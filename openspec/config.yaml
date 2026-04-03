@@ -1,0 +1,41 @@
+# openspec/config.yaml
+schema: spec-driven
+
+context: |
+  Tech stack: Python 3.x, FastAPI, LangGraph 0.2+, PostgreSQL 17 + pgvector, Redis 7+, Celery
+  LLM: Claude Sonnet 4 (conversational), Claude Haiku 4.5 (classification/summarization)
+  Embeddings: text-embedding-3-small (OpenAI) or voyage-3 (Anthropic)
+  Integration: WhatsApp Business API (Meta Cloud API) via 360dialog or Twilio BSP
+  Architecture: Multi-agent Supervisor pattern (LangGraph), RAG with pgvector, stateless FastAPI
+  Testing: pytest (to be established)
+  CI/CD: GitHub Actions
+  Deploy: Debian Linux, uvicorn + gunicorn
+  Monitoring: Plotly Dash dashboard
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules/packages
+    - Consider WhatsApp API constraints (rate limits, message types, 24h window)
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Include latency and cost requirements where applicable
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Consider LLM token cost implications in design choices
+  tasks:
+    - Group tasks by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+  apply:
+    - Follow existing code patterns and conventions
+    - Load relevant coding skills for the project stack
+    - Validate WhatsApp webhook signature in all endpoints
+  verify:
+    - Run tests if test infrastructure exists
+    - Compare implementation against every spec scenario
+    - Verify LLM cost estimates against projections
+  archive:
+    - Warn before merging destructive deltas (large removals)
