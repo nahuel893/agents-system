@@ -2,9 +2,9 @@
 **Proyecto:** WhatsApp Sales Agent Bot  
 **Empresa:** Distribuidora BADIE S.A. — Grupo Manzur  
 **Autor:** Área de Ingeniería de Datos  
-**Versión:** 1.0.0  
-**Fecha:** Marzo 2026  
-**Estado:** En definición
+**Versión:** 1.1.0  
+**Fecha:** Abril 2026  
+**Estado:** Ajustes post-análisis arquitectónico
 
 ---
 
@@ -149,7 +149,7 @@ El sistema se organiza en tres capas:
 │  ├── Order Agent      (interpreta pedido)       │
 │  ├── Confirm Agent    (cierra pedido)           │
 │  └── Modify Agent     (post-cierre)             │
-│  Estado: Redis (por thread_id, TTL 12h)         │
+│  Estado: Redis (por thread_id, TTL 24h)         │
 └─────────────────────┬───────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────┐
@@ -289,13 +289,14 @@ Dashboard en Plotly Dash que muestre: conversaciones activas, pedidos registrado
 | Orquestación agentes | LangGraph 0.2+ | Grafo de estados nativo; checkpointing; multi-agente; stateful por thread |
 | LLM conversacional | claude-sonnet-4-20250514 | Calidad de respuesta, soporte de tools, prompt caching |
 | LLM clasificación / resumen | claude-haiku-4-5 | Barato y rápido para tasks simples |
-| Embeddings | text-embedding-3-small (OpenAI) o voyage-3 (Anthropic) | Costo/calidad balanceado para catálogo |
+| Embeddings | text-embedding-3-small (OpenAI) | Decisión cerrada: soporte Matryoshka (dim reduction a 512), ecosistema maduro, costo/calidad óptimo para catálogo |
 | Vector DB | pgvector (extensión PostgreSQL) | Reutiliza infraestructura existente; sin nueva dependencia |
-| Estado conversacional | Redis 7+ (con TTL 12h por sesión) | Sub-milisegundo de lectura/escritura; evicción automática |
+| Estado conversacional | Redis 7+ (con TTL 24h por sesión) | Sub-milisegundo de lectura/escritura; evicción automática |
 | Base de datos principal | PostgreSQL 17 (existente) | Pedidos, clientes, catálogo maestro |
-| Queue async | Celery + Redis | Tasks lentas: compresión historial, notificaciones, archivado |
+| Queue async | FastAPI BackgroundTasks (Fase 1) → Celery + Redis (Fase 2) | MVP usa BackgroundTasks nativo; Celery se introduce cuando el volumen justifique workers dedicados |
 | Servidor | Debian Linux (existente) | uvicorn + gunicorn para FastAPI |
 | Monitoreo | Plotly Dash + PostgreSQL | Dashboard interno; stack existente |
+| Logging | structlog | Structured JSON logging con correlation ID (thread_id) |
 | CI/CD | GitHub Actions | Deploy automático desde `main` |
 
 ---
@@ -447,13 +448,14 @@ CREATE TABLE catalog_embeddings (
     id              SERIAL PRIMARY KEY,
     sku             VARCHAR(50) NOT NULL UNIQUE,
     description     TEXT NOT NULL,         -- texto de embedding
-    embedding       vector(1536),           -- dimensión según modelo
+    embedding       vector(512),            -- Matryoshka dim reduction desde text-embedding-3-small (512 dims suficiente para catálogos < 10K items)
     active          BOOLEAN DEFAULT TRUE,
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX ON catalog_embeddings USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+-- HNSW: recall near-perfect para catálogos chicos sin necesidad de tuning (a diferencia de IVFFlat que requiere re-tuning de lists al crecer).
+CREATE INDEX ON catalog_embeddings USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
 ```
 
 ### 11.4 Actualización del índice
@@ -608,12 +610,12 @@ CREATE TABLE conversation_logs (
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Embeddings del catálogo (pgvector)
+-- Embeddings del catálogo (pgvector) — Matryoshka 512 dims
 CREATE TABLE catalog_embeddings (
     id              SERIAL PRIMARY KEY,
     sku             VARCHAR(50) NOT NULL UNIQUE,
     description     TEXT NOT NULL,
-    embedding       vector(1536),
+    embedding       vector(512),
     active          BOOLEAN DEFAULT TRUE,
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
@@ -655,9 +657,12 @@ CREATE TABLE catalog_embeddings (
 - [ ] Modelo de datos en PostgreSQL (clients, orders, order_items)
 - [ ] Agente LangGraph de un solo nodo (greeting → ordering → confirm)
 - [ ] RAG básico con pgvector (embedding del catálogo existente)
-- [ ] Estado en Redis con TTL 12h
+- [ ] Estado en Redis con TTL 24h
+- [ ] Deduplicación de mensajes via Redis SET NX (idempotency key: message_id de Meta)
 - [ ] Test con 10 clientes internos (equipo BADIE)
-- [ ] Logging básico de conversaciones
+- [ ] Logging básico de conversaciones (structlog)
+
+**Approach:** Grafo único con routing por fase (phase-based routing). El patrón Supervisor se introduce en Fase 2.
 
 **Entregable:** Bot que toma un pedido simple de punta a punta.
 
@@ -669,6 +674,7 @@ CREATE TABLE catalog_embeddings (
 - [ ] Implementar `summarize_node` y compresión de historial
 - [ ] Agregar `modify_agent` para post-cierre
 - [ ] Implementar `escalate_node` con notificación a Slack
+- [ ] Migrar de FastAPI BackgroundTasks a Celery + Redis para queue async
 - [ ] Rate limiting por cliente
 - [ ] Tests de carga: 100 conversaciones simultáneas
 - [ ] Piloto con 50 clientes reales seleccionados
