@@ -23,8 +23,10 @@ class Client(Base):
 
     __tablename__ = "clients"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    phone_number: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True)
+    phone_number: Mapped[str] = mapped_column(
+        String(20), unique=False, nullable=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     business_type: Mapped[str | None] = mapped_column(String(100))
     zone: Mapped[str | None] = mapped_column(String(100))
@@ -46,16 +48,17 @@ class Order(Base):
 
     __tablename__ = "orders"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True)
     external_id: Mapped[str | None] = mapped_column(String(50), unique=True)
     client_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("clients.id")
-    )
+        Integer, ForeignKey("clients.id"))
     status: Mapped[str] = mapped_column(String(20), default="pending")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()"
     )
-    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True))
     cutoff_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_amount: Mapped[float | None] = mapped_column(Numeric(12, 2))
     notes: Mapped[str | None] = mapped_column(Text)
@@ -70,10 +73,10 @@ class OrderItem(Base):
 
     __tablename__ = "order_items"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True)
     order_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("orders.id")
-    )
+        Integer, ForeignKey("orders.id"))
     sku: Mapped[str] = mapped_column(String(50), nullable=False)
     description: Mapped[str | None] = mapped_column(String(300))
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -89,11 +92,11 @@ class ConversationLog(Base):
 
     __tablename__ = "conversation_logs"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True)
     thread_id: Mapped[str] = mapped_column(String(50), nullable=False)
     client_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("clients.id")
-    )
+        Integer, ForeignKey("clients.id"))
     role: Mapped[str] = mapped_column(String(10), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tokens_used: Mapped[int | None] = mapped_column(Integer)
@@ -103,7 +106,8 @@ class ConversationLog(Base):
     )
 
     # Relationships
-    client: Mapped["Client | None"] = relationship(back_populates="conversation_logs")
+    client: Mapped["Client | None"] = relationship(
+        back_populates="conversation_logs")
 
 
 class CatalogEmbedding(Base):
@@ -111,7 +115,8 @@ class CatalogEmbedding(Base):
 
     __tablename__ = "catalog_embeddings"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True)
     sku: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     embedding = mapped_column(Vector(512))
