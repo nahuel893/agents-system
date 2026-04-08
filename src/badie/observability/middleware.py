@@ -6,7 +6,7 @@ import time
 from uuid import uuid4
 
 import structlog.contextvars
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -16,7 +16,7 @@ from badie.observability.logging import logger
 class RequestIdMiddleware(BaseHTTPMiddleware):
     """Generates a short request_id, binds it to structlog contextvars, and logs lifecycle events."""
 
-    async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = uuid4().hex[:8]
         structlog.contextvars.bind_contextvars(request_id=request_id)
         logger.info("request.started", method=request.method, path=request.url.path)
