@@ -1,0 +1,21 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [{
+    "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+    "changes": [{
+      "value": {
+        "messaging_product": "whatsapp",
+        "metadata": {"display_phone_number": "15550783881", "phone_number_id": "123456123"},
+        "contacts": [{"profile": {"name": "Test User"}, "wa_id": "5491123456789"}],
+        "messages": [{
+          "from": "5491123456789",
+          "id": "wamid.ABGGFlA5FpafAgo6tHcNmNjXmuSf",
+          "timestamp": "1669058305",
+          "text": {"body": "dame dos cajones de la rubia"},
+          "type": "text"
+        }]
+      },
+      "field": "messages"
+    }]
+  }]
+}
