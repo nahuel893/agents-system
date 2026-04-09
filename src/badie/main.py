@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Request
 from sqlalchemy import text
 
 from badie.config import Settings, get_settings
+from badie.integration import webhook_router
 from badie.models.base import get_engine
 from badie.observability import RequestIdMiddleware, setup_logging
 from badie.services.redis import close_redis_pool, get_redis_client
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
     )
 
     application.add_middleware(RequestIdMiddleware)
+    application.include_router(webhook_router)
 
     logger = structlog.get_logger()
 
