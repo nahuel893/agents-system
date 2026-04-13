@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from unittest.mock import AsyncMock, patch
 
 from badie.config import Settings, get_settings
 from badie.main import create_app
@@ -236,3 +237,75 @@ async def test_post_missing_signature(
         headers={"Content-Type": "application/json"},
     )
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Deduplication tests (tasks 2.1–2.3)
+# ---------------------------------------------------------------------------
+
+
+async def test_post_duplicate_message(
+    client: AsyncClient, text_payload: bytes
+) -> None:
+    """POST /webhook with duplicate message_id returns 200 but skips processing."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=None)  # key existed = duplicate
+
+    with patch("badie.integration.webhook.get_redis_client", return_value=mock_redis):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+async def test_post_new_message_with_dedup(
+    client: AsyncClient, text_payload: bytes
+) -> None:
+    """POST /webhook with new message_id processes normally."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)  # key created = new
+
+    with patch("badie.integration.webhook.get_redis_client", return_value=mock_redis):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    mock_redis.set.assert_called_once()
+
+
+async def test_post_dedup_redis_failure(
+    client: AsyncClient, text_payload: bytes
+) -> None:
+    """POST /webhook with Redis failure still processes message (fail-open)."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(side_effect=ConnectionError("Redis down"))
+
+    with patch("badie.integration.webhook.get_redis_client", return_value=mock_redis):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}

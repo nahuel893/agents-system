@@ -10,6 +10,8 @@ from starlette.responses import PlainTextResponse
 
 from badie.config import Settings, get_settings
 from badie.integration.meta_signature import verify_signature
+from badie.services.dedup import is_duplicate
+from badie.services.redis import get_redis_client
 
 webhook_router = APIRouter(prefix="/webhook", tags=["webhook"])
 
@@ -68,6 +70,12 @@ async def receive_message(
     message_id = message.get("id", "")
     text = message.get("text", {}).get("body", "")
     timestamp = message.get("timestamp", "")
+
+    # Dedup check — skip if already processed within TTL window
+    redis_client = get_redis_client(settings.redis_url)
+    if await is_duplicate(redis_client, message_id):
+        logger.info("webhook.duplicate_skipped", message_id=message_id)
+        return {"status": "ok"}
 
     logger.info(
         "webhook.message_received",
