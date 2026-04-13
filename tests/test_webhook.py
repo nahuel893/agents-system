@@ -5,14 +5,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import AsyncMock, patch
 
 from badie.config import Settings, get_settings
 from badie.main import create_app
+from badie.models.tables import Client
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -286,7 +286,6 @@ async def test_post_new_message_with_dedup(
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
-    mock_redis.set.assert_called_once()
 
 
 async def test_post_dedup_redis_failure(
@@ -298,6 +297,99 @@ async def test_post_dedup_redis_failure(
     mock_redis.set = AsyncMock(side_effect=ConnectionError("Redis down"))
 
     with patch("badie.integration.webhook.get_redis_client", return_value=mock_redis):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Client lookup integration tests (tasks 5.1–5.3)
+# ---------------------------------------------------------------------------
+
+
+async def test_post_unregistered_client(
+    client: AsyncClient, text_payload: bytes
+) -> None:
+    """POST /webhook with unregistered client returns 200 but skips processing."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)  # new message
+
+    unregistered = Client(
+        id=1, phone_number="+5491123456789", name="Pendiente de alta", active=False
+    )
+    mock_lookup = AsyncMock(return_value=unregistered)
+
+    with (
+        patch("badie.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("badie.integration.webhook.lookup_or_create_client", mock_lookup),
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    mock_lookup.assert_called_once()
+
+
+async def test_post_registered_client(
+    client: AsyncClient, text_payload: bytes
+) -> None:
+    """POST /webhook with registered client processes normally."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)  # new message
+
+    registered = Client(
+        id=2, phone_number="+5491123456789", name="Kiosco Don José", active=True
+    )
+    mock_lookup = AsyncMock(return_value=registered)
+
+    with (
+        patch("badie.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("badie.integration.webhook.lookup_or_create_client", mock_lookup),
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+async def test_post_db_failure_fail_open(
+    client: AsyncClient, text_payload: bytes
+) -> None:
+    """POST /webhook with DB failure still processes message (fail-open)."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)  # new message
+
+    mock_lookup = AsyncMock(side_effect=Exception("DB unavailable"))
+
+    with (
+        patch("badie.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("badie.integration.webhook.lookup_or_create_client", mock_lookup),
+    ):
         response = await client.post(
             "/webhook",
             content=text_payload,

@@ -57,3 +57,9 @@ def test_conversation_log_relationship() -> None:
     """ConversationLog links back to client."""
     rel_names = {r.key for r in ConversationLog.__mapper__.relationships}
     assert "client" in rel_names
+
+
+def test_clients_phone_number_index() -> None:
+    """clients table has an index on phone_number."""
+    index_names = {idx.name for idx in Client.__table__.indexes}
+    assert "ix_clients_phone_number" in index_names

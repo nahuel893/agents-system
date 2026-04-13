@@ -12,6 +12,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,13 +34,17 @@ class Client(Base):
     price_list_id: Mapped[int | None] = mapped_column(Integer)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
+        DateTime(timezone=True), server_default=func.now()
     )
 
     # Relationships
     orders: Mapped[list["Order"]] = relationship(back_populates="client")
     conversation_logs: Mapped[list["ConversationLog"]] = relationship(
         back_populates="client"
+    )
+
+    __table_args__ = (
+        Index("ix_clients_phone_number", "phone_number"),
     )
 
 
@@ -55,7 +60,7 @@ class Order(Base):
         Integer, ForeignKey("clients.id"))
     status: Mapped[str] = mapped_column(String(20), default="pending")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
+        DateTime(timezone=True), server_default=func.now()
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True))
@@ -102,7 +107,7 @@ class ConversationLog(Base):
     tokens_used: Mapped[int | None] = mapped_column(Integer)
     model_used: Mapped[str | None] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
+        DateTime(timezone=True), server_default=func.now()
     )
 
     # Relationships
@@ -122,7 +127,7 @@ class CatalogEmbedding(Base):
     embedding = mapped_column(Vector(512))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
+        DateTime(timezone=True), server_default=func.now()
     )
 
     __table_args__ = (

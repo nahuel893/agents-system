@@ -10,6 +10,8 @@ from starlette.responses import PlainTextResponse
 
 from badie.config import Settings, get_settings
 from badie.integration.meta_signature import verify_signature
+from badie.models.base import get_session_factory
+from badie.services.clients import lookup_or_create_client, normalize_phone
 from badie.services.dedup import is_duplicate
 from badie.services.redis import get_redis_client
 
@@ -77,9 +79,27 @@ async def receive_message(
         logger.info("webhook.duplicate_skipped", message_id=message_id)
         return {"status": "ok"}
 
+    # Client lookup — normalize phone and find or create client
+    phone = normalize_phone(phone_number)
+    client_record = None
+    try:
+        session_factory = get_session_factory(request.app.state.engine)
+        async with session_factory() as session:
+            client_record = await lookup_or_create_client(session, phone)
+    except Exception:
+        logger.warning("client_lookup.db_error", phone_number=phone)
+
+    if client_record is not None and not client_record.active:
+        logger.info(
+            "webhook.unregistered_client",
+            phone_number=phone,
+            client_id=client_record.id,
+        )
+        return {"status": "ok"}
+
     logger.info(
         "webhook.message_received",
-        phone_number=phone_number,
+        phone_number=phone,
         message_id=message_id,
         text=text,
         timestamp=timestamp,
