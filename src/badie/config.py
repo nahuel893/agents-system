@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://localhost:5432/badie"
 
+    # Medallion data warehouse (read-only, source of truth for catalog/clients)
+    medallion_database_url: str = "postgresql+asyncpg://localhost:5432/medallion"
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
