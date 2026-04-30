@@ -29,6 +29,8 @@ class Settings(BaseSettings):
 
     # Embeddings - OpenAI
     openai_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 512
 
     # WhatsApp / Meta
     meta_webhook_secret: str = ""
