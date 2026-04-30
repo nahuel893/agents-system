@@ -63,3 +63,10 @@ def test_clients_phone_number_index() -> None:
     """clients table has an index on phone_number."""
     index_names = {idx.name for idx in Client.__table__.indexes}
     assert "ix_clients_phone_number" in index_names
+
+
+def test_clients_external_id_unique() -> None:
+    """clients.external_id is a nullable, unique Integer column for medallion sync."""
+    col = Client.__table__.c.external_id
+    assert col.nullable is True
+    assert col.unique is True
