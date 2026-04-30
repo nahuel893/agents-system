@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from badie.services.clients import normalize_phone
+from badie.services.clients import normalize_argentine_mobile, normalize_phone
 
 
 # ---------------------------------------------------------------------------
@@ -57,3 +57,38 @@ def test_normalize_garbage_raises() -> None:
 def test_normalize_too_short_raises() -> None:
     with pytest.raises(ValueError):
         normalize_phone("123")
+
+
+# ---------------------------------------------------------------------------
+# Argentine mobile-aware normalization (used by medallion sync)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_argentine_mobile_local_dashes() -> None:
+    """Local format with dashes — known to be mobile, force '9' prefix."""
+    assert normalize_argentine_mobile("11-2345-6789") == "+5491123456789"
+
+
+def test_normalize_argentine_mobile_local_parens() -> None:
+    """Local format with parens — known to be mobile."""
+    assert normalize_argentine_mobile("(011) 2345-6789") == "+5491123456789"
+
+
+def test_normalize_argentine_mobile_already_correct() -> None:
+    """Already-normalized mobile passes through."""
+    assert normalize_argentine_mobile("+5491123456789") == "+5491123456789"
+
+
+def test_normalize_argentine_mobile_with_country_code_no_nine() -> None:
+    """+54 11... gets the '9' inserted."""
+    assert normalize_argentine_mobile("+541123456789") == "+5491123456789"
+
+
+def test_normalize_argentine_mobile_invalid_raises() -> None:
+    with pytest.raises(ValueError):
+        normalize_argentine_mobile("abc")
+
+
+def test_normalize_argentine_mobile_empty_raises() -> None:
+    with pytest.raises(ValueError):
+        normalize_argentine_mobile("")

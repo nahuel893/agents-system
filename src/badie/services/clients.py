@@ -44,6 +44,32 @@ def normalize_phone(raw: str) -> str:
     return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
 
 
+def normalize_argentine_mobile(raw: str) -> str:
+    """Normalize a phone known to be an Argentine mobile to E.164 (+549...).
+
+    Argentina's quirk: in international format, mobiles get a ``9`` after the
+    country code (``+5491123456789``), but locals dial without it
+    (``11-2345-6789``). phonenumbers can't infer mobile from ambiguous input,
+    so this helper forces the ``9`` prefix when missing.
+
+    Args:
+        raw: Raw mobile phone string in any format.
+
+    Returns:
+        E.164 mobile phone with ``+549`` prefix.
+
+    Raises:
+        ValueError: if the input cannot be parsed.
+    """
+    e164 = normalize_phone(raw)
+    if e164.startswith("+549"):
+        return e164
+    if e164.startswith("+54") and not e164.startswith("+549"):
+        # Insert "9" right after country code
+        return "+549" + e164[len("+54"):]
+    return e164
+
+
 async def lookup_or_create_client(
     session: AsyncSession, phone: str
 ) -> Client:
