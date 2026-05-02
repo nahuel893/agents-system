@@ -1,11 +1,18 @@
-"""Tests for the embedding service abstraction (Protocol + Fake + OpenAI)."""
+"""Tests for the embedding service abstraction (Protocol + Fake + OpenAI + Local)."""
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+
+from badie.config import Settings
 from badie.services.embeddings import (
     EmbeddingProvider,
     FakeEmbeddingProvider,
+    LocalBGEEmbeddingProvider,
     OpenAIEmbeddingProvider,
+    get_embedding_provider,
 )
 
 
@@ -73,3 +80,77 @@ def test_openai_provider_implements_protocol() -> None:
         api_key="sk-test", model="text-embedding-3-small", dimensions=512
     )
     assert hasattr(provider, "embed")
+
+
+# ---------------------------------------------------------------------------
+# LocalBGEEmbeddingProvider — uses sentence-transformers (mocked in tests)
+# ---------------------------------------------------------------------------
+
+
+@patch("badie.services.embeddings.SentenceTransformer")
+async def test_local_provider_truncates_to_dimensions(mock_st: MagicMock) -> None:
+    """BGE-M3 outputs 1024 dims natively — provider must truncate to N (Matryoshka)."""
+    fake_model = MagicMock()
+    fake_model.encode.return_value = np.full((2, 1024), 0.5, dtype=np.float32)
+    mock_st.return_value = fake_model
+
+    provider = LocalBGEEmbeddingProvider(model_name="BAAI/bge-m3", dimensions=512)
+    vectors = await provider.embed(["Quilmes 1L", "Brahma lata"])
+
+    assert len(vectors) == 2
+    assert len(vectors[0]) == 512
+    assert len(vectors[1]) == 512
+    fake_model.encode.assert_called_once()
+
+
+@patch("badie.services.embeddings.SentenceTransformer")
+async def test_local_provider_empty_input(mock_st: MagicMock) -> None:
+    """Empty input list returns empty list, never calls encode."""
+    fake_model = MagicMock()
+    mock_st.return_value = fake_model
+
+    provider = LocalBGEEmbeddingProvider(model_name="BAAI/bge-m3", dimensions=512)
+    result = await provider.embed([])
+
+    assert result == []
+    fake_model.encode.assert_not_called()
+
+
+@patch("badie.services.embeddings.SentenceTransformer")
+def test_local_provider_implements_protocol(mock_st: MagicMock) -> None:
+    """LocalBGEEmbeddingProvider satisfies the EmbeddingProvider Protocol."""
+    mock_st.return_value = MagicMock()
+    provider: EmbeddingProvider = LocalBGEEmbeddingProvider(
+        model_name="BAAI/bge-m3", dimensions=512
+    )
+    assert hasattr(provider, "embed")
+
+
+# ---------------------------------------------------------------------------
+# Factory — selects implementation based on settings
+# ---------------------------------------------------------------------------
+
+
+@patch("badie.services.embeddings.SentenceTransformer")
+def test_factory_returns_local_when_configured(mock_st: MagicMock) -> None:
+    """embedding_provider='local' returns LocalBGEEmbeddingProvider."""
+    mock_st.return_value = MagicMock()
+    settings = Settings(
+        embedding_provider="local",
+        embedding_model_local="BAAI/bge-m3",
+        embedding_dimensions=512,
+    )
+    provider = get_embedding_provider(settings)
+    assert isinstance(provider, LocalBGEEmbeddingProvider)
+
+
+def test_factory_returns_openai_when_configured() -> None:
+    """embedding_provider='openai' returns OpenAIEmbeddingProvider."""
+    settings = Settings(
+        embedding_provider="openai",
+        openai_api_key="sk-test",
+        embedding_model="text-embedding-3-small",
+        embedding_dimensions=512,
+    )
+    provider = get_embedding_provider(settings)
+    assert isinstance(provider, OpenAIEmbeddingProvider)

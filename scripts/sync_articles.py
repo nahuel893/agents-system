@@ -4,7 +4,9 @@ Usage::
 
     uv run python scripts/sync_articles.py
 
-Reads connection URLs and OpenAI key from environment / .env via Settings.
+Reads connection URLs and embedding provider config from .env via Settings.
+Defaults to ``embedding_provider="local"`` (BGE-M3, no API key required).
+Set ``EMBEDDING_PROVIDER=openai`` + ``OPENAI_API_KEY=sk-...`` to use the cloud.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from badie.config import get_settings
 from badie.models.base import get_engine
 from badie.observability import setup_logging
-from badie.services.embeddings import OpenAIEmbeddingProvider
+from badie.services.embeddings import get_embedding_provider
 from badie.services.medallion import get_medallion_engine
 from badie.services.sync_articles import sync_articles
 
@@ -28,18 +30,11 @@ async def main() -> int:
     logger = structlog.get_logger()
     settings = get_settings()
 
-    if not settings.openai_api_key:
-        logger.error("sync_articles.missing_openai_key")
-        return 1
+    logger.info("sync_articles.provider_selected", provider=settings.embedding_provider)
+    embedder = get_embedding_provider(settings)
 
     medallion_engine = get_medallion_engine(settings.medallion_database_url)
     bot_engine = get_engine(settings.database_url)
-
-    embedder = OpenAIEmbeddingProvider(
-        api_key=settings.openai_api_key,
-        model=settings.embedding_model,
-        dimensions=settings.embedding_dimensions,
-    )
 
     med_factory = async_sessionmaker(medallion_engine, expire_on_commit=False)
     bot_factory = async_sessionmaker(bot_engine, expire_on_commit=False)

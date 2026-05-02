@@ -1,6 +1,7 @@
 """Application settings loaded from environment / .env file."""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,10 +31,16 @@ class Settings(BaseSettings):
     # LLM - Anthropic
     anthropic_api_key: str = ""
 
-    # Embeddings - OpenAI
+    # Embeddings — provider switch (local default = no API key required)
+    embedding_provider: Literal["openai", "local"] = "local"
+    embedding_dimensions: int = 512
+
+    # Embeddings — OpenAI
     openai_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 512
+
+    # Embeddings — local (sentence-transformers)
+    embedding_model_local: str = "BAAI/bge-m3"
 
     # WhatsApp / Meta
     meta_webhook_secret: str = ""
