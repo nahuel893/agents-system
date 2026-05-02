@@ -23,6 +23,8 @@ dependencies = [
     "structlog>=24.0",
     "phonenumbers>=8.13",
     "openai>=1.50",
+    "torch>=2.0,<3.0",
+    "sentence-transformers>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -51,6 +53,7 @@ strict = true
 [[tool.mypy.overrides]]
 module = [
     "pgvector.*",
+    "sentence_transformers.*",
 ]
 ignore_missing_imports = true
 
@@ -62,3 +65,14 @@ dev = [
     "mypy>=1.13",
     "aiosqlite>=0.20",
 ]
+
+# Force CPU-only torch (avoid pulling 5GB of CUDA libs on machines without GPU)
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+torchaudio = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
