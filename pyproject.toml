@@ -45,6 +45,11 @@ target-version = "py312"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: requires real models / external services (slow, opt-in)",
+]
+# Skip integration tests by default. Run them explicitly with: pytest -m integration
+addopts = "-m 'not integration'"
 
 [tool.mypy]
 python_version = "3.12"
