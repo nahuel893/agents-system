@@ -26,6 +26,9 @@ ENV/
 # Testing
 .pytest_cache/
 
+# Agent-generated registries / caches
+.atl/
+
 # IDE
 .idea/
 .vscode/
