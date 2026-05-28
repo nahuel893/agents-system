@@ -25,50 +25,59 @@
 
 ---
 
-## Active wave: W1 — Harness hardening (2026-05-28)
+## Active wave: W1 — Harness build-out (2026-05-28)
 
 | ID | Slice / Feature | Agent | Model | Cx | Branch | Depends on | Status | Result |
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
-| D-001 | Enforce `execution_limits` stricter-only invariant in loader | opencode | minimax-2.7 | low | `feat/D-001-exec-limits-invariant` | — | todo | — |
+| D-002 | ToolRegistry + Capability Injector (Layer 1 enforcement) | opencode | gpt-5.4 | high | `feat/D-002-tool-registry-injector` | — | todo | — |
 
 ---
 
 ## Task details
 
-### D-001 — Enforce `execution_limits` stricter-only invariant in loader
+### D-002 — ToolRegistry + Capability Injector (Layer 1 enforcement)
 
-The agent definition loader documents an invariant (#4) that a deployment override's `execution_limits` may only be **stricter or equal** to the parent — never looser. The docstring in `loader.py` claims this, but `merge()` does not enforce it: it takes an override's limits dict as-is. Close that gap with Strict TDD.
+Build the second harness piece: the code-side `ToolRegistry` (the authority on what tools exist) and the capability injector that resolves the enforced tool surface for an agent. This is the security core — **the system provides and limits tools; the markdown only references names.**
 
 - **Agent:** opencode
-- **Model:** minimax-2.7
-- **Complexity:** low
-- **Branch:** `feat/D-001-exec-limits-invariant`
-- **Worktree:** `../agents-system-D-001`
-- **Depends on:** none
+- **Model:** gpt-5.4
+- **Complexity:** high
+- **Branch:** `feat/D-002-tool-registry-injector`
+- **Worktree:** `../agents-system-D-002`
+- **Depends on:** none (branch from current `main`, which already includes the D-001 loader hardening)
 - **Wave:** W1
-- **Strict TDD:** ACTIVE. Test runner: `pytest` (or `uv run pytest`). Write the failing test FIRST, watch it fail, then implement.
-- **Skills to load:** none required (mechanical fix; no project skill matches).
-- **Scope (files):**
-  - `src/badie/harness/loader.py`
-  - `tests/test_harness_loader.py`
+- **Strict TDD:** ACTIVE. Test runner: `pytest` (or `uv run pytest`). Write each failing test FIRST, watch it fail, then implement.
+- **Skills to load:** none required (no matching project skill).
+- **Read first:** `docs/platform/harness.md` (Capability Injector section), `docs/architecture/permission-model.md`, `docs/platform/tool.md`, and `src/badie/harness/loader.py` for the `AgentDefinition` shape. **Do NOT modify `loader.py`.**
+- **Scope (files) — all NEW, disjoint from the loader:**
+  - `src/badie/harness/registry.py`
+  - `src/badie/harness/injector.py`
+  - `tests/test_harness_registry.py`
+  - `tests/test_harness_injector.py`
 - **What to implement:**
-  1. Add a module-level constant `_PLATFORM_DEFAULT_LIMITS: dict[str, int]` in `loader.py` with the platform defaults from `docs/platform/policy.md`, using these exact snake_case keys:
-     - `tool_call_timeout_s: 10`
-     - `total_execution_timeout_s: 60`
-     - `max_tool_calls: 20`
-     - `max_delegation_depth: 2`
-     - `max_clarification_attempts: 3`
-  2. Add `_validate_execution_limits(baseline: dict, override_limits: dict) -> None`. For each key present in `override_limits`, its numeric value must be `<=` the baseline value for that key. If any value is greater (looser), raise `DefinitionError` with a precise message naming the field, the override value, and the baseline.
-  3. In `merge()`, where `execution_limits` is resolved: when the override provides a dict, compute `baseline = generic.execution_limits if it is a dict else _PLATFORM_DEFAULT_LIMITS`, call `_validate_execution_limits(baseline, override_dict)` BEFORE accepting it, then set the resolved limits to the override dict.
-  4. Keep existing behavior intact: `execution_limits: inherit`, `None`, or absent → inherit the parent/default unchanged (no validation needed).
+  - **`registry.py`:**
+    - `ToolSpec` (frozen dataclass): `name: str`, `required_permissions: tuple[str, ...]`, `connector: Callable[..., Any]` (the executable — real connectors come later; any callable is fine now).
+    - `ToolNotFoundError(Exception)`.
+    - `ToolRegistry` class: `register(spec)` (raise on duplicate name), `get(name) -> ToolSpec` (raise `ToolNotFoundError` if unknown), `__contains__(name)`, `names() -> tuple[str, ...]`.
+  - **`injector.py`:**
+    - `InjectionError(Exception)`.
+    - `InjectionResult` (frozen dataclass): `granted: tuple[ToolSpec, ...]`, `denied: tuple[tuple[str, str], ...]` (each `(tool_name, reason)`).
+    - `resolve_tool_surface(definition: AgentDefinition, registry: ToolRegistry, granted_permissions: Iterable[str]) -> InjectionResult`:
+      1. `effective = set(definition.permissions) & set(granted_permissions)` — the role's permissions intersected with the requesting identity's RBAC grants.
+      2. For each tool name in `definition.tools`:
+         - if `name not in registry` → **raise `InjectionError`** (the manifest references a tool the system does not provide — fail loud, deterministic).
+         - else `spec = registry.get(name)`; if `set(spec.required_permissions) <= effective` → add to `granted`; otherwise → add to `denied` with a reason naming the missing permissions.
+      3. Return `InjectionResult(granted, denied)`.
 - **Acceptance criteria:**
-  - [ ] New test: override with a STRICTER limit (e.g. `max_tool_calls: 10`) merges successfully and the resolved `AgentDefinition.execution_limits["max_tool_calls"] == 10`.
-  - [ ] New test: override with a LOOSER limit (e.g. `max_tool_calls: 50`) raises `DefinitionError`.
-  - [ ] New test: override with `execution_limits: inherit` still inherits with no error (regression guard).
-  - [ ] Full suite green: `pytest` (no regressions).
-  - [ ] `mypy src/` clean, `ruff check src/badie/harness/` clean.
-- **Engram topic:** `delegations/D-001` — on finish, `mem_save` with `project: "agents-system"`, `topic_key: "delegations/D-001"`: what you changed, the keys/defaults you used, test results.
-- **Do NOT:** merge to `main`, touch any file outside the scope, or change the merge directive behavior for other fields.
+  - [ ] registry: `register` + `get` round-trip; `get(unknown)` raises `ToolNotFoundError`; duplicate `register` raises; `in` works; `names()` returns registered names.
+  - [ ] resolve: all permissions present → every tool in `granted`, `denied` empty.
+  - [ ] resolve: a tool whose `required_permissions` exceed `effective` → that tool in `denied` (reason names missing perms), the rest granted.
+  - [ ] resolve: a tool allowed by the role's permissions but where the USER lacks the grant → `denied` (proves `effective = role ∩ granted`).
+  - [ ] resolve: definition references a tool not in the registry → raises `InjectionError`.
+  - [ ] Full suite green: `pytest`. `mypy src/` clean, `ruff check src/badie/harness/` clean.
+- **Out of scope (do NOT build):** LangChain `bind_tools` / model binding; the Layer-2 runtime Tool Call Interceptor; real connector implementations; any change to `loader.py` or `test_harness_loader.py`.
+- **Engram topic:** `delegations/D-002` — on finish, `mem_save` with `project: "agents-system"`, `topic_key: "delegations/D-002"`: what you built, the resolution algorithm, test results.
+- **Do NOT:** merge to `main`, or touch any file outside the scope.
 - **Status:** todo
 - **Result:** _(fill when `in_review`: branch ready, test output summary, notes for the integrator)_
 
@@ -76,4 +85,4 @@ The agent definition loader documents an invariant (#4) that a deployment overri
 
 ## Done (archive)
 
-_Completed tasks move here with their final Result note, for traceability._
+- **D-001** — Enforce `execution_limits` stricter-only invariant in loader (opencode/minimax-2.7). Merged to `main` (`00089c8`). Added `_PLATFORM_DEFAULT_LIMITS` + `_validate_execution_limits()` in `loader.py`; 19 loader tests, full suite 110 passed.
