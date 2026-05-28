@@ -54,8 +54,8 @@ The following capabilities are considered platform capabilities or future module
 ## Design principles
 
 1. **Declarative first**
-   - Agent roles are defined in `.md` manifests.
-   - Runtime behavior is assembled from those manifests, not hardcoded per case.
+   - Agent roles are defined as folders under `agents/`, each containing `role.md`, `manifest.md`, and `policy.md`.
+   - Runtime behavior is assembled from those agent definitions, not hardcoded per case.
 
 2. **Instantiate on demand**
    - Agents are created and destroyed under demand, like runtime objects.
@@ -130,7 +130,7 @@ The platform distinguishes clearly between three concepts:
 
 | Concept | Meaning |
 |---|---|
-| **RoleManifest** | Declarative `.md` definition of a role |
+| **AgentDefinition** | Folder-based declarative definition of a role (`role.md` + `manifest.md` + `policy.md`) |
 | **AgentRuntime** | Live in-memory execution instance |
 | **Subsystem** | Coordinated set of roles and policies within a domain |
 
@@ -220,27 +220,32 @@ Defines domain-specific orchestration behavior:
 
 ---
 
-## Role manifests (`.md`)
+## Agent definitions (folder-based)
 
-Each role is defined declaratively in Markdown.
+Each role is defined as a folder under `agents/` with three Markdown files: `role.md`, `manifest.md`, and `policy.md`.
 
-At minimum, a role manifest should define:
+At minimum, the agent definition should define:
 
+**`role.md`:**
 - role name
 - purpose
 - scope
+
+**`manifest.md`:**
 - allowed tools
 - allowed skills
 - required context
+- permission requirements
+
+**`policy.md`:**
 - escalation rules
 - delegation policy
-- permission requirements
 - memory policy
 - audit policy
 
-### Manifest principle
+### Agent definition principle
 
-The manifest defines **what the role is allowed to be and do**.
+The agent definition defines **what the role is allowed to be and do**.
 The runtime decides **how and when it is instantiated**.
 
 ---
@@ -410,7 +415,7 @@ These are platform capabilities or roadmap options unless explicitly included in
 
 The following decisions are still intentionally open:
 
-1. Should role manifests define only role semantics, or the full execution policy as well?
+1. Should agent definitions define only role semantics, or the full execution policy as well?
 2. Can agents decide autonomously when to spawn child agents, or only under explicit system rules?
 3. Which actions require human approval versus autonomous execution?
 4. Which contexts are local-only, shared-team, or organization-wide?
@@ -422,8 +427,7 @@ The following decisions are still intentionally open:
 
 1. `docs/architecture/badie-seller-ai.md`
    - concrete BADIE delivery scope
-2. `docs/architecture/role-manifest-schema.md`
-   - formal structure of `.md` role manifests
+2. `docs/platform/role.md` already covers the agent definition folder schema.
 3. `docs/architecture/delegation-policy.md`
    - rules for child-agent spawning and escalation
 4. `docs/architecture/tool-permission-model.md`

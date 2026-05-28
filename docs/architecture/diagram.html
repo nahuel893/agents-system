@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Platform — Architecture Diagram</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --bg2: #161b22;
+    --bg3: #1c2333;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --blue: #3b82f6;
+    --blue-dim: #1e3a5f;
+    --green: #10b981;
+    --green-dim: #064e3b;
+    --gray: #6b7280;
+    --gray-dim: #1f2937;
+    --orange: #f59e0b;
+    --orange-dim: #451a03;
+    --purple: #8b5cf6;
+    --purple-dim: #2e1065;
+    --transition: 200ms ease;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 24px 32px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.3px;
+  }
+  header p {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    margin-bottom: 16px;
+  }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    margin-top: 0;
+  }
+  .tab {
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    transition: color var(--transition), border-color var(--transition);
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    color: var(--blue);
+    border-bottom-color: var(--blue);
+  }
+
+  /* ── Main layout ── */
+  main {
+    padding: 32px;
+    max-width: 1400px;
+  }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* ─────────────────────────────────────────
+     VIEW 1 — EXECUTION PIPELINE
+  ───────────────────────────────────────── */
+  .pipeline-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .pipeline-stages {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+
+  .stage-wrapper {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 18px;
+    border-radius: 10px;
+    border: 1.5px solid var(--border);
+    background: var(--bg2);
+    cursor: pointer;
+    transition: border-color var(--transition), background var(--transition), transform var(--transition);
+    min-width: 130px;
+    text-align: center;
+    position: relative;
+  }
+  .stage:hover {
+    transform: translateY(-2px);
+    border-color: var(--blue);
+    background: var(--bg3);
+  }
+  .stage.active {
+    border-color: var(--blue);
+    background: var(--blue-dim);
+  }
+
+  .stage-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    margin-bottom: 8px;
+    background: var(--bg3);
+  }
+  .stage.active .stage-icon { background: var(--blue-dim); }
+
+  .stage-num {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .stage-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.3;
+  }
+
+  .arrow {
+    width: 36px;
+    height: 2px;
+    background: var(--border);
+    position: relative;
+    flex-shrink: 0;
+  }
+  .arrow::after {
+    content: '';
+    position: absolute;
+    right: -1px;
+    top: -4px;
+    width: 0;
+    height: 0;
+    border-left: 7px solid var(--border);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+  }
+
+  /* Stage detail panel */
+  .stage-detail {
+    margin-top: 24px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    overflow: hidden;
+    animation: slideIn 150ms ease;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .stage-detail-header {
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .stage-detail-header .icon {
+    font-size: 24px;
+  }
+  .stage-detail-header h2 {
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .stage-detail-header .stage-badge {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 20px;
+    background: var(--blue-dim);
+    color: var(--blue);
+  }
+
+  .stage-detail-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+  }
+  @media (max-width: 900px) {
+    .stage-detail-body { grid-template-columns: 1fr; }
+  }
+
+  .detail-section {
+    padding: 20px 24px;
+    border-right: 1px solid var(--border);
+  }
+  .detail-section:last-child { border-right: none; }
+  .detail-section h3 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+  .detail-section p {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .tag {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+  .tag-in  { background: var(--gray-dim); color: var(--gray); border: 1px solid #374151; }
+  .tag-out { background: var(--blue-dim); color: var(--blue); border: 1px solid #1d4ed8; }
+  .tag-security { background: var(--orange-dim); color: var(--orange); border: 1px solid #92400e; }
+  .tag-memory { background: var(--purple-dim); color: var(--purple); border: 1px solid #5b21b6; }
+
+  /* Injection order sub-list */
+  .inject-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .inject-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .inject-num {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--blue-dim);
+    color: var(--blue);
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  /* ─────────────────────────────────────────
+     VIEW 2 — AGENT MODEL
+  ───────────────────────────────────────── */
+  .agent-layout {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+  }
+  @media (max-width: 1100px) {
+    .agent-layout { flex-direction: column; }
+  }
+
+  .agent-diagram {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .agent-panel {
+    width: 320px;
+    flex-shrink: 0;
+  }
+
+  /* SVG diagram wrapper */
+  .diagram-svg-wrap {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    position: relative;
+  }
+
+  /* Agent nodes */
+  .agent-node {
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .agent-node:hover rect,
+  .agent-node:hover circle {
+    filter: brightness(1.2);
+  }
+  .agent-node.selected rect,
+  .agent-node.selected circle {
+    stroke-width: 2.5;
+  }
+
+  /* Agent detail panel */
+  .agent-detail {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: sticky;
+    top: 20px;
+  }
+
+  .agent-detail-header {
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .agent-detail-header .agent-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .agent-detail-header h2 {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .agent-detail-header .agent-scope {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .agent-detail-body {
+    padding: 16px 20px;
+  }
+  .agent-detail-body p {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+  }
+  .agent-detail-body h4 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+
+  .conn-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 14px;
+  }
+  .conn-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .conn-item::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--blue);
+    flex-shrink: 0;
+  }
+
+  .agent-placeholder {
+    padding: 32px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  /* ─────────────────────────────────────────
+     VIEW 3 — AGENT DEFINITION STRUCTURE
+  ───────────────────────────────────────── */
+  .def-layout {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+  }
+  @media (max-width: 1100px) {
+    .def-layout { flex-direction: column; }
+  }
+
+  .def-tree {
+    flex: 1;
+    min-width: 0;
+  }
+  .def-detail {
+    width: 340px;
+    flex-shrink: 0;
+  }
+
+  .tree-container {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  .tree-root {
+    font-size: 13px;
+    color: var(--blue);
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .tree-node {
+    display: flex;
+    align-items: center;
+    padding: 5px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+    position: relative;
+    margin: 1px 0;
+  }
+  .tree-node:hover { background: var(--bg3); }
+  .tree-node.active { background: var(--blue-dim); }
+  .tree-node.active .node-name { color: var(--blue); }
+
+  .tree-indent { color: var(--border); margin-right: 2px; font-size: 13px; }
+  .tree-icon { margin-right: 6px; font-size: 13px; }
+  .node-name { font-size: 13px; color: var(--text); }
+  .node-label {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: -apple-system, sans-serif;
+    background: var(--bg3);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .node-arrow { color: var(--text-muted); font-size: 10px; margin-right: 6px; }
+
+  /* Enforcement layers section */
+  .enforcement-section {
+    margin-top: 24px;
+  }
+  .enforcement-section h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 11px;
+  }
+
+  .enforce-layers {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .enforce-layer {
+    padding: 14px 16px;
+    border-radius: 8px;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all var(--transition);
+    position: relative;
+    overflow: hidden;
+  }
+  .enforce-layer::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+  }
+  .enforce-layer.layer1 { border-color: var(--orange); background: var(--orange-dim); }
+  .enforce-layer.layer1::before { background: var(--orange); }
+  .enforce-layer.layer2 { border-color: #d97706; background: #451a03; }
+  .enforce-layer.layer2::before { background: #d97706; }
+
+  .enforce-layer h4 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--orange);
+    margin-bottom: 4px;
+  }
+  .enforce-layer p {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  /* File detail panel */
+  .file-detail {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: sticky;
+    top: 20px;
+  }
+  .file-detail-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .file-detail-header .file-icon { font-size: 18px; }
+  .file-detail-header h2 { font-size: 14px; font-weight: 600; }
+  .file-detail-body { padding: 16px 20px; }
+  .file-detail-body p {
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+  .file-detail-body h4 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .field-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .field-item {
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .field-key {
+    font-family: monospace;
+    color: var(--blue);
+    flex-shrink: 0;
+    min-width: 90px;
+  }
+  .field-val { color: var(--text-muted); line-height: 1.5; }
+
+  .when-changes {
+    font-size: 11px;
+    color: var(--orange);
+    background: var(--orange-dim);
+    border: 1px solid #92400e;
+    border-radius: 6px;
+    padding: 8px 10px;
+    line-height: 1.5;
+  }
+  .file-placeholder {
+    padding: 28px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Agent Platform — Architecture</h1>
+  <p>agents-system · Interactive reference diagram</p>
+  <nav class="tabs">
+    <button class="tab active" onclick="showView(0, this)">Execution Pipeline</button>
+    <button class="tab" onclick="showView(1, this)">Agent Model</button>
+    <button class="tab" onclick="showView(2, this)">Agent Definition Structure</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- ─────────────────────────────────────────
+     VIEW 1 — EXECUTION PIPELINE
+───────────────────────────────────────── -->
+<section class="view active" id="view-0">
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--blue)"></div> Platform Core</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--orange)"></div> Enforcement / Security</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--purple)"></div> Audit / Memory</div>
+  </div>
+
+  <div class="pipeline-container">
+    <div class="pipeline-stages" id="pipeline-stages">
+      <!-- stages injected by JS -->
+    </div>
+    <div class="stage-detail" id="stage-detail" style="display:none">
+      <!-- content injected by JS -->
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────
+     VIEW 2 — AGENT MODEL
+───────────────────────────────────────── -->
+<section class="view" id="view-1">
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--blue)"></div> Platform Core</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div> BADIE Delivery</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--gray)"></div> Platform Roadmap</div>
+  </div>
+
+  <div class="agent-layout">
+    <div class="agent-diagram">
+      <div class="diagram-svg-wrap">
+        <svg id="agent-svg" viewBox="0 0 700 500" width="100%" style="display:block; overflow:visible">
+          <defs>
+            <marker id="arr-blue" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#3b82f6" opacity="0.6"/>
+            </marker>
+            <marker id="arr-gray" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#4b5563" opacity="0.8"/>
+            </marker>
+            <marker id="arr-green" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#10b981" opacity="0.7"/>
+            </marker>
+          </defs>
+
+          <!-- ── Delegation arrows ── -->
+          <!-- Orchestrator → Preventa -->
+          <line x1="350" y1="120" x2="210" y2="210" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#arr-blue)" opacity="0.7"/>
+          <!-- Orchestrator → Data -->
+          <line x1="350" y1="120" x2="490" y2="210" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#arr-blue)" opacity="0.7"/>
+          <!-- Orchestrator → Summary (roadmap) -->
+          <line x1="350" y1="120" x2="175" y2="330" stroke="#4b5563" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arr-gray)" opacity="0.5"/>
+          <!-- Orchestrator → Employee (roadmap) -->
+          <line x1="350" y1="120" x2="525" y2="330" stroke="#4b5563" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#arr-gray)" opacity="0.5"/>
+
+          <!-- ── External integration labels ── -->
+          <!-- Preventa integrations -->
+          <text x="58" y="256" font-size="10" fill="#10b981" opacity="0.85" font-family="monospace">DeW /</text>
+          <text x="48" y="268" font-size="10" fill="#10b981" opacity="0.85" font-family="monospace">App Preventas</text>
+          <line x1="140" y1="260" x2="165" y2="260" stroke="#10b981" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+
+          <!-- Data integrations -->
+          <text x="560" y="244" font-size="10" fill="#6b7280" opacity="0.85" font-family="monospace">App Preventas</text>
+          <text x="572" y="256" font-size="10" fill="#6b7280" opacity="0.85" font-family="monospace">App Sergio</text>
+          <text x="584" y="268" font-size="10" fill="#6b7280" opacity="0.85" font-family="monospace">Outline</text>
+          <line x1="540" y1="256" x2="558" y2="256" stroke="#6b7280" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+
+          <!-- Summary integration -->
+          <text x="58" y="372" font-size="10" fill="#6b7280" opacity="0.85" font-family="monospace">Element</text>
+          <line x1="140" y1="372" x2="155" y2="372" stroke="#6b7280" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+
+          <!-- Employee local runtime -->
+          <text x="538" y="372" font-size="10" fill="#6b7280" opacity="0.85" font-family="monospace">Local Runtime</text>
+          <text x="548" y="383" font-size="10" fill="#6b7280" opacity="0.6" font-family="monospace">(optional)</text>
+          <line x1="510" y1="372" x2="536" y2="372" stroke="#6b7280" stroke-width="1" stroke-dasharray="3 2" opacity="0.5"/>
+
+          <!-- ── Nodes ── -->
+
+          <!-- Orchestrator (blue, top center) -->
+          <g class="agent-node" id="node-orchestrator" onclick="selectAgent('orchestrator')">
+            <rect x="270" y="60" width="160" height="60" rx="10" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="350" y="84" text-anchor="middle" font-size="13" font-weight="600" fill="#e6edf3">Orchestrator</text>
+            <text x="350" y="101" text-anchor="middle" font-size="10" fill="#8b949e">Routing &amp; lifecycle</text>
+            <rect x="296" y="112" width="50" height="14" rx="3" fill="#064e3b"/>
+            <text x="321" y="122" text-anchor="middle" font-size="9" fill="#10b981" font-weight="500">BADIE MVP</text>
+            <rect x="356" y="112" width="50" height="14" rx="3" fill="#1e3a5f"/>
+            <text x="381" y="122" text-anchor="middle" font-size="9" fill="#3b82f6" font-weight="500">Platform</text>
+          </g>
+
+          <!-- Preventa (green, left) -->
+          <g class="agent-node" id="node-preventa" onclick="selectAgent('preventa')">
+            <rect x="130" y="210" width="160" height="60" rx="10" fill="#064e3b" stroke="#10b981" stroke-width="2"/>
+            <text x="210" y="234" text-anchor="middle" font-size="13" font-weight="600" fill="#e6edf3">Preventa</text>
+            <text x="210" y="251" text-anchor="middle" font-size="10" fill="#8b949e">Sales workflows</text>
+            <rect x="160" y="262" width="100" height="14" rx="3" fill="#064e3b" stroke="#10b981" stroke-width="0.5"/>
+            <text x="210" y="272" text-anchor="middle" font-size="9" fill="#10b981" font-weight="500">BADIE Delivered</text>
+          </g>
+
+          <!-- Data (gray, right) -->
+          <g class="agent-node" id="node-data" onclick="selectAgent('data')">
+            <rect x="410" y="210" width="130" height="60" rx="10" fill="#1f2937" stroke="#6b7280" stroke-width="1.5"/>
+            <text x="475" y="234" text-anchor="middle" font-size="13" font-weight="600" fill="#e6edf3">Data</text>
+            <text x="475" y="251" text-anchor="middle" font-size="10" fill="#8b949e">Retrieval &amp; synthesis</text>
+            <rect x="427" y="262" width="96" height="14" rx="3" fill="#1f2937"/>
+            <text x="475" y="272" text-anchor="middle" font-size="9" fill="#6b7280" font-weight="500">Roadmap</text>
+          </g>
+
+          <!-- Summary (gray, lower left) -->
+          <g class="agent-node" id="node-summary" onclick="selectAgent('summary')">
+            <rect x="95" y="335" width="160" height="56" rx="10" fill="#1f2937" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="5 3"/>
+            <text x="175" y="357" text-anchor="middle" font-size="13" font-weight="600" fill="#8b949e">Summary</text>
+            <text x="175" y="373" text-anchor="middle" font-size="10" fill="#6b7280">Meeting summaries</text>
+            <rect x="130" y="382" width="90" height="13" rx="3" fill="#1f2937"/>
+            <text x="175" y="391" text-anchor="middle" font-size="9" fill="#6b7280" font-weight="500">Roadmap</text>
+          </g>
+
+          <!-- Employee (gray, lower right) -->
+          <g class="agent-node" id="node-employee" onclick="selectAgent('employee')">
+            <rect x="445" y="335" width="130" height="56" rx="10" fill="#1f2937" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="5 3"/>
+            <text x="510" y="357" text-anchor="middle" font-size="13" font-weight="600" fill="#8b949e">Employee</text>
+            <text x="510" y="373" text-anchor="middle" font-size="10" fill="#6b7280">Personal assistance</text>
+            <rect x="460" y="382" width="100" height="13" rx="3" fill="#1f2937"/>
+            <text x="510" y="391" text-anchor="middle" font-size="9" fill="#6b7280" font-weight="500">Roadmap</text>
+          </g>
+
+          <!-- Delegation label -->
+          <text x="262" y="175" font-size="10" fill="#3b82f6" opacity="0.7" font-style="italic">delegates to</text>
+
+          <!-- Legend hints -->
+          <text x="10" y="488" font-size="10" fill="#4b5563">─── solid = BADIE scope</text>
+          <text x="200" y="488" font-size="10" fill="#4b5563">- - - dashed = roadmap only</text>
+          <text x="420" y="488" font-size="10" fill="#4b5563">Click any node for details</text>
+        </svg>
+      </div>
+    </div>
+
+    <div class="agent-panel">
+      <div class="agent-detail" id="agent-detail">
+        <div class="agent-placeholder">
+          Click an agent node to see its details, responsibilities, and connections.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────
+     VIEW 3 — AGENT DEFINITION STRUCTURE
+───────────────────────────────────────── -->
+<section class="view" id="view-2">
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--blue)"></div> Identity (role.md)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div> Capabilities (manifest.md)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--purple)"></div> Behavior (policy.md)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--orange)"></div> Enforcement Layers</div>
+  </div>
+
+  <div class="def-layout">
+    <div class="def-tree">
+      <div class="tree-container" id="tree-container">
+        <div class="tree-root">agents/</div>
+        <div id="tree-nodes"><!-- injected by JS --></div>
+      </div>
+
+      <div class="enforcement-section">
+        <h3>Enforcement Layers</h3>
+        <div class="enforce-layers">
+          <div class="enforce-layer layer1" onclick="selectFile('enforce1')">
+            <h4>Layer 1 — Capability Injector (build time)</h4>
+            <p>Builds permitted tool surface from manifest.md + RBAC. Passes to model via <code style="color:#f59e0b;background:#78350f20;padding:1px 4px;border-radius:3px">bind_tools()</code>. Model cannot see tools outside this list.</p>
+          </div>
+          <div class="enforce-layer layer2" onclick="selectFile('enforce2')">
+            <h4>Layer 2 — Tool Call Interceptor (execution time)</h4>
+            <p>Before any connector executes: validates call against injected surface. On violation: block + audit log + escalate. Catches hallucinations and prompt injection.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="def-detail">
+      <div class="file-detail" id="file-detail">
+        <div class="file-placeholder">
+          Click a file or enforcement layer to see what it contains and when it changes.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+// ──────────────────────────────────────────
+//  DATA
+// ──────────────────────────────────────────
+
+const stages = [
+  {
+    id: 'trigger',
+    num: '01',
+    icon: '⚡',
+    name: 'Trigger',
+    color: 'var(--blue)',
+    description: 'Any event that initiates agent execution. The platform accepts five trigger types: user actions, inbound messages, schedules, external events, and async tool callbacks.',
+    inputs: ['WhatsApp message', 'API call', 'Webhook POST', 'Cron job', 'Tool callback'],
+    outputs: ['Raw event payload', 'Source identifier', 'Requesting identity'],
+    notes: 'Triggers carry three fields: raw event payload, source identifier (which connector), and requesting identity (user, employee, or system for scheduled triggers).'
+  },
+  {
+    id: 'router',
+    num: '02',
+    icon: '🔀',
+    name: 'System Router',
+    color: 'var(--blue)',
+    description: 'Receives the trigger and makes three routing decisions: domain identification, role selection, and runtime reuse evaluation. Produces a routing decision — not agent logic.',
+    inputs: ['Trigger event', 'Requesting identity'],
+    outputs: ['Role name', 'Cache directive (use_cache: true/false)', 'Identity context'],
+    notes: 'The router does not execute any agent logic. Its sole output is a routing decision passed to the Agent Factory.'
+  },
+  {
+    id: 'factory',
+    num: '03',
+    icon: '🏭',
+    name: 'Agent Factory',
+    color: 'var(--blue)',
+    description: 'Receives the routing decision and builds the base runtime. Resolves model/provider, applies baseline execution policy, reads the agent definition folder.',
+    inputs: ['Routing decision', 'Role name', 'Agent definition folder (role.md, manifest.md, policy.md)'],
+    outputs: ['Unequipped runtime — identity + policy but no capabilities yet'],
+    notes: 'The factory does not inject capabilities. It produces an unequipped runtime. The Capability Injector handles the rest.'
+  },
+  {
+    id: 'injector',
+    num: '04',
+    icon: '💉',
+    name: 'Capability Injector',
+    color: 'var(--orange)',
+    description: 'Equips the runtime with all capabilities in a fixed order. Each injection step may depend on what was injected before it.',
+    inputs: ['Unequipped runtime', 'Requesting identity', 'manifest.md', 'policy.md'],
+    outputs: ['Fully equipped runtime ready for execution'],
+    injectionOrder: [
+      { n: 1, label: 'Tools', detail: 'Inject permitted connectors. Permission check here.' },
+      { n: 2, label: 'Skills', detail: 'Inject behavioral packs and prompt modules.' },
+      { n: 3, label: 'Context', detail: 'Session, user identity, org context.' },
+      { n: 4, label: 'Permissions', detail: 'Finalize full RBAC permission surface.' },
+      { n: 5, label: 'Memory', detail: 'Attach memory handles per memory_policy.' },
+      { n: 6, label: 'Policies', detail: 'Autonomy, escalation, delegation rules.' },
+    ]
+  },
+  {
+    id: 'runtime',
+    num: '05',
+    icon: '🤖',
+    name: 'Agent Runtime',
+    color: 'var(--blue)',
+    description: 'Executes the assigned role using injected capabilities. Processes the trigger, invokes tools, applies skills, observes escalation rules, and may delegate if policy permits.',
+    inputs: ['Fully equipped runtime', 'Triggering event', 'Injected tool surface'],
+    outputs: ['Messages sent', 'Records written', 'Delegated tasks', 'Escalations'],
+    notes: 'The runtime operates within a strict boundary: it can only use what was injected. It cannot acquire new capabilities during execution.'
+  },
+  {
+    id: 'toolexec',
+    num: '06',
+    icon: '🛡️',
+    name: 'Tool Execution',
+    color: 'var(--orange)',
+    description: 'Two-layered enforcement protects every tool call. Layer 1 limits what the model can see. Layer 2 intercepts every call before execution — no silent failures allowed.',
+    inputs: ['Tool call from runtime', 'Injected tool surface (for validation)', 'Requesting identity'],
+    outputs: ['Tool result → runtime context', 'Audit entry (policy violations)', 'Escalation (on violation)'],
+    notes: 'On violation: block + audit log + escalate. No retry with different tool. No silent failure. Catches hallucinations, prompt injection, and incomplete injection bugs.'
+  },
+  {
+    id: 'audit',
+    num: '07',
+    icon: '📋',
+    name: 'Audit / Memory',
+    color: 'var(--purple)',
+    description: 'After every execution, the harness persists the audit trail and memory writes. Audit entries are immutable. Memory scope follows the agent\'s memory_policy.',
+    inputs: ['Execution outcome', 'Tool call log', 'Delegation events', 'Escalations'],
+    outputs: ['Immutable audit trail', 'Conversation logs', 'Working memory updates', 'Persistent business memory'],
+    notes: 'Audit records retained per retention_days in policy.md (or platform default). The full trail includes: who triggered, role, tools injected, tool calls, delegations, escalations, outputs, duration.'
+  }
+];
+
+const agents = {
+  orchestrator: {
+    name: 'Orchestrator Agent',
+    color: '#3b82f6',
+    scope: 'BADIE MVP (minimal) + Platform Core',
+    scopeColor: '#1e3a5f',
+    scopeTextColor: '#3b82f6',
+    description: 'Top-level routing and lifecycle control. For the BADIE MVP it operates in minimal capacity: receives the inbound WhatsApp trigger, confirms the client is registered and active, and routes to a Preventa Agent runtime. Not user-facing.',
+    responsibilities: [
+      'Domain identification from trigger',
+      'Role selection and runtime routing',
+      'Cache directive evaluation',
+      'Lifecycle control for child runtimes'
+    ],
+    connections: ['Preventa Agent (delegates to)', 'Data Agent (future)', 'Summary Agent (future)', 'Employee Agent (future)'],
+    deliveryNote: 'Delivered for BADIE in minimal mode — routing only, no complex orchestration in Phase 1.'
+  },
+  preventa: {
+    name: 'Preventa Agent',
+    color: '#10b981',
+    scope: 'BADIE Delivered',
+    scopeColor: '#064e3b',
+    scopeTextColor: '#10b981',
+    description: 'The primary committed client-facing delivery for Distribuidora BADIE S.A. Receives inbound WhatsApp messages from registered retail points of sale, interprets colloquial Argentine product requests, matches via RAG, confirms, and persists orders.',
+    responsibilities: [
+      'Interpret colloquial Argentine Spanish orders',
+      'Execute semantic catalog search (RAG / pgvector)',
+      'Apply client assigned price list',
+      'Confirm order with client before persisting',
+      'Persist orders to orders / order_items tables',
+      'Escalate to human when required'
+    ],
+    connections: ['DeW / App Preventas (order destination)', 'PostgreSQL catalog_embeddings', 'Redis session state', 'Meta WhatsApp Cloud API'],
+    tools: ['whatsapp_sender', 'rag_catalog_search', 'postgres_order_writer', 'redis_session_state', 'client_lookup'],
+    skills: ['order_extraction', 'colloquial_product_matching', 'confirm_flow'],
+    deliveryNote: 'Primary BADIE delivery. delegation_policy.allowed: false — no child agents.'
+  },
+  data: {
+    name: 'Data Agent',
+    color: '#6b7280',
+    scope: 'Platform Roadmap',
+    scopeColor: '#1f2937',
+    scopeTextColor: '#6b7280',
+    description: 'Responsible for retrieval and synthesis of business information. Provides controlled access to internal reference knowledge across multiple sources. Not delivered for BADIE MVP.',
+    responsibilities: [
+      'Business information retrieval',
+      'Cross-source data synthesis',
+      'Controlled Outline wiki access',
+      'App Sergio data queries'
+    ],
+    connections: ['App Preventas', 'App Sergio', 'Outline (private wiki)'],
+    deliveryNote: 'Platform roadmap — not committed to BADIE unless explicitly re-scoped.'
+  },
+  summary: {
+    name: 'Summary Agent',
+    color: '#6b7280',
+    scope: 'Platform Roadmap',
+    scopeColor: '#1f2937',
+    scopeTextColor: '#6b7280',
+    description: 'Responsible for summarizing meetings and conversations, formatting outbound summaries, and communicating with employee-facing agents when needed. Not delivered for BADIE MVP.',
+    responsibilities: [
+      'Meeting and conversation summarization',
+      'Outbound summary formatting',
+      'Employee agent coordination for delivery'
+    ],
+    connections: ['Element (messaging platform)'],
+    deliveryNote: 'Platform roadmap — not committed to BADIE unless explicitly re-scoped.'
+  },
+  employee: {
+    name: 'Employee Agent',
+    color: '#6b7280',
+    scope: 'Platform Roadmap',
+    scopeColor: '#1f2937',
+    scopeTextColor: '#6b7280',
+    description: 'One agent per employee, instantiated on demand, scoped to employee identity and permissions. May run locally via Hermes Agent / OpenClaw / PicoClaw. Not a permanent swarm. May delegate to child agents when policy allows.',
+    responsibilities: [
+      'Individual employee assistance',
+      'Employee-local context coordination',
+      'Optional delegation under policy',
+      'Personal task decomposition (exceptional)'
+    ],
+    connections: ['Employee identity (RBAC)', 'Outline (when permitted)', 'Summary Agent (optional)', 'Local runtime (Hermes / OpenClaw / PicoClaw)'],
+    deliveryNote: 'Platform roadmap — not committed to BADIE unless explicitly re-scoped.'
+  }
+};
+
+const treeFiles = [
+  { id: 'folder-preventa', type: 'folder', indent: 0, icon: '📁', name: 'preventa/', label: '' },
+  { id: 'role', type: 'file', indent: 1, icon: '📄', name: 'role.md', label: 'WHO', color: '#3b82f6' },
+  { id: 'manifest', type: 'file', indent: 1, icon: '📄', name: 'manifest.md', label: 'WHAT', color: '#10b981' },
+  { id: 'policy', type: 'file', indent: 1, icon: '📄', name: 'policy.md', label: 'HOW', color: '#8b5cf6' },
+  { id: 'folder-skills', type: 'folder', indent: 1, icon: '📁', name: 'skills/', label: '' },
+  { id: 'skill-order', type: 'file', indent: 2, icon: '📝', name: 'order_extraction.md', label: 'skill', color: '#f59e0b' },
+  { id: 'skill-match', type: 'file', indent: 2, icon: '📝', name: 'colloquial_matching.md', label: 'skill', color: '#f59e0b' },
+  { id: 'skill-confirm', type: 'file', indent: 2, icon: '📝', name: 'confirm_flow.md', label: 'skill', color: '#f59e0b' },
+];
+
+const fileDetails = {
+  role: {
+    icon: '📄',
+    name: 'role.md — Identity',
+    color: '#3b82f6',
+    description: 'Defines the behavioral identity of the agent. What the role exists to accomplish and the operational boundary it operates within. Read by the Agent Factory at instantiation time.',
+    fields: [
+      { key: 'name', val: 'Unique role identifier (e.g. preventa_agent). Snake-case. Used by factory for selection.' },
+      { key: 'version', val: 'Optional semantic version. Used for audit trails and cache invalidation.' },
+      { key: 'purpose', val: '1–3 sentences describing what this role exists to accomplish. Behavioral, not technical.' },
+      { key: 'scope', val: 'Operational boundary: which domain, which users, which tasks.' },
+    ],
+    whenChanges: 'Changes when the role\'s purpose or operational scope changes — e.g., Preventa expanded to handle returns, or scope narrowed to a specific client segment.'
+  },
+  manifest: {
+    icon: '📄',
+    name: 'manifest.md — Capabilities',
+    color: '#10b981',
+    description: 'Declares every capability the agent is allowed to use. The Capability Injector reads this to build the permitted tool surface, skill list, and context requirements at injection time.',
+    fields: [
+      { key: 'tools', val: 'List of permitted tool names. Only tools listed here are injected. Others do not exist to the model.' },
+      { key: 'skills', val: 'Optional skill pack names. Each skill shapes how the agent reasons and responds.' },
+      { key: 'context', val: 'Context requirements: session, user_identity, org_context, private_wiki, tool_derived.' },
+      { key: 'permissions', val: 'RBAC permission identifiers required. Evaluated at injection time against user\'s permission set.' },
+    ],
+    whenChanges: 'Changes when the agent needs a new tool (e.g., add stock_lookup), a new skill, or different context access. Any change invalidates warm-cached runtimes for this role.'
+  },
+  policy: {
+    icon: '📄',
+    name: 'policy.md — Behavior',
+    color: '#8b5cf6',
+    description: 'Governs how the runtime behaves within its injected capabilities. Injected last in the capability injection sequence — governs use of everything else. Defines when to act, when to escalate, when to delegate.',
+    fields: [
+      { key: 'autonomy', val: 'full | supervised | confirm. Ceiling on autonomous action. Preventa uses supervised.' },
+      { key: 'escalation_rules', val: 'Conditions for escalating to human or higher-authority agent. Produces audit entry on trigger.' },
+      { key: 'delegation_policy', val: 'allowed: bool, permitted_child_roles, max_depth. Preventa: allowed: false.' },
+      { key: 'memory_policy', val: 'read_scope, write_scope (local/team/org), persist_conversation.' },
+      { key: 'audit_policy', val: 'log_tool_calls, log_delegations, log_escalations, retention_days.' },
+    ],
+    whenChanges: 'Changes when business rules change: e.g., escalation threshold raised, delegation enabled, audit retention extended.'
+  },
+  'skill-order': {
+    icon: '📝',
+    name: 'order_extraction.md',
+    color: '#f59e0b',
+    description: 'Skill pack for extracting structured order data from unstructured conversational input in colloquial Argentine Spanish.',
+    fields: [
+      { key: 'purpose', val: 'Extract SKUs, quantities, and item specs from natural language messages.' },
+      { key: 'handles', val: 'Multi-item messages, quantity expressions ("dos cajones"), incomplete specs requiring clarification.' },
+      { key: 'output', val: 'Structured order draft: [{sku, quantity, description}] or clarification request.' },
+    ],
+    whenChanges: 'Changes when new colloquial patterns are identified, or when the order data model changes (new fields, new product attributes).'
+  },
+  'skill-match': {
+    icon: '📝',
+    name: 'colloquial_matching.md',
+    color: '#f59e0b',
+    description: 'Skill pack for mapping informal Argentine product references and nicknames to catalog SKUs using RAG retrieval results.',
+    fields: [
+      { key: 'purpose', val: 'Bridge colloquial vocabulary ("la rubia", "Brahma lata") to catalog entities.' },
+      { key: 'handles', val: 'Interprets RAG candidates, applies brand/format/size reasoning, selects best match.' },
+      { key: 'thresholds', val: 'Confidence 0.92 = high certainty. 0.82–0.92 = propose + confirm. <0.82 = clarification.' },
+    ],
+    whenChanges: 'Changes when new colloquial terms emerge, catalog structure changes, or matching thresholds are tuned.'
+  },
+  'skill-confirm': {
+    icon: '📝',
+    name: 'confirm_flow.md',
+    color: '#f59e0b',
+    description: 'Skill pack guiding the agent through the order confirmation exchange before persisting.',
+    fields: [
+      { key: 'purpose', val: 'Present order summary, handle corrections, get explicit client confirmation.' },
+      { key: 'handles', val: 'Multi-round confirmation, item corrections, cancellation requests.' },
+      { key: 'post-confirm', val: 'After confirmation: triggers postgres_order_writer. No writes before explicit confirm.' },
+    ],
+    whenChanges: 'Changes when confirmation UX changes, or when confirmation bypass rules are modified for specific autonomy levels.'
+  },
+  enforce1: {
+    icon: '🔒',
+    name: 'Layer 1 — Capability Injector',
+    color: '#f59e0b',
+    description: 'Build-time enforcement. The Capability Injector reads manifest.md and the requesting user\'s RBAC permissions, then builds the permitted tool surface. Only tools passing both checks are included.',
+    fields: [
+      { key: 'mechanism', val: 'bind_tools() — model receives tool list. Cannot see or call tools outside it.' },
+      { key: 'timing', val: 'Build time — before any execution begins.' },
+      { key: 'catches', val: 'Prevents model from ever attempting out-of-scope tools (primary barrier).' },
+    ],
+    whenChanges: 'Triggered on every agent instantiation. Changes when manifest.md tools list or RBAC permissions change.'
+  },
+  enforce2: {
+    icon: '🛡️',
+    name: 'Layer 2 — Tool Call Interceptor',
+    color: '#f59e0b',
+    description: 'Execution-time enforcement. Before any connector executes, the interceptor validates the call against the injected surface for the current runtime. No silent failures.',
+    fields: [
+      { key: 'mechanism', val: 'Validates every tool invocation before execution, regardless of how the call was generated.' },
+      { key: 'on violation', val: 'Block + write policy violation to audit trail + trigger escalation.' },
+      { key: 'catches', val: 'Model hallucinations of non-existent tools, prompt injection attempts, incomplete injection bugs.' },
+    ],
+    whenChanges: 'Always active. Policy for what constitutes a violation is defined in policy.md escalation_rules.'
+  }
+};
+
+// ──────────────────────────────────────────
+//  VIEW SWITCHING
+// ──────────────────────────────────────────
+
+function showView(idx, btn) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('view-' + idx).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ──────────────────────────────────────────
+//  VIEW 1 — PIPELINE
+// ──────────────────────────────────────────
+
+function buildPipeline() {
+  const container = document.getElementById('pipeline-stages');
+  stages.forEach((s, i) => {
+    // Stage wrapper
+    const wrap = document.createElement('div');
+    wrap.className = 'stage-wrapper';
+
+    const node = document.createElement('div');
+    node.className = 'stage';
+    node.id = 'stage-' + s.id;
+    node.onclick = () => selectStage(s.id);
+
+    const iconBg = s.color === 'var(--orange)' ? 'background:var(--orange-dim)' :
+                   s.color === 'var(--purple)' ? 'background:var(--purple-dim)' :
+                   'background:var(--bg3)';
+
+    node.innerHTML = `
+      <div class="stage-icon" style="${iconBg}">${s.icon}</div>
+      <div class="stage-num">${s.num}</div>
+      <div class="stage-name">${s.name}</div>
+    `;
+    wrap.appendChild(node);
+
+    if (i < stages.length - 1) {
+      const arrow = document.createElement('div');
+      arrow.className = 'arrow';
+      wrap.appendChild(arrow);
+    }
+
+    container.appendChild(wrap);
+  });
+}
+
+let activeStage = null;
+
+function selectStage(id) {
+  const s = stages.find(s => s.id === id);
+  if (!s) return;
+
+  // Toggle
+  if (activeStage === id) {
+    activeStage = null;
+    document.getElementById('stage-detail').style.display = 'none';
+    document.querySelectorAll('.stage').forEach(el => el.classList.remove('active'));
+    return;
+  }
+
+  activeStage = id;
+  document.querySelectorAll('.stage').forEach(el => el.classList.remove('active'));
+  document.getElementById('stage-' + id).classList.add('active');
+
+  const detail = document.getElementById('stage-detail');
+  detail.style.display = 'block';
+
+  const inputTags = s.inputs.map(i => `<span class="tag tag-in">${i}</span>`).join('');
+  const outputTags = s.outputs.map(o => `<span class="tag tag-out">${o}</span>`).join('');
+
+  let middleSection;
+  if (s.injectionOrder) {
+    const items = s.injectionOrder.map(x =>
+      `<li><span class="inject-num">${x.n}</span><span>${x.label} — <span style="color:var(--text-muted);font-size:11px">${x.detail}</span></span></li>`
+    ).join('');
+    middleSection = `
+      <div class="detail-section">
+        <h3>Injection Order</h3>
+        <ul class="inject-list">${items}</ul>
+      </div>`;
+  } else {
+    middleSection = `
+      <div class="detail-section">
+        <h3>What it does</h3>
+        <p>${s.description}</p>
+        ${s.notes ? `<p style="margin-top:10px;color:var(--text-muted);font-size:12px">${s.notes}</p>` : ''}
+      </div>`;
+  }
+
+  const colorStyle = s.color === 'var(--orange)' ? `color:var(--orange);background:var(--orange-dim)` :
+                     s.color === 'var(--purple)' ? `color:var(--purple);background:var(--purple-dim)` :
+                     `color:var(--blue);background:var(--blue-dim)`;
+
+  detail.innerHTML = `
+    <div class="stage-detail-header">
+      <span class="icon">${s.icon}</span>
+      <h2>${s.name}</h2>
+      <span class="stage-badge" style="${colorStyle}">Stage ${s.num}</span>
+    </div>
+    <div class="stage-detail-body">
+      <div class="detail-section">
+        <h3>Description</h3>
+        <p>${s.description}</p>
+        ${s.notes && s.injectionOrder ? `<p style="margin-top:10px;color:var(--text-muted);font-size:12px">${s.notes}</p>` : ''}
+        <br>
+        <h3>Inputs</h3>
+        <div class="tag-list">${inputTags}</div>
+      </div>
+      ${middleSection}
+      <div class="detail-section">
+        <h3>Outputs</h3>
+        <div class="tag-list">${outputTags}</div>
+      </div>
+    </div>
+  `;
+}
+
+// ──────────────────────────────────────────
+//  VIEW 2 — AGENTS
+// ──────────────────────────────────────────
+
+function selectAgent(id) {
+  const a = agents[id];
+  if (!a) return;
+
+  // Visual selection
+  document.querySelectorAll('.agent-node').forEach(n => n.classList.remove('selected'));
+  const node = document.getElementById('node-' + id);
+  if (node) node.classList.add('selected');
+
+  const panel = document.getElementById('agent-detail');
+
+  const respList = a.responsibilities.map(r => `<div class="conn-item">${r}</div>`).join('');
+  const connList = a.connections.map(c => `<div class="conn-item">${c}</div>`).join('');
+  const toolList = a.tools ? a.tools.map(t => `<span class="tag tag-in" style="font-family:monospace">${t}</span>`).join('') : '';
+  const skillList = a.skills ? a.skills.map(s => `<span class="tag tag-out" style="font-family:monospace">${s}</span>`).join('') : '';
+
+  panel.innerHTML = `
+    <div class="agent-detail-header">
+      <div class="agent-dot" style="background:${a.color}"></div>
+      <h2>${a.name}</h2>
+      <span class="agent-scope" style="background:${a.scopeColor};color:${a.scopeTextColor}">${a.scope}</span>
+    </div>
+    <div class="agent-detail-body">
+      <p>${a.description}</p>
+      <h4>Responsibilities</h4>
+      <div class="conn-list" style="margin-bottom:12px">${respList}</div>
+      <h4>Connections</h4>
+      <div class="conn-list">${connList}</div>
+      ${a.tools ? `<h4 style="margin-top:12px">Tools (manifest)</h4><div class="tag-list" style="margin-bottom:10px">${toolList}</div>` : ''}
+      ${a.skills ? `<h4>Skills (manifest)</h4><div class="tag-list" style="margin-bottom:10px">${skillList}</div>` : ''}
+      <div style="margin-top:14px;font-size:11px;color:${a.color};background:${a.scopeColor};border:1px solid ${a.color}40;border-radius:6px;padding:8px 10px;line-height:1.5">
+        ${a.deliveryNote}
+      </div>
+    </div>
+  `;
+}
+
+// ──────────────────────────────────────────
+//  VIEW 3 — DEFINITION STRUCTURE
+// ──────────────────────────────────────────
+
+function buildTree() {
+  const container = document.getElementById('tree-nodes');
+  treeFiles.forEach(f => {
+    const node = document.createElement('div');
+    node.className = 'tree-node' + (f.type === 'folder' ? '' : '');
+    node.id = 'tree-' + f.id;
+
+    const indentChars = f.indent > 0
+      ? Array(f.indent).fill('').map((_, i) =>
+          `<span class="tree-indent">${i === f.indent - 1 ? '├─ ' : '│  '}</span>`
+        ).join('')
+      : '';
+
+    const labelHtml = f.label
+      ? `<span class="node-label" style="background:${f.color}22;color:${f.color}">${f.label}</span>`
+      : '';
+
+    node.innerHTML = `${indentChars}<span class="tree-icon">${f.icon}</span><span class="node-name">${f.name}</span>${labelHtml}`;
+
+    if (f.type === 'file') {
+      node.onclick = () => selectFile(f.id);
+    }
+    container.appendChild(node);
+  });
+}
+
+function selectFile(id) {
+  // Deselect all
+  document.querySelectorAll('.tree-node').forEach(n => n.classList.remove('active'));
+  const treeNode = document.getElementById('tree-' + id);
+  if (treeNode) treeNode.classList.add('active');
+
+  const d = fileDetails[id];
+  if (!d) return;
+
+  const panel = document.getElementById('file-detail');
+
+  const fieldRows = d.fields.map(f =>
+    `<div class="field-item"><span class="field-key">${f.key}</span><span class="field-val">${f.val}</span></div>`
+  ).join('');
+
+  panel.innerHTML = `
+    <div class="file-detail-header" style="border-bottom-color:${d.color}40">
+      <span class="file-icon">${d.icon}</span>
+      <h2 style="color:${d.color}">${d.name}</h2>
+    </div>
+    <div class="file-detail-body">
+      <p>${d.description}</p>
+      <h4>Fields</h4>
+      <div class="field-list">${fieldRows}</div>
+      ${d.whenChanges ? `<h4>When it changes</h4><div class="when-changes">${d.whenChanges}</div>` : ''}
+    </div>
+  `;
+}
+
+// ──────────────────────────────────────────
+//  INIT
+// ──────────────────────────────────────────
+buildPipeline();
+buildTree();
+</script>
+</body>
+</html>
