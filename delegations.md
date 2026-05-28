@@ -29,7 +29,8 @@
 
 | ID | Slice / Feature | Agent | Model | Cx | Branch | Depends on | Status | Result |
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
-| D-002 | ToolRegistry + Capability Injector (Layer 1 enforcement) | opencode | gpt-5.4 | high | `feat/D-002-tool-registry-injector` | — | todo | — |
+| D-002 | ToolRegistry + Capability Injector (Layer 1 enforcement) | opencode | gpt-5.4 | high | `feat/D-002-tool-registry-injector` | — | in_progress | — |
+| D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | todo | — |
 
 ---
 
@@ -80,8 +81,44 @@ Build the second harness piece: the code-side `ToolRegistry` (the authority on w
 - **Out of scope (do NOT build):** LangChain `bind_tools` / model binding; the Layer-2 runtime Tool Call Interceptor; real connector implementations; any change to `loader.py` or `test_harness_loader.py`.
 - **Engram topic:** `delegations/D-002` — on finish, `mem_save` with `project: "agents-system"`, `topic_key: "delegations/D-002"`: what you built, the resolution algorithm, test results.
 - **Do NOT:** merge to `main`, or touch any file outside the scope.
-- **Status:** todo
+- **Status:** in_progress
 - **Result:** _(fill when `in_review`: branch ready, test output summary, notes for the integrator)_
+
+---
+
+### D-003 — Sync architecture diagram + complete Spanish docs
+
+Bring the interactive diagram and the Spanish docs in line with the **current `main`** architecture. Two deliverables, both disjoint from D-002's code.
+
+- **Agent:** antigravity
+- **Model:** gemini-3.5-flash-high
+- **Complexity:** low (well-specified — no design decisions)
+- **Branch:** `feat/D-003-docs-diagram-sync`
+- **Worktree:** `../agents-system-D-003` — **already created for you.** `cd ../agents-system-D-003` and work ONLY there. Never touch the main checkout, never `git reset`/`checkout` shared history.
+- **Depends on:** none (syncs current `main`)
+- **Wave:** W1
+- **Read first:** `docs/platform/deployment.md`, `docs/platform/role.md`, `docs/platform/policy.md`, the English `docs/platform/*.md`, and `docs/architecture/diagram.html`.
+- **Scope (files) — disjoint from D-002:**
+  - `docs/architecture/diagram.html`
+  - `docs/platform_es/*.md` (update existing; add new `policy.md` + `deployment.md`)
+- **Part A — `diagram.html`:**
+  - **View 3 (Agent Definition Structure)** currently shows a single `agents/preventa/` folder. Replace it with the **two-layer deployment model** from `deployment.md`: `platform/roles/{role}/` (generic: `role.md` + `manifest.md` + `policy.md`) and `deployments/{client}/{role}/` (override: same three + `skills/`).
+  - Note that `manifest.md`/`policy.md` are machine-readable **YAML frontmatter** and `role.md` prose is the system prompt.
+  - Show the inheritance rule (override ⊆ parent: tools subset, `permissions: inherit`, autonomy ceiling).
+  - Verify Views 1 (pipeline) and 2 (agent model) are still accurate; keep the enforcement-layers panel.
+  - Must stay **self-contained** (no new external/CDN deps) and open in a browser without errors.
+- **Part B — `docs/platform_es/`:**
+  - Add `docs/platform_es/policy.md` and `docs/platform_es/deployment.md`, translated from the English `docs/platform/policy.md` and `deployment.md`.
+  - Update the existing `docs/platform_es/{harness,manifesto,role,skill,tool}.md` from single-file "manifiesto" wording to the **folder-based agent-definition** terminology, matching the English source of truth.
+- **Acceptance criteria:**
+  - [ ] `diagram.html` View 3 shows the two-layer `platform/roles` + `deployments` model and notes the YAML-frontmatter format; opens in a browser, still self-contained.
+  - [ ] `docs/platform_es/` has all 7 files, consistent with the English versions and the folder-based model.
+  - [ ] No code touched; no English `docs/platform/` source modified (Spanish + diagram only).
+- **Out of scope (do NOT do):** document the `ToolRegistry`/injector (D-002 is unmerged — only document what's on `main`); touch any code; edit `delegations.md`.
+- **Engram topic:** `delegations/D-003` — on finish, `mem_save` with `project: "agents-system"`, `topic_key: "delegations/D-003"`.
+- **Reporting:** the Lead owns `delegations.md` — do **not** edit it. Report status by telling Nahuel + saving to Engram.
+- **Status:** todo
+- **Result:** _(fill when `in_review`)_
 
 ---
 
