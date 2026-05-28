@@ -111,7 +111,26 @@ The mapping is a starting hypothesis — reassign as you observe what each agent
 
 ### During
 6. Work **only within your declared file scope**. If you need to touch a file outside scope, STOP and flag it in your row as `blocked` with a note — do not silently expand scope.
-7. Follow the SDD flow and Strict TDD as configured.
+7. Follow the Gentle AI SDD flow and Strict TDD (see below).
+
+---
+
+## Gentle AI SDD flow (mandatory)
+
+This project runs on the Gentle AI Spec-Driven Development flow with Strict TDD. It is not optional, and it is split across the delegation roles:
+
+| SDD phase | Owner | Where it happens |
+|---|---|---|
+| explore → propose → spec → design → tasks (**planning**) | Lead | When the Lead scopes a slice and writes its ledger task. The task block is the distilled spec + design + tasks for that slice. |
+| **apply** | Worker | `sdd-apply` with Strict TDD — failing test first, then implement to green, then refactor. |
+| **verify** | Worker | `sdd-verify` against the task's acceptance criteria, before setting `in_review`. |
+| **archive** | Lead | At integration, after merge. |
+
+Consequences:
+- The Lead does NOT hand workers an unplanned task. Every ledger task carries scope, acceptance criteria, and design constraints — that is the planning output.
+- A worker treats its task block as the contract and runs apply + verify on it. It does not re-plan or expand scope; if the task is underspecified, it sets the row `blocked`.
+- For a substantial NEW change (not yet sliced), the Lead runs the full SDD planning (`sdd-explore`/`sdd-new`/`sdd-ff`) before writing ledger tasks.
+- Strict TDD is enforced inside `apply`: no implementation before its test.
 
 ### On finish
 8. Commit on your branch (conventional commits, no AI attribution).
