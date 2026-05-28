@@ -47,6 +47,16 @@ git worktree add ../agents-system-D-001 -b feat/D-001-slug
 - **Worktree path**: `../agents-system-D-00X` (sibling of the main checkout)
 - One task = one worktree = one branch. No exceptions.
 
+### Isolation guardrails (hard rules — this is what the incident violated)
+
+A separate terminal is **not** isolation. A separate branch is **not** isolation. The **working directory** is the unit of isolation. Three terminals on three branches collide the moment they share one directory.
+
+- **`cd` into your worktree and stay there.** Your terminal operates only inside `../agents-system-D-00X` — never in the main checkout (`/home/nahuel/agents-system`).
+- **Never `git checkout <another-branch>`** inside your worktree. One worktree stays on its one branch for the task's life.
+- **Never `git reset`, `git rebase`, or force-update shared history** (`main`, or another agent's branch). A reset on a shared checkout silently destroys committed work — that is exactly how a prior D-002 attempt was lost.
+- **Commit early and often** on your branch. Uncommitted work in a shared directory is the most fragile state there is.
+- Merging to `main` happens only in the main checkout, only by the Lead.
+
 ### The golden rule of slicing
 
 > **Parallel slices must touch disjoint file sets.** If two concurrent tasks edit the same file, integration will conflict.
