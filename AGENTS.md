@@ -15,12 +15,24 @@ Multiple agents work this repo **in parallel**. There is no direct communication
 1. **Your task lives in `delegations.md`.** Scan the active wave table for the row(s) where the **Agent** column matches your identity (`claude-code`, `antigravity`, `opencode`) and the status is `todo`. Those are yours — do only that slice. No one needs to hand you an ID.
 2. **Isolation.** Work in your own git worktree + branch (`feat/D-00X-<slug>`, worktree `../agents-system-D-00X`). Touch only files inside your task's declared **Scope (files)**. Need something out of scope? Stop and set your row to `blocked` with a note — never expand scope silently.
 3. **Load context first.** `mem_search` Engram for `delegations/<task-id>` and any referenced topics. Load the skill paths your task lists.
-4. **On finish:** commit on your branch (conventional commits, **no AI attribution**) → save to Engram under `topic_key: delegations/<task-id>` (what you built, decisions, gotchas, files) → set your row to `in_review` and fill the **Result** note → tell the human. **Do not merge to `main`** — the Lead integrates.
-5. **Follow SDD and Strict TDD** as configured (Engram + the SDD flow).
+4. **Use the Gentle AI SDD flow** for the work itself (see the section below — it is mandatory, not optional).
+5. **On finish:** commit on your branch (conventional commits, **no AI attribution**) → save to Engram under `topic_key: delegations/<task-id>` (what you built, decisions, gotchas, files) → set your row to `in_review` and fill the **Result** note → tell the human. **Do not merge to `main`** — the Lead integrates.
 
 ### Roles are slots, not fixed agents
 
 The `Agent roster` table at the top of `delegations.md` maps slot → agent → model and is edited freely. Any agent can take the **Lead** role by reading Engram (`methodology/multi-agent-delegation` + `delegations/*`) and the ledger. The human switches the model per task based on each task's complexity tier.
+
+## SDD flow — how it maps onto this ledger
+
+Gentle AI already installs the SDD skills and Strict TDD in your config — you know the flow. What is **project-specific** (and was being skipped) is how it maps onto our delegation model:
+
+| SDD phase | Owner |
+|---|---|
+| explore → propose → spec → design → tasks (planning) | Lead — your ledger task block **is** the resulting spec/design/tasks |
+| apply (Strict TDD) + verify | **You (worker)** — run them on your slice |
+| archive | Lead, at integration |
+
+So: treat your task block as the contract, run apply + verify on it, and do not mark `in_review` until verify passes **every** acceptance criterion. If the task is underspecified, set it `blocked` — don't re-plan or expand scope.
 
 ## Engram persistent memory
 
