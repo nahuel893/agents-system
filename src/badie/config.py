@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,6 +43,13 @@ class Settings(BaseSettings):
     # Embeddings — local (sentence-transformers)
     embedding_model_local: str = "BAAI/bge-m3"
 
+    # RAG retrieval
+    rag_threshold_direct: float = Field(default=0.92, gt=0, le=1)
+    rag_threshold_ambiguous: float = Field(default=0.82, ge=0, lt=1)
+    rag_top_k: int = Field(default=3, gt=0)
+    rag_keyword_top_k: int = Field(default=5, gt=0)
+    rag_hnsw_ef_search: int = Field(default=40, gt=0)
+
     # WhatsApp / Meta
     meta_webhook_secret: str = ""
     meta_phone_number_id: str = ""
@@ -57,6 +65,16 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     debug: bool = False
     environment: str = "development"
+
+    @model_validator(mode="after")
+    def validate_rag_thresholds(self) -> "Settings":
+        if self.rag_threshold_direct <= self.rag_threshold_ambiguous:
+            raise ValueError(
+                "rag_threshold_direct must be greater than "
+                "rag_threshold_ambiguous"
+            )
+
+        return self
 
 
 @lru_cache

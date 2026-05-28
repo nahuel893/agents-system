@@ -1,13 +1,57 @@
 """Tests for badie.config — Settings loading and singleton."""
 
+import pytest
+from pydantic import ValidationError
+
 from badie.config import Settings, get_settings
 
 
 def test_settings_loads_with_defaults():
-    settings = Settings()
+    settings = Settings(_env_file=None)
     assert settings.environment == "development"
     assert settings.debug is False
     assert "postgresql" in settings.database_url
+    assert settings.rag_threshold_direct == 0.92
+    assert settings.rag_threshold_ambiguous == 0.82
+    assert settings.rag_top_k == 3
+    assert settings.rag_keyword_top_k == 5
+    assert settings.rag_hnsw_ef_search == 40
+
+
+@pytest.mark.parametrize(
+    ("direct", "ambiguous"),
+    [
+        (0.82, 0.82),
+        (0.81, 0.82),
+    ],
+)
+def test_settings_reject_invalid_rag_threshold_order(
+    direct: float, ambiguous: float
+) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            rag_threshold_direct=direct,
+            rag_threshold_ambiguous=ambiguous,
+        )
+
+    assert "rag_threshold_direct" in str(excinfo.value)
+    assert "rag_threshold_ambiguous" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("rag_top_k", 0),
+        ("rag_keyword_top_k", -1),
+        ("rag_hnsw_ef_search", 0),
+    ],
+)
+def test_settings_reject_non_positive_rag_limits(field_name: str, value: int) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None, **{field_name: value})
+
+    assert field_name in str(excinfo.value)
 
 
 def test_get_settings_returns_singleton():
