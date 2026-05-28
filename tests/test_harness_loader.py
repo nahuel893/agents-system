@@ -276,6 +276,42 @@ def test_real_badie_system_prompt_is_override_role_body() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test 13 — execution_limits: stricter limit merges successfully
+# ---------------------------------------------------------------------------
+def test_execution_limits_stricter_override_merges() -> None:
+    from badie.harness.loader import resolve
+
+    definition = resolve("simple-role", client="strict-limits", roots=_override_roots())
+
+    # max_tool_calls: 10 is stricter than platform default 20
+    assert definition.execution_limits is not None
+    assert definition.execution_limits["max_tool_calls"] == 10
+
+
+# ---------------------------------------------------------------------------
+# Test 14 — execution_limits: looser limit raises DefinitionError
+# ---------------------------------------------------------------------------
+def test_execution_limits_looser_override_raises_definition_error() -> None:
+    from badie.harness.loader import DefinitionError, resolve
+
+    with pytest.raises(DefinitionError, match="max_tool_calls"):
+        resolve("simple-role", client="loose-limits", roots=_override_roots())
+
+
+# ---------------------------------------------------------------------------
+# Test 15 — execution_limits: inherit still works (regression guard)
+# ---------------------------------------------------------------------------
+def test_execution_limits_inherit_still_works() -> None:
+    from badie.harness.loader import resolve
+
+    definition = resolve("simple-role", client="client-a", roots=_override_roots())
+
+    # client-a uses execution_limits: inherit
+    # Since parent has execution_limits: null, resolved should be None
+    assert definition.execution_limits is None
+
+
+# ---------------------------------------------------------------------------
 # Test 12 — AgentDefinition is frozen (immutable after construction)
 # ---------------------------------------------------------------------------
 def test_agent_definition_is_frozen() -> None:

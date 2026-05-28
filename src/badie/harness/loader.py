@@ -54,6 +54,17 @@ _AUTONOMY_RANK: dict[str, int] = {
     "full": 2,
 }
 
+# ---------------------------------------------------------------------------
+# Platform default execution limits (from docs/platform/policy.md)
+# ---------------------------------------------------------------------------
+_PLATFORM_DEFAULT_LIMITS: dict[str, int] = {
+    "tool_call_timeout_s": 10,
+    "total_execution_timeout_s": 60,
+    "max_tool_calls": 20,
+    "max_delegation_depth": 2,
+    "max_clarification_attempts": 3,
+}
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -436,6 +447,30 @@ def _validate_autonomy(parent: RawDefinition, override: RawDefinition) -> None:
         )
 
 
+def _validate_execution_limits(
+    baseline: dict[str, int],
+    override_limits: dict[str, int],
+) -> None:
+    """Validate that override limits are stricter or equal to baseline.
+
+    For each key present in override_limits, its numeric value must be <= the
+    baseline value for that key. If any value is greater (looser), raise
+    DefinitionError with a precise message naming the field, the override
+    value, and the baseline.
+    """
+    for key, override_value in override_limits.items():
+        baseline_value = baseline.get(key)
+        if baseline_value is None:
+            # Key not in baseline — allow it (new limit not in platform defaults)
+            continue
+        if override_value > baseline_value:
+            raise DefinitionError(
+                f"Invariant violation — execution_limits: override sets "
+                f"{key}={override_value} which exceeds parent/platform default "
+                f"{key}={baseline_value}.  Deployments may only restrict, not elevate."
+            )
+
+
 # ---------------------------------------------------------------------------
 # merge
 # ---------------------------------------------------------------------------
@@ -493,6 +528,13 @@ def merge(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
             else None
         )
     elif isinstance(ov_limits, dict):
+        # Validate stricter-only invariant before accepting
+        baseline = (
+            dict(generic.execution_limits)
+            if isinstance(generic.execution_limits, dict)
+            else _PLATFORM_DEFAULT_LIMITS
+        )
+        _validate_execution_limits(baseline, ov_limits)
         resolved_limits = dict(ov_limits)
     else:
         resolved_limits = None
