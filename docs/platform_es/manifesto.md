@@ -31,7 +31,7 @@ La plataforma no es un producto diseñado para un único cliente. Es la base sob
 
 ### 1. Enfoque declarativo primero (*Declarative first*)
 
-Los roles de los agentes se definen como carpetas bajo `agents/` — no como subclases, ni como blobs de configuración, ni como prompts embebidos en el código. Cada carpeta contiene `role.md` (identidad), `manifest.md` (capacidades) y `policy.md` (comportamiento). La carpeta de definición del agente es la especificación autoritativa de lo que un rol tiene permitido ser y hacer.
+Los roles de los agentes se definen como carpetas bajo `platform/roles/` (para las plantillas genéricas) y `deployments/` (para las sobreescrituras específicas de clientes) — no como subclases, ni como blobs de configuración, ni como prompts embebidos en el código. Cada carpeta de definición del agente contiene `role.md` (identidad), `manifest.md` (capacidades) y `policy.md` (comportamiento). La carpeta de definición del agente es la especificación autoritativa de lo que un rol tiene permitido ser y hacer.
 
 **Justificación:** Las definiciones declarativas son legibles por seres humanos, auditables, versionables en Git e independientes de la implementación del runtime. Hacen que el sistema sea inspeccionable sin necesidad de rastrear líneas de código.
 
