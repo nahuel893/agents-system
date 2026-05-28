@@ -103,7 +103,7 @@ The mapping is a starting hypothesis — reassign as you observe what each agent
 ## Worker lifecycle (every agent follows this)
 
 ### On start
-1. Read your assigned row and task detail in `delegations.md`.
+1. Scan the active wave table in `delegations.md` for the row(s) where the **Agent** column matches your identity and status is `todo`; read your row and its task detail.
 2. `mem_search` Engram for `delegations/<task-id>` and any referenced context.
 3. Load the skill paths listed in your task's **Skills to load**.
 4. Create your worktree + branch if it doesn't exist.

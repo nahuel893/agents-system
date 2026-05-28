@@ -12,7 +12,7 @@ Multiple agents work this repo **in parallel**. There is no direct communication
 
 ### Standing rules
 
-1. **Your task lives in `delegations.md`.** Find your row by the ID you were given; do only that slice.
+1. **Your task lives in `delegations.md`.** Scan the active wave table for the row(s) where the **Agent** column matches your identity (`claude-code`, `antigravity`, `opencode`) and the status is `todo`. Those are yours — do only that slice. No one needs to hand you an ID.
 2. **Isolation.** Work in your own git worktree + branch (`feat/D-00X-<slug>`, worktree `../agents-system-D-00X`). Touch only files inside your task's declared **Scope (files)**. Need something out of scope? Stop and set your row to `blocked` with a note — never expand scope silently.
 3. **Load context first.** `mem_search` Engram for `delegations/<task-id>` and any referenced topics. Load the skill paths your task lists.
 4. **On finish:** commit on your branch (conventional commits, **no AI attribution**) → save to Engram under `topic_key: delegations/<task-id>` (what you built, decisions, gotchas, files) → set your row to `in_review` and fill the **Result** note → tell the human. **Do not merge to `main`** — the Lead integrates.
