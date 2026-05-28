@@ -804,7 +804,7 @@
   <div class="def-layout">
     <div class="def-tree">
       <div class="tree-container" id="tree-container">
-        <div class="tree-root">agents/</div>
+        <div class="tree-root">agents-system/</div>
         <div id="tree-nodes"><!-- injected by JS --></div>
       </div>
 
@@ -1014,56 +1014,100 @@ const agents = {
 };
 
 const treeFiles = [
-  { id: 'folder-preventa', type: 'folder', indent: 0, icon: '📁', name: 'preventa/', label: '' },
-  { id: 'role', type: 'file', indent: 1, icon: '📄', name: 'role.md', label: 'WHO', color: '#3b82f6' },
-  { id: 'manifest', type: 'file', indent: 1, icon: '📄', name: 'manifest.md', label: 'WHAT', color: '#10b981' },
-  { id: 'policy', type: 'file', indent: 1, icon: '📄', name: 'policy.md', label: 'HOW', color: '#8b5cf6' },
-  { id: 'folder-skills', type: 'folder', indent: 1, icon: '📁', name: 'skills/', label: '' },
-  { id: 'skill-order', type: 'file', indent: 2, icon: '📝', name: 'order_extraction.md', label: 'skill', color: '#f59e0b' },
-  { id: 'skill-match', type: 'file', indent: 2, icon: '📝', name: 'colloquial_matching.md', label: 'skill', color: '#f59e0b' },
-  { id: 'skill-confirm', type: 'file', indent: 2, icon: '📝', name: 'confirm_flow.md', label: 'skill', color: '#f59e0b' },
+  { id: 'folder-platform', type: 'folder', indent: 0, icon: '📁', name: 'platform/', label: '' },
+  { id: 'folder-roles', type: 'folder', indent: 1, icon: '📁', name: 'roles/', label: '' },
+  { id: 'folder-generic-sales', type: 'folder', indent: 2, icon: '📁', name: 'sales-agent/', label: 'generic' },
+  { id: 'generic-role', type: 'file', indent: 3, icon: '📄', name: 'role.md', label: 'WHO (Parent)', color: '#3b82f6' },
+  { id: 'generic-manifest', type: 'file', indent: 3, icon: '📄', name: 'manifest.md', label: 'WHAT (Parent)', color: '#10b981' },
+  { id: 'generic-policy', type: 'file', indent: 3, icon: '📄', name: 'policy.md', label: 'HOW (Parent)', color: '#8b5cf6' },
+  { id: 'folder-deployments', type: 'folder', indent: 0, icon: '📁', name: 'deployments/', label: '' },
+  { id: 'folder-client', type: 'folder', indent: 1, icon: '📁', name: 'badie/', label: 'client' },
+  { id: 'folder-override-sales', type: 'folder', indent: 2, icon: '📁', name: 'sales-agent/', label: 'override' },
+  { id: 'override-role', type: 'file', indent: 3, icon: '📄', name: 'role.md', label: 'WHO (Override)', color: '#3b82f6' },
+  { id: 'override-manifest', type: 'file', indent: 3, icon: '📄', name: 'manifest.md', label: 'WHAT (Override)', color: '#10b981' },
+  { id: 'override-policy', type: 'file', indent: 3, icon: '📄', name: 'policy.md', label: 'HOW (Override)', color: '#8b5cf6' },
+  { id: 'folder-skills', type: 'folder', indent: 3, icon: '📁', name: 'skills/', label: '' },
+  { id: 'skill-order', type: 'file', indent: 4, icon: '📝', name: 'order_extraction.md', label: 'skill', color: '#f59e0b' },
+  { id: 'skill-match', type: 'file', indent: 4, icon: '📝', name: 'colloquial_matching.md', label: 'skill', color: '#f59e0b' },
+  { id: 'skill-confirm', type: 'file', indent: 4, icon: '📝', name: 'confirm_flow.md', label: 'skill', color: '#f59e0b' },
 ];
 
 const fileDetails = {
-  role: {
+  'generic-role': {
     icon: '📄',
-    name: 'role.md — Identity',
+    name: 'platform/roles/sales-agent/role.md (Parent)',
     color: '#3b82f6',
-    description: 'Defines the behavioral identity of the agent. What the role exists to accomplish and the operational boundary it operates within. Read by the Agent Factory at instantiation time.',
+    description: 'Defines the abstract behavioral template and system prompt of the generic sales agent role. All deployment-specific overrides inherit from this definition.',
     fields: [
-      { key: 'name', val: 'Unique role identifier (e.g. preventa_agent). Snake-case. Used by factory for selection.' },
-      { key: 'version', val: 'Optional semantic version. Used for audit trails and cache invalidation.' },
-      { key: 'purpose', val: '1–3 sentences describing what this role exists to accomplish. Behavioral, not technical.' },
-      { key: 'scope', val: 'Operational boundary: which domain, which users, which tasks.' },
+      { key: 'Format', val: 'Plain Markdown containing the system prompt text.' },
+      { key: 'name', val: 'Unique role identifier: sales-agent. Snake-case.' },
+      { key: 'purpose', val: 'Abstract behavioral purpose of a sales agent (e.g. order intake, catalog lookup).' },
+      { key: 'scope', val: 'Universal operational boundaries.' }
     ],
-    whenChanges: 'Changes when the role\'s purpose or operational scope changes — e.g., Preventa expanded to handle returns, or scope narrowed to a specific client segment.'
+    whenChanges: 'Modified by the platform core team when updating the general purpose, identity, or scope boundaries of all sales agents.'
   },
-  manifest: {
+  'generic-manifest': {
     icon: '📄',
-    name: 'manifest.md — Capabilities',
+    name: 'platform/roles/sales-agent/manifest.md (Parent)',
     color: '#10b981',
-    description: 'Declares every capability the agent is allowed to use. The Capability Injector reads this to build the permitted tool surface, skill list, and context requirements at injection time.',
+    description: 'Declares the maximum allowed capability surface for all sales agents. The parent manifest acts as an absolute ceiling: no deployment can declare tools or permissions exceeding this allowed surface.',
     fields: [
-      { key: 'tools', val: 'List of permitted tool names. Only tools listed here are injected. Others do not exist to the model.' },
-      { key: 'skills', val: 'Optional skill pack names. Each skill shapes how the agent reasons and responds.' },
-      { key: 'context', val: 'Context requirements: session, user_identity, org_context, private_wiki, tool_derived.' },
-      { key: 'permissions', val: 'RBAC permission identifiers required. Evaluated at injection time against user\'s permission set.' },
+      { key: 'Format', val: 'YAML Frontmatter.' },
+      { key: 'tools', val: 'Approved list of platform tools this role is allowed to call.' },
+      { key: 'permissions', val: 'Approved list of platform RBAC permissions required for this role.' },
+      { key: 'context', val: 'Approved context requirements.' }
     ],
-    whenChanges: 'Changes when the agent needs a new tool (e.g., add stock_lookup), a new skill, or different context access. Any change invalidates warm-cached runtimes for this role.'
+    whenChanges: 'Modified by core when expanding the absolute limits of what any sales agent can do (e.g. adding new platform tools to the approved list).'
   },
-  policy: {
+  'generic-policy': {
     icon: '📄',
-    name: 'policy.md — Behavior',
+    name: 'platform/roles/sales-agent/policy.md (Parent)',
     color: '#8b5cf6',
-    description: 'Governs how the runtime behaves within its injected capabilities. Injected last in the capability injection sequence — governs use of everything else. Defines when to act, when to escalate, when to delegate.',
+    description: 'Defines the default runtime execution policies for all sales agents, setting baseline autonomy ceilings and maximum timeout/iteration limits.',
     fields: [
-      { key: 'autonomy', val: 'full | supervised | confirm. Ceiling on autonomous action. Preventa uses supervised.' },
-      { key: 'escalation_rules', val: 'Conditions for escalating to human or higher-authority agent. Produces audit entry on trigger.' },
-      { key: 'delegation_policy', val: 'allowed: bool, permitted_child_roles, max_depth. Preventa: allowed: false.' },
-      { key: 'memory_policy', val: 'read_scope, write_scope (local/team/org), persist_conversation.' },
-      { key: 'audit_policy', val: 'log_tool_calls, log_delegations, log_escalations, retention_days.' },
+      { key: 'Format', val: 'YAML Frontmatter.' },
+      { key: 'autonomy', val: 'Maximum baseline autonomy ceiling (e.g., supervised).' },
+      { key: 'execution_limits', val: 'Baseline limits: tool_call_timeout_s, max_tool_calls, max_delegation_depth.' },
+      { key: 'escalation_rules', val: 'Required baseline conditions under which the agent must escalate.' }
     ],
-    whenChanges: 'Changes when business rules change: e.g., escalation threshold raised, delegation enabled, audit retention extended.'
+    whenChanges: 'Modified when default platform execution limits or escalation parameters are updated globally.'
+  },
+  'override-role': {
+    icon: '📄',
+    name: 'deployments/badie/sales-agent/role.md (Override)',
+    color: '#3b82f6',
+    description: 'Specializes the generic sales agent with client-specific context: Distribuidora BADIE S.A., colloquial Argentine Spanish vocabulary, and DeW/Preventas system prompts.',
+    fields: [
+      { key: 'extends', val: 'Declares parent role to inherit from: platform/roles/sales-agent.' },
+      { key: 'company/language', val: 'Adds company-specific identity (Distribuidora BADIE S.A.) and Rioplatense Spanish locale.' },
+      { key: 'vocabulary', val: 'Client-specific term mappings (e.g. "la rubia" -> Quilmes, "cajón" -> 24-unit case).' },
+      { key: 'purpose_extension', val: 'Appends client-specific business objectives to the parent purpose.' }
+    ],
+    whenChanges: 'Modified when client-specific vocabulary, slang mappings, or business vocabulary changes.'
+  },
+  'override-manifest': {
+    icon: '📄',
+    name: 'deployments/badie/sales-agent/manifest.md (Override)',
+    color: '#10b981',
+    description: 'Declares client-specific tools, active skills, and permissions. Enforces the STRICT INVARIANT: override permissions and tools must be a subset of the parent manifest.',
+    fields: [
+      { key: 'tools', val: 'Must be a SUBSET of parent tools (e.g., [whatsapp_sender, rag_catalog_search, postgres_order_writer, client_lookup]).' },
+      { key: 'skills', val: 'Lists active client-specific prompt skills (order_extraction, colloquial_matching, confirm_flow).' },
+      { key: 'permissions', val: 'Must be "inherit" or a subset of parent permissions. User RBAC grants are validated against this at runtime.' }
+    ],
+    whenChanges: 'Modified when adding or removing client-specific tool connectors or activating/deactivating behavioral skills.'
+  },
+  'override-policy': {
+    icon: '📄',
+    name: 'deployments/badie/sales-agent/policy.md (Override)',
+    color: '#8b5cf6',
+    description: 'Specializes execution policies for the client deployment. Enforces the STRICT INVARIANT: override limits must be stricter or equal to parent/platform limits.',
+    fields: [
+      { key: 'autonomy', val: 'Ceiling for client: supervised. (Can restrict but not elevate beyond parent ceiling).' },
+      { key: 'execution_limits', val: 'Must be stricter or equal to parent: shorter timeouts, fewer max_tool_calls permitted.' },
+      { key: 'escalation_rules', val: 'Adds client-specific escalation rules (e.g., total exceeds approval threshold, unregistered client).' }
+    ],
+    whenChanges: 'Modified when client-specific business rules, escalation thresholds, or execution constraints are adjusted.'
   },
   'skill-order': {
     icon: '📝',

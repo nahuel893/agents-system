@@ -4,7 +4,7 @@
 
 Un rol es una identidad de comportamiento declarativa. Define qué tiene permitido ser y hacer un agente dentro de la plataforma; no es una clase de Python, ni un servicio, ni una cadena de texto (*prompt string*).
 
-Un rol se define mediante una carpeta bajo `agents/`. La carpeta contiene tres archivos: `role.md` (identidad), `manifest.md` (capacidades) y `policy.md` (comportamiento), más un subdirectorio opcional `skills/`. El harness lee la carpeta de definición del agente en el momento de la instanciación y ensambla las capacidades a partir de ella.
+Un rol se define mediante una carpeta bajo `platform/roles/` (para las plantillas de roles genéricos) y `deployments/{cliente}/` (para las sobreescrituras específicas del cliente). La carpeta contiene tres archivos: `role.md` (identidad), `manifest.md` (capacidades) y `policy.md` (comportamiento), más un subdirectorio opcional `skills/` en los despliegues. El harness lee esta carpeta de definición del agente en el momento de la instanciación, resuelve las fusiones y ensambla las capacidades a partir de ella.
 
 **Un rol NO es:**
 - Un proceso activo o un hilo de ejecución (*thread*).
@@ -38,7 +38,7 @@ La definición del agente declara las capacidades, permisos y restricciones. El 
 
 ## Esquema de la definición del agente (*Agent definition schema*)
 
-Una definición del agente es una carpeta bajo `agents/` que contiene tres archivos. Los campos marcados como **obligatorio** deben estar presentes para que la definición se considere válida.
+Una definición del agente es una carpeta bajo `platform/roles/{rol}/` (para la plantilla genérica) o `deployments/{cliente}/{rol}/` (para las sobreescrituras) que contiene tres archivos. Los campos marcados como **obligatorio** deben estar presentes para que la definición se considere válida.
 
 ### Campos de `role.md`
 
@@ -54,7 +54,7 @@ Una definición del agente es una carpeta bajo `agents/` que contiene tres archi
 | Campo | Tipo | Obligatorio | Descripción |
 |---|---|---|---|
 | `tools` | `list[string]` | obligatorio | Nombres de las herramientas que este rol tiene permitido usar. La plataforma inyectará únicamente las herramientas listadas aquí. Cualquier otra herramienta que no esté en la lista no estará disponible, aunque exista en el registro global. |
-| `skills` | `list[string]` | opcional | Nombres de los paquetes de habilidades que acepta este rol. Las habilidades definen cómo razona y responde el agente. Ver `docs/platform/skill.md`. |
+| `skills` | `list[string]` | opcional | Nombres de los paquetes de habilidades que acepta este rol. Las habilidades definen cómo razona y responde el agente. Ver `docs/platform_es/skill.md`. |
 | `context` | `object` | obligatorio | Requerimientos de contexto. Especifica qué información debe recibir el runtime al momento de la inyección. Subcampos: `session` (booleano), `user_identity` (booleano), `org_context` (booleano), `private_wiki` (booleano), `tool_derived` (lista de nombres de herramientas cuyos resultados se requieren como contexto previo). |
 | `permissions` | `list[string]` | obligatorio | Identificadores de permisos RBAC requeridos para que este rol pueda operar. La plataforma los evalúa al momento de la inyección comparándolos con los permisos del usuario solicitante. Ver `docs/architecture/permission-model.md`. |
 
@@ -62,7 +62,7 @@ Una definición del agente es una carpeta bajo `agents/` que contiene tres archi
 
 | Campo | Tipo | Obligatorio | Descripción |
 |---|---|---|---|
-| `autonomy` | `string` | obligatorio | Nivel de autonomía del rol. Uno de `full`, `supervised` o `confirm`. Ver `docs/platform/policy.md`. |
+| `autonomy` | `string` | obligatorio | Nivel de autonomía del rol. Uno de `full`, `supervised` o `confirm`. Ver `docs/platform_es/policy.md`. |
 | `escalation_rules` | `object` | obligatorio | Condiciones bajo las cuales este rol debe escalar la tarea a un humano o a un agente de mayor autoridad. Subcampos: `escalate_to` (nombre del rol destino o `human`), `conditions` (lista de condiciones disparadoras descritas como texto). |
 | `delegation_policy` | `object` | obligatorio | Define si este rol puede delegar tareas en agentes hijos y bajo qué restricciones. Subcampos: `allowed` (booleano), `permitted_child_roles` (lista de nombres de roles permitidos, vacía si `allowed: false`), `max_depth` (entero). Ver `docs/architecture/delegation-policy.md`. |
 | `memory_policy` | `object` | obligatorio | Gobierna lo que el runtime puede leer y escribir en memoria. Subcampos: `read_scope` (uno de `local`, `team`, `org`), `write_scope` (uno de `local`, `team`, `org`), `persist_conversation` (booleano). |
@@ -74,9 +74,9 @@ Una definición del agente es una carpeta bajo `agents/` que contiene tres archi
 
 ## Ejemplo de definición del agente: Preventa Agent (Agente de Preventa)
 
-La definición del Agente de Preventa reside en `agents/preventa/` y se compone de tres archivos.
+En la arquitectura de dos capas, la definición consolidada del Agente de Preventa (que se especializa como `sales-agent` para Distribuidora BADIE S.A.) se construye mezclando la plantilla genérica de `platform/roles/sales-agent/` y la sobreescritura del cliente en `deployments/badie/sales-agent/`. A continuación se muestran los tres archivos consolidados resultantes de dicha mezcla:
 
-**`agents/preventa/role.md`**
+**`deployments/badie/sales-agent/role.md`**
 
 ```markdown
 # Role: preventa_agent
@@ -93,7 +93,7 @@ el catálogo de productos y la lista de precios del cliente.
   confirmar y persistir pedidos.
 ```
 
-**`agents/preventa/manifest.md`**
+**`deployments/badie/sales-agent/manifest.md`**
 
 ```markdown
 ## tools
@@ -125,7 +125,7 @@ el catálogo de productos y la lista de precios del cliente.
   - send:whatsapp
 ```
 
-**`agents/preventa/policy.md`**
+**`deployments/badie/sales-agent/policy.md`**
 
 ```markdown
 ## autonomy
@@ -162,8 +162,8 @@ Esta carpeta de definición del agente establece la frontera de comportamiento d
 
 ## Referencias cruzadas
 
-- Definición de herramientas (*tools*): `docs/platform/tool.md`
-- Definición de habilidades (*skills*): `docs/platform/skill.md`
-- Ciclo de vida del runtime y orden de inyección: `docs/platform/harness.md`
+- Definición de herramientas (*tools*): `docs/platform_es/tool.md`
+- Definición de habilidades (*skills*): `docs/platform_es/skill.md`
+- Ciclo de vida del runtime y orden de inyección: `docs/platform_es/harness.md`
 - Reglas de delegación: `docs/architecture/delegation-policy.md`
 - Modelo de permisos: `docs/architecture/permission-model.md`
