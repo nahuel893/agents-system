@@ -33,7 +33,7 @@ Una habilidad guía el razonamiento interno del agente antes de que este decida 
 
 ## Cómo se componen e inyectan las habilidades
 
-Las habilidades se inyectan después de las herramientas y antes del contexto dentro del pipeline de inyección (ver `docs/platform/harness.md` para la explicación completa del orden).
+Las habilidades se inyectan después de las herramientas y antes del contexto dentro del pipeline de inyección (ver `docs/platform_es/harness.md` para la explicación completa del orden).
 
 **Secuencia de inyección:**
 
@@ -105,6 +105,6 @@ Módulos de prompts inyectados:
 
 ## Referencias cruzadas
 
-- Definiciones de herramientas (*tools* — contraparte ejecutable de las habilidades): `docs/platform/tool.md`
-- Pipeline de inyección y orden de precedencia: `docs/platform/harness.md`
-- Campo `skills` en el `manifest.md` del agente: `docs/platform/role.md`
+- Definiciones de herramientas (*tools* — contraparte ejecutable de las habilidades): `docs/platform_es/tool.md`
+- Pipeline de inyección y orden de precedencia: `docs/platform_es/harness.md`
+- Campo `skills` en el `manifest.md` del agente: `docs/platform_es/role.md`
