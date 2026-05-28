@@ -39,6 +39,8 @@
 
 Build the second harness piece: the code-side `ToolRegistry` (the authority on what tools exist) and the capability injector that resolves the enforced tool surface for an agent. This is the security core — **the system provides and limits tools; the markdown only references names.**
 
+> **⚠ Redo — isolation is mandatory.** A prior attempt was lost because work happened on the shared `main` checkout instead of an isolated worktree, and a `git reset` clobbered it. The worktree `../agents-system-D-002` is **already created** for you on branch `feat/D-002-tool-registry-injector` (from current `main`). `cd ../agents-system-D-002` and work ONLY there — never touch the main checkout, never `git reset` shared history. Your earlier tests survive as dangling commit `3f074e2` (e.g. `git show 3f074e2:tests/test_harness_registry.py`) if you want a head start, but redo with Strict TDD.
+
 - **Agent:** opencode
 - **Model:** gpt-5.4
 - **Complexity:** high
