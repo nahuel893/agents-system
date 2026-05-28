@@ -32,6 +32,22 @@
       "sessions": 0,
       "memories": 1,
       "prompts": 0
+    },
+    {
+      "id": "9b989ee9",
+      "created_by": "nahuel",
+      "created_at": "2026-05-10T03:19:14Z",
+      "sessions": 2,
+      "memories": 47,
+      "prompts": 0
+    },
+    {
+      "id": "b9eec06d",
+      "created_by": "nahuel",
+      "created_at": "2026-05-28T16:26:45Z",
+      "sessions": 11,
+      "memories": 38,
+      "prompts": 51
     }
   ]
 }
