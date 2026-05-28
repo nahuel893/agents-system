@@ -59,6 +59,7 @@ strict = true
 module = [
     "pgvector.*",
     "sentence_transformers.*",
+    "yaml",
 ]
 ignore_missing_imports = true
 
