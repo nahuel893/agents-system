@@ -30,6 +30,7 @@
 | ID | Slice / Feature | Agent | Model | Cx | Branch | Depends on | Status | Result |
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
 | D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | in_review | Committed on branch (`5581b57`); pending Lead review |
+| D-004 | Agent Factory — assemble EquippedRuntime (loader + injector + skills) | claude-code | (session) | high | `feat/D-004-agent-factory` | D-002 | in_review | Built interactively (`0c72cca`); factory 100% cov, full suite 166 passed |
 
 ---
 
@@ -118,6 +119,37 @@ Bring the interactive diagram and the Spanish docs in line with the **current `m
 - **Reporting:** the Lead owns `delegations.md` — do **not** edit it. Report status by telling Nahuel + saving to Engram.
 - **Status:** todo
 - **Result:** _(fill when `in_review`)_
+
+---
+
+### D-004 — Agent Factory (EquippedRuntime assembler)
+
+The keystone glue: assembles `loader.resolve()` + `injector.resolve_tool_surface()` + loaded skill files into a single ready-to-run `EquippedRuntime`. Built interactively with the Lead. Serves the **agent_seller MVP** — `badie/sales-agent` now assembles end-to-end.
+
+- **Agent:** claude-code (Lead, interactive)
+- **Model:** (session)
+- **Complexity:** high
+- **Branch:** `feat/D-004-agent-factory`
+- **Depends on:** D-002 (registry + injector, on `main`)
+- **Wave:** W1
+- **Strict TDD:** ACTIVE — tests written first (RED → GREEN).
+- **Scope (files) — all NEW:**
+  - `src/agentsys/harness/factory.py`
+  - `tests/test_harness_factory.py`
+- **What was built:**
+  - `build_runtime(role_type, registry, granted_permissions, *, client=None, roots=None) -> EquippedRuntime`.
+  - `EquippedRuntime` (frozen): `definition`, `system_prompt` (composed), `tools` (granted `ToolSpec`s), `denied_tools` (`tuple[name, reason]`), `skills` (`tuple[LoadedSkill]`).
+  - `LoadedSkill(name, content)`, `FactoryError`.
+  - Prompt composition = role body + each skill file verbatim, joined by `---`, in manifest order. Skills load from `deployments/{client}/{role_type}/skills/{name}.md`; missing file → `FactoryError`. Structured events: `factory.skill_loaded`, `factory.skill_missing`, `factory.runtime_built`.
+- **Acceptance criteria:**
+  - [x] Resolves definition + grants/denies tools via injector.
+  - [x] Loads declared skills in order; missing skill file → `FactoryError`.
+  - [x] Composes prompt (role body before skills); generic role (no client) → role body alone, no skills.
+  - [x] Full suite green (166 passed), factory 100% cov, ruff clean, mypy clean on factory files.
+- **Out of scope (later slices):** LangChain `bind_tools` / model binding / LLM call (D-007 Agent Runtime); Layer-2 Tool Call Interceptor (D-005).
+- **Engram topic:** `delegations/D-004`.
+- **Status:** in_review
+- **Result:** Branch `feat/D-004-agent-factory` (`0c72cca`). 9 factory tests, 100% factory coverage, full suite 166 passed, ruff clean. Pending merge to `main` by Lead at integration.
 
 ---
 
