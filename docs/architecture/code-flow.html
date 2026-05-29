@@ -194,7 +194,7 @@
     </div>
     <div class="mod factory">
       <h3>factory.py</h3>
-      <p>El <b>ensamblador</b>. Orquesta loader + injector + skills y arma el runtime equipado, listo para ejecutar. No agrega seguridad nueva: pega lo anterior.</p>
+      <p>El <b>ensamblador</b>. <b>Llama</b> al loader y al injector, <b>recibe</b> el registry y se lo pasa al injector, y <b>agrega</b> la carga de skills + la composición del prompt. No decide seguridad: solo pega y compone.</p>
       <ul>
         <li><code>build_runtime()</code> — punto de entrada</li>
         <li>compone el <code>system_prompt</code> (role + skills)</li>
@@ -351,6 +351,16 @@ registry.<span class="f">get</span>(<span class="s">"unknown_tool"</span>)   <sp
     system_prompt = <span class="f">_compose_prompt</span>(definition, skills)             <span class="cm"># role body + skills</span>
     <span class="k">return</span> EquippedRuntime(definition, system_prompt,
                            surface.granted, surface.denied, skills)</pre>
+      <h4 style="margin-top:14px">Su relación con cada módulo — orquesta 2, recibe 1, agrega 2</h4>
+      <table>
+        <tr><th>Módulo</th><th>Cómo lo usa el factory</th></tr>
+        <tr><td><code>loader</code></td><td><b>Lo llama</b> — <code>resolve()</code> → <code>AgentDefinition</code></td></tr>
+        <tr><td><code>injector</code></td><td><b>Lo llama</b> — <code>resolve_tool_surface()</code> → tools concedidas / denegadas</td></tr>
+        <tr><td><code>registry</code></td><td><b>NO lo llama.</b> Lo <b>recibe como parámetro</b> y se lo pasa al injector — el injector es quien lo lee. El registry se arma una vez al iniciar (con los connectors reales); el factory no sabe cómo se construye. Por eso es testeable: en los tests recibe un registry de prueba con callables falsos.</td></tr>
+        <tr><td><code>skills/*.md</code></td><td><b>Trabajo propio</b> — los lee de <code>deployments/{client}/{role}/skills/</code>. El loader nunca toca estos archivos.</td></tr>
+        <tr><td>composición</td><td><b>Trabajo propio</b> — arma el <code>system_prompt</code> (role body + skills).</td></tr>
+      </table>
+      <div class="note"><b>La regla que lo gobierna:</b> el factory <b>no decide nada de seguridad</b>. No valida invariantes (eso es del loader) ni resuelve permisos (eso es del injector). Solo <b>pega y compone</b>. El verify independiente confirmó que no introduce ni una sola decisión de seguridad nueva — por eso es simple y predecible.</div>
       <h4 style="margin-top:14px">Cómo se arma el <code>system_prompt</code></h4>
       <table>
         <tr><th>Regla de composición</th><th>Detalle</th></tr>
