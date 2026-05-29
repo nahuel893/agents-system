@@ -30,7 +30,7 @@
 | ID | Slice / Feature | Agent | Model | Cx | Branch | Depends on | Status | Result |
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
 | D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | in_review | Committed on branch (`5581b57`); pending Lead review |
-| D-004 | Agent Factory — assemble EquippedRuntime (loader + injector + skills) | claude-code | (session) | high | `feat/D-004-agent-factory` | D-002 | in_review | Built interactively (`0c72cca`); factory 100% cov, full suite 166 passed |
+| D-004 | Agent Factory — assemble EquippedRuntime (loader + injector + skills) | claude-code | (session) | high | `feat/D-004-agent-factory` | D-002 | in_review | SDD backfilled + verify PASS (fresh sonnet); WARNING-1 closed; factory 100% cov, suite 168 passed; pending merge |
 
 ---
 
@@ -148,8 +148,9 @@ The keystone glue: assembles `loader.resolve()` + `injector.resolve_tool_surface
   - [x] Full suite green (166 passed), factory 100% cov, ruff clean, mypy clean on factory files.
 - **Out of scope (later slices):** LangChain `bind_tools` / model binding / LLM call (D-007 Agent Runtime); Layer-2 Tool Call Interceptor (D-005).
 - **Engram topic:** `delegations/D-004`.
+- **SDD:** Artifacts backfilled to engram (`sdd/D-004/{spec,design,tasks,apply-progress}`). Verify run by a fresh `sdd-verify` sub-agent (sonnet) → **PASS** (`sdd/D-004/verify-report`, obs #210): 0 CRITICAL, 1 WARNING (R5 events emitted but not asserted) + 1 SUGGESTION. WARNING-1 closed by adding explicit assertions for `factory.skill_loaded`/`factory.skill_missing` (`4f118b9`). SUGGESTION-1 (generic test uses real roots) left as intentional design choice — happy path deliberately exercises the real BADIE MVP deployment.
 - **Status:** in_review
-- **Result:** Branch `feat/D-004-agent-factory` (`0c72cca`). 9 factory tests, 100% factory coverage, full suite 166 passed, ruff clean. Pending merge to `main` by Lead at integration.
+- **Result:** Branch `feat/D-004-agent-factory` (commits `0c72cca`, `adc8335`, `b027b65`, `4f118b9`). 11 factory tests, 100% factory coverage, full suite 168 passed, ruff + mypy clean on factory. Verify PASS. Pending merge to `main` by Lead at integration.
 
 ---
 
