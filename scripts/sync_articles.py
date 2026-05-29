@@ -17,12 +17,12 @@ import sys
 import structlog
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from acme.config import get_settings
-from acme.models.base import get_engine
-from acme.observability import setup_logging
-from acme.services.embeddings import get_embedding_provider
-from acme.services.medallion import get_medallion_engine
-from acme.services.sync_articles import sync_articles
+from agentsys.config import get_settings
+from agentsys.models.base import get_engine
+from agentsys.observability import setup_logging
+from agentsys.services.embeddings import get_embedding_provider
+from agentsys.services.medallion import get_medallion_engine
+from agentsys.services.sync_articles import sync_articles
 
 
 async def main() -> int:

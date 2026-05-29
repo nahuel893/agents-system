@@ -4,9 +4,9 @@ import asyncio
 
 from sqlalchemy import text
 
-from acme.config import get_settings
-from acme.models import Base
-from acme.models.base import get_engine
+from agentsys.config import get_settings
+from agentsys.models import Base
+from agentsys.models.base import get_engine
 
 
 async def init_db() -> None:

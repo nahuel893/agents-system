@@ -1,6 +1,6 @@
 """Tests for ORM model definitions (no running database required)."""
 
-from acme.models import (
+from agentsys.models import (
     Base,
     CatalogEmbedding,
     Client,
