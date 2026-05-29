@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import urllib.request
 import urllib.error
 
@@ -16,18 +17,28 @@ def make_request(path, data=None):
     }
     
     req_body = json.dumps(data).encode("utf-8") if data is not None else None
-    req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
     
-    try:
-        with urllib.request.urlopen(req) as res:
-            res_body = res.read().decode("utf-8")
-            return json.loads(res_body)
-    except urllib.error.HTTPError as e:
-        print(f"HTTP Error {e.code} for {path}: {e.read().decode('utf-8')}")
-        raise e
-    except Exception as e:
-        print(f"Connection Error for {path}: {e}")
-        raise e
+    max_retries = 6
+    backoff = 3
+    for attempt in range(max_retries):
+        req = urllib.request.Request(url, data=req_body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req) as res:
+                res_body = res.read().decode("utf-8")
+                return json.loads(res_body)
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                print(f"Rate limited (429) on {path}. Retrying in {backoff} seconds (Attempt {attempt+1}/{max_retries})...")
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            print(f"HTTP Error {e.code} for {path}: {e.read().decode('utf-8')}")
+            raise e
+        except Exception as e:
+            print(f"Connection Error for {path}: {e}")
+            raise e
+            
+    raise Exception(f"Failed after {max_retries} retries due to rate limiting on {path}")
 
 def read_file(filepath):
     full_path = os.path.join(WORKSPACE_DIR, filepath)
@@ -51,6 +62,7 @@ def create_document(title, text, collection_id, parent_id=None):
     res = make_request("/api/documents.create", payload)
     doc_id = res["data"]["id"]
     print(f"Created doc '{title}' with ID: {doc_id}")
+    time.sleep(1.0)  # Pace the requests to prevent hitting rate limits
     return doc_id
 
 def main():
