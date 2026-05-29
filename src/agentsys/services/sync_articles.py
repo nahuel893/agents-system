@@ -14,8 +14,8 @@ import structlog
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from badie.models.tables import CatalogEmbedding
-from badie.services.embeddings import EmbeddingProvider
+from agentsys.models.tables import CatalogEmbedding
+from agentsys.services.embeddings import EmbeddingProvider
 
 logger = structlog.get_logger()
 

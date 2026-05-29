@@ -8,7 +8,7 @@ def _connector() -> str:
 
 
 def test_register_and_get_round_trip() -> None:
-    from badie.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     spec = ToolSpec(
@@ -23,7 +23,7 @@ def test_register_and_get_round_trip() -> None:
 
 
 def test_get_unknown_tool_raises_not_found() -> None:
-    from badie.harness.registry import ToolNotFoundError, ToolRegistry
+    from agentsys.harness.registry import ToolNotFoundError, ToolRegistry
 
     registry = ToolRegistry()
 
@@ -32,7 +32,7 @@ def test_get_unknown_tool_raises_not_found() -> None:
 
 
 def test_register_duplicate_name_raises() -> None:
-    from badie.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     spec = ToolSpec(
@@ -48,7 +48,7 @@ def test_register_duplicate_name_raises() -> None:
 
 
 def test_contains_and_names_reflect_registered_tools() -> None:
-    from badie.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     first = ToolSpec(

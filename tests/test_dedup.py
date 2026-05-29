@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-from badie.services.dedup import is_duplicate
+from agentsys.services.dedup import is_duplicate
 
 
 # ---------------------------------------------------------------------------

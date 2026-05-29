@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from badie.config import Settings
-from badie.services import rag
-from badie.services.catalog import (
+from agentsys.config import Settings
+from agentsys.services import rag
+from agentsys.services.catalog import (
     KeywordSearchCandidate,
     VectorSearchCandidate,
 )

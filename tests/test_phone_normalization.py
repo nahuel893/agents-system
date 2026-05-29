@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from badie.services.clients import normalize_argentine_mobile, normalize_phone
+from agentsys.services.clients import normalize_argentine_mobile, normalize_phone
 
 
 # ---------------------------------------------------------------------------

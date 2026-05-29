@@ -10,7 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-from badie.observability.logging import logger
+from agentsys.observability.logging import logger
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):

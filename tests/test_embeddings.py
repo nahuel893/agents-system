@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from badie.config import Settings
-from badie.services.embeddings import (
+from agentsys.config import Settings
+from agentsys.services.embeddings import (
     EmbeddingProvider,
     FakeEmbeddingProvider,
     LocalBGEEmbeddingProvider,
@@ -87,7 +87,7 @@ def test_openai_provider_implements_protocol() -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("badie.services.embeddings.SentenceTransformer")
+@patch("agentsys.services.embeddings.SentenceTransformer")
 async def test_local_provider_truncates_to_dimensions(mock_st: MagicMock) -> None:
     """BGE-M3 outputs 1024 dims natively — provider must truncate to N (Matryoshka)."""
     fake_model = MagicMock()
@@ -103,7 +103,7 @@ async def test_local_provider_truncates_to_dimensions(mock_st: MagicMock) -> Non
     fake_model.encode.assert_called_once()
 
 
-@patch("badie.services.embeddings.SentenceTransformer")
+@patch("agentsys.services.embeddings.SentenceTransformer")
 async def test_local_provider_empty_input(mock_st: MagicMock) -> None:
     """Empty input list returns empty list, never calls encode."""
     fake_model = MagicMock()
@@ -116,7 +116,7 @@ async def test_local_provider_empty_input(mock_st: MagicMock) -> None:
     fake_model.encode.assert_not_called()
 
 
-@patch("badie.services.embeddings.SentenceTransformer")
+@patch("agentsys.services.embeddings.SentenceTransformer")
 def test_local_provider_implements_protocol(mock_st: MagicMock) -> None:
     """LocalBGEEmbeddingProvider satisfies the EmbeddingProvider Protocol."""
     mock_st.return_value = MagicMock()
@@ -131,7 +131,7 @@ def test_local_provider_implements_protocol(mock_st: MagicMock) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("badie.services.embeddings.SentenceTransformer")
+@patch("agentsys.services.embeddings.SentenceTransformer")
 def test_factory_returns_local_when_configured(mock_st: MagicMock) -> None:
     """embedding_provider='local' returns LocalBGEEmbeddingProvider."""
     mock_st.return_value = MagicMock()

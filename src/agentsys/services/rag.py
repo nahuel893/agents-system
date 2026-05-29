@@ -8,9 +8,9 @@ from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from badie.config import Settings
-from badie.services import catalog
-from badie.services.embeddings import EmbeddingProvider
+from agentsys.config import Settings
+from agentsys.services import catalog
+from agentsys.services.embeddings import EmbeddingProvider
 
 _logger = logging.getLogger(__name__)
 

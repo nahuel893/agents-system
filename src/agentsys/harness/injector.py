@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from badie.harness.loader import AgentDefinition
-from badie.harness.registry import ToolRegistry, ToolSpec
+from agentsys.harness.loader import AgentDefinition
+from agentsys.harness.registry import ToolRegistry, ToolSpec
 
 
 class InjectionError(Exception):

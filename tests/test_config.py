@@ -1,9 +1,9 @@
-"""Tests for badie.config — Settings loading and singleton."""
+"""Tests for agentsys.config — Settings loading and singleton."""
 
 import pytest
 from pydantic import ValidationError
 
-from badie.config import Settings, get_settings
+from agentsys.config import Settings, get_settings
 
 
 def test_settings_loads_with_defaults():

@@ -1,6 +1,6 @@
 """Agent harness — loads and merges agent definitions from disk."""
 
-from badie.harness.loader import (
+from agentsys.harness.loader import (
     AgentDefinition,
     DefinitionError,
     RootConfig,

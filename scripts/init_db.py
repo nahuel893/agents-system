@@ -4,9 +4,9 @@ import asyncio
 
 from sqlalchemy import text
 
-from badie.config import get_settings
-from badie.models import Base
-from badie.models.base import get_engine
+from agentsys.config import get_settings
+from agentsys.models import Base
+from agentsys.models.base import get_engine
 
 
 async def init_db() -> None:

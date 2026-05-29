@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from badie.models.tables import CatalogEmbedding
+from agentsys.models.tables import CatalogEmbedding
 
 
 @dataclass(frozen=True)

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from openai import AsyncOpenAI
 
-from badie.config import Settings
+from agentsys.config import Settings
 
 # Module-level placeholder so tests can patch ``embeddings.SentenceTransformer``.
 # Real import is lazy inside ``LocalBGEEmbeddingProvider.__init__`` to avoid

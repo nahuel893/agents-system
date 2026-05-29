@@ -8,12 +8,12 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.responses import PlainTextResponse
 
-from badie.config import Settings, get_settings
-from badie.integration.meta_signature import verify_signature
-from badie.models.base import get_session_factory
-from badie.services.clients import lookup_or_create_client, normalize_phone
-from badie.services.dedup import is_duplicate
-from badie.services.redis import get_redis_client
+from agentsys.config import Settings, get_settings
+from agentsys.integration.meta_signature import verify_signature
+from agentsys.models.base import get_session_factory
+from agentsys.services.clients import lookup_or_create_client, normalize_phone
+from agentsys.services.dedup import is_duplicate
+from agentsys.services.redis import get_redis_client
 
 webhook_router = APIRouter(prefix="/webhook", tags=["webhook"])
 

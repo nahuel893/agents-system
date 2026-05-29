@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from badie.config import get_settings
-from badie.main import create_app
+from agentsys.config import get_settings
+from agentsys.main import create_app
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +51,7 @@ async def test_health_all_ok(app):
 
     app.state.engine = mock_engine
 
-    with patch("badie.main.get_redis_client", return_value=mock_redis):
+    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get("/health")
 
@@ -81,7 +81,7 @@ async def test_health_postgres_degraded(app):
 
     app.state.engine = mock_engine
 
-    with patch("badie.main.get_redis_client", return_value=mock_redis):
+    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get("/health")
 
@@ -112,7 +112,7 @@ async def test_health_redis_degraded(app):
 
     app.state.engine = mock_engine
 
-    with patch("badie.main.get_redis_client", return_value=mock_redis):
+    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get("/health")
 
@@ -142,7 +142,7 @@ async def test_health_both_degraded(app):
 
     app.state.engine = mock_engine
 
-    with patch("badie.main.get_redis_client", return_value=mock_redis):
+    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get("/health")
 
@@ -194,7 +194,7 @@ async def test_middleware_adds_request_id(app):
     mock_redis = AsyncMock()
     mock_redis.ping = AsyncMock(return_value=True)
 
-    with patch("badie.main.get_redis_client", return_value=mock_redis):
+    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             await ac.get("/health")
 

@@ -1,7 +1,7 @@
 """Observability package — logging configuration and request middleware."""
 
-from badie.observability.logging import request_id_ctx, setup_logging, thread_id_ctx
-from badie.observability.middleware import RequestIdMiddleware
+from agentsys.observability.logging import request_id_ctx, setup_logging, thread_id_ctx
+from agentsys.observability.middleware import RequestIdMiddleware
 
 __all__ = [
     "setup_logging",

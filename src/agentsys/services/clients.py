@@ -7,7 +7,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from badie.models.tables import Client
+from agentsys.models.tables import Client
 
 logger = structlog.get_logger()
 

@@ -11,11 +11,11 @@ import structlog
 from fastapi import Depends, FastAPI, Request
 from sqlalchemy import text
 
-from badie.config import Settings, get_settings
-from badie.integration import webhook_router
-from badie.models.base import get_engine
-from badie.observability import RequestIdMiddleware, setup_logging
-from badie.services.redis import close_redis_pool, get_redis_client
+from agentsys.config import Settings, get_settings
+from agentsys.integration import webhook_router
+from agentsys.models.base import get_engine
+from agentsys.observability import RequestIdMiddleware, setup_logging
+from agentsys.services.redis import close_redis_pool, get_redis_client
 
 
 @asynccontextmanager

@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from badie.config import Settings, get_settings
-from badie.main import create_app
-from badie.models.tables import Client
+from agentsys.config import Settings, get_settings
+from agentsys.main import create_app
+from agentsys.models.tables import Client
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,7 +35,7 @@ def make_settings(**overrides: str) -> Settings:
     defaults = dict(
         meta_webhook_secret=TEST_SECRET,
         whatsapp_verify_token=TEST_VERIFY_TOKEN,
-        database_url="postgresql+asyncpg://localhost:5432/badie_test",
+        database_url="postgresql+asyncpg://localhost:5432/agentsys_test",
         redis_url="redis://localhost:6379/0",
     )
     defaults.update(overrides)
@@ -91,7 +91,7 @@ def test_verify_signature_valid() -> None:
     """Valid HMAC-SHA256 signature passes without raising."""
     from starlette.datastructures import Headers
 
-    from badie.integration.meta_signature import verify_signature
+    from agentsys.integration.meta_signature import verify_signature
 
     body = b'{"hello": "world"}'
     sig = sign_payload(body, TEST_SECRET)
@@ -106,7 +106,7 @@ def test_verify_signature_invalid() -> None:
     from fastapi import HTTPException
     from starlette.datastructures import Headers
 
-    from badie.integration.meta_signature import verify_signature
+    from agentsys.integration.meta_signature import verify_signature
 
     body = b'{"hello": "world"}'
     headers = Headers({"x-hub-signature-256": "sha256=deadbeefdeadbeef"})
@@ -120,7 +120,7 @@ def test_verify_signature_missing_header() -> None:
     from fastapi import HTTPException
     from starlette.datastructures import Headers
 
-    from badie.integration.meta_signature import verify_signature
+    from agentsys.integration.meta_signature import verify_signature
 
     body = b'{"hello": "world"}'
     headers = Headers({})
@@ -252,7 +252,7 @@ async def test_post_duplicate_message(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=None)  # key existed = duplicate
 
-    with patch("badie.integration.webhook.get_redis_client", return_value=mock_redis):
+    with patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis):
         response = await client.post(
             "/webhook",
             content=text_payload,
@@ -274,7 +274,7 @@ async def test_post_new_message_with_dedup(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)  # key created = new
 
-    with patch("badie.integration.webhook.get_redis_client", return_value=mock_redis):
+    with patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis):
         response = await client.post(
             "/webhook",
             content=text_payload,
@@ -296,7 +296,7 @@ async def test_post_dedup_redis_failure(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(side_effect=ConnectionError("Redis down"))
 
-    with patch("badie.integration.webhook.get_redis_client", return_value=mock_redis):
+    with patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis):
         response = await client.post(
             "/webhook",
             content=text_payload,
@@ -329,8 +329,8 @@ async def test_post_unregistered_client(
     mock_lookup = AsyncMock(return_value=unregistered)
 
     with (
-        patch("badie.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("badie.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
     ):
         response = await client.post(
             "/webhook",
@@ -360,8 +360,8 @@ async def test_post_registered_client(
     mock_lookup = AsyncMock(return_value=registered)
 
     with (
-        patch("badie.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("badie.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
     ):
         response = await client.post(
             "/webhook",
@@ -387,8 +387,8 @@ async def test_post_db_failure_fail_open(
     mock_lookup = AsyncMock(side_effect=Exception("DB unavailable"))
 
     with (
-        patch("badie.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("badie.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
     ):
         response = await client.post(
             "/webhook",

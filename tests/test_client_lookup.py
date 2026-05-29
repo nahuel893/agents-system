@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from badie.models.base import Base
-from badie.models.tables import Client
-from badie.services.clients import lookup_or_create_client, normalize_phone
+from agentsys.models.base import Base
+from agentsys.models.tables import Client
+from agentsys.services.clients import lookup_or_create_client, normalize_phone
 
 
 # ---------------------------------------------------------------------------

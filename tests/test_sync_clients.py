@@ -20,9 +20,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from badie.models.base import Base
-from badie.models.tables import Client
-from badie.services.sync_clients import sync_clients
+from agentsys.models.base import Base
+from agentsys.models.tables import Client
+from agentsys.services.sync_clients import sync_clients
 
 
 # ---------------------------------------------------------------------------

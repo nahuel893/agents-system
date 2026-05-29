@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from badie.models.base import Base
+from agentsys.models.base import Base
 
 
 class Client(Base):

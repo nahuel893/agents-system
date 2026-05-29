@@ -16,8 +16,8 @@ import structlog
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from badie.models.tables import Client
-from badie.services.clients import normalize_argentine_mobile
+from agentsys.models.tables import Client
+from agentsys.services.clients import normalize_argentine_mobile
 
 logger = structlog.get_logger()
 

@@ -1,4 +1,4 @@
-"""Tests for the agent definition loader (src/badie/harness/loader.py).
+"""Tests for the agent definition loader (src/agentsys/harness/loader.py).
 
 Tests follow strict TDD: written BEFORE the implementation, intentionally fail
 until the module exists and passes all invariants.
@@ -33,7 +33,7 @@ OVERRIDE_ROOTS_DIR = FIXTURE_BASE / "overrides"
 
 def _generic_roots() -> Any:
     """RootConfig pointing at the fixture generic-role tree."""
-    from badie.harness.loader import RootConfig
+    from agentsys.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=GENERIC_ROOTS_DIR,
@@ -43,7 +43,7 @@ def _generic_roots() -> Any:
 
 def _override_roots() -> Any:
     """RootConfig pointing at the fixture override tree."""
-    from badie.harness.loader import RootConfig
+    from agentsys.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=GENERIC_ROOTS_DIR,
@@ -53,7 +53,7 @@ def _override_roots() -> Any:
 
 def _real_roots() -> Any:
     """RootConfig pointing at the actual repo files."""
-    from badie.harness.loader import RootConfig
+    from agentsys.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=REPO_ROOT / "platform",
@@ -65,7 +65,7 @@ def _real_roots() -> Any:
 # Test 1 — Loading a generic role produces a fully-populated AgentDefinition
 # ---------------------------------------------------------------------------
 def test_load_generic_produces_agent_definition() -> None:
-    from badie.harness.loader import AgentDefinition, resolve
+    from agentsys.harness.loader import AgentDefinition, resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -76,7 +76,7 @@ def test_load_generic_produces_agent_definition() -> None:
 
 
 def test_load_generic_tools_parsed() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -84,7 +84,7 @@ def test_load_generic_tools_parsed() -> None:
 
 
 def test_load_generic_permissions_parsed() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -92,7 +92,7 @@ def test_load_generic_permissions_parsed() -> None:
 
 
 def test_load_generic_autonomy_parsed() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -100,7 +100,7 @@ def test_load_generic_autonomy_parsed() -> None:
 
 
 def test_load_generic_delegation_policy_parsed() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -112,7 +112,7 @@ def test_load_generic_delegation_policy_parsed() -> None:
 # Test 2 — role.md prose body captured verbatim as system_prompt
 # ---------------------------------------------------------------------------
 def test_role_md_body_captured_as_system_prompt() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -127,7 +127,7 @@ def test_role_md_body_captured_as_system_prompt() -> None:
 # Test 3 — resolve with no client returns the generic definition unchanged
 # ---------------------------------------------------------------------------
 def test_resolve_no_client_returns_generic() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -139,7 +139,7 @@ def test_resolve_no_client_returns_generic() -> None:
 # Test 4 — resolve with a client that has an override merges correctly
 # ---------------------------------------------------------------------------
 def test_resolve_with_client_merges_override() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", client="client-a", roots=_override_roots())
 
@@ -159,7 +159,7 @@ def test_resolve_with_client_merges_override() -> None:
 # Test 5 — permissions: inherit keyword resolves to the parent's full set
 # ---------------------------------------------------------------------------
 def test_permissions_inherit_keyword_resolves_to_parent() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", client="client-a", roots=_override_roots())
 
@@ -171,7 +171,7 @@ def test_permissions_inherit_keyword_resolves_to_parent() -> None:
 # Test 6 — {inherit: true, add: [...]} appends to parent list (dedup, order)
 # ---------------------------------------------------------------------------
 def test_escalation_rules_inherit_add_appends() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", client="client-a", roots=_override_roots())
 
@@ -188,7 +188,7 @@ def test_escalation_rules_inherit_add_appends() -> None:
 # Test 7 — Invariant: override tool NOT in parent raises DefinitionError
 # ---------------------------------------------------------------------------
 def test_override_tool_not_in_parent_raises_definition_error() -> None:
-    from badie.harness.loader import DefinitionError, resolve
+    from agentsys.harness.loader import DefinitionError, resolve
 
     with pytest.raises(DefinitionError, match="tools"):
         resolve("simple-role", client="bad-tools", roots=_override_roots())
@@ -198,7 +198,7 @@ def test_override_tool_not_in_parent_raises_definition_error() -> None:
 # Test 8 — Invariant: override autonomy above parent ceiling raises DefinitionError
 # ---------------------------------------------------------------------------
 def test_override_autonomy_elevation_raises_definition_error() -> None:
-    from badie.harness.loader import DefinitionError, resolve
+    from agentsys.harness.loader import DefinitionError, resolve
 
     with pytest.raises(DefinitionError, match="autonomy"):
         resolve("simple-role", client="bad-autonomy", roots=_override_roots())
@@ -208,7 +208,7 @@ def test_override_autonomy_elevation_raises_definition_error() -> None:
 # Test 9 — Override folder absent → resolve returns generic without error
 # ---------------------------------------------------------------------------
 def test_resolve_absent_override_folder_returns_generic() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     # "nonexistent-client" has no folder under the override deployments root
     definition = resolve(
@@ -225,7 +225,7 @@ def test_resolve_absent_override_folder_returns_generic() -> None:
 # Test 10 — Real BADIE sales-agent merge (happy-path integration test)
 # ---------------------------------------------------------------------------
 def test_real_badie_sales_agent_merge() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("sales-agent", client="badie", roots=_real_roots())
 
@@ -267,7 +267,7 @@ def test_real_badie_sales_agent_merge() -> None:
 # (when a deployment role.md exists, it is the effective system prompt)
 # ---------------------------------------------------------------------------
 def test_real_badie_system_prompt_is_override_role_body() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("sales-agent", client="badie", roots=_real_roots())
 
@@ -279,7 +279,7 @@ def test_real_badie_system_prompt_is_override_role_body() -> None:
 # Test 13 — execution_limits: stricter limit merges successfully
 # ---------------------------------------------------------------------------
 def test_execution_limits_stricter_override_merges() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", client="strict-limits", roots=_override_roots())
 
@@ -292,7 +292,7 @@ def test_execution_limits_stricter_override_merges() -> None:
 # Test 14 — execution_limits: looser limit raises DefinitionError
 # ---------------------------------------------------------------------------
 def test_execution_limits_looser_override_raises_definition_error() -> None:
-    from badie.harness.loader import DefinitionError, resolve
+    from agentsys.harness.loader import DefinitionError, resolve
 
     with pytest.raises(DefinitionError, match="max_tool_calls"):
         resolve("simple-role", client="loose-limits", roots=_override_roots())
@@ -302,7 +302,7 @@ def test_execution_limits_looser_override_raises_definition_error() -> None:
 # Test 15 — execution_limits: inherit still works (regression guard)
 # ---------------------------------------------------------------------------
 def test_execution_limits_inherit_still_works() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", client="client-a", roots=_override_roots())
 
@@ -315,7 +315,7 @@ def test_execution_limits_inherit_still_works() -> None:
 # Test 12 — AgentDefinition is frozen (immutable after construction)
 # ---------------------------------------------------------------------------
 def test_agent_definition_is_frozen() -> None:
-    from badie.harness.loader import resolve
+    from agentsys.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
