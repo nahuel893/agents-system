@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>agentsys — Flujo de ejecución del harness</title>
+<title>agentsys — Guía del sistema (plataforma, roles, archivos y flujo del harness)</title>
 <style>
   :root {
     --bg: #0f1117; --panel: #171a23; --panel2: #1e222d; --border: #2a2f3a;
@@ -70,10 +70,96 @@
 </head>
 <body>
 <header>
-  <h1><span class="pkg">agentsys</span> — Flujo de ejecución del harness</h1>
-  <p class="sub">Cómo una solicitud se convierte en un runtime de agente validado y con capacidades acotadas. Esto recorre el <b>código real que existe hoy</b> (<code>src/agentsys/harness/</code>): el loader, el registro de tools y el inyector de capacidades. El modelo es el cerebro; esto es el sistema operativo que decide qué tiene permitido ser y hacer.</p>
+  <h1><span class="pkg">agentsys</span> — Guía del sistema</h1>
+  <p class="sub">Qué es la plataforma, qué roles define, qué archivos la componen, y cómo se ejecuta el harness paso a paso. El modelo es el cerebro; el harness es el sistema operativo que decide qué tiene permitido ser y hacer. Pensado para entender el sistema antes de avanzar.</p>
 </header>
 <div class="wrap">
+
+  <h2>¿Qué es la plataforma?</h2>
+  <p style="color:var(--muted);font-size:14px;max-width:840px;margin:0 0 14px">
+    <b>agentsys</b> es una <b>plataforma de agentes reutilizable</b>, no un bot. El bot de WhatsApp de <b>BADIE</b> es solo el <b>primer deployment</b> que corre sobre ella. La plataforma es el producto; cada cliente es una implementación. Esa separación es la regla que organiza todo el repo.
+  </p>
+  <div class="modules" style="grid-template-columns:repeat(2,1fr)">
+    <div class="mod loader">
+      <h3>Core Platform</h3>
+      <p>El runtime genérico, agnóstico al cliente. IP de la plataforma.</p>
+      <ul>
+        <li>roles genéricos en <code>platform/roles/</code></li>
+        <li>el harness (loader, registry, injector)</li>
+        <li>RBAC, lifecycle, auditoría</li>
+      </ul>
+    </div>
+    <div class="mod registry">
+      <h3>Deployment (cliente)</h3>
+      <p>La especialización concreta. Ej: BADIE.</p>
+      <ul>
+        <li>overrides en <code>deployments/badie/</code></li>
+        <li>skills propias del dominio</li>
+        <li>solo puede <b>restringir o especializar</b>, nunca elevar</li>
+      </ul>
+    </div>
+  </div>
+  <h4 style="color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin:18px 0 6px">Tres conceptos que no hay que mezclar</h4>
+  <table>
+    <tr><th>Concepto</th><th>Qué es</th></tr>
+    <tr><td><code>AgentDefinition</code></td><td>La definición declarativa de un rol: una <b>carpeta</b> con <code>role.md</code> + <code>manifest.md</code> + <code>policy.md</code>. Lo que el harness lee.</td></tr>
+    <tr><td><code>AgentRuntime</code></td><td>Una <b>instancia viva</b> en memoria, ya equipada con sus capacidades. Lo que ejecuta.</td></tr>
+    <tr><td><code>Subsystem</code></td><td>Un conjunto coordinado de roles y políticas dentro de un dominio.</td></tr>
+  </table>
+
+  <h2>Los roles</h2>
+  <p class="hint">Roles <b>genéricos</b> (plataforma) — definidos en <code>platform/roles/</code>. Un deployment los especializa sin elevarlos.</p>
+  <table>
+    <tr><th>Rol</th><th>Para qué</th><th>Autonomía</th><th>¿Delega?</th></tr>
+    <tr><td><code>orchestrator</code></td><td>Ruteo de alto nivel, selección de rol, control del lifecycle</td><td><code>supervised</code></td><td>Sí → sales / data / summary</td></tr>
+    <tr><td><code>sales-agent</code></td><td>Toma de pedidos por canal conversacional: matchear catálogo, confirmar, persistir</td><td><code>supervised</code></td><td>No (hoja)</td></tr>
+    <tr><td><code>data-agent</code></td><td>Recuperación y síntesis de información de negocio (solo lectura)</td><td><code>full</code></td><td>No</td></tr>
+    <tr><td><code>summary-agent</code></td><td>Resúmenes de conversaciones/reuniones</td><td><code>full</code></td><td>No</td></tr>
+  </table>
+  <p class="hint" style="margin-top:14px">Deployment <b>BADIE</b> — en <code>deployments/badie/sales-agent/</code>, especializa el <code>sales-agent</code> genérico:</p>
+  <table>
+    <tr><th>Aporta</th><th>Detalle</th></tr>
+    <tr><td>contexto</td><td><code>role.md</code>: empresa, español rioplatense, vocabulario (<code>"la rubia"→Quilmes</code>, <code>"cajón"→24u</code>)</td></tr>
+    <tr><td>tools activas</td><td><code>message_sender</code>, <code>catalog_search</code>, <code>order_writer</code>, <code>session_state</code>, <code>client_lookup</code></td></tr>
+    <tr><td>skills</td><td><code>order_extraction</code>, <code>colloquial_matching</code>, <code>confirm_flow</code></td></tr>
+  </table>
+
+  <h2>Mapa de los archivos <code>.md</code></h2>
+  <div class="note">
+    <b>Schema ≠ instancia.</b> Los <code>.md</code> en <code>docs/platform/</code> son <b>esquemas</b> — describen qué debe contener una definición y cómo funciona la plataforma (los lee un humano). Los <code>.md</code> en <code>platform/roles/</code> y <code>deployments/</code> son <b>instancias</b> — son los agentes reales que el harness <b>parsea en runtime</b>. <code>docs/platform/role.md</code> dice "un rol tiene estos campos"; <code>platform/roles/sales-agent/role.md</code> ES un rol.
+  </div>
+  <h4 style="color:var(--blue);font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin:16px 0 4px">Especificaciones de plataforma — <code>docs/platform/</code> (schema)</h4>
+  <table>
+    <tr><th>Archivo</th><th>Define</th></tr>
+    <tr><td><code>manifesto.md</code></td><td>Visión y principios; qué es y qué NO es la plataforma; el límite Core vs deployment</td></tr>
+    <tr><td><code>role.md</code></td><td>Esquema de una definición de rol; la distinción AgentDefinition / AgentRuntime / Subsystem</td></tr>
+    <tr><td><code>tool.md</code></td><td>Qué es un tool, su esquema, cómo se registra e inyecta; tool vs skill</td></tr>
+    <tr><td><code>skill.md</code></td><td>Qué es una skill (módulo de comportamiento/prompt); skill vs tool</td></tr>
+    <tr><td><code>harness.md</code></td><td>El runtime: pipeline, inyección de capacidades, lifecycle, las dos capas de enforcement</td></tr>
+    <tr><td><code>policy.md</code></td><td>Cómo se comporta el agente: autonomía, escalation, human-in-the-loop, límites, enforcement</td></tr>
+    <tr><td><code>deployment.md</code></td><td>El modelo de dos capas (<code>platform/roles</code> + <code>deployments/{client}</code>) y las reglas de merge</td></tr>
+  </table>
+  <h4 style="color:var(--purple);font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin:16px 0 4px">Arquitectura y entrega — <code>docs/architecture/</code>, <code>docs/delivery/</code></h4>
+  <table>
+    <tr><th>Archivo</th><th>Define</th></tr>
+    <tr><td><code>architecture/agent-platform.md</code></td><td>Overview de alto nivel de la plataforma</td></tr>
+    <tr><td><code>architecture/delegation-policy.md</code></td><td>Reglas de spawn de agentes hijos y escalación</td></tr>
+    <tr><td><code>architecture/permission-model.md</code></td><td>RBAC e inyección de permisos por connector</td></tr>
+    <tr><td><code>delivery/badie-seller-ai.md</code></td><td>El alcance concreto entregado a BADIE</td></tr>
+    <tr><td><code>delivery/delegation-protocol.md</code></td><td>Metodología multi-agente: git+engram+ledger, worktrees, SDD, guardrails de aislamiento</td></tr>
+  </table>
+  <h4 style="color:var(--green);font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin:16px 0 4px">Definiciones de agentes (instancias — las lee el harness)</h4>
+  <table>
+    <tr><th>Ruta</th><th>Qué es</th></tr>
+    <tr><td><code>platform/roles/{sales-agent,orchestrator,data-agent,summary-agent}/</code></td><td>Los 4 roles genéricos, cada uno con <code>role.md</code> + <code>manifest.md</code> + <code>policy.md</code></td></tr>
+    <tr><td><code>deployments/badie/sales-agent/</code></td><td>El override de BADIE: los 3 <code>.md</code> + <code>skills/</code> (order_extraction, colloquial_matching, confirm_flow)</td></tr>
+  </table>
+  <h4 style="color:var(--amber);font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin:16px 0 4px">Proceso / gobernanza (raíz del repo)</h4>
+  <table>
+    <tr><th>Archivo</th><th>Qué es</th></tr>
+    <tr><td><code>AGENTS.md</code></td><td>Reglas de pie para todo agente (multi-agente, aislamiento, SDD). <code>CLAUDE.md</code> lo importa.</td></tr>
+    <tr><td><code>delegations.md</code></td><td>El ledger vivo de tareas — quién hace qué, en qué worktree, con qué estado</td></tr>
+  </table>
 
   <h2>Los tres módulos</h2>
   <div class="modules">
