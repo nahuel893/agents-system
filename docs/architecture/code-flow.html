@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agentsys — Harness Code Execution Flow</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1e222d; --border: #2a2f3a;
+    --text: #e4e7ee; --muted: #9aa3b2; --mono: ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+    --blue: #3b82f6; --green: #10b981; --amber: #f59e0b; --purple: #8b5cf6; --red: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.55; }
+  header { padding: 28px 32px 16px; border-bottom: 1px solid var(--border); }
+  h1 { margin: 0 0 6px; font-size: 22px; }
+  h1 .pkg { color: var(--blue); font-family: var(--mono); }
+  .sub { color: var(--muted); font-size: 14px; max-width: 820px; }
+  .wrap { padding: 24px 32px 64px; max-width: 1100px; }
+  h2 { font-size: 16px; margin: 34px 0 14px; color: var(--text);
+       border-left: 3px solid var(--blue); padding-left: 10px; }
+  code { font-family: var(--mono); background: var(--panel2); padding: 1px 5px;
+         border-radius: 4px; font-size: 0.9em; color: #c8d0de; }
+  .modules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .mod { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .mod h3 { margin: 0 0 8px; font-family: var(--mono); font-size: 14px; }
+  .mod.loader h3 { color: var(--blue); }
+  .mod.registry h3 { color: var(--green); }
+  .mod.injector h3 { color: var(--amber); }
+  .mod p { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+  .mod ul { margin: 0; padding-left: 16px; font-size: 12.5px; color: var(--muted); }
+  .mod li { margin: 2px 0; }
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .step { display: flex; align-items: stretch; gap: 0; cursor: pointer; }
+  .step .num { flex: 0 0 42px; display: flex; align-items: center; justify-content: center;
+               font-family: var(--mono); font-weight: 600; font-size: 15px;
+               background: var(--panel2); border: 1px solid var(--border); border-radius: 8px 0 0 8px; }
+  .step .body { flex: 1; background: var(--panel); border: 1px solid var(--border); border-left: none;
+                border-radius: 0 8px 8px 0; padding: 12px 14px; transition: background .15s; }
+  .step:hover .body { background: var(--panel2); }
+  .step .sig { font-family: var(--mono); font-size: 13.5px; color: var(--text); }
+  .step .what { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .arrow { height: 16px; display: flex; align-items: center; padding-left: 20px; color: var(--border); }
+  .arrow::before { content: "↓"; font-size: 16px; color: #3a4150; }
+  .step[data-c="blue"] .num { color: var(--blue); }
+  .step[data-c="green"] .num { color: var(--green); }
+  .step[data-c="amber"] .num { color: var(--amber); }
+  .step[data-c="purple"] .num { color: var(--purple); }
+  .detail { display: none; margin: 2px 0 2px 42px; background: #12151d;
+            border: 1px solid var(--border); border-left: 2px solid var(--blue);
+            border-radius: 0 8px 8px 0; padding: 14px 16px; font-size: 13px; }
+  .detail.open { display: block; }
+  .detail h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  pre { margin: 8px 0 0; background: #0b0d12; border: 1px solid var(--border); border-radius: 6px;
+        padding: 12px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: #c8d0de; }
+  .k { color: #c678dd; } .s { color: #98c379; } .f { color: #61afef; } .cm { color: #5c6370; font-style: italic; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td code { font-size: 12px; }
+  .ds { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .ds h3 { margin: 0 0 6px; font-family: var(--mono); font-size: 13.5px; color: var(--purple); }
+  .note { background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.3); border-radius: 8px;
+          padding: 12px 14px; font-size: 13px; color: #e8d4a8; margin-top: 10px; }
+  .next { background: rgba(139,92,246,.07); border: 1px solid rgba(139,92,246,.3); border-radius: 8px;
+          padding: 12px 14px; font-size: 13px; color: #d4c5f0; }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="pkg">agentsys</span> — Harness Code Execution Flow</h1>
+  <p class="sub">How a request becomes a validated, capability-scoped agent runtime. This walks the <b>real code that exists today</b> (<code>src/agentsys/harness/</code>): the loader, the tool registry, and the capability injector. The model is the brain; this is the OS that decides what it is allowed to be and do.</p>
+</header>
+<div class="wrap">
+
+  <h2>The three modules</h2>
+  <div class="modules">
+    <div class="mod loader">
+      <h3>loader.py</h3>
+      <p>Turns markdown definition folders into one validated, immutable <code>AgentDefinition</code>.</p>
+      <ul>
+        <li><code>resolve()</code> — entry point</li>
+        <li><code>load_generic()</code> / <code>load_override()</code></li>
+        <li><code>merge()</code> — directives + invariants</li>
+        <li><code>AgentDefinition</code> (frozen)</li>
+      </ul>
+    </div>
+    <div class="mod registry">
+      <h3>registry.py</h3>
+      <p>The code-side authority on which tools exist. Markdown only <i>references</i> names.</p>
+      <ul>
+        <li><code>ToolSpec</code> — name, required_permissions, connector</li>
+        <li><code>ToolRegistry</code> — register / get / names</li>
+        <li><code>ToolNotFoundError</code></li>
+      </ul>
+    </div>
+    <div class="mod injector">
+      <h3>injector.py</h3>
+      <p>Computes the enforced tool surface for one agent + identity (Layer 1).</p>
+      <ul>
+        <li><code>resolve_tool_surface()</code></li>
+        <li><code>effective = role ∩ granted</code></li>
+        <li><code>InjectionResult</code> — granted / denied</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Execution flow — click a step to expand</h2>
+  <p class="hint">Scenario: instantiate the <code>sales-agent</code> role for client <code>badie</code>, for a user whose RBAC grants a set of permissions.</p>
+  <div class="flow" id="flow">
+
+    <div class="step" data-c="blue" data-step="1">
+      <div class="num">1</div>
+      <div class="body">
+        <div class="sig">resolve(role_type="sales-agent", client="badie", roots)</div>
+        <div class="what">Public entry point. Orchestrates load → merge → return. Where any agent instantiation begins.</div>
+      </div>
+    </div>
+    <div class="detail" data-for="1">
+      <h4>What it does</h4>
+      Loads the generic role, loads the client override if it exists, merges them, and returns a frozen <code>AgentDefinition</code>. If no override exists for that client, the generic definition is returned unchanged — clients onboard gradually.
+      <pre><span class="k">def</span> <span class="f">resolve</span>(role_type, *, client=<span class="k">None</span>, roots=<span class="k">None</span>) -> AgentDefinition:
+    generic = <span class="f">load_generic</span>(role_type, roots=roots)
+    <span class="k">if</span> client <span class="k">is not</span> <span class="k">None</span>:
+        override = <span class="f">load_override</span>(client, role_type, roots=roots)
+        <span class="k">if</span> override <span class="k">is not</span> <span class="k">None</span>:
+            <span class="k">return</span> <span class="f">merge</span>(generic, override)   <span class="cm"># validated here</span>
+    <span class="k">return</span> _wrap(generic)               <span class="cm"># no override → generic as-is</span></pre>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="step" data-c="blue" data-step="2">
+      <div class="num">2</div>
+      <div class="body">
+        <div class="sig">load_generic("sales-agent") → RawDefinition</div>
+        <div class="what">Reads platform/roles/sales-agent/{role,manifest,policy}.md and parses the YAML frontmatter.</div>
+      </div>
+    </div>
+    <div class="detail" data-for="2">
+      <h4>What it does</h4>
+      Reads the three files of the generic role folder. <code>_split_frontmatter()</code> separates the YAML block (machine-readable config) from the markdown body. The body of <code>role.md</code> becomes the <code>system_prompt</code> verbatim — that is the only "prose for the model". Everything else is structured config.
+      <pre><span class="cm"># platform/roles/sales-agent/</span>
+role.md     → frontmatter {name, version}  +  BODY = system_prompt
+manifest.md → tools, skills, context, permissions
+policy.md   → autonomy, escalation_rules, delegation_policy,
+              memory_policy, audit_policy, execution_limits</pre>
+      <div class="note"><b>Key idea:</b> the markdown provides <i>context</i> (the prose). The structured fields are parsed only from YAML frontmatter — the loader never interprets prose.</div>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="step" data-c="blue" data-step="3">
+      <div class="num">3</div>
+      <div class="body">
+        <div class="sig">load_override("badie", "sales-agent") → RawDefinition | None</div>
+        <div class="what">Reads deployments/badie/sales-agent/… — the client's specialization. Returns None if the folder doesn't exist.</div>
+      </div>
+    </div>
+    <div class="detail" data-for="3">
+      <h4>What it does</h4>
+      Same parsing as step 2, but for the deployment folder. The override carries client-specific tools/skills and merge directives (e.g. <code>permissions: inherit</code>, <code>escalation_rules: {inherit: true, add: [...]}</code>). It also carries the BADIE <code>role.md</code> body (Argentine Spanish, vocabulary) which becomes the system prompt.
+    </div>
+    <div class="arrow"></div>
+
+    <div class="step" data-c="purple" data-step="4">
+      <div class="num">4</div>
+      <div class="body">
+        <div class="sig">merge(generic, override) → AgentDefinition</div>
+        <div class="what">The deterministic core. Validates invariants, applies merge directives, returns the frozen result. Raises DefinitionError on any violation.</div>
+      </div>
+    </div>
+    <div class="detail" data-for="4">
+      <h4>Validation runs FIRST — fail loud</h4>
+      <table>
+        <tr><th>Invariant</th><th>Rule</th></tr>
+        <tr><td>autonomy</td><td>override rank ≤ parent rank &nbsp;(<code>confirm</code> 0 &lt; <code>supervised</code> 1 &lt; <code>full</code> 2)</td></tr>
+        <tr><td>tools</td><td><code>set(override.tools) ⊆ set(parent.tools)</code></td></tr>
+        <tr><td>permissions</td><td>resolved permissions ⊆ parent permissions</td></tr>
+        <tr><td>execution_limits</td><td>each override limit ≤ parent / platform default</td></tr>
+      </table>
+      <div class="note"><b>The invariant that matters:</b> a deployment can only <b>restrict or specialize</b> — never elevate. This is architecture enforced as code: an override that tries to grab a tool or permission the generic role doesn't have makes <code>merge()</code> raise, and the runtime is never built.</div>
+      <h4 style="margin-top:14px">Then merge directives are applied</h4>
+      <table>
+        <tr><th>Directive</th><th>Result</th></tr>
+        <tr><td>field absent</td><td>inherit parent value unchanged</td></tr>
+        <tr><td><code>inherit</code></td><td>take parent value as-is</td></tr>
+        <tr><td><code>{inherit: true, add: [...]}</code></td><td>parent list + additions</td></tr>
+        <tr><td><code>{inherit: true, remove: [...]}</code></td><td>parent list − removals</td></tr>
+        <tr><td><code>{override: value}</code></td><td>replace entirely (still validated)</td></tr>
+      </table>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="step" data-c="green" data-step="5">
+      <div class="num">5</div>
+      <div class="body">
+        <div class="sig">ToolRegistry.register(ToolSpec(...))  ·  built at startup</div>
+        <div class="what">The platform registers every real tool once. A manifest can only name tools that live here. Unknown name → it does not exist.</div>
+      </div>
+    </div>
+    <div class="detail" data-for="5">
+      <h4>What it does</h4>
+      The registry is the single source of truth for what tools the platform provides. Each <code>ToolSpec</code> couples a name to the permissions it requires and the executable connector.
+      <pre><span class="k">@dataclass</span>(frozen=<span class="k">True</span>)
+<span class="k">class</span> <span class="f">ToolSpec</span>:
+    name: <span class="f">str</span>
+    required_permissions: <span class="f">tuple</span>[<span class="f">str</span>, ...]
+    connector: Callable[..., Any]   <span class="cm"># the executable</span>
+
+registry.<span class="f">get</span>(<span class="s">"unknown_tool"</span>)   <span class="cm"># → raises ToolNotFoundError</span></pre>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="step" data-c="amber" data-step="6">
+      <div class="num">6</div>
+      <div class="body">
+        <div class="sig">resolve_tool_surface(definition, registry, granted_permissions) → InjectionResult</div>
+        <div class="what">Layer 1 enforcement. Computes which tools this agent + this identity may actually use.</div>
+      </div>
+    </div>
+    <div class="detail" data-for="6">
+      <h4>The resolution — effective = role ∩ granted</h4>
+      <pre><span class="k">def</span> <span class="f">resolve_tool_surface</span>(definition, registry, granted_permissions):
+    effective = <span class="f">set</span>(definition.permissions) & <span class="f">set</span>(granted_permissions)
+    granted, denied = [], []
+    <span class="k">for</span> name <span class="k">in</span> definition.tools:
+        <span class="k">if</span> name <span class="k">not in</span> registry:
+            <span class="k">raise</span> InjectionError(name)        <span class="cm"># fail loud</span>
+        spec = registry.<span class="f">get</span>(name)
+        <span class="k">if</span> <span class="f">set</span>(spec.required_permissions) &lt;= effective:
+            granted.<span class="f">append</span>(spec)
+        <span class="k">else</span>:
+            denied.<span class="f">append</span>((name, <span class="s">"missing permissions: …"</span>))
+    <span class="k">return</span> InjectionResult(granted, denied)</pre>
+      <div class="note"><b>Why the intersection:</b> a tool is usable only if the <i>role</i> allows the permission AND the <i>user</i> was granted it. The role caps it; the user identity caps it again. Neither alone is enough.</div>
+    </div>
+
+  </div>
+
+  <h2>The data that flows through</h2>
+  <div class="ds">
+    <h3>AgentDefinition  (frozen — the validated snapshot)</h3>
+    <pre>role_name · version · deployment · <span class="cm"># identity</span>
+system_prompt                       <span class="cm"># role.md body, verbatim</span>
+tools · skills · context · permissions    <span class="cm"># from manifest.md</span>
+autonomy · escalation_rules · delegation_policy
+memory_policy · audit_policy · execution_limits   <span class="cm"># from policy.md</span></pre>
+  </div>
+  <div class="ds">
+    <h3>InjectionResult  (the enforced surface)</h3>
+    <pre>granted: tuple[ToolSpec, ...]            <span class="cm"># what the agent may call</span>
+denied:  tuple[(tool_name, reason), ...] <span class="cm"># filtered out, with why</span></pre>
+  </div>
+
+  <h2>Worked example — sales-agent for badie</h2>
+  <table>
+    <tr><th>Input</th><td><code>resolve("sales-agent", client="badie")</code> · user granted <code>{read:catalog, send:message}</code></td></tr>
+    <tr><th>After merge</th><td>AgentDefinition with tools <code>[message_sender, catalog_search, order_writer, session_state, client_lookup]</code>, autonomy <code>supervised</code>, permissions inherited from the generic role</td></tr>
+    <tr><th>effective</th><td><code>definition.permissions ∩ {read:catalog, send:message}</code> = <code>{read:catalog, send:message}</code></td></tr>
+    <tr><th>Result</th><td><code>catalog_search</code> + <code>message_sender</code> → <b>granted</b>; <code>order_writer</code> (needs <code>write:orders</code>) → <b>denied</b> (missing permission)</td></tr>
+  </table>
+
+  <h2>What is NOT built yet</h2>
+  <div class="next">
+    The flow above stops at the <b>resolved surface</b>. Still ahead (Wave 2+): the <b>Agent Factory</b> (assembles prompt + tools + skills + policy into a runtime), <b>Layer 2 — the Tool Call Interceptor</b> (runtime enforcement: block + audit + escalate), the <b>Agent Runtime</b> (LangGraph + <code>bind_tools</code> + the LLM), the <b>System Router</b>, and the <b>audit/memory</b> sinks. This page covers loader + registry + injector only — the deterministic foundation everything else builds on.
+  </div>
+
+</div>
+<script>
+  document.querySelectorAll('.step').forEach(function (step) {
+    step.addEventListener('click', function () {
+      var id = step.getAttribute('data-step');
+      var detail = document.querySelector('.detail[data-for="' + id + '"]');
+      if (detail) detail.classList.toggle('open');
+    });
+  });
+</script>
+</body>
+</html>
