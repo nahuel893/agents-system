@@ -36,7 +36,10 @@ import dataclasses
 import pathlib
 from typing import Any, Mapping
 
+import structlog
 import yaml
+
+logger = structlog.get_logger()
 
 # ---------------------------------------------------------------------------
 # Repo-level default roots (overridable via RootConfig)
@@ -477,6 +480,31 @@ def _validate_execution_limits(
 
 
 def merge(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
+    """Validate and merge a generic definition with an override.
+
+    Logs the outcome (invariant violation or successful merge) and delegates
+    the actual work to ``_merge_validated``.
+    """
+    try:
+        result = _merge_validated(generic, override)
+    except DefinitionError as exc:
+        logger.error(
+            "loader.invariant_violation",
+            role=generic.role_name,
+            deployment=override.deployment,
+            detail=str(exc),
+        )
+        raise
+    logger.info(
+        "loader.definition_merged",
+        role=result.role_name,
+        deployment=result.deployment,
+        tools=len(result.tools),
+    )
+    return result
+
+
+def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
     """Apply override merge directives to the generic definition.
 
     Validates all structural invariants and raises ``DefinitionError`` on any
