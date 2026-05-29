@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from acme.harness.loader import AgentDefinition
-from acme.harness.registry import ToolRegistry, ToolSpec
+from agentsys.harness.loader import AgentDefinition
+from agentsys.harness.registry import ToolRegistry, ToolSpec
 
 
 def _connector() -> str:
@@ -30,7 +30,7 @@ def _definition(*, tools: tuple[str, ...], permissions: tuple[str, ...]) -> Agen
 
 
 def test_resolve_tool_surface_grants_all_tools_when_permissions_present() -> None:
-    from acme.harness.injector import resolve_tool_surface
+    from agentsys.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     catalog_search = ToolSpec(
@@ -61,7 +61,7 @@ def test_resolve_tool_surface_grants_all_tools_when_permissions_present() -> Non
 
 
 def test_resolve_tool_surface_denies_tool_with_missing_permissions() -> None:
-    from acme.harness.injector import resolve_tool_surface
+    from agentsys.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     catalog_search = ToolSpec(
@@ -94,7 +94,7 @@ def test_resolve_tool_surface_denies_tool_with_missing_permissions() -> None:
 
 
 def test_resolve_tool_surface_uses_role_and_user_permission_intersection() -> None:
-    from acme.harness.injector import resolve_tool_surface
+    from agentsys.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     client_lookup = ToolSpec(
@@ -121,7 +121,7 @@ def test_resolve_tool_surface_uses_role_and_user_permission_intersection() -> No
 
 
 def test_resolve_tool_surface_raises_for_unregistered_tool() -> None:
-    from acme.harness.injector import InjectionError, resolve_tool_surface
+    from agentsys.harness.injector import InjectionError, resolve_tool_surface
 
     definition = _definition(
         tools=("missing_tool",),

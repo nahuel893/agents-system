@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from acme.config import Settings
-from acme.services import rag
-from acme.services.catalog import (
+from agentsys.config import Settings
+from agentsys.services import rag
+from agentsys.services.catalog import (
     KeywordSearchCandidate,
     VectorSearchCandidate,
 )

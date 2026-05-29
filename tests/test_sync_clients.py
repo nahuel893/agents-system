@@ -20,9 +20,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from acme.models.base import Base
-from acme.models.tables import Client
-from acme.services.sync_clients import sync_clients
+from agentsys.models.base import Base
+from agentsys.models.tables import Client
+from agentsys.services.sync_clients import sync_clients
 
 
 # ---------------------------------------------------------------------------

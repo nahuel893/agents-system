@@ -19,10 +19,10 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from acme.models.base import Base
-from acme.models.tables import CatalogEmbedding
-from acme.services.embeddings import FakeEmbeddingProvider
-from acme.services.sync_articles import sync_articles
+from agentsys.models.base import Base
+from agentsys.models.tables import CatalogEmbedding
+from agentsys.services.embeddings import FakeEmbeddingProvider
+from agentsys.services.sync_articles import sync_articles
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """Tests for the Redis connection manager (no running Redis required)."""
 
-import acme.services.redis as redis_mod
+import agentsys.services.redis as redis_mod
 
 
 def test_get_redis_pool_returns_pool() -> None:
