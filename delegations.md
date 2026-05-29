@@ -29,8 +29,7 @@
 
 | ID | Slice / Feature | Agent | Model | Cx | Branch | Depends on | Status | Result |
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
-| D-002 | ToolRegistry + Capability Injector (Layer 1 enforcement) | opencode | gpt-5.4 | high | `feat/D-002-tool-registry-injector` | — | in_progress | — |
-| D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | todo | — |
+| D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | in_review | Committed on branch (`5581b57`); pending Lead review |
 
 ---
 
@@ -125,3 +124,4 @@ Bring the interactive diagram and the Spanish docs in line with the **current `m
 ## Done (archive)
 
 - **D-001** — Enforce `execution_limits` stricter-only invariant in loader (opencode/minimax-2.7). Merged to `main` (`00089c8`). Added `_PLATFORM_DEFAULT_LIMITS` + `_validate_execution_limits()` in `loader.py`; 19 loader tests, full suite 110 passed.
+- **D-002** — ToolRegistry + capability injector / Layer 1 enforcement (opencode/gpt-5.4). Merged to `main` (`a82101a`). `registry.py` (tool authority) + `injector.py` (`resolve_tool_surface`, effective = role ∩ granted, fail-loud on unknown tool); 8 tests, full suite 118 passed. Note: worker did not commit — Lead committed the work at integration.
