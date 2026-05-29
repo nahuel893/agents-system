@@ -62,7 +62,7 @@ def create_document(title, text, collection_id, parent_id=None):
     res = make_request("/api/documents.create", payload)
     doc_id = res["data"]["id"]
     print(f"Created doc '{title}' with ID: {doc_id}")
-    time.sleep(1.0)  # Pace the requests to prevent hitting rate limits
+    time.sleep(1.2)  # Pace the requests to prevent hitting rate limits
     return doc_id
 
 def main():
@@ -88,9 +88,13 @@ def main():
         col_id = create_res["data"]["id"]
         print(f"Created collection with ID: {col_id}")
         
-    # 1. Overview
+    # 1. Overview (English)
     overview_text = read_file("docs/architecture/agent-platform.md")
     overview_id = create_document("Agent Platform — Overview", overview_text, col_id)
+    
+    # 1b. Descripción General (Español)
+    overview_es_text = read_file("docs/architecture_es/agent-platform.md")
+    overview_es_id = create_document("Agent Platform — Descripción General (Español)", overview_es_text, col_id)
     
     # 2. Platform Primitives (parent)
     primitives_intro = (
@@ -165,6 +169,24 @@ def main():
     for title, path in arch_docs:
         text = read_file(path)
         create_document(title, text, col_id, arch_id)
+
+    # 5b. Arquitectura (Español) (parent)
+    arch_es_intro = (
+        "# Arquitectura (Español)\n\n"
+        "Documentación formal sobre las políticas de seguridad, permisos y control de flujo del sistema multi-agente en español:\n\n"
+        "- **Política de Delegación (Español)**: Las reglas explícitas de spawning y control de agentes hijos.\n"
+        "- **Modelo de Permisos (Español)**: La matriz de control de acceso basada en roles (RBAC) y revalidación en caliente."
+    )
+    arch_es_id = create_document("Arquitectura (Español)", arch_es_intro, col_id)
+    
+    # 5c. Hijos de Arquitectura (Español)
+    arch_es_docs = [
+        ("Política de Delegación (Español)", "docs/architecture_es/delegation-policy.md"),
+        ("Modelo de Permisos (Español)", "docs/architecture_es/permission-model.md")
+    ]
+    for title, path in arch_es_docs:
+        text = read_file(path)
+        create_document(title, text, col_id, arch_es_id)
         
     # 6. Delivery (parent)
     delivery_intro = (
@@ -176,6 +198,17 @@ def main():
     
     # 7. Children of Delivery
     create_document("BADIE Seller AI", read_file("docs/delivery/badie-seller-ai.md"), col_id, delivery_id)
+
+    # 7b. Entrega (Español) (parent)
+    delivery_es_intro = (
+        "# Entrega (Español)\n\n"
+        "Especificaciones del alcance comprometido y las integraciones concretas para los despliegues de clientes en español:\n\n"
+        "- **Alcance: BADIE Seller AI (Español)**: El bot de toma de pedidos conversacional por WhatsApp para Distribuidora BADIE S.A."
+    )
+    delivery_es_id = create_document("Entrega (Español)", delivery_es_intro, col_id)
+    
+    # 7c. Hijos de Entrega (Español)
+    create_document("Alcance: BADIE Seller AI (Español)", read_file("docs/delivery_es/badie-seller-ai.md"), col_id, delivery_es_id)
     
     # 8. Agent Definitions (parent)
     defs_intro = (
