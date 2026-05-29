@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>agentsys — Harness Code Execution Flow</title>
+<title>agentsys — Flujo de ejecución del harness</title>
 <style>
   :root {
     --bg: #0f1117; --panel: #171a23; --panel2: #1e222d; --border: #2a2f3a;
@@ -70,26 +70,26 @@
 </head>
 <body>
 <header>
-  <h1><span class="pkg">agentsys</span> — Harness Code Execution Flow</h1>
-  <p class="sub">How a request becomes a validated, capability-scoped agent runtime. This walks the <b>real code that exists today</b> (<code>src/agentsys/harness/</code>): the loader, the tool registry, and the capability injector. The model is the brain; this is the OS that decides what it is allowed to be and do.</p>
+  <h1><span class="pkg">agentsys</span> — Flujo de ejecución del harness</h1>
+  <p class="sub">Cómo una solicitud se convierte en un runtime de agente validado y con capacidades acotadas. Esto recorre el <b>código real que existe hoy</b> (<code>src/agentsys/harness/</code>): el loader, el registro de tools y el inyector de capacidades. El modelo es el cerebro; esto es el sistema operativo que decide qué tiene permitido ser y hacer.</p>
 </header>
 <div class="wrap">
 
-  <h2>The three modules</h2>
+  <h2>Los tres módulos</h2>
   <div class="modules">
     <div class="mod loader">
       <h3>loader.py</h3>
-      <p>Turns markdown definition folders into one validated, immutable <code>AgentDefinition</code>.</p>
+      <p>Convierte las carpetas de definición en markdown en un único <code>AgentDefinition</code> validado e inmutable.</p>
       <ul>
-        <li><code>resolve()</code> — entry point</li>
+        <li><code>resolve()</code> — punto de entrada</li>
         <li><code>load_generic()</code> / <code>load_override()</code></li>
-        <li><code>merge()</code> — directives + invariants</li>
-        <li><code>AgentDefinition</code> (frozen)</li>
+        <li><code>merge()</code> — directivas + invariantes</li>
+        <li><code>AgentDefinition</code> (congelado)</li>
       </ul>
     </div>
     <div class="mod registry">
       <h3>registry.py</h3>
-      <p>The code-side authority on which tools exist. Markdown only <i>references</i> names.</p>
+      <p>La autoridad, del lado del código, sobre qué tools existen. El markdown solo <i>referencia</i> nombres.</p>
       <ul>
         <li><code>ToolSpec</code> — name, required_permissions, connector</li>
         <li><code>ToolRegistry</code> — register / get / names</li>
@@ -98,36 +98,36 @@
     </div>
     <div class="mod injector">
       <h3>injector.py</h3>
-      <p>Computes the enforced tool surface for one agent + identity (Layer 1).</p>
+      <p>Calcula la superficie de tools que se hace cumplir para un agente + identidad (Capa 1).</p>
       <ul>
         <li><code>resolve_tool_surface()</code></li>
-        <li><code>effective = role ∩ granted</code></li>
+        <li><code>effective = rol ∩ otorgados</code></li>
         <li><code>InjectionResult</code> — granted / denied</li>
       </ul>
     </div>
   </div>
 
-  <h2>Execution flow — click a step to expand</h2>
-  <p class="hint">Scenario: instantiate the <code>sales-agent</code> role for client <code>badie</code>, for a user whose RBAC grants a set of permissions.</p>
+  <h2>Flujo de ejecución — hacé clic en un paso para expandir</h2>
+  <p class="hint">Escenario: instanciar el rol <code>sales-agent</code> para el cliente <code>badie</code>, para un usuario cuyo RBAC le otorga un conjunto de permisos.</p>
   <div class="flow" id="flow">
 
     <div class="step" data-c="blue" data-step="1">
       <div class="num">1</div>
       <div class="body">
         <div class="sig">resolve(role_type="sales-agent", client="badie", roots)</div>
-        <div class="what">Public entry point. Orchestrates load → merge → return. Where any agent instantiation begins.</div>
+        <div class="what">Punto de entrada público. Orquesta cargar → fusionar → devolver. Donde arranca toda instanciación de agente.</div>
       </div>
     </div>
     <div class="detail" data-for="1">
-      <h4>What it does</h4>
-      Loads the generic role, loads the client override if it exists, merges them, and returns a frozen <code>AgentDefinition</code>. If no override exists for that client, the generic definition is returned unchanged — clients onboard gradually.
+      <h4>Qué hace</h4>
+      Carga el rol genérico, carga el override del cliente si existe, los fusiona y devuelve un <code>AgentDefinition</code> congelado. Si no existe override para ese cliente, devuelve el genérico sin cambios — los clientes se incorporan de a poco.
       <pre><span class="k">def</span> <span class="f">resolve</span>(role_type, *, client=<span class="k">None</span>, roots=<span class="k">None</span>) -> AgentDefinition:
     generic = <span class="f">load_generic</span>(role_type, roots=roots)
     <span class="k">if</span> client <span class="k">is not</span> <span class="k">None</span>:
         override = <span class="f">load_override</span>(client, role_type, roots=roots)
         <span class="k">if</span> override <span class="k">is not</span> <span class="k">None</span>:
-            <span class="k">return</span> <span class="f">merge</span>(generic, override)   <span class="cm"># validated here</span>
-    <span class="k">return</span> _wrap(generic)               <span class="cm"># no override → generic as-is</span></pre>
+            <span class="k">return</span> <span class="f">merge</span>(generic, override)   <span class="cm"># acá se valida</span>
+    <span class="k">return</span> _wrap(generic)               <span class="cm"># sin override → genérico tal cual</span></pre>
     </div>
     <div class="arrow"></div>
 
@@ -135,18 +135,18 @@
       <div class="num">2</div>
       <div class="body">
         <div class="sig">load_generic("sales-agent") → RawDefinition</div>
-        <div class="what">Reads platform/roles/sales-agent/{role,manifest,policy}.md and parses the YAML frontmatter.</div>
+        <div class="what">Lee platform/roles/sales-agent/{role,manifest,policy}.md y parsea el frontmatter YAML.</div>
       </div>
     </div>
     <div class="detail" data-for="2">
-      <h4>What it does</h4>
-      Reads the three files of the generic role folder. <code>_split_frontmatter()</code> separates the YAML block (machine-readable config) from the markdown body. The body of <code>role.md</code> becomes the <code>system_prompt</code> verbatim — that is the only "prose for the model". Everything else is structured config.
+      <h4>Qué hace</h4>
+      Lee los tres archivos de la carpeta del rol genérico. <code>_split_frontmatter()</code> separa el bloque YAML (config máquina-legible) del cuerpo markdown. El cuerpo de <code>role.md</code> se vuelve el <code>system_prompt</code> textual — esa es la única "prosa para el modelo". Todo lo demás es config estructurada.
       <pre><span class="cm"># platform/roles/sales-agent/</span>
-role.md     → frontmatter {name, version}  +  BODY = system_prompt
+role.md     → frontmatter {name, version}  +  CUERPO = system_prompt
 manifest.md → tools, skills, context, permissions
 policy.md   → autonomy, escalation_rules, delegation_policy,
               memory_policy, audit_policy, execution_limits</pre>
-      <div class="note"><b>Key idea:</b> the markdown provides <i>context</i> (the prose). The structured fields are parsed only from YAML frontmatter — the loader never interprets prose.</div>
+      <div class="note"><b>Idea clave:</b> el markdown aporta <i>contexto</i> (la prosa). Los campos estructurados se parsean solo desde el frontmatter YAML — el loader nunca interpreta prosa.</div>
     </div>
     <div class="arrow"></div>
 
@@ -154,12 +154,12 @@ policy.md   → autonomy, escalation_rules, delegation_policy,
       <div class="num">3</div>
       <div class="body">
         <div class="sig">load_override("badie", "sales-agent") → RawDefinition | None</div>
-        <div class="what">Reads deployments/badie/sales-agent/… — the client's specialization. Returns None if the folder doesn't exist.</div>
+        <div class="what">Lee deployments/badie/sales-agent/… — la especialización del cliente. Devuelve None si la carpeta no existe.</div>
       </div>
     </div>
     <div class="detail" data-for="3">
-      <h4>What it does</h4>
-      Same parsing as step 2, but for the deployment folder. The override carries client-specific tools/skills and merge directives (e.g. <code>permissions: inherit</code>, <code>escalation_rules: {inherit: true, add: [...]}</code>). It also carries the BADIE <code>role.md</code> body (Argentine Spanish, vocabulary) which becomes the system prompt.
+      <h4>Qué hace</h4>
+      El mismo parseo que el paso 2, pero sobre la carpeta del deployment. El override trae tools/skills específicos del cliente y directivas de merge (por ej. <code>permissions: inherit</code>, <code>escalation_rules: {inherit: true, add: [...]}</code>). También trae el cuerpo del <code>role.md</code> de BADIE (español rioplatense, vocabulario) que se vuelve el system prompt.
     </div>
     <div class="arrow"></div>
 
@@ -167,27 +167,27 @@ policy.md   → autonomy, escalation_rules, delegation_policy,
       <div class="num">4</div>
       <div class="body">
         <div class="sig">merge(generic, override) → AgentDefinition</div>
-        <div class="what">The deterministic core. Validates invariants, applies merge directives, returns the frozen result. Raises DefinitionError on any violation.</div>
+        <div class="what">El núcleo determinístico. Valida invariantes, aplica las directivas de merge y devuelve el resultado congelado. Lanza DefinitionError ante cualquier violación.</div>
       </div>
     </div>
     <div class="detail" data-for="4">
-      <h4>Validation runs FIRST — fail loud</h4>
+      <h4>La validación corre PRIMERO — falla fuerte</h4>
       <table>
-        <tr><th>Invariant</th><th>Rule</th></tr>
-        <tr><td>autonomy</td><td>override rank ≤ parent rank &nbsp;(<code>confirm</code> 0 &lt; <code>supervised</code> 1 &lt; <code>full</code> 2)</td></tr>
+        <tr><th>Invariante</th><th>Regla</th></tr>
+        <tr><td>autonomy</td><td>rango del override ≤ rango del padre &nbsp;(<code>confirm</code> 0 &lt; <code>supervised</code> 1 &lt; <code>full</code> 2)</td></tr>
         <tr><td>tools</td><td><code>set(override.tools) ⊆ set(parent.tools)</code></td></tr>
-        <tr><td>permissions</td><td>resolved permissions ⊆ parent permissions</td></tr>
-        <tr><td>execution_limits</td><td>each override limit ≤ parent / platform default</td></tr>
+        <tr><td>permissions</td><td>permisos resueltos ⊆ permisos del padre</td></tr>
+        <tr><td>execution_limits</td><td>cada límite del override ≤ padre / default de plataforma</td></tr>
       </table>
-      <div class="note"><b>The invariant that matters:</b> a deployment can only <b>restrict or specialize</b> — never elevate. This is architecture enforced as code: an override that tries to grab a tool or permission the generic role doesn't have makes <code>merge()</code> raise, and the runtime is never built.</div>
-      <h4 style="margin-top:14px">Then merge directives are applied</h4>
+      <div class="note"><b>El invariante que importa:</b> un deployment solo puede <b>restringir o especializar</b> — nunca elevar. Esto es arquitectura hecha cumplir como código: un override que intente agarrar un tool o permiso que el rol genérico no tiene hace que <code>merge()</code> lance, y el runtime nunca se construye.</div>
+      <h4 style="margin-top:14px">Después se aplican las directivas de merge</h4>
       <table>
-        <tr><th>Directive</th><th>Result</th></tr>
-        <tr><td>field absent</td><td>inherit parent value unchanged</td></tr>
-        <tr><td><code>inherit</code></td><td>take parent value as-is</td></tr>
-        <tr><td><code>{inherit: true, add: [...]}</code></td><td>parent list + additions</td></tr>
-        <tr><td><code>{inherit: true, remove: [...]}</code></td><td>parent list − removals</td></tr>
-        <tr><td><code>{override: value}</code></td><td>replace entirely (still validated)</td></tr>
+        <tr><th>Directiva</th><th>Resultado</th></tr>
+        <tr><td>campo ausente</td><td>hereda el valor del padre sin cambios</td></tr>
+        <tr><td><code>inherit</code></td><td>toma el valor del padre tal cual</td></tr>
+        <tr><td><code>{inherit: true, add: [...]}</code></td><td>lista del padre + agregados</td></tr>
+        <tr><td><code>{inherit: true, remove: [...]}</code></td><td>lista del padre − quitados</td></tr>
+        <tr><td><code>{override: value}</code></td><td>reemplaza por completo (igual se valida)</td></tr>
       </table>
     </div>
     <div class="arrow"></div>
@@ -195,20 +195,20 @@ policy.md   → autonomy, escalation_rules, delegation_policy,
     <div class="step" data-c="green" data-step="5">
       <div class="num">5</div>
       <div class="body">
-        <div class="sig">ToolRegistry.register(ToolSpec(...))  ·  built at startup</div>
-        <div class="what">The platform registers every real tool once. A manifest can only name tools that live here. Unknown name → it does not exist.</div>
+        <div class="sig">ToolRegistry.register(ToolSpec(...))  ·  se arma al iniciar</div>
+        <div class="what">La plataforma registra cada tool real una vez. Un manifest solo puede nombrar tools que viven acá. Nombre desconocido → no existe.</div>
       </div>
     </div>
     <div class="detail" data-for="5">
-      <h4>What it does</h4>
-      The registry is the single source of truth for what tools the platform provides. Each <code>ToolSpec</code> couples a name to the permissions it requires and the executable connector.
+      <h4>Qué hace</h4>
+      El registro es la única fuente de verdad sobre qué tools provee la plataforma. Cada <code>ToolSpec</code> acopla un nombre a los permisos que requiere y al connector ejecutable.
       <pre><span class="k">@dataclass</span>(frozen=<span class="k">True</span>)
 <span class="k">class</span> <span class="f">ToolSpec</span>:
     name: <span class="f">str</span>
     required_permissions: <span class="f">tuple</span>[<span class="f">str</span>, ...]
-    connector: Callable[..., Any]   <span class="cm"># the executable</span>
+    connector: Callable[..., Any]   <span class="cm"># el ejecutable</span>
 
-registry.<span class="f">get</span>(<span class="s">"unknown_tool"</span>)   <span class="cm"># → raises ToolNotFoundError</span></pre>
+registry.<span class="f">get</span>(<span class="s">"unknown_tool"</span>)   <span class="cm"># → lanza ToolNotFoundError</span></pre>
     </div>
     <div class="arrow"></div>
 
@@ -216,54 +216,54 @@ registry.<span class="f">get</span>(<span class="s">"unknown_tool"</span>)   <sp
       <div class="num">6</div>
       <div class="body">
         <div class="sig">resolve_tool_surface(definition, registry, granted_permissions) → InjectionResult</div>
-        <div class="what">Layer 1 enforcement. Computes which tools this agent + this identity may actually use.</div>
+        <div class="what">Enforcement de Capa 1. Calcula qué tools puede usar realmente este agente + esta identidad.</div>
       </div>
     </div>
     <div class="detail" data-for="6">
-      <h4>The resolution — effective = role ∩ granted</h4>
+      <h4>La resolución — effective = rol ∩ otorgados</h4>
       <pre><span class="k">def</span> <span class="f">resolve_tool_surface</span>(definition, registry, granted_permissions):
     effective = <span class="f">set</span>(definition.permissions) & <span class="f">set</span>(granted_permissions)
     granted, denied = [], []
     <span class="k">for</span> name <span class="k">in</span> definition.tools:
         <span class="k">if</span> name <span class="k">not in</span> registry:
-            <span class="k">raise</span> InjectionError(name)        <span class="cm"># fail loud</span>
+            <span class="k">raise</span> InjectionError(name)        <span class="cm"># falla fuerte</span>
         spec = registry.<span class="f">get</span>(name)
         <span class="k">if</span> <span class="f">set</span>(spec.required_permissions) &lt;= effective:
             granted.<span class="f">append</span>(spec)
         <span class="k">else</span>:
-            denied.<span class="f">append</span>((name, <span class="s">"missing permissions: …"</span>))
+            denied.<span class="f">append</span>((name, <span class="s">"faltan permisos: …"</span>))
     <span class="k">return</span> InjectionResult(granted, denied)</pre>
-      <div class="note"><b>Why the intersection:</b> a tool is usable only if the <i>role</i> allows the permission AND the <i>user</i> was granted it. The role caps it; the user identity caps it again. Neither alone is enough.</div>
+      <div class="note"><b>Por qué la intersección:</b> un tool es usable solo si el <i>rol</i> permite el permiso Y el <i>usuario</i> lo tiene otorgado. El rol lo limita; la identidad del usuario lo limita de nuevo. Ninguno por sí solo alcanza.</div>
     </div>
 
   </div>
 
-  <h2>The data that flows through</h2>
+  <h2>Los datos que fluyen</h2>
   <div class="ds">
-    <h3>AgentDefinition  (frozen — the validated snapshot)</h3>
-    <pre>role_name · version · deployment · <span class="cm"># identity</span>
-system_prompt                       <span class="cm"># role.md body, verbatim</span>
-tools · skills · context · permissions    <span class="cm"># from manifest.md</span>
+    <h3>AgentDefinition  (congelado — la instantánea validada)</h3>
+    <pre>role_name · version · deployment · <span class="cm"># identidad</span>
+system_prompt                       <span class="cm"># cuerpo de role.md, textual</span>
+tools · skills · context · permissions    <span class="cm"># de manifest.md</span>
 autonomy · escalation_rules · delegation_policy
-memory_policy · audit_policy · execution_limits   <span class="cm"># from policy.md</span></pre>
+memory_policy · audit_policy · execution_limits   <span class="cm"># de policy.md</span></pre>
   </div>
   <div class="ds">
-    <h3>InjectionResult  (the enforced surface)</h3>
-    <pre>granted: tuple[ToolSpec, ...]            <span class="cm"># what the agent may call</span>
-denied:  tuple[(tool_name, reason), ...] <span class="cm"># filtered out, with why</span></pre>
+    <h3>InjectionResult  (la superficie que se hace cumplir)</h3>
+    <pre>granted: tuple[ToolSpec, ...]            <span class="cm"># lo que el agente puede llamar</span>
+denied:  tuple[(tool_name, reason), ...] <span class="cm"># filtrados, con el motivo</span></pre>
   </div>
 
-  <h2>Worked example — sales-agent for badie</h2>
+  <h2>Ejemplo trabajado — sales-agent para badie</h2>
   <table>
-    <tr><th>Input</th><td><code>resolve("sales-agent", client="badie")</code> · user granted <code>{read:catalog, send:message}</code></td></tr>
-    <tr><th>After merge</th><td>AgentDefinition with tools <code>[message_sender, catalog_search, order_writer, session_state, client_lookup]</code>, autonomy <code>supervised</code>, permissions inherited from the generic role</td></tr>
+    <tr><th>Entrada</th><td><code>resolve("sales-agent", client="badie")</code> · al usuario se le otorga <code>{read:catalog, send:message}</code></td></tr>
+    <tr><th>Tras el merge</th><td>AgentDefinition con tools <code>[message_sender, catalog_search, order_writer, session_state, client_lookup]</code>, autonomy <code>supervised</code>, permisos heredados del rol genérico</td></tr>
     <tr><th>effective</th><td><code>definition.permissions ∩ {read:catalog, send:message}</code> = <code>{read:catalog, send:message}</code></td></tr>
-    <tr><th>Result</th><td><code>catalog_search</code> + <code>message_sender</code> → <b>granted</b>; <code>order_writer</code> (needs <code>write:orders</code>) → <b>denied</b> (missing permission)</td></tr>
+    <tr><th>Resultado</th><td><code>catalog_search</code> + <code>message_sender</code> → <b>granted</b>; <code>order_writer</code> (necesita <code>write:orders</code>) → <b>denied</b> (falta el permiso)</td></tr>
   </table>
 
-  <h2>What is NOT built yet</h2>
+  <h2>Lo que TODAVÍA no está construido</h2>
   <div class="next">
-    The flow above stops at the <b>resolved surface</b>. Still ahead (Wave 2+): the <b>Agent Factory</b> (assembles prompt + tools + skills + policy into a runtime), <b>Layer 2 — the Tool Call Interceptor</b> (runtime enforcement: block + audit + escalate), the <b>Agent Runtime</b> (LangGraph + <code>bind_tools</code> + the LLM), the <b>System Router</b>, and the <b>audit/memory</b> sinks. This page covers loader + registry + injector only — the deterministic foundation everything else builds on.
+    El flujo de arriba termina en la <b>superficie resuelta</b>. Falta (Wave 2+): el <b>Agent Factory</b> (ensambla prompt + tools + skills + policy en un runtime), la <b>Capa 2 — el Tool Call Interceptor</b> (enforcement en runtime: bloquea + audita + escala), el <b>Agent Runtime</b> (LangGraph + <code>bind_tools</code> + el LLM), el <b>System Router</b>, y los sumideros de <b>auditoría/memoria</b>. Esta página cubre solo loader + registry + injector — el cimiento determinístico sobre el que se construye todo lo demás.
   </div>
 
 </div>
