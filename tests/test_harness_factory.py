@@ -239,3 +239,44 @@ def test_build_runtime_logs_built_event() -> None:
 
     events = [e["event"] for e in logs]
     assert "factory.runtime_built" in events
+
+
+def test_build_runtime_logs_each_skill_loaded() -> None:
+    from agentsys.harness.factory import build_runtime
+
+    with structlog.testing.capture_logs() as logs:
+        build_runtime(
+            "sales-agent",
+            _sales_registry(),
+            SALES_PERMISSIONS,
+            client="badie",
+        )
+
+    loaded = [e for e in logs if e["event"] == "factory.skill_loaded"]
+    assert {e["skill"] for e in loaded} == {
+        "order_extraction",
+        "colloquial_matching",
+        "confirm_flow",
+    }
+
+
+def test_build_runtime_logs_skill_missing_before_raising() -> None:
+    from agentsys.harness.factory import FactoryError, build_runtime
+    from agentsys.harness.registry import ToolRegistry
+
+    reg = ToolRegistry()
+    reg.register(_spec("tool_alpha", ["read:alpha"]))
+    reg.register(_spec("tool_beta", ["read:beta"]))
+
+    with structlog.testing.capture_logs() as logs:
+        with pytest.raises(FactoryError):
+            build_runtime(
+                "simple-role",
+                reg,
+                ["read:alpha", "read:beta", "write:gamma"],
+                client="client-a",
+                roots=_fixture_roots(),
+            )
+
+    events = [e["event"] for e in logs]
+    assert "factory.skill_missing" in events
