@@ -22,7 +22,8 @@ def _spec(name: str, perms: list[str], connector: Any = None) -> Any:
     from agentsys.harness.registry import ToolSpec
 
     if connector is None:
-        connector = lambda _input: f"{name}_result"
+        def connector(_input: Any) -> str:
+            return f"{name}_result"
     return ToolSpec(name=name, required_permissions=tuple(perms), connector=connector)
 
 
@@ -90,7 +91,7 @@ def test_intercept_logs_call_blocked_when_not_in_surface() -> None:
 # ---------------------------------------------------------------------------
 
 def test_intercept_sensitive_tool_with_sufficient_permissions() -> None:
-    from agentsys.harness.interceptor import CallResult, intercept
+    from agentsys.harness.interceptor import intercept
 
     spec = _spec("order_writer", ["write:orders", "write:order_items"])
     runtime = _runtime([spec])
@@ -161,7 +162,7 @@ def test_intercept_sensitive_tool_without_permissions_raises() -> None:
 # ---------------------------------------------------------------------------
 
 def test_intercept_non_sensitive_tool_ignores_current_permissions() -> None:
-    from agentsys.harness.interceptor import CallResult, intercept
+    from agentsys.harness.interceptor import intercept
 
     spec = _spec("catalog_search", ["read:catalog"])
     runtime = _runtime([spec])
