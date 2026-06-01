@@ -204,8 +204,8 @@ Los registros de auditoría se retienen según los días declarados en `audit_po
 
 ## Referencias cruzadas
 
-- Esquema de la definición del agente: `docs/platform/role.md`
-- Definición de herramientas (*tools*): `docs/platform/tool.md`
-- Definición de habilidades (*skills*): `docs/platform/skill.md`
+- Esquema de la definición del agente: `docs/platform_es/role.md`
+- Definición de herramientas (*tools*): `docs/platform_es/tool.md`
+- Definición de habilidades (*skills*): `docs/platform_es/skill.md`
 - Reglas de delegación y agentes hijos: `docs/architecture/delegation-policy.md`
 - Modelo de permisos y RBAC: `docs/architecture/permission-model.md`
