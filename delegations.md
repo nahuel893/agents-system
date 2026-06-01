@@ -31,7 +31,7 @@
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
 | D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | done | Merged to `main` (`351be60`). diagram.html + 7 platform_es files + extras (architecture_es, delivery_es, Outline scripts). |
 | D-004 | Agent Factory — assemble EquippedRuntime (loader + injector + skills) | claude-code | (session) | high | `feat/D-004-agent-factory` | D-002 | done | Merged to `main`. build_runtime() + EquippedRuntime; 11 tests, 100% cov, verify PASS. |
-| D-005 | Tool Call Interceptor — Layer-2 execution-time enforcement | claude-code | (session) | medium | `feat/D-005-tool-call-interceptor` | D-004 | in_progress | — |
+| D-005 | Tool Call Interceptor — Layer-2 execution-time enforcement | claude-code | (session) | medium | `feat/D-005-tool-call-interceptor` | D-004 | in_review | 9 tests, ruff+mypy clean, 177 suite passed; pending merge |
 
 ---
 
@@ -189,8 +189,8 @@ The second enforcement layer: validates every tool call at execution time agains
   - [ ] All three events (`call_blocked`, `call_allowed`, `call_executed`) emitted at the right moments.
   - [ ] Full suite green (`uv run pytest`), `mypy` + `ruff` clean on new files.
 - **Out of scope:** delegation interceptor, audit persistence, escalation signalling (those are D-007+), connector timeout enforcement.
-- **Status:** in_progress
-- **Result:** _(fill when done)_
+- **Status:** in_review
+- **Result:** `interceptor.py` + `test_harness_interceptor.py`. 9 tests (all criteria covered), 177 full suite passed, ruff + mypy clean. Pending merge to `main`.
 
 ---
 
