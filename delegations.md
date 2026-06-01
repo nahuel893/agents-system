@@ -31,7 +31,8 @@
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
 | D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | done | Merged to `main` (`351be60`). diagram.html + 7 platform_es files + extras (architecture_es, delivery_es, Outline scripts). |
 | D-004 | Agent Factory — assemble EquippedRuntime (loader + injector + skills) | claude-code | (session) | high | `feat/D-004-agent-factory` | D-002 | done | Merged to `main`. build_runtime() + EquippedRuntime; 11 tests, 100% cov, verify PASS. |
-| D-005 | Tool Call Interceptor — Layer-2 execution-time enforcement | claude-code | (session) | medium | `feat/D-005-tool-call-interceptor` | D-004 | in_review | 9 tests, ruff+mypy clean, 177 suite passed; pending merge |
+| D-005 | Tool Call Interceptor — Layer-2 execution-time enforcement | claude-code | (session) | medium | `feat/D-005-tool-call-interceptor` | D-004 | done | Merged to `main`. interceptor.py + 9 tests, 177 suite, ruff+mypy clean. |
+| D-006 | BADIE connector stubs — 5 sales-agent tools with realistic fake responses | claude-code | (session) | low | `feat/D-006-connector-stubs` | D-005 | in_progress | — |
 
 ---
 
@@ -200,3 +201,4 @@ The second enforcement layer: validates every tool call at execution time agains
 - **D-002** — ToolRegistry + capability injector / Layer 1 enforcement (opencode/gpt-5.4). Merged to `main` (`a82101a`). `registry.py` (tool authority) + `injector.py` (`resolve_tool_surface`, effective = role ∩ granted, fail-loud on unknown tool); 8 tests, full suite 118 passed. Note: worker did not commit — Lead committed the work at integration.
 - **D-003** — Sync architecture diagram + complete Spanish docs (antigravity/gemini-3.5-flash-high). Merged to `main` (`351be60`). `diagram.html` View 3 updated to two-layer model; `docs/platform_es/` complete (7 files); extras: `docs/architecture_es/`, `docs/delivery_es/`, Outline scripts.
 - **D-004** — Agent Factory / EquippedRuntime assembler (claude-code). Merged to `main`. `factory.py`: `build_runtime()` glues loader + injector + skill files → frozen `EquippedRuntime`. Prompt = role body + skills joined by `---`. 11 tests, 100% factory coverage, verify PASS (SDD sub-agent sonnet).
+- **D-005** — Tool Call Interceptor / Layer-2 enforcement (claude-code). Merged to `main`. `interceptor.py`: `intercept()` validates call against surface, revalidates sensitive tools at call time. `PolicyViolation` + `CallResult`. 9 tests, 177 suite, ruff+mypy clean. Verify PASS.
