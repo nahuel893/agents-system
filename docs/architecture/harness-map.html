@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harness — Concept Map</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --bg2: #161b22;
+    --bg3: #1c2333;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --text-dim: #6b7280;
+    --blue: #3b82f6;
+    --blue-dim: #1e3a5f;
+    --green: #10b981;
+    --green-dim: #064e3b;
+    --orange: #f59e0b;
+    --orange-dim: #451a03;
+    --purple: #8b5cf6;
+    --purple-dim: #2e1065;
+    --red: #ef4444;
+    --red-dim: #450a0a;
+    --teal: #06b6d4;
+    --teal-dim: #0c2a35;
+    --yellow: #eab308;
+    --yellow-dim: #3d2a00;
+    --transition: 180ms ease;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  header {
+    padding: 24px 32px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+  header p  { font-size: 13px; color: var(--text-muted); margin-top: 4px; margin-bottom: 16px; }
+
+  .tabs { display: flex; gap: 2px; }
+  .tab {
+    padding: 10px 20px; font-size: 13px; font-weight: 500;
+    color: var(--text-muted); cursor: pointer; border: none; background: transparent;
+    border-bottom: 2px solid transparent;
+    transition: color var(--transition), border-color var(--transition);
+    white-space: nowrap;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+  main { padding: 32px; max-width: 1400px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ── Shared ── */
+  .section-title {
+    font-size: 11px; font-weight: 600; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 16px;
+  }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+  }
+  .badge-green  { background: var(--green-dim);  color: var(--green); }
+  .badge-orange { background: var(--orange-dim); color: var(--orange); }
+  .badge-blue   { background: var(--blue-dim);   color: var(--blue); }
+  .badge-purple { background: var(--purple-dim); color: var(--purple); }
+  .badge-red    { background: var(--red-dim);    color: var(--red); }
+  .badge-teal   { background: var(--teal-dim);   color: var(--teal); }
+  .badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
+
+  code {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 12px; background: var(--bg3); padding: 1px 6px;
+    border-radius: 4px; color: var(--teal);
+  }
+  .mono {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 12px;
+  }
+
+  /* ─────────────────────────────────────────
+     VIEW 1 — PIPELINE
+  ───────────────────────────────────────── */
+  .pipeline-wrap { display: flex; flex-direction: column; gap: 32px; }
+
+  .pipeline-row {
+    display: flex; align-items: center; gap: 0;
+    overflow-x: auto; padding-bottom: 8px;
+  }
+
+  .pnode {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 14px 16px; border-radius: 10px; border: 1.5px solid var(--border);
+    background: var(--bg2); cursor: pointer; flex-shrink: 0; min-width: 120px;
+    text-align: center;
+    transition: border-color var(--transition), background var(--transition), transform var(--transition);
+  }
+  .pnode:hover { transform: translateY(-2px); border-color: var(--blue); background: var(--bg3); }
+  .pnode.active { border-color: var(--blue); background: var(--blue-dim); }
+  .pnode.l1 { border-color: var(--green-dim); }
+  .pnode.l1:hover, .pnode.l1.active { border-color: var(--green); background: var(--green-dim); }
+  .pnode.l2 { border-color: var(--orange-dim); }
+  .pnode.l2:hover, .pnode.l2.active { border-color: var(--orange); background: var(--orange-dim); }
+  .pnode.violation { border-color: var(--red-dim); }
+  .pnode.violation:hover { border-color: var(--red); background: var(--red-dim); }
+
+  .pnode-icon { font-size: 22px; margin-bottom: 6px; }
+  .pnode-label { font-size: 12px; font-weight: 600; color: var(--text); line-height: 1.3; }
+  .pnode-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  .pipe-arrow {
+    width: 32px; height: 2px; background: var(--border); flex-shrink: 0; position: relative;
+  }
+  .pipe-arrow::after {
+    content: ''; position: absolute; right: -1px; top: -4px;
+    border-left: 7px solid var(--border); border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  }
+  .pipe-arrow.dashed {
+    background: repeating-linear-gradient(90deg, var(--border) 0, var(--border) 4px, transparent 4px, transparent 8px);
+  }
+  .pipe-arrow.dashed::after { border-left-color: var(--border); }
+
+  .detail-panel {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 24px; min-height: 120px;
+  }
+  .detail-panel h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .detail-panel .sub { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+  .detail-item { background: var(--bg3); border-radius: 8px; padding: 12px; }
+  .detail-item-label { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
+  .detail-item-val { font-size: 12px; color: var(--text); line-height: 1.5; }
+
+  .layer-banner {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    border-radius: 8px; margin-bottom: 12px;
+  }
+  .layer-banner.l1 { background: var(--green-dim); border: 1px solid var(--green); }
+  .layer-banner.l2 { background: var(--orange-dim); border: 1px solid var(--orange); }
+  .layer-banner span { font-size: 12px; font-weight: 500; }
+
+  /* ─────────────────────────────────────────
+     VIEW 2 — COMPONENTS
+  ───────────────────────────────────────── */
+  .components-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 20px;
+  }
+
+  .comp-card {
+    background: var(--bg2); border: 1.5px solid var(--border); border-radius: 12px;
+    padding: 20px; cursor: pointer;
+    transition: border-color var(--transition), transform var(--transition);
+  }
+  .comp-card:hover { transform: translateY(-2px); border-color: var(--blue); }
+  .comp-card.green { border-color: var(--green-dim); }
+  .comp-card.green:hover { border-color: var(--green); }
+  .comp-card.orange { border-color: var(--orange-dim); }
+  .comp-card.orange:hover { border-color: var(--orange); }
+  .comp-card.purple { border-color: var(--purple-dim); }
+  .comp-card.purple:hover { border-color: var(--purple); }
+  .comp-card.teal { border-color: var(--teal-dim); }
+  .comp-card.teal:hover { border-color: var(--teal); }
+
+  .comp-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .comp-icon {
+    width: 40px; height: 40px; border-radius: 10px; background: var(--bg3);
+    display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0;
+  }
+  .comp-title { font-size: 14px; font-weight: 600; }
+  .comp-file  { font-size: 11px; color: var(--text-muted); margin-top: 2px; font-family: 'SF Mono', monospace; }
+
+  .comp-desc { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-bottom: 14px; }
+
+  .comp-api { background: var(--bg3); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .comp-api-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 8px; }
+  .comp-sig { font-family: 'SF Mono', monospace; font-size: 11px; color: var(--teal); line-height: 1.8; }
+
+  .comp-types { display: flex; flex-wrap: wrap; gap: 6px; }
+  .type-pill {
+    font-family: 'SF Mono', monospace; font-size: 11px; padding: 3px 8px;
+    border-radius: 4px; background: var(--bg3); border: 1px solid var(--border); color: var(--text-muted);
+  }
+
+  .comp-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+  /* ─────────────────────────────────────────
+     VIEW 3 — ENFORCEMENT
+  ───────────────────────────────────────── */
+  .enforcement-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .enforcement-wrap { grid-template-columns: 1fr; } }
+
+  .layer-card {
+    background: var(--bg2); border-radius: 12px; padding: 24px; border: 1.5px solid var(--border);
+  }
+  .layer-card.l1 { border-color: var(--green); }
+  .layer-card.l2 { border-color: var(--orange); }
+
+  .layer-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .layer-sub   { font-size: 12px; color: var(--text-muted); margin-bottom: 20px; }
+
+  .layer-step {
+    display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-start;
+  }
+  .step-num {
+    width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; margin-top: 1px;
+  }
+  .l1 .step-num { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+  .l2 .step-num { background: var(--orange-dim); color: var(--orange); border: 1px solid var(--orange); }
+  .step-body { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+  .step-body strong { color: var(--text); font-weight: 500; }
+
+  .violation-flow {
+    grid-column: 1 / -1; background: var(--red-dim); border: 1px solid var(--red);
+    border-radius: 12px; padding: 20px 24px;
+  }
+  .violation-flow h3 { color: var(--red); font-size: 14px; margin-bottom: 12px; }
+  .vflow-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .vf-node {
+    background: var(--bg2); border: 1px solid var(--red); border-radius: 6px;
+    padding: 6px 12px; font-size: 12px; font-weight: 500;
+  }
+  .vf-arrow { color: var(--red); font-size: 16px; }
+
+  .sensitivity-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .sensitivity-table th, .sensitivity-table td {
+    text-align: left; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--border);
+  }
+  .sensitivity-table th { color: var(--text-muted); font-weight: 500; }
+  .sensitivity-table td { color: var(--text); }
+
+  /* ─────────────────────────────────────────
+     VIEW 4 — DATA FLOW
+  ───────────────────────────────────────── */
+  .dataflow-wrap { display: flex; flex-direction: column; gap: 32px; }
+
+  .runtime-anatomy {
+    background: var(--bg2); border: 1.5px solid var(--purple); border-radius: 12px; padding: 24px;
+  }
+  .runtime-anatomy h2 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .runtime-anatomy p  { font-size: 12px; color: var(--text-muted); margin-bottom: 20px; }
+
+  .fields-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .field-card {
+    background: var(--bg3); border-radius: 8px; padding: 14px;
+    border-left: 3px solid var(--purple);
+  }
+  .field-name { font-family: 'SF Mono', monospace; font-size: 12px; color: var(--purple); font-weight: 600; margin-bottom: 4px; }
+  .field-type { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-family: 'SF Mono', monospace; }
+  .field-desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+
+  .flow-map { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+  .flow-map h2 { font-size: 15px; font-weight: 700; margin-bottom: 20px; }
+
+  .flow-row {
+    display: grid; grid-template-columns: 160px 40px 1fr; align-items: center;
+    gap: 12px; margin-bottom: 12px; min-height: 48px;
+  }
+  .flow-from {
+    background: var(--bg3); border-radius: 6px; padding: 8px 12px;
+    font-size: 12px; font-weight: 500; text-align: center;
+  }
+  .flow-to-arrow { text-align: center; color: var(--text-muted); font-size: 18px; }
+  .flow-payload {
+    background: var(--bg3); border-radius: 6px; padding: 8px 12px;
+    font-size: 11px; color: var(--text-muted); line-height: 1.6;
+    font-family: 'SF Mono', monospace;
+  }
+
+  .connectors-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .connector-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+  }
+  .connector-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .connector-icon { font-size: 18px; }
+  .connector-name { font-size: 13px; font-weight: 600; }
+  .connector-perms { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .connector-in-out { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .connector-io-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 4px; }
+  .connector-io-val { font-size: 11px; font-family: 'SF Mono', monospace; color: var(--text-muted); line-height: 1.5; }
+
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Harness — Concept Map</h1>
+  <p>Execution pipeline, module breakdown, enforcement layers, and data flow.</p>
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('pipeline', this)">Pipeline</button>
+    <button class="tab"        onclick="switchTab('components', this)">Components</button>
+    <button class="tab"        onclick="switchTab('enforcement', this)">Enforcement</button>
+    <button class="tab"        onclick="switchTab('dataflow', this)">Data Flow</button>
+  </div>
+</header>
+
+<main>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 1 — PIPELINE
+═══════════════════════════════════════════════════════════════ -->
+<div id="view-pipeline" class="view active">
+
+  <div class="pipeline-wrap">
+
+    <!-- Row: full pipeline -->
+    <div>
+      <div class="section-title">Execution pipeline — every agent run follows this path</div>
+      <div class="pipeline-row" id="pipeline-row">
+
+        <div class="pnode" onclick="showStage('trigger')" id="pn-trigger">
+          <div class="pnode-icon">⚡</div>
+          <div class="pnode-label">Trigger</div>
+          <div class="pnode-sub">event in</div>
+        </div>
+        <div class="pipe-arrow"></div>
+
+        <div class="pnode" onclick="showStage('router')" id="pn-router">
+          <div class="pnode-icon">🔀</div>
+          <div class="pnode-label">System Router</div>
+          <div class="pnode-sub">role selection</div>
+        </div>
+        <div class="pipe-arrow"></div>
+
+        <div class="pnode l1" onclick="showStage('factory')" id="pn-factory">
+          <div class="pnode-icon">🏭</div>
+          <div class="pnode-label">Agent Factory</div>
+          <div class="pnode-sub">build runtime</div>
+        </div>
+        <div class="pipe-arrow"></div>
+
+        <div class="pnode l1" onclick="showStage('injector')" id="pn-injector">
+          <div class="pnode-icon">💉</div>
+          <div class="pnode-label">Capability Injector</div>
+          <div class="pnode-sub">L1 enforcement</div>
+        </div>
+        <div class="pipe-arrow"></div>
+
+        <div class="pnode" onclick="showStage('runtime')" id="pn-runtime">
+          <div class="pnode-icon">🧠</div>
+          <div class="pnode-label">Agent Runtime</div>
+          <div class="pnode-sub">LLM loop</div>
+        </div>
+        <div class="pipe-arrow"></div>
+
+        <div class="pnode l2" onclick="showStage('interceptor')" id="pn-interceptor">
+          <div class="pnode-icon">🛡️</div>
+          <div class="pnode-label">Tool Call Interceptor</div>
+          <div class="pnode-sub">L2 enforcement</div>
+        </div>
+        <div class="pipe-arrow"></div>
+
+        <div class="pnode" onclick="showStage('connector')" id="pn-connector">
+          <div class="pnode-icon">🔌</div>
+          <div class="pnode-label">Connector</div>
+          <div class="pnode-sub">external call</div>
+        </div>
+        <div class="pipe-arrow"></div>
+
+        <div class="pnode" onclick="showStage('audit')" id="pn-audit">
+          <div class="pnode-icon">📋</div>
+          <div class="pnode-label">Audit / Memory</div>
+          <div class="pnode-sub">persist</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Detail panel -->
+    <div class="detail-panel" id="stage-detail">
+      <div style="color:var(--text-muted); font-size:13px;">
+        Click any stage above to see its details.
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div style="display:flex; gap:20px; flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="width:16px;height:3px;background:var(--green);border-radius:2px;"></div>
+        <span style="font-size:12px;color:var(--text-muted);">Layer 1 — build-time enforcement (injector + factory)</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="width:16px;height:3px;background:var(--orange);border-radius:2px;"></div>
+        <span style="font-size:12px;color:var(--text-muted);">Layer 2 — call-time enforcement (interceptor)</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="width:16px;height:3px;background:var(--border);border-radius:2px;"></div>
+        <span style="font-size:12px;color:var(--text-muted);">No enforcement role</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 2 — COMPONENTS
+═══════════════════════════════════════════════════════════════ -->
+<div id="view-components" class="view">
+
+  <div class="section-title" style="margin-bottom:20px;">Built modules — D-001 through D-006</div>
+
+  <div class="components-grid">
+
+    <!-- Loader -->
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon">📄</div>
+        <div>
+          <div class="comp-title">Loader</div>
+          <div class="comp-file">harness/loader.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">
+        Parses agent definition folders — reads <code>role.md</code>, <code>manifest.md</code>, and <code>policy.md</code> — and produces a validated <code>AgentDefinition</code>. Supports deployment overrides that merge on top of the generic platform role.
+      </div>
+      <div class="comp-api">
+        <div class="comp-api-title">Public API</div>
+        <div class="comp-sig">
+          resolve(role_type, *, client=None, roots=None)<br>
+          → AgentDefinition
+        </div>
+      </div>
+      <div class="comp-types">
+        <span class="type-pill">AgentDefinition</span>
+        <span class="type-pill">RootConfig</span>
+        <span class="type-pill">ExecutionLimits</span>
+      </div>
+      <div class="comp-meta">
+        <span class="badge badge-blue">D-001</span>
+        <span class="badge badge-green">done</span>
+      </div>
+    </div>
+
+    <!-- Registry -->
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon">📚</div>
+        <div>
+          <div class="comp-title">Tool Registry</div>
+          <div class="comp-file">harness/registry.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">
+        The platform's authority on what tools exist. Stores <code>ToolSpec</code> entries (name, required permissions, connector callable). Agents cannot see or call tools that are not registered here — registration precedes injection.
+      </div>
+      <div class="comp-api">
+        <div class="comp-api-title">Public API</div>
+        <div class="comp-sig">
+          registry.register(spec)<br>
+          registry.get(name) → ToolSpec<br>
+          registry.names() → tuple[str, ...]
+        </div>
+      </div>
+      <div class="comp-types">
+        <span class="type-pill">ToolSpec</span>
+        <span class="type-pill">ToolRegistry</span>
+        <span class="type-pill">ToolNotFoundError</span>
+      </div>
+      <div class="comp-meta">
+        <span class="badge badge-blue">D-002</span>
+        <span class="badge badge-green">done</span>
+      </div>
+    </div>
+
+    <!-- Injector -->
+    <div class="comp-card green">
+      <div class="comp-header">
+        <div class="comp-icon">💉</div>
+        <div>
+          <div class="comp-title">Capability Injector</div>
+          <div class="comp-file">harness/injector.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">
+        <strong style="color:var(--green);">Layer 1 — build-time.</strong> Resolves the effective tool surface: <code>effective = role.permissions ∩ granted_permissions</code>. Tools whose <code>required_permissions ⊆ effective</code> are granted; the rest are denied with a reason. Unknown tool names fail loud.
+      </div>
+      <div class="comp-api">
+        <div class="comp-api-title">Public API</div>
+        <div class="comp-sig">
+          resolve_tool_surface(<br>
+          &nbsp;&nbsp;definition, registry, granted_permissions<br>
+          ) → InjectionResult
+        </div>
+      </div>
+      <div class="comp-types">
+        <span class="type-pill">InjectionResult</span>
+        <span class="type-pill">InjectionError</span>
+      </div>
+      <div class="comp-meta">
+        <span class="badge badge-blue">D-002</span>
+        <span class="badge badge-green">done</span>
+        <span class="badge badge-green">L1</span>
+      </div>
+    </div>
+
+    <!-- Factory -->
+    <div class="comp-card purple">
+      <div class="comp-header">
+        <div class="comp-icon">🏭</div>
+        <div>
+          <div class="comp-title">Agent Factory</div>
+          <div class="comp-file">harness/factory.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">
+        The assembler. Calls loader → injector → skill file loader, then composes the final system prompt (role body + skill bodies joined by <code>---</code>). Returns a frozen <code>EquippedRuntime</code> ready for the Agent Runtime.
+      </div>
+      <div class="comp-api">
+        <div class="comp-api-title">Public API</div>
+        <div class="comp-sig">
+          build_runtime(<br>
+          &nbsp;&nbsp;role_type, registry, granted_permissions,<br>
+          &nbsp;&nbsp;*, client=None, roots=None<br>
+          ) → EquippedRuntime
+        </div>
+      </div>
+      <div class="comp-types">
+        <span class="type-pill">EquippedRuntime</span>
+        <span class="type-pill">LoadedSkill</span>
+        <span class="type-pill">FactoryError</span>
+      </div>
+      <div class="comp-meta">
+        <span class="badge badge-blue">D-004</span>
+        <span class="badge badge-green">done</span>
+      </div>
+    </div>
+
+    <!-- Interceptor -->
+    <div class="comp-card orange">
+      <div class="comp-header">
+        <div class="comp-icon">🛡️</div>
+        <div>
+          <div class="comp-title">Tool Call Interceptor</div>
+          <div class="comp-file">harness/interceptor.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">
+        <strong style="color:var(--orange);">Layer 2 — call-time.</strong> Validates every tool invocation before the connector fires. Blocks hallucinated tool names, prompt injection, and incomplete injection bugs. Revalidates permissions for sensitive tools (<code>write:*</code> / <code>send:*</code>) at call time.
+      </div>
+      <div class="comp-api">
+        <div class="comp-api-title">Public API</div>
+        <div class="comp-sig">
+          intercept(<br>
+          &nbsp;&nbsp;tool_name, tool_input, runtime,<br>
+          &nbsp;&nbsp;*, current_permissions=None<br>
+          ) → CallResult
+        </div>
+      </div>
+      <div class="comp-types">
+        <span class="type-pill">CallResult</span>
+        <span class="type-pill">PolicyViolation</span>
+      </div>
+      <div class="comp-meta">
+        <span class="badge badge-blue">D-005</span>
+        <span class="badge badge-green">done</span>
+        <span class="badge badge-orange">L2</span>
+      </div>
+    </div>
+
+    <!-- Connector Stubs -->
+    <div class="comp-card teal">
+      <div class="comp-header">
+        <div class="comp-icon">🔌</div>
+        <div>
+          <div class="comp-title">Connector Stubs</div>
+          <div class="comp-file">connectors/stubs.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">
+        Deterministic fake connectors for the five BADIE sales-agent tools. Return realistic data shapes without touching real external services (WhatsApp API, Postgres, Redis). Enable end-to-end harness testing.
+      </div>
+      <div class="comp-api">
+        <div class="comp-api-title">Public API</div>
+        <div class="comp-sig">
+          catalog_search(inputs) → dict<br>
+          client_lookup(inputs) → dict<br>
+          order_writer(inputs) → dict<br>
+          message_sender(inputs) → dict<br>
+          session_state(inputs) → dict<br>
+          build_badie_registry() → ToolRegistry
+        </div>
+      </div>
+      <div class="comp-types">
+        <span class="type-pill">ToolRegistry</span>
+      </div>
+      <div class="comp-meta">
+        <span class="badge badge-blue">D-006</span>
+        <span class="badge badge-green">done</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Coming up -->
+  <div style="margin-top:28px;">
+    <div class="section-title">Coming next</div>
+    <div class="components-grid">
+      <div class="comp-card" style="opacity:0.5; cursor:default;">
+        <div class="comp-header">
+          <div class="comp-icon">🔗</div>
+          <div>
+            <div class="comp-title">Agent Runtime</div>
+            <div class="comp-file">runtime/agent.py</div>
+          </div>
+        </div>
+        <div class="comp-desc">LangGraph loop + <code>bind_tools()</code> + real LLM call. Takes an <code>EquippedRuntime</code> and runs the conversation graph. Uses the interceptor before each connector fires.</div>
+        <div class="comp-meta">
+          <span class="badge badge-blue">D-007</span>
+          <span class="badge badge-yellow">planned</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 3 — ENFORCEMENT
+═══════════════════════════════════════════════════════════════ -->
+<div id="view-enforcement" class="view">
+
+  <div class="enforcement-wrap">
+
+    <!-- Layer 1 -->
+    <div class="layer-card l1">
+      <div class="layer-title" style="color:var(--green);">Layer 1 — Build-time</div>
+      <div class="layer-sub">Capability Injector · runs once when the runtime is assembled</div>
+
+      <div class="layer-step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          Loader reads <code>role.md</code> + <code>manifest.md</code> + <code>policy.md</code> from the agent definition folder → produces <strong>AgentDefinition</strong> with <code>tools[]</code> and <code>permissions[]</code>.
+        </div>
+      </div>
+      <div class="layer-step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          Injector computes <strong>effective permissions</strong>:<br>
+          <code>effective = role.permissions ∩ granted_permissions</code><br>
+          This is the intersection of what the <em>role</em> declares and what the <em>calling identity</em> actually holds.
+        </div>
+      </div>
+      <div class="layer-step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          For each tool name in <code>manifest.tools</code>:<br>
+          — Not in registry → <strong>InjectionError</strong> (fail loud, deterministic)<br>
+          — <code>spec.required_permissions ⊆ effective</code> → <strong>granted</strong><br>
+          — Otherwise → <strong>denied</strong> (with reason naming missing perms)
+        </div>
+      </div>
+      <div class="layer-step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          Factory composes system prompt and assembles a frozen <strong>EquippedRuntime</strong>. Only granted tools are in <code>runtime.tools</code>. These are passed to the LLM via <code>bind_tools()</code> — the model cannot see or call anything outside this list.
+        </div>
+      </div>
+    </div>
+
+    <!-- Layer 2 -->
+    <div class="layer-card l2">
+      <div class="layer-title" style="color:var(--orange);">Layer 2 — Call-time</div>
+      <div class="layer-sub">Tool Call Interceptor · runs on every tool invocation during the LLM loop</div>
+
+      <div class="layer-step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          Model generates a tool call. Before the connector fires, <code>intercept()</code> receives <strong>tool_name</strong>, <strong>tool_input</strong>, and the <strong>EquippedRuntime</strong>.
+        </div>
+      </div>
+      <div class="layer-step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          Surface check: build a lookup dict <code>{t.name: t for t in runtime.tools}</code>. If <strong>tool_name not in surface</strong> → log <code>interceptor.call_blocked</code> (reason: <code>not_in_surface</code>) → raise <strong>PolicyViolation</strong>.
+        </div>
+      </div>
+      <div class="layer-step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          Sensitivity check: a tool is <strong>sensitive</strong> if any <code>required_permission</code> starts with <code>write:</code> or <code>send:</code>. Sensitive tools require <code>current_permissions</code> at call time.
+        </div>
+      </div>
+      <div class="layer-step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          If sensitive and no <code>current_permissions</code> → block (<code>revalidation_required</code>).<br>
+          If sensitive and <code>spec.required_permissions ⊄ current_permissions</code> → block (<code>permission_revoked</code>).
+        </div>
+      </div>
+      <div class="layer-step">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          All checks pass → log <code>interceptor.call_allowed</code> → execute <code>spec.connector(tool_input)</code> → log <code>interceptor.call_executed</code> → return <strong>CallResult</strong>.
+        </div>
+      </div>
+    </div>
+
+    <!-- Violation flow -->
+    <div class="violation-flow">
+      <h3>PolicyViolation flow — no silent failures</h3>
+      <div class="vflow-row">
+        <div class="vf-node">Tool call generated</div>
+        <div class="vf-arrow">→</div>
+        <div class="vf-node">intercept() checks surface</div>
+        <div class="vf-arrow">→</div>
+        <div class="vf-node">Not in surface OR perms revoked</div>
+        <div class="vf-arrow">→</div>
+        <div class="vf-node">log call_blocked</div>
+        <div class="vf-arrow">→</div>
+        <div class="vf-node">raise PolicyViolation</div>
+        <div class="vf-arrow">→</div>
+        <div class="vf-node">Agent Runtime escalates</div>
+        <div class="vf-arrow">→</div>
+        <div class="vf-node">Audit entry written</div>
+      </div>
+      <div style="margin-top:14px;">
+        <table class="sensitivity-table">
+          <thead>
+            <tr><th>Reason</th><th>Trigger</th><th>Sensitive?</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>not_in_surface</code></td><td>Tool name not in <code>runtime.tools</code></td><td>Either</td></tr>
+            <tr><td><code>revalidation_required</code></td><td>Sensitive tool + no <code>current_permissions</code></td><td>Yes</td></tr>
+            <tr><td><code>permission_revoked</code></td><td>Sensitive tool + perms insufficient at call time</td><td>Yes</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Why two layers -->
+    <div style="grid-column:1/-1; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:20px 24px;">
+      <div class="section-title">Why both layers are mandatory</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+        <div>
+          <div style="color:var(--green); font-size:13px; font-weight:600; margin-bottom:8px;">What Layer 1 prevents</div>
+          <ul style="font-size:12px; color:var(--text-muted); line-height:2; padding-left:16px;">
+            <li>Model calling tools it was never told about</li>
+            <li>Tools being used before permission is verified</li>
+            <li>Unregistered tool names reaching the LLM</li>
+          </ul>
+        </div>
+        <div>
+          <div style="color:var(--orange); font-size:13px; font-weight:600; margin-bottom:8px;">What Layer 2 catches that L1 can't</div>
+          <ul style="font-size:12px; color:var(--text-muted); line-height:2; padding-left:16px;">
+            <li>Model hallucinations of valid-looking tool names</li>
+            <li>Prompt injection that forges a tool call</li>
+            <li>Bugs in the injection pipeline (incomplete surface)</li>
+            <li>Permission changes <em>after</em> runtime was built</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 4 — DATA FLOW
+═══════════════════════════════════════════════════════════════ -->
+<div id="view-dataflow" class="view">
+
+  <div class="dataflow-wrap">
+
+    <!-- EquippedRuntime anatomy -->
+    <div class="runtime-anatomy">
+      <h2>EquippedRuntime — the central data object</h2>
+      <p>Frozen dataclass produced by the factory. Everything downstream reads from it — the Agent Runtime, the interceptor, the audit trail.</p>
+      <div class="fields-grid">
+        <div class="field-card">
+          <div class="field-name">definition</div>
+          <div class="field-type">AgentDefinition</div>
+          <div class="field-desc">The resolved agent spec: role name, tools list, permissions, skills, autonomy level, execution limits, policies.</div>
+        </div>
+        <div class="field-card">
+          <div class="field-name">system_prompt</div>
+          <div class="field-type">str</div>
+          <div class="field-desc">Composed prompt: role body + each skill file body, joined by <code>---</code> in manifest declaration order.</div>
+        </div>
+        <div class="field-card">
+          <div class="field-name">tools</div>
+          <div class="field-type">tuple[ToolSpec, ...]</div>
+          <div class="field-desc">Granted tool surface. Only tools that passed the L1 RBAC check. Passed to the LLM via <code>bind_tools()</code>.</div>
+        </div>
+        <div class="field-card">
+          <div class="field-name">denied_tools</div>
+          <div class="field-type">tuple[tuple[str, str], ...]</div>
+          <div class="field-desc">Tools that were declared but denied, with their reason. Used for audit and debugging.</div>
+        </div>
+        <div class="field-card">
+          <div class="field-name">skills</div>
+          <div class="field-type">tuple[LoadedSkill, ...]</div>
+          <div class="field-desc">Deployment skill files loaded from disk. Each has a <code>name</code> and the full markdown <code>content</code>.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data flow table -->
+    <div class="flow-map">
+      <h2>What flows between stages</h2>
+      <div class="flow-row" style="font-size:11px;color:var(--text-muted); grid-template-columns:160px 40px 1fr; margin-bottom:4px;">
+        <div>FROM</div><div></div><div>PAYLOAD</div>
+      </div>
+      <div style="border-top:1px solid var(--border); margin-bottom:12px;"></div>
+
+      <div class="flow-row">
+        <div class="flow-from">Trigger</div>
+        <div class="flow-to-arrow">→</div>
+        <div class="flow-payload">raw event payload · source identifier · requesting identity</div>
+      </div>
+      <div class="flow-row">
+        <div class="flow-from">System Router</div>
+        <div class="flow-to-arrow">→</div>
+        <div class="flow-payload">role_type: str · client: str | None · use_cache: bool · granted_permissions: list[str]</div>
+      </div>
+      <div class="flow-row">
+        <div class="flow-from" style="border-color:var(--green);">Agent Factory</div>
+        <div class="flow-to-arrow">→</div>
+        <div class="flow-payload"><strong>EquippedRuntime</strong> (frozen): definition · system_prompt · tools · denied_tools · skills</div>
+      </div>
+      <div class="flow-row">
+        <div class="flow-from">Agent Runtime</div>
+        <div class="flow-to-arrow">→</div>
+        <div class="flow-payload">tool_name: str · tool_input: dict · current_permissions: list[str]</div>
+      </div>
+      <div class="flow-row">
+        <div class="flow-from" style="border-color:var(--orange);">Interceptor</div>
+        <div class="flow-to-arrow">→</div>
+        <div class="flow-payload"><strong>CallResult</strong>: tool_name · output: Any · revalidated: bool<br><em>or raises</em> <strong>PolicyViolation</strong>: tool_name · reason</div>
+      </div>
+      <div class="flow-row">
+        <div class="flow-from">Connector</div>
+        <div class="flow-to-arrow">→</div>
+        <div class="flow-payload">tool-specific dict (e.g. <code>{"results": [...]}</code>, <code>{"order_id": "ord-0001"}</code>)</div>
+      </div>
+      <div class="flow-row">
+        <div class="flow-from">Audit / Memory</div>
+        <div class="flow-to-arrow">→</div>
+        <div class="flow-payload">immutable audit entry: trigger identity · role · tools injected · calls made · outcomes · duration</div>
+      </div>
+    </div>
+
+    <!-- Connectors -->
+    <div>
+      <div class="section-title">BADIE sales-agent connectors (D-006 stubs)</div>
+      <div class="connectors-grid">
+
+        <div class="connector-card">
+          <div class="connector-header">
+            <div class="connector-icon">🔍</div>
+            <div>
+              <div class="connector-name">catalog_search</div>
+              <div class="connector-perms">read:catalog</div>
+            </div>
+          </div>
+          <div class="connector-in-out">
+            <div>
+              <div class="connector-io-label">Input</div>
+              <div class="connector-io-val">q: str</div>
+            </div>
+            <div>
+              <div class="connector-io-label">Output</div>
+              <div class="connector-io-val">results: list[{id, name, price, stock}]</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-card">
+          <div class="connector-header">
+            <div class="connector-icon">👤</div>
+            <div>
+              <div class="connector-name">client_lookup</div>
+              <div class="connector-perms">read:client_registry</div>
+            </div>
+          </div>
+          <div class="connector-in-out">
+            <div>
+              <div class="connector-io-label">Input</div>
+              <div class="connector-io-val">phone: str</div>
+            </div>
+            <div>
+              <div class="connector-io-label">Output</div>
+              <div class="connector-io-val">client_id · name · phone</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-card">
+          <div class="connector-header">
+            <div class="connector-icon">📦</div>
+            <div>
+              <div class="connector-name">order_writer</div>
+              <div class="connector-perms">write:orders · write:order_items</div>
+            </div>
+          </div>
+          <div class="connector-in-out">
+            <div>
+              <div class="connector-io-label">Input</div>
+              <div class="connector-io-val">client_id: str<br>items: [{product_id, qty}]</div>
+            </div>
+            <div>
+              <div class="connector-io-label">Output</div>
+              <div class="connector-io-val">order_id · status · total</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-card">
+          <div class="connector-header">
+            <div class="connector-icon">💬</div>
+            <div>
+              <div class="connector-name">message_sender</div>
+              <div class="connector-perms">send:message</div>
+            </div>
+          </div>
+          <div class="connector-in-out">
+            <div>
+              <div class="connector-io-label">Input</div>
+              <div class="connector-io-val">to: str (phone)<br>text: str</div>
+            </div>
+            <div>
+              <div class="connector-io-label">Output</div>
+              <div class="connector-io-val">status: "sent"<br>message_id: str</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="connector-card">
+          <div class="connector-header">
+            <div class="connector-icon">🗄️</div>
+            <div>
+              <div class="connector-name">session_state</div>
+              <div class="connector-perms">(no permissions)</div>
+            </div>
+          </div>
+          <div class="connector-in-out">
+            <div>
+              <div class="connector-io-label">Input</div>
+              <div class="connector-io-val">action: "get"|"set"<br>session_id: str</div>
+            </div>
+            <div>
+              <div class="connector-io-label">Output</div>
+              <div class="connector-io-val">get → {session_id, data}<br>set → {status: "ok"}</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</main>
+
+<script>
+function switchTab(name, el) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  el.classList.add('active');
+}
+
+const stageData = {
+  trigger: {
+    title: '⚡ Trigger',
+    sub: 'Any event that initiates an agent execution',
+    items: [
+      { label: 'Types', val: 'User action (WhatsApp message), API call, Schedule (cron), External event (webhook), Tool callback' },
+      { label: 'Carries', val: 'Raw event payload · Source identifier (which integration) · Requesting identity (user or system)' },
+      { label: 'Outputs', val: 'Routing request to the System Router' },
+      { label: 'Status', val: '⏳ Planned (D-007+)' },
+    ]
+  },
+  router: {
+    title: '🔀 System Router',
+    sub: 'Decides which agent handles this trigger',
+    items: [
+      { label: 'Decisions', val: '(1) Domain identification · (2) Role selection · (3) Runtime reuse (warm cache?)' },
+      { label: 'Outputs', val: 'role_type: str · client: str | None · granted_permissions: list[str] · use_cache: bool' },
+      { label: 'Does NOT', val: 'Execute any agent logic — routing only' },
+      { label: 'Status', val: '⏳ Planned (D-007+)' },
+    ]
+  },
+  factory: {
+    title: '🏭 Agent Factory',
+    sub: 'Assembles the EquippedRuntime from definition + injector + skills',
+    items: [
+      { label: 'Module', val: 'src/agentsys/harness/factory.py' },
+      { label: 'Calls', val: 'loader.resolve() → injector.resolve_tool_surface() → _load_skills() → _compose_prompt()' },
+      { label: 'Returns', val: 'EquippedRuntime (frozen): definition · system_prompt · tools · denied_tools · skills' },
+      { label: 'Skill loading', val: 'deployments/{client}/{role}/skills/{name}.md — missing file → FactoryError' },
+      { label: 'Prompt composition', val: 'role body + skill bodies joined by "---" in manifest order' },
+      { label: 'Status', val: '✅ Done (D-004, merged to main)' },
+    ]
+  },
+  injector: {
+    title: '💉 Capability Injector — Layer 1',
+    sub: 'Build-time RBAC: resolves the granted tool surface',
+    items: [
+      { label: 'Module', val: 'src/agentsys/harness/injector.py' },
+      { label: 'Algorithm', val: 'effective = role.permissions ∩ granted_permissions\nFor each tool: required_permissions ⊆ effective → granted; else denied' },
+      { label: 'Fail loud', val: 'Unknown tool name (not in registry) → InjectionError immediately' },
+      { label: 'Returns', val: 'InjectionResult: granted: tuple[ToolSpec] · denied: tuple[(name, reason)]' },
+      { label: 'Status', val: '✅ Done (D-002, merged to main)' },
+    ]
+  },
+  runtime: {
+    title: '🧠 Agent Runtime',
+    sub: 'The LLM conversation loop — LangGraph + bind_tools',
+    items: [
+      { label: 'Module', val: 'src/agentsys/runtime/agent.py (planned)' },
+      { label: 'Receives', val: 'EquippedRuntime — already assembled and equipped' },
+      { label: 'Does', val: 'bind_tools(runtime.tools) · run LangGraph graph · call interceptor before each tool · observe escalation rules' },
+      { label: 'Produces', val: 'Messages sent · Records written · Delegations initiated · Escalations' },
+      { label: 'Status', val: '⏳ Planned (D-007)' },
+    ]
+  },
+  interceptor: {
+    title: '🛡️ Tool Call Interceptor — Layer 2',
+    sub: 'Call-time validation: blocks anything not in the injected surface',
+    items: [
+      { label: 'Module', val: 'src/agentsys/harness/interceptor.py' },
+      { label: 'Catches', val: 'Model hallucinations · Prompt injection attempts · Incomplete injection bugs · Revoked permissions' },
+      { label: 'Sensitivity rule', val: 'write:* or send:* perms → sensitive → revalidate current_permissions at call time' },
+      { label: 'On block', val: 'log interceptor.call_blocked · raise PolicyViolation(tool_name, reason)' },
+      { label: 'On pass', val: 'log call_allowed · execute connector · log call_executed · return CallResult' },
+      { label: 'Status', val: '✅ Done (D-005, merged to main)' },
+    ]
+  },
+  connector: {
+    title: '🔌 Connector',
+    sub: 'The callable that executes the external operation',
+    items: [
+      { label: 'Signature', val: 'connector(tool_input: dict) → dict' },
+      { label: 'BADIE tools', val: 'catalog_search · client_lookup · order_writer · message_sender · session_state' },
+      { label: 'Current state', val: 'Stubs (D-006) — deterministic fake responses. Real connectors (Postgres, WhatsApp API) come later.' },
+      { label: 'Real connectors', val: 'WhatsApp → Meta Cloud API · catalog/orders → Postgres · session → Redis' },
+      { label: 'Status', val: '✅ Stubs done (D-006). Real connectors: planned.' },
+    ]
+  },
+  audit: {
+    title: '📋 Audit / Memory',
+    sub: 'Persist the execution trail and memory writes',
+    items: [
+      { label: 'Audit entry contains', val: 'Trigger identity · Role · Tools injected · Tool calls made (name, inputs sanitized, output shape, timestamp) · Delegations · Escalations · Outputs · Duration' },
+      { label: 'Immutability', val: 'Audit entries are immutable. Cannot be modified after write.' },
+      { label: 'Memory writes', val: 'Conversation logs · Working memory updates · Persistent business memory — scoped per memory_policy' },
+      { label: 'Hard rule', val: 'Audit persistence failure → block execution. No execution without auditability.' },
+      { label: 'Status', val: '⏳ Planned (D-007+)' },
+    ]
+  },
+};
+
+function showStage(key) {
+  document.querySelectorAll('.pnode').forEach(n => n.classList.remove('active'));
+  document.getElementById('pn-' + key).classList.add('active');
+
+  const d = stageData[key];
+  const items = d.items.map(i => `
+    <div class="detail-item">
+      <div class="detail-item-label">${i.label}</div>
+      <div class="detail-item-val mono">${i.val.replace(/\n/g, '<br>')}</div>
+    </div>
+  `).join('');
+
+  document.getElementById('stage-detail').innerHTML = `
+    <h3>${d.title}</h3>
+    <div class="sub">${d.sub}</div>
+    <div class="detail-grid">${items}</div>
+  `;
+}
+</script>
+</body>
+</html>
