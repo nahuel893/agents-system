@@ -31,6 +31,7 @@
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
 | D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | done | Merged to `main` (`351be60`). diagram.html + 7 platform_es files + extras (architecture_es, delivery_es, Outline scripts). |
 | D-004 | Agent Factory — assemble EquippedRuntime (loader + injector + skills) | claude-code | (session) | high | `feat/D-004-agent-factory` | D-002 | done | Merged to `main`. build_runtime() + EquippedRuntime; 11 tests, 100% cov, verify PASS. |
+| D-005 | Tool Call Interceptor — Layer-2 execution-time enforcement | claude-code | (session) | medium | `feat/D-005-tool-call-interceptor` | D-004 | in_review | 9 tests, ruff+mypy clean, 177 suite passed; pending merge |
 
 ---
 
@@ -151,6 +152,45 @@ The keystone glue: assembles `loader.resolve()` + `injector.resolve_tool_surface
 - **SDD:** Artifacts backfilled to engram (`sdd/D-004/{spec,design,tasks,apply-progress}`). Verify run by a fresh `sdd-verify` sub-agent (sonnet) → **PASS** (`sdd/D-004/verify-report`, obs #210): 0 CRITICAL, 1 WARNING (R5 events emitted but not asserted) + 1 SUGGESTION. WARNING-1 closed by adding explicit assertions for `factory.skill_loaded`/`factory.skill_missing` (`4f118b9`). SUGGESTION-1 (generic test uses real roots) left as intentional design choice — happy path deliberately exercises the real BADIE MVP deployment.
 - **Status:** in_review
 - **Result:** Branch `feat/D-004-agent-factory` (commits `0c72cca`, `adc8335`, `b027b65`, `4f118b9`). 11 factory tests, 100% factory coverage, full suite 168 passed, ruff + mypy clean on factory. Verify PASS. Pending merge to `main` by Lead at integration.
+
+---
+
+### D-005 — Tool Call Interceptor (Layer-2 execution-time enforcement)
+
+The second enforcement layer: validates every tool call at execution time against the `EquippedRuntime`'s injected surface, blocks anything not in the surface, and revalidates permissions for sensitive tools (write:\* / send:\*) before the connector fires.
+
+- **Agent:** claude-code (Lead, interactive)
+- **Model:** (session)
+- **Complexity:** medium
+- **Branch:** `feat/D-005-tool-call-interceptor`
+- **Depends on:** D-004 (`EquippedRuntime` shape)
+- **Wave:** W1
+- **Strict TDD:** ACTIVE — RED → GREEN, one test at a time.
+- **Scope (files) — all NEW:**
+  - `src/agentsys/harness/interceptor.py`
+  - `tests/test_harness_interceptor.py`
+- **What to implement:**
+  - **`PolicyViolation(Exception)`** — raised on any blocked call. Carries `tool_name`, `reason`.
+  - **`CallResult`** (frozen dataclass): `tool_name: str`, `output: Any`, `revalidated: bool`.
+  - **`intercept(tool_name, tool_input, runtime, *, current_permissions=None) -> CallResult`**:
+    1. Look up tool by name in `runtime.tools` (the granted `ToolSpec` tuple).
+    2. If NOT found → log `interceptor.call_blocked` (reason: `not_in_surface`) → raise `PolicyViolation`.
+    3. If found: check if **sensitive** — a tool is sensitive if any `required_permissions` starts with `"write:"` or `"send:"`.
+    4. If sensitive and `current_permissions is None` → log `interceptor.call_blocked` (reason: `revalidation_required`) → raise `PolicyViolation`.
+    5. If sensitive and `current_permissions` given → recheck `set(spec.required_permissions) <= set(current_permissions)`; if fails → log `interceptor.call_blocked` (reason: `permission_revoked`) → raise `PolicyViolation`.
+    6. Log `interceptor.call_allowed`. Execute `spec.connector(tool_input)`. Log `interceptor.call_executed`. Return `CallResult(tool_name, output, revalidated=is_sensitive)`.
+- **Acceptance criteria:**
+  - [ ] Non-sensitive tool in surface, no `current_permissions` → executes, `revalidated=False`.
+  - [ ] Tool NOT in surface → raises `PolicyViolation`, logs `interceptor.call_blocked`.
+  - [ ] Sensitive tool, sufficient `current_permissions` → executes, `revalidated=True`.
+  - [ ] Sensitive tool, insufficient `current_permissions` → raises `PolicyViolation`, logs `interceptor.call_blocked`.
+  - [ ] Sensitive tool, `current_permissions=None` → raises `PolicyViolation` (can't revalidate).
+  - [ ] Non-sensitive tool, `current_permissions` irrelevant (not revalidated even if provided).
+  - [ ] All three events (`call_blocked`, `call_allowed`, `call_executed`) emitted at the right moments.
+  - [ ] Full suite green (`uv run pytest`), `mypy` + `ruff` clean on new files.
+- **Out of scope:** delegation interceptor, audit persistence, escalation signalling (those are D-007+), connector timeout enforcement.
+- **Status:** in_review
+- **Result:** `interceptor.py` + `test_harness_interceptor.py`. 9 tests (all criteria covered), 177 full suite passed, ruff + mypy clean. Pending merge to `main`.
 
 ---
 
