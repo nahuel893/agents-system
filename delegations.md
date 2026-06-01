@@ -30,6 +30,7 @@
 | ID | Slice / Feature | Agent | Model | Cx | Branch | Depends on | Status | Result |
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
 | D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | done | Merged to `main` (`351be60`). diagram.html + 7 platform_es files + extras (architecture_es, delivery_es, Outline scripts). |
+| D-004 | Agent Factory — assemble EquippedRuntime (loader + injector + skills) | claude-code | (session) | high | `feat/D-004-agent-factory` | D-002 | done | Merged to `main`. build_runtime() + EquippedRuntime; 11 tests, 100% cov, verify PASS. |
 
 ---
 
@@ -121,8 +122,41 @@ Bring the interactive diagram and the Spanish docs in line with the **current `m
 
 ---
 
+### D-004 — Agent Factory (EquippedRuntime assembler)
+
+The keystone glue: assembles `loader.resolve()` + `injector.resolve_tool_surface()` + loaded skill files into a single ready-to-run `EquippedRuntime`. Built interactively with the Lead. Serves the **agent_seller MVP** — `badie/sales-agent` now assembles end-to-end.
+
+- **Agent:** claude-code (Lead, interactive)
+- **Model:** (session)
+- **Complexity:** high
+- **Branch:** `feat/D-004-agent-factory`
+- **Depends on:** D-002 (registry + injector, on `main`)
+- **Wave:** W1
+- **Strict TDD:** ACTIVE — tests written first (RED → GREEN).
+- **Scope (files) — all NEW:**
+  - `src/agentsys/harness/factory.py`
+  - `tests/test_harness_factory.py`
+- **What was built:**
+  - `build_runtime(role_type, registry, granted_permissions, *, client=None, roots=None) -> EquippedRuntime`.
+  - `EquippedRuntime` (frozen): `definition`, `system_prompt` (composed), `tools` (granted `ToolSpec`s), `denied_tools` (`tuple[name, reason]`), `skills` (`tuple[LoadedSkill]`).
+  - `LoadedSkill(name, content)`, `FactoryError`.
+  - Prompt composition = role body + each skill file verbatim, joined by `---`, in manifest order. Skills load from `deployments/{client}/{role_type}/skills/{name}.md`; missing file → `FactoryError`. Structured events: `factory.skill_loaded`, `factory.skill_missing`, `factory.runtime_built`.
+- **Acceptance criteria:**
+  - [x] Resolves definition + grants/denies tools via injector.
+  - [x] Loads declared skills in order; missing skill file → `FactoryError`.
+  - [x] Composes prompt (role body before skills); generic role (no client) → role body alone, no skills.
+  - [x] Full suite green (166 passed), factory 100% cov, ruff clean, mypy clean on factory files.
+- **Out of scope (later slices):** LangChain `bind_tools` / model binding / LLM call (D-007 Agent Runtime); Layer-2 Tool Call Interceptor (D-005).
+- **Engram topic:** `delegations/D-004`.
+- **SDD:** Artifacts backfilled to engram (`sdd/D-004/{spec,design,tasks,apply-progress}`). Verify run by a fresh `sdd-verify` sub-agent (sonnet) → **PASS** (`sdd/D-004/verify-report`, obs #210): 0 CRITICAL, 1 WARNING (R5 events emitted but not asserted) + 1 SUGGESTION. WARNING-1 closed by adding explicit assertions for `factory.skill_loaded`/`factory.skill_missing` (`4f118b9`). SUGGESTION-1 (generic test uses real roots) left as intentional design choice — happy path deliberately exercises the real BADIE MVP deployment.
+- **Status:** in_review
+- **Result:** Branch `feat/D-004-agent-factory` (commits `0c72cca`, `adc8335`, `b027b65`, `4f118b9`). 11 factory tests, 100% factory coverage, full suite 168 passed, ruff + mypy clean on factory. Verify PASS. Pending merge to `main` by Lead at integration.
+
+---
+
 ## Done (archive)
 
 - **D-001** — Enforce `execution_limits` stricter-only invariant in loader (opencode/minimax-2.7). Merged to `main` (`00089c8`). Added `_PLATFORM_DEFAULT_LIMITS` + `_validate_execution_limits()` in `loader.py`; 19 loader tests, full suite 110 passed.
 - **D-002** — ToolRegistry + capability injector / Layer 1 enforcement (opencode/gpt-5.4). Merged to `main` (`a82101a`). `registry.py` (tool authority) + `injector.py` (`resolve_tool_surface`, effective = role ∩ granted, fail-loud on unknown tool); 8 tests, full suite 118 passed. Note: worker did not commit — Lead committed the work at integration.
 - **D-003** — Sync architecture diagram + complete Spanish docs (antigravity/gemini-3.5-flash-high). Merged to `main` (`351be60`). `diagram.html` View 3 updated to two-layer model; `docs/platform_es/` complete (7 files); extras: `docs/architecture_es/`, `docs/delivery_es/`, Outline scripts.
+- **D-004** — Agent Factory / EquippedRuntime assembler (claude-code). Merged to `main`. `factory.py`: `build_runtime()` glues loader + injector + skill files → frozen `EquippedRuntime`. Prompt = role body + skills joined by `---`. 11 tests, 100% factory coverage, verify PASS (SDD sub-agent sonnet).

@@ -28,6 +28,7 @@
   .mod.loader h3 { color: var(--blue); }
   .mod.registry h3 { color: var(--green); }
   .mod.injector h3 { color: var(--amber); }
+  .mod.factory h3 { color: var(--purple); }
   .mod p { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
   .mod ul { margin: 0; padding-left: 16px; font-size: 12.5px; color: var(--muted); }
   .mod li { margin: 2px 0; }
@@ -161,8 +162,8 @@
     <tr><td><code>delegations.md</code></td><td>El ledger vivo de tareas — quién hace qué, en qué worktree, con qué estado</td></tr>
   </table>
 
-  <h2>Los tres módulos</h2>
-  <div class="modules">
+  <h2>Los cuatro módulos</h2>
+  <div class="modules" style="grid-template-columns:repeat(2,1fr)">
     <div class="mod loader">
       <h3>loader.py</h3>
       <p>Convierte las carpetas de definición en markdown en un único <code>AgentDefinition</code> validado e inmutable.</p>
@@ -189,6 +190,16 @@
         <li><code>resolve_tool_surface()</code></li>
         <li><code>effective = rol ∩ otorgados</code></li>
         <li><code>InjectionResult</code> — granted / denied</li>
+      </ul>
+    </div>
+    <div class="mod factory">
+      <h3>factory.py</h3>
+      <p>El <b>ensamblador</b>. <b>Llama</b> al loader y al injector, <b>recibe</b> el registry y se lo pasa al injector, y <b>agrega</b> la carga de skills + la composición del prompt. No decide seguridad: solo pega y compone.</p>
+      <ul>
+        <li><code>build_runtime()</code> — punto de entrada</li>
+        <li>compone el <code>system_prompt</code> (role + skills)</li>
+        <li>carga <code>skills/*.md</code> del deployment</li>
+        <li><code>EquippedRuntime</code> — definition · prompt · tools · skills</li>
       </ul>
     </div>
   </div>
@@ -321,6 +332,46 @@ registry.<span class="f">get</span>(<span class="s">"unknown_tool"</span>)   <sp
     <span class="k">return</span> InjectionResult(granted, denied)</pre>
       <div class="note"><b>Por qué la intersección:</b> un tool es usable solo si el <i>rol</i> permite el permiso Y el <i>usuario</i> lo tiene otorgado. El rol lo limita; la identidad del usuario lo limita de nuevo. Ninguno por sí solo alcanza.</div>
     </div>
+    <div class="arrow"></div>
+
+    <div class="step" data-c="purple" data-step="7">
+      <div class="num">7</div>
+      <div class="body">
+        <div class="sig">build_runtime(role_type, registry, granted_permissions, *, client, roots) → EquippedRuntime</div>
+        <div class="what">El ensamblador (<code>src/agentsys/harness/factory.py</code>). Orquesta los pasos 1–6, carga las skills y compone el system prompt → un runtime equipado listo para el motor.</div>
+      </div>
+    </div>
+    <div class="detail" data-for="7">
+      <h4>Cómo orquesta — pega todo lo anterior, sin lógica de seguridad nueva</h4>
+      El factory no decide permisos ni valida invariantes (de eso ya se encargaron el loader y el injector). Llama a los módulos en orden, suma las skills del deployment y compone el prompt final.
+      <pre><span class="k">def</span> <span class="f">build_runtime</span>(role_type, registry, granted_permissions, *, client=<span class="k">None</span>, roots=<span class="k">None</span>):
+    definition = <span class="f">resolve</span>(role_type, client=client, roots=roots)        <span class="cm"># pasos 1–4</span>
+    surface    = <span class="f">resolve_tool_surface</span>(definition, registry, granted_permissions)  <span class="cm"># paso 6</span>
+    skills     = <span class="f">_load_skills</span>(definition, client, roots)              <span class="cm"># lee deployments/.../skills/*.md</span>
+    system_prompt = <span class="f">_compose_prompt</span>(definition, skills)             <span class="cm"># role body + skills</span>
+    <span class="k">return</span> EquippedRuntime(definition, system_prompt,
+                           surface.granted, surface.denied, skills)</pre>
+      <h4 style="margin-top:14px">Su relación con cada módulo — orquesta 2, recibe 1, agrega 2</h4>
+      <table>
+        <tr><th>Módulo</th><th>Cómo lo usa el factory</th></tr>
+        <tr><td><code>loader</code></td><td><b>Lo llama</b> — <code>resolve()</code> → <code>AgentDefinition</code></td></tr>
+        <tr><td><code>injector</code></td><td><b>Lo llama</b> — <code>resolve_tool_surface()</code> → tools concedidas / denegadas</td></tr>
+        <tr><td><code>registry</code></td><td><b>NO lo llama.</b> Lo <b>recibe como parámetro</b> y se lo pasa al injector — el injector es quien lo lee. El registry se arma una vez al iniciar (con los connectors reales); el factory no sabe cómo se construye. Por eso es testeable: en los tests recibe un registry de prueba con callables falsos.</td></tr>
+        <tr><td><code>skills/*.md</code></td><td><b>Trabajo propio</b> — los lee de <code>deployments/{client}/{role}/skills/</code>. El loader nunca toca estos archivos.</td></tr>
+        <tr><td>composición</td><td><b>Trabajo propio</b> — arma el <code>system_prompt</code> (role body + skills).</td></tr>
+      </table>
+      <div class="note"><b>La regla que lo gobierna:</b> el factory <b>no decide nada de seguridad</b>. No valida invariantes (eso es del loader) ni resuelve permisos (eso es del injector). Solo <b>pega y compone</b>. El verify independiente confirmó que no introduce ni una sola decisión de seguridad nueva — por eso es simple y predecible.</div>
+      <h4 style="margin-top:14px">Cómo se arma el <code>system_prompt</code></h4>
+      <table>
+        <tr><th>Regla de composición</th><th>Detalle</th></tr>
+        <tr><td>orden</td><td>cuerpo de <code>role.md</code> primero, después cada skill en el orden del <code>manifest</code></td></tr>
+        <tr><td>contenido</td><td>el archivo de cada skill se concatena <b>textual</b> — el factory no reescribe títulos ni reformatea (pasa el contenido, respeta al autor)</td></tr>
+        <tr><td>separador</td><td>los bloques se unen con <code>\n\n---\n\n</code></td></tr>
+        <tr><td>rol genérico (sin cliente)</td><td>no tiene skills → el prompt es solo el cuerpo del <code>role.md</code></td></tr>
+        <tr><td>skill declarada sin archivo</td><td><code>FactoryError</code> — falla fuerte, igual que el loader y el injector</td></tr>
+      </table>
+      <div class="note"><b>Por qué textual y no generado:</b> las skills ya se auto-titulan (<code># Skill: order_extraction</code>). Si el factory regenerara el texto, perdería la intención del autor. Mismo principio que el resolver de skills: <i>se pasa el contenido, no un resumen</i>. El resultado es determinístico — mismos archivos, mismo prompt, byte a byte.</div>
+    </div>
 
   </div>
 
@@ -338,6 +389,14 @@ memory_policy · audit_policy · execution_limits   <span class="cm"># de policy
     <pre>granted: tuple[ToolSpec, ...]            <span class="cm"># lo que el agente puede llamar</span>
 denied:  tuple[(tool_name, reason), ...] <span class="cm"># filtrados, con el motivo</span></pre>
   </div>
+  <div class="ds">
+    <h3>EquippedRuntime  (el runtime equipado — lo que arma el factory)</h3>
+    <pre>definition:   AgentDefinition           <span class="cm"># referencia: context/policy/autonomy viven acá</span>
+system_prompt: str                       <span class="cm"># compuesto: role body + skills</span>
+tools:        tuple[ToolSpec, ...]       <span class="cm"># las concedidas (de InjectionResult)</span>
+denied_tools: tuple[(name, reason), ...] <span class="cm"># las filtradas, para auditoría</span>
+skills:       tuple[LoadedSkill, ...]    <span class="cm"># name + content, leídas de disco</span></pre>
+  </div>
 
   <h2>Ejemplo trabajado — sales-agent para badie</h2>
   <table>
@@ -349,7 +408,7 @@ denied:  tuple[(tool_name, reason), ...] <span class="cm"># filtrados, con el mo
 
   <h2>Lo que TODAVÍA no está construido</h2>
   <div class="next">
-    El flujo de arriba termina en la <b>superficie resuelta</b>. Falta (Wave 2+): el <b>Agent Factory</b> (ensambla prompt + tools + skills + policy en un runtime), la <b>Capa 2 — el Tool Call Interceptor</b> (enforcement en runtime: bloquea + audita + escala), el <b>Agent Runtime</b> (LangGraph + <code>bind_tools</code> + el LLM), el <b>System Router</b>, y los sumideros de <b>auditoría/memoria</b>. Esta página cubre solo loader + registry + injector — el cimiento determinístico sobre el que se construye todo lo demás.
+    El flujo de arriba termina en el <b>runtime equipado</b> (<code>EquippedRuntime</code>), pero ese objeto todavía es <b>inerte</b>: nadie lo ejecuta aún. Falta (Wave 2+): el <b>Agent Runtime</b> (LangGraph + <code>bind_tools</code> + el LLM — el motor que pone vivo al runtime), la <b>Capa 2 — el Tool Call Interceptor</b> (enforcement en runtime: aplica los <code>execution_limits</code>, bloquea + audita + escala), los <b>connectors reales</b> (hoy son callables de prueba: <code>message_sender</code> vía Meta Cloud API, <code>catalog_search</code> vía pgvector, etc.), el <b>System Router</b> y los sumideros de <b>auditoría/memoria</b>. Esta página cubre loader + registry + injector + <b>factory</b> — el cimiento determinístico sobre el que se construye todo lo demás.
   </div>
 
 </div>
