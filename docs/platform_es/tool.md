@@ -47,7 +47,7 @@ El registro de herramientas es una operación a nivel de plataforma. Las nuevas 
 
 ## Cómo se inyectan las herramientas
 
-El Capability Injector resuelve e inyecta las herramientas como el primer paso del pipeline de inyección (antes de las habilidades, el contexto, los permisos, la memoria y las políticas — ver `docs/platform/harness.md` para la explicación completa del orden).
+El Capability Injector resuelve e inyecta las herramientas como el primer paso del pipeline de inyección (antes de las habilidades, el contexto, los permisos, la memoria y las políticas — ver `docs/platform_es/harness.md` para la explicación completa del orden).
 
 **Secuencia de inyección para cada herramienta declarada en el `manifest.md` del agente:**
 
@@ -135,6 +135,6 @@ Resuelve un número de teléfono entrante asociándolo a un registro de cliente 
 ## Referencias cruzadas
 
 - Modelo de permisos y reglas de inyección por conector: `docs/architecture/permission-model.md`
-- Pipeline de inyección y orden de precedencia: `docs/platform/harness.md`
-- Habilidades (*skills* — contraparte de comportamiento de las herramientas): `docs/platform/skill.md`
-- Campo `tools` en el `manifest.md` del agente: `docs/platform/role.md`
+- Pipeline de inyección y orden de precedencia: `docs/platform_es/harness.md`
+- Habilidades (*skills* — contraparte de comportamiento de las herramientas): `docs/platform_es/skill.md`
+- Campo `tools` en el `manifest.md` del agente: `docs/platform_es/role.md`
