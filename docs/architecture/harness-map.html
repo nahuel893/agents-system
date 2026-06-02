@@ -303,6 +303,7 @@
     <button class="tab"        onclick="switchTab('components', this)">Components</button>
     <button class="tab"        onclick="switchTab('enforcement', this)">Enforcement</button>
     <button class="tab"        onclick="switchTab('dataflow', this)">Data Flow</button>
+    <button class="tab"        onclick="switchTab('datalayer', this)">Data Layer</button>
   </div>
 </header>
 
@@ -1006,6 +1007,193 @@
     </div>
 
   </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 5 — DATA LAYER
+═══════════════════════════════════════════════════════════════ -->
+<div id="view-datalayer" class="view">
+
+  <!-- Intro banner -->
+  <div style="background:var(--yellow-dim); border:1px solid var(--yellow); border-radius:12px; padding:18px 22px; margin-bottom:28px;">
+    <div style="color:var(--yellow); font-weight:700; font-size:14px; margin-bottom:6px;">⚠ This layer exists but is NOT wired to the harness yet</div>
+    <div style="font-size:12px; color:var(--text-muted); line-height:1.6;">
+      The RAG + embedding + Postgres/pgvector code is written and unit-tested (<code>test_rag.py</code>, <code>test_embeddings.py</code> — 21 tests, all green with <code>FakeEmbeddingProvider</code>, no DB). But the agent still calls the <strong>stub</strong> <code>catalog_search</code> — it returns hardcoded data. Connecting this layer to the harness is the <strong>D-008 → D-011</strong> roadmap below.
+    </div>
+  </div>
+
+  <!-- RAG pipeline -->
+  <div class="section-title">RAG retrieval pipeline — <code style="font-size:12px;">services/rag.py</code></div>
+  <div class="flow-map" style="margin-top:16px; margin-bottom:32px;">
+    <div class="flow-row">
+      <div class="flow-from">query: str</div>
+      <div class="flow-to-arrow">→</div>
+      <div class="flow-payload"><strong>embedder.embed([query])</strong> — one vector, dimension 512</div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-from" style="border-color:var(--teal);">search_vector</div>
+      <div class="flow-to-arrow">→</div>
+      <div class="flow-payload">pgvector cosine distance over <code>catalog_embeddings</code> · HNSW <code>ef_search=40</code> · top_k=3</div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-from" style="border-color:var(--purple);">classify</div>
+      <div class="flow-to-arrow">→</div>
+      <div class="flow-payload">similarity ≥ <strong>0.92</strong> → <code>direct</code> · ≥ <strong>0.82</strong> → <code>ambiguous</code> · else → <code>no_match</code></div>
+    </div>
+    <div class="flow-row">
+      <div class="flow-from" style="border-color:var(--orange);">fallback</div>
+      <div class="flow-to-arrow">→</div>
+      <div class="flow-payload">on embed failure OR empty vector → <strong>keyword ILIKE search</strong> (degraded, source=keyword_fallback)</div>
+    </div>
+  </div>
+
+  <!-- Embedding providers -->
+  <div class="section-title">Embedding providers — <code style="font-size:12px;">services/embeddings.py</code></div>
+  <p style="font-size:12px; color:var(--text-muted); margin:6px 0 16px;">A <code>Protocol</code> with three swappable implementations. The factory <code>get_embedding_provider(settings)</code> selects by config. Default is <strong>local</strong> — no API key needed.</p>
+  <div class="components-grid" style="margin-bottom:32px;">
+
+    <div class="comp-card" style="border-color:var(--teal);">
+      <div class="comp-header">
+        <div class="comp-icon">🏠</div>
+        <div>
+          <div class="comp-title">LocalBGE</div>
+          <div class="comp-file">BAAI/bge-m3</div>
+        </div>
+      </div>
+      <div class="comp-desc">Self-hosted via sentence-transformers. Native 1024 dims truncated to 512 (Matryoshka). No API key, runs offline. Lazy-imports torch only when instantiated.</div>
+      <div class="comp-meta"><span class="badge badge-green">default</span><span class="type-pill">offline</span></div>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon">☁️</div>
+        <div>
+          <div class="comp-title">OpenAI</div>
+          <div class="comp-file">text-embedding-3-small</div>
+        </div>
+      </div>
+      <div class="comp-desc">Cloud provider. 512 dims via the <code>dimensions</code> param. Requires <code>openai_api_key</code>. Fast and high quality, but billed per token.</div>
+      <div class="comp-meta"><span class="type-pill">cloud</span><span class="type-pill">needs key</span></div>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon">🧪</div>
+        <div>
+          <div class="comp-title">Fake</div>
+          <div class="comp-file">deterministic</div>
+        </div>
+      </div>
+      <div class="comp-desc">SHA-256 seeded vectors — deterministic, no network. Powers all 21 unit tests so RAG logic is testable without a model or a DB.</div>
+      <div class="comp-meta"><span class="badge badge-green">tests</span><span class="type-pill">no deps</span></div>
+    </div>
+
+  </div>
+
+  <!-- DB schema -->
+  <div class="section-title">Database schema — Postgres + pgvector</div>
+  <p style="font-size:12px; color:var(--text-muted); margin:6px 0 16px;">Five tables (<code>models/tables.py</code>). The connection layer (<code>get_engine</code> / <code>async_sessionmaker</code> / <code>get_db</code>) and <code>init_db.py</code> already exist. What's missing is a <strong>running</strong> Postgres — that's D-008.</p>
+  <div class="fields-grid" style="margin-bottom:32px;">
+    <div class="field-card" style="border-left-color:var(--teal);">
+      <div class="field-name">catalog_embeddings</div>
+      <div class="field-type">sku · description · Vector(512) · active</div>
+      <div class="field-desc">The RAG target. HNSW index: m=16, ef_construction=64, vector_cosine_ops.</div>
+    </div>
+    <div class="field-card">
+      <div class="field-name">clients</div>
+      <div class="field-type">id · external_id · phone_number · name · zone</div>
+      <div class="field-desc">Retail clients (puntos de venta). Looked up by phone.</div>
+    </div>
+    <div class="field-card">
+      <div class="field-name">orders</div>
+      <div class="field-type">id · external_id · client_id FK · status · amounts</div>
+      <div class="field-desc">Header row for a placed order.</div>
+    </div>
+    <div class="field-card">
+      <div class="field-name">order_items</div>
+      <div class="field-type">id · order_id FK · sku · qty · unit_price · subtotal</div>
+      <div class="field-desc">Line items belonging to an order.</div>
+    </div>
+    <div class="field-card">
+      <div class="field-name">conversation_logs</div>
+      <div class="field-type">id · thread_id · client_id FK · role · content · tokens</div>
+      <div class="field-desc">Persisted conversation turns for audit / memory.</div>
+    </div>
+  </div>
+
+  <!-- Missing link -->
+  <div class="violation-flow" style="background:var(--bg2); border-color:var(--orange); margin-bottom:32px;">
+    <h3 style="color:var(--orange);">The missing link — stub → real connector (the async friction)</h3>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:6px;">
+      <div>
+        <div style="color:var(--teal); font-size:13px; font-weight:600; margin-bottom:8px;">Today — the stub</div>
+        <div class="comp-sig" style="background:var(--bg3); padding:10px 12px; border-radius:6px;">catalog_search(dict) → dict<br><span style="color:var(--text-dim);">sync · hardcoded 5 products</span></div>
+      </div>
+      <div>
+        <div style="color:var(--orange); font-size:13px; font-weight:600; margin-bottom:8px;">Target — the real connector</div>
+        <div class="comp-sig" style="background:var(--bg3); padding:10px 12px; border-radius:6px;">await rag.search_catalog(<br>&nbsp;&nbsp;session, query, embedder)<br><span style="color:var(--text-dim);">async · needs AsyncSession</span></div>
+      </div>
+    </div>
+    <div style="font-size:12px; color:var(--text-muted); line-height:1.7; margin-top:16px;">
+      <strong style="color:var(--red);">The conflict:</strong> <code>ToolSpec.connector</code> is <strong>sync</strong> (<code>dict→dict</code>), and the runtime wraps it in <code>asyncio.to_thread</code>. But <code>rag.search_catalog</code> is <strong>async</strong> — it needs a SQLAlchemy <code>AsyncSession</code>. Drop an async connector into a sync slot and you get a coroutine that's never awaited. <strong>D-009 resolves this</strong> by teaching the interceptor + runtime to support async-native connectors.
+    </div>
+  </div>
+
+  <!-- Roadmap -->
+  <div class="section-title">Roadmap — del stub al RAG real</div>
+  <p style="font-size:12px; color:var(--text-muted); margin:6px 0 16px;">Critical path: <strong>D-009 → D-010 → D-011</strong>. D-008 and D-009 are independent (infra vs code).</p>
+  <div class="components-grid">
+
+    <div class="comp-card" style="border-color:var(--blue);">
+      <div class="comp-header">
+        <div class="comp-icon">🐘</div>
+        <div>
+          <div class="comp-title">DB Infrastructure</div>
+          <div class="comp-file">docker-compose.yml</div>
+        </div>
+      </div>
+      <div class="comp-desc">Local Postgres+pgvector (<code>pgvector/pgvector:pg16</code>) + Redis. <code>pool_pre_ping</code> on the engine. A <code>SELECT 1</code> + extension smoke test. Connection layer & init_db already exist.</div>
+      <div class="comp-meta"><span class="badge badge-blue">D-008</span><span class="badge badge-orange">in progress</span></div>
+    </div>
+
+    <div class="comp-card" style="border-color:var(--orange);">
+      <div class="comp-header">
+        <div class="comp-icon">⚙️</div>
+        <div>
+          <div class="comp-title">Async Connectors</div>
+          <div class="comp-file">harness/interceptor.py · agent/graph.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">Teach the interceptor + runtime to support async-native connectors. Resolves the sync/async friction so a connector can hold an <code>AsyncSession</code>. The architectural core.</div>
+      <div class="comp-meta"><span class="badge badge-blue">D-009</span><span class="badge badge-yellow">planned</span></div>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon">🔗</div>
+        <div>
+          <div class="comp-title">RAG Catalog Connector</div>
+          <div class="comp-file">connectors/catalog.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">Wrap <code>rag.search_catalog</code> as a real connector. A factory chooses stub vs real by config. The first real connector replacing a stub.</div>
+      <div class="comp-meta"><span class="badge badge-blue">D-010</span><span class="badge badge-yellow">planned</span></div>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon">✅</div>
+        <div>
+          <div class="comp-title">Data + Smoke RAG</div>
+          <div class="comp-file">scripts/smoke_rag.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">Run <code>embed_catalog</code> to populate <code>catalog_embeddings</code>, then an end-to-end smoke where the model queries real catalog data through the RAG connector.</div>
+      <div class="comp-meta"><span class="badge badge-blue">D-011</span><span class="badge badge-yellow">planned</span></div>
+    </div>
+
+  </div>
+
 </div>
 
 </main>
