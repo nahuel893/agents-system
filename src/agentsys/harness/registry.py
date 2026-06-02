@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 
@@ -9,6 +9,18 @@ class ToolSpec:
     name: str
     required_permissions: tuple[str, ...]
     connector: Callable[..., Any]
+    description: str = ""
+    input_schema: dict[str, Any] = field(default_factory=dict)
+
+    def to_langchain_tool_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.input_schema or {"type": "object", "properties": {}},
+            },
+        }
 
 
 class ToolNotFoundError(Exception):
