@@ -409,7 +409,7 @@
 ═══════════════════════════════════════════════════════════════ -->
 <div id="view-components" class="view">
 
-  <div class="section-title" style="margin-bottom:20px;">Built modules — D-001 through D-006</div>
+  <div class="section-title" style="margin-bottom:20px;">Built modules — D-001 through D-007</div>
 
   <div class="components-grid">
 
@@ -453,7 +453,7 @@
         </div>
       </div>
       <div class="comp-desc">
-        The platform's authority on what tools exist. Stores <code>ToolSpec</code> entries (name, required permissions, connector callable). Agents cannot see or call tools that are not registered here — registration precedes injection.
+        The platform's authority on what tools exist. Stores <code>ToolSpec</code> entries: name, required permissions, connector callable, <code>description</code>, and <code>input_schema</code> for <code>bind_tools()</code> bridging. Agents cannot see or call tools that are not registered here — registration precedes injection.
       </div>
       <div class="comp-api">
         <div class="comp-api-title">Public API</div>
@@ -569,6 +569,38 @@
       </div>
     </div>
 
+    <!-- Agent Runtime -->
+    <div class="comp-card" style="border-color:var(--blue);">
+      <div class="comp-header">
+        <div class="comp-icon">🧠</div>
+        <div>
+          <div class="comp-title">Agent Runtime</div>
+          <div class="comp-file">agent/graph.py · agent/state.py</div>
+        </div>
+      </div>
+      <div class="comp-desc">
+        Provider-agnostic LangGraph runtime that turns an <code>EquippedRuntime</code> into a live multi-turn agent. Two nodes: <code>call_model</code> binds any injected <code>BaseChatModel</code>; <code>execute_tools</code> calls <code>intercept()</code> before every tool fires. <code>PolicyViolation</code> becomes an error <code>ToolMessage</code> — never a crash. Sync connectors wrapped via <code>asyncio.to_thread</code>.
+      </div>
+      <div class="comp-api">
+        <div class="comp-api-title">Public API</div>
+        <div class="comp-sig">
+          AgentRuntime(runtime, model: BaseChatModel)<br>
+          await runtime.run_turn(<br>
+          &nbsp;&nbsp;messages, session_id, permissions<br>
+          ) → list[AnyMessage]
+        </div>
+      </div>
+      <div class="comp-types">
+        <span class="type-pill">AgentRuntime</span>
+        <span class="type-pill">AgentState</span>
+        <span class="type-pill">AnyMessage</span>
+      </div>
+      <div class="comp-meta">
+        <span class="badge badge-blue">D-007</span>
+        <span class="badge badge-green">done</span>
+      </div>
+    </div>
+
     <!-- Connector Stubs -->
     <div class="comp-card teal">
       <div class="comp-header">
@@ -609,15 +641,29 @@
     <div class="components-grid">
       <div class="comp-card" style="opacity:0.5; cursor:default;">
         <div class="comp-header">
-          <div class="comp-icon">🔗</div>
+          <div class="comp-icon">💾</div>
           <div>
-            <div class="comp-title">Agent Runtime</div>
-            <div class="comp-file">runtime/agent.py</div>
+            <div class="comp-title">Session Persistence</div>
+            <div class="comp-file">agent/checkpointer.py</div>
           </div>
         </div>
-        <div class="comp-desc">LangGraph loop + <code>bind_tools()</code> + real LLM call. Takes an <code>EquippedRuntime</code> and runs the conversation graph. Uses the interceptor before each connector fires.</div>
+        <div class="comp-desc">LangGraph checkpointing — cross-turn session durability via in-memory or Redis backend. Decouples conversation history from the caller. Required before wiring real WhatsApp transport.</div>
         <div class="comp-meta">
-          <span class="badge badge-blue">D-007</span>
+          <span class="badge badge-blue">D-008</span>
+          <span class="badge badge-yellow">planned</span>
+        </div>
+      </div>
+      <div class="comp-card" style="opacity:0.5; cursor:default;">
+        <div class="comp-header">
+          <div class="comp-icon">💬</div>
+          <div>
+            <div class="comp-title">WhatsApp Transport</div>
+            <div class="comp-file">transport/whatsapp.py</div>
+          </div>
+        </div>
+        <div class="comp-desc">Webhook receiver + Meta Cloud API sender. Bridges inbound WhatsApp messages to <code>AgentRuntime.run_turn()</code> and sends replies back. Depends on D-008 for session continuity.</div>
+        <div class="comp-meta">
+          <span class="badge badge-blue">D-009</span>
           <span class="badge badge-yellow">planned</span>
         </div>
       </div>
@@ -721,9 +767,9 @@
         <div class="vf-arrow">→</div>
         <div class="vf-node">raise PolicyViolation</div>
         <div class="vf-arrow">→</div>
-        <div class="vf-node">Agent Runtime escalates</div>
+        <div class="vf-node">Runtime: ToolMessage(status="error")</div>
         <div class="vf-arrow">→</div>
-        <div class="vf-node">Audit entry written</div>
+        <div class="vf-node">Model recovers, turn continues</div>
       </div>
       <div style="margin-top:14px;">
         <table class="sensitivity-table">
@@ -1018,13 +1064,15 @@ const stageData = {
   },
   runtime: {
     title: '🧠 Agent Runtime',
-    sub: 'The LLM conversation loop — LangGraph + bind_tools',
+    sub: 'Provider-agnostic LangGraph runtime — any BaseChatModel',
     items: [
-      { label: 'Module', val: 'src/agentsys/runtime/agent.py (planned)' },
-      { label: 'Receives', val: 'EquippedRuntime — already assembled and equipped' },
-      { label: 'Does', val: 'bind_tools(runtime.tools) · run LangGraph graph · call interceptor before each tool · observe escalation rules' },
-      { label: 'Produces', val: 'Messages sent · Records written · Delegations initiated · Escalations' },
-      { label: 'Status', val: '⏳ Planned (D-007)' },
+      { label: 'Module', val: 'src/agentsys/agent/graph.py · src/agentsys/agent/state.py' },
+      { label: 'Receives', val: 'EquippedRuntime (from factory) + injected BaseChatModel (ChatOpenAI, ChatAnthropic, etc.)' },
+      { label: 'Graph nodes', val: 'call_model: binds tools + invokes model\nexecute_tools: calls intercept() per tool_use block' },
+      { label: 'PolicyViolation', val: 'Blocked tool → ToolMessage(status="error") — loop continues, no crash' },
+      { label: 'Async', val: 'async def nodes · sync connectors wrapped via asyncio.to_thread' },
+      { label: 'State', val: 'AgentState: messages (add_messages) · session_id · current_permissions' },
+      { label: 'Status', val: '✅ Done (D-007, branch feat/D-007-agent-runtime)' },
     ]
   },
   interceptor: {
