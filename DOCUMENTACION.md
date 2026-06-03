@@ -807,18 +807,33 @@ uv sync --group dev
 cp .env.example .env  # editar con valores reales
 ```
 
-### Levantar dependencias (ejemplo con docker)
+### Variables de entorno requeridas
+
+| Variable | Valor por defecto | Descripción |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/badie` | URL async de Postgres (asyncpg driver) |
+| `REDIS_URL` | `redis://localhost:6379/0` | URL de Redis |
+
+Estas variables ya están en `.env.example`. Copiar y ajustar si los puertos o credenciales difieren.
+
+### Levantar dependencias (docker compose)
 
 ```bash
-# Postgres con pgvector
-docker run -d --name badie-pg \
-  -p 5432:5432 \
-  -e POSTGRES_PASSWORD=dev \
-  -e POSTGRES_DB=badie \
-  pgvector/pgvector:pg17
+# Arranca Postgres (pgvector/pgvector:pg16) + Redis en background
+docker compose up -d
 
-# Redis
-docker run -d --name badie-redis -p 6379:6379 redis:7-alpine
+# Esperar a que Postgres esté healthy (healthcheck: pg_isready, interval 5s, retries 5)
+# Luego inicializar el schema (CREATE EXTENSION vector + 5 tablas)
+uv run python scripts/init_db.py
+```
+
+El script `init_db.py` es idempotente — se puede correr múltiples veces sin error.
+
+#### Verificación de conectividad (opcional)
+
+```bash
+# Requiere que el stack esté levantado y el schema inicializado
+uv run pytest -m integration -v
 ```
 
 ### Levantar la app

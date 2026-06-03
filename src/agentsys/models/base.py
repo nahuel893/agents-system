@@ -18,7 +18,7 @@ class Base(DeclarativeBase):
 
 def get_engine(url: str) -> AsyncEngine:
     """Create an async SQLAlchemy engine from a database URL."""
-    return create_async_engine(url, echo=False)
+    return create_async_engine(url, echo=False, pool_pre_ping=True)
 
 
 def get_session_factory(
