@@ -12,8 +12,7 @@ from typing import Any, Sequence
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
-from langchain_core.tools import BaseTool
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from agentsys.harness.factory import EquippedRuntime
 from agentsys.harness.loader import AgentDefinition
