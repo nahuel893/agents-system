@@ -21,7 +21,7 @@ from typing import Any
 
 import structlog
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
 
 from agentsys.agent.state import AgentState
@@ -38,7 +38,18 @@ logger = structlog.get_logger()
 
 async def _call_model(state: AgentState, bound_model: Any) -> dict[str, Any]:
     """Invoke the bound model with the current message history."""
-    response: AIMessage = await bound_model.ainvoke(state["messages"])
+    try:
+        response: AIMessage = await bound_model.ainvoke(state["messages"])
+    except Exception as exc:
+        # Some providers raise BadRequestError when the model generates a
+        # malformed tool call (tool_use_failed). Retry without tools so the
+        # model falls back to a plain text response instead of crashing.
+        if "tool_use_failed" in str(exc) or "tool call validation failed" in str(exc):
+            logger.warning("runtime.tool_format_error_retry", error=str(exc)[:120])
+            base_model = bound_model.bound
+            response = await base_model.ainvoke(state["messages"])
+        else:
+            raise
     logger.info("runtime.model_response", tool_calls=len(response.tool_calls or []))
     return {"messages": [response]}
 
@@ -195,8 +206,12 @@ class AgentRuntime:
             tool messages). The caller owns cross-turn aggregation.
         """
         compiled = _build_graph(self._equipped, self._bound_model, permissions).compile()
+        # Prepend system prompt if not already present
+        all_messages = list(messages)
+        if not all_messages or not isinstance(all_messages[0], SystemMessage):
+            all_messages = [SystemMessage(content=self._equipped.system_prompt)] + all_messages
         initial_state: AgentState = {
-            "messages": list(messages),
+            "messages": all_messages,
             "session_id": session_id,
             "current_permissions": permissions,
         }

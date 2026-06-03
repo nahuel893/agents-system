@@ -76,27 +76,37 @@ def build_badie_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(ToolSpec(
         name="catalog_search",
+        description="Search the product catalog. Returns a list of matching products with id, name, price, and stock.",
         required_permissions=("read:catalog",),
+        input_schema={"type": "object", "properties": {"q": {"type": "string", "description": "Search query (product name or keyword). Leave empty to return all products."}}, "required": []},
         connector=catalog_search,
     ))
     registry.register(ToolSpec(
         name="client_lookup",
+        description="Look up a client by phone number. Returns client_id, name, and phone. Use this before creating an order.",
         required_permissions=("read:client_registry",),
+        input_schema={"type": "object", "properties": {"phone": {"type": "string", "description": "Client phone number in international format, e.g. 5491112345678"}}, "required": ["phone"]},
         connector=client_lookup,
     ))
     registry.register(ToolSpec(
         name="order_writer",
+        description="Create a new order for a client. Requires client_id (from client_lookup) and a list of items with product_id and qty.",
         required_permissions=("write:orders", "write:order_items"),
+        input_schema={"type": "object", "properties": {"client_id": {"type": "string", "description": "Client ID obtained from client_lookup"}, "items": {"type": "array", "items": {"type": "object", "properties": {"product_id": {"type": "string"}, "qty": {"type": "integer"}}, "required": ["product_id", "qty"]}, "description": "List of products to order"}}, "required": ["client_id", "items"]},
         connector=order_writer,
     ))
     registry.register(ToolSpec(
         name="message_sender",
+        description="Send a WhatsApp message to a phone number.",
         required_permissions=("send:message",),
+        input_schema={"type": "object", "properties": {"to": {"type": "string", "description": "Recipient phone number"}, "text": {"type": "string", "description": "Message text to send"}}, "required": ["to", "text"]},
         connector=message_sender,
     ))
     registry.register(ToolSpec(
         name="session_state",
+        description="Get or set session state data for the current conversation.",
         required_permissions=(),
+        input_schema={"type": "object", "properties": {"action": {"type": "string", "enum": ["get", "set"]}, "session_id": {"type": "string"}, "data": {"type": "object"}}, "required": ["action", "session_id"]},
         connector=session_state,
     ))
     return registry
