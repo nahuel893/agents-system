@@ -11,9 +11,14 @@ Sensitive tools — those whose required_permissions include any write:* or
 send:* permission — are revalidated against current permissions at call time.
 This guards against permission changes that occur between runtime instantiation
 and the actual tool invocation in long-running sessions.
+
+D-009: intercept() is async-native. Async connectors are awaited directly;
+sync connectors are offloaded via asyncio.to_thread so the event loop stays
+free. Policy enforcement remains synchronous and runs before dispatch.
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from typing import Any, Iterable
 
@@ -52,12 +57,13 @@ class CallResult:
     revalidated: bool
 
 
-def intercept(
+async def intercept(
     tool_name: str,
     tool_input: dict[str, Any],
     runtime: EquippedRuntime,
     *,
     current_permissions: Iterable[str] | None = None,
+    session: Any = None,
 ) -> CallResult:
     """Validate and execute a tool call against the injected surface.
 
@@ -72,6 +78,11 @@ def intercept(
     current_permissions:
         The caller's current permission grants, used to revalidate sensitive
         tools at execution time. Must be provided for any sensitive tool.
+    session:
+        An optional SQLAlchemy AsyncSession opened per-turn by the caller.
+        Forwarded as a keyword argument to async connectors only. Sync
+        connectors do not receive it (they run in asyncio.to_thread and must
+        not access async session objects from a thread context).
     """
     surface: dict[str, ToolSpec] = {t.name: t for t in runtime.tools}
 
@@ -108,7 +119,12 @@ def intercept(
         revalidated = True
 
     logger.info("interceptor.call_allowed", tool=tool_name, sensitive=sensitive)
-    output = spec.connector(tool_input)
+
+    if asyncio.iscoroutinefunction(spec.connector):
+        output = await spec.connector(tool_input, session=session)
+    else:
+        output = await asyncio.to_thread(spec.connector, tool_input)
+
     logger.info("interceptor.call_executed", tool=tool_name)
 
     return CallResult(tool_name=tool_name, output=output, revalidated=revalidated)
