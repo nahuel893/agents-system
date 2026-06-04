@@ -9,6 +9,18 @@ class ToolSpec:
     name: str
     required_permissions: tuple[str, ...]
     connector: Callable[..., Any]
+    """The callable that executes the tool.
+
+    Connector contract (D-009):
+    - Sync:  ``def connector(inputs: dict, /) -> dict``
+             Executed via ``asyncio.to_thread`` — must not touch async objects.
+    - Async: ``async def connector(inputs: dict, *, session: AsyncSession | None = None) -> dict``
+             Awaited directly; receives the turn-scoped SQLAlchemy AsyncSession
+             (or None when no session_provider is configured).
+
+    Connectors MUST NOT call ``session.commit()`` or ``session.rollback()``.
+    Transaction management belongs to the orchestrator (webhook / request handler).
+    """
     description: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
 
