@@ -1,4 +1,4 @@
-"""AgentRuntime — LangGraph-based, provider-agnostic agent loop (D-007).
+"""AgentRuntime — LangGraph-based, provider-agnostic agent loop (D-007/D-009).
 
 Turns a static EquippedRuntime into a live multi-turn agent via a 2-node
 LangGraph graph:
@@ -6,16 +6,23 @@ LangGraph graph:
   - execute_tools: dispatches each tool_call through the Layer-2 interceptor
 
 The loop continues until the model produces an AIMessage with no tool_calls.
-Sync connector functions are wrapped with asyncio.to_thread so they never
-block the event loop.
+
+D-009: intercept() is now async-native. Sync connectors are wrapped with
+asyncio.to_thread inside intercept() itself. _execute_tools opens one
+turn-scoped AsyncSession (when session_provider is set) and forwards it to
+intercept(). The session is NOT committed here — the orchestrator/webhook owns
+commit after run_turn() returns.
+
+Concurrency note: the tool-call loop remains sequential. A shared AsyncSession
+must not be used concurrently — do not convert the loop to asyncio.gather.
 
 State is NOT persisted internally. The caller supplies the full message history
-per turn and owns cross-turn durability (D-008 will add checkpointing).
+per turn and owns cross-turn durability.
 """
 from __future__ import annotations
 
-import asyncio
 import json
+from contextlib import nullcontext
 from functools import partial
 from typing import Any
 
@@ -59,45 +66,55 @@ async def _execute_tools(
     equipped: EquippedRuntime,
     permissions: tuple[str, ...],
 ) -> dict[str, Any]:
-    """Execute all tool_calls in the last AIMessage through the Layer-2 interceptor."""
+    """Execute all tool_calls in the last AIMessage through the Layer-2 interceptor.
+
+    D-009: Opens one turn-scoped AsyncSession when equipped.session_provider is
+    set; passes the session to every intercept() call in this turn. The session
+    is NOT committed — the orchestrator owns the transaction boundary.
+    The loop is intentionally sequential: a shared AsyncSession must not be
+    used concurrently (no asyncio.gather here).
+    """
     last_message = state["messages"][-1]
     tool_calls: list[dict[str, Any]] = getattr(last_message, "tool_calls", []) or []
 
     result_messages: list[ToolMessage] = []
-    for call in tool_calls:
-        tool_name: str = call["name"]
-        tool_args: dict[str, Any] = call.get("args", {}) or {}
-        call_id: str = call["id"]
 
-        try:
-            outcome: CallResult = await asyncio.to_thread(
-                intercept,
-                tool_name,
-                tool_args,
-                equipped,
-                current_permissions=permissions,
-            )
-            output = outcome.output
-            content = (
-                json.dumps(output) if isinstance(output, (dict, list)) else str(output)
-            )
-            result_messages.append(
-                ToolMessage(content=content, tool_call_id=call_id)
-            )
-            logger.info("runtime.tool_executed", tool=tool_name)
-        except PolicyViolation as violation:
-            result_messages.append(
-                ToolMessage(
-                    content=f"Tool call blocked: {violation.reason}",
-                    tool_call_id=call_id,
-                    status="error",
+    session_cm = equipped.session_provider() if equipped.session_provider else nullcontext()
+    async with session_cm as session:
+        for call in tool_calls:
+            tool_name: str = call["name"]
+            tool_args: dict[str, Any] = call.get("args", {}) or {}
+            call_id: str = call["id"]
+
+            try:
+                outcome: CallResult = await intercept(
+                    tool_name,
+                    tool_args,
+                    equipped,
+                    current_permissions=permissions,
+                    session=session,
                 )
-            )
-            logger.warning(
-                "runtime.tool_blocked",
-                tool=tool_name,
-                reason=violation.reason,
-            )
+                output = outcome.output
+                content = (
+                    json.dumps(output) if isinstance(output, (dict, list)) else str(output)
+                )
+                result_messages.append(
+                    ToolMessage(content=content, tool_call_id=call_id)
+                )
+                logger.info("runtime.tool_executed", tool=tool_name)
+            except PolicyViolation as violation:
+                result_messages.append(
+                    ToolMessage(
+                        content=f"Tool call blocked: {violation.reason}",
+                        tool_call_id=call_id,
+                        status="error",
+                    )
+                )
+                logger.warning(
+                    "runtime.tool_blocked",
+                    tool=tool_name,
+                    reason=violation.reason,
+                )
 
     return {"messages": result_messages}
 

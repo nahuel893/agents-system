@@ -1,13 +1,16 @@
-"""Tests for the Tool Call Interceptor — Layer-2 execution-time enforcement (D-005).
+"""Tests for the Tool Call Interceptor — Layer-2 execution-time enforcement (D-005/D-009).
 
 The interceptor is the second enforcement barrier: it validates every tool call
 against the EquippedRuntime's injected surface BEFORE the connector executes.
 Layer 1 (injector) runs at build time; Layer 2 (interceptor) runs at call time.
 
-Strict TDD: tests written before interceptor.py exists.
+D-009: intercept() is now async-native. All tests converted to async def.
+Strict TDD: tests written before interceptor.py changes exist.
 """
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -44,13 +47,13 @@ def _runtime(tools: list[Any]) -> Any:
 # 1. Non-sensitive tool in surface — executes, revalidated=False
 # ---------------------------------------------------------------------------
 
-def test_intercept_allowed_non_sensitive_tool() -> None:
+async def test_intercept_allowed_non_sensitive_tool() -> None:
     from agentsys.harness.interceptor import CallResult, intercept
 
     spec = _spec("session_state", [])
     runtime = _runtime([spec])
 
-    result = intercept("session_state", {}, runtime)
+    result = await intercept("session_state", {}, runtime)
 
     assert isinstance(result, CallResult)
     assert result.tool_name == "session_state"
@@ -62,25 +65,25 @@ def test_intercept_allowed_non_sensitive_tool() -> None:
 # 2. Tool NOT in surface → PolicyViolation
 # ---------------------------------------------------------------------------
 
-def test_intercept_blocks_tool_not_in_surface() -> None:
+async def test_intercept_blocks_tool_not_in_surface() -> None:
     from agentsys.harness.interceptor import PolicyViolation, intercept
 
     runtime = _runtime([_spec("session_state", [])])
 
     with pytest.raises(PolicyViolation) as exc_info:
-        intercept("ghost_tool", {}, runtime)
+        await intercept("ghost_tool", {}, runtime)
 
     assert exc_info.value.tool_name == "ghost_tool"
 
 
-def test_intercept_logs_call_blocked_when_not_in_surface() -> None:
+async def test_intercept_logs_call_blocked_when_not_in_surface() -> None:
     from agentsys.harness.interceptor import PolicyViolation, intercept
 
     runtime = _runtime([_spec("session_state", [])])
 
     with structlog.testing.capture_logs() as logs:
         with pytest.raises(PolicyViolation):
-            intercept("ghost_tool", {}, runtime)
+            await intercept("ghost_tool", {}, runtime)
 
     events = [e["event"] for e in logs]
     assert "interceptor.call_blocked" in events
@@ -90,13 +93,13 @@ def test_intercept_logs_call_blocked_when_not_in_surface() -> None:
 # 3. Sensitive tool, sufficient current_permissions → executes, revalidated=True
 # ---------------------------------------------------------------------------
 
-def test_intercept_sensitive_tool_with_sufficient_permissions() -> None:
+async def test_intercept_sensitive_tool_with_sufficient_permissions() -> None:
     from agentsys.harness.interceptor import intercept
 
     spec = _spec("order_writer", ["write:orders", "write:order_items"])
     runtime = _runtime([spec])
 
-    result = intercept(
+    result = await intercept(
         "order_writer",
         {"items": []},
         runtime,
@@ -111,14 +114,14 @@ def test_intercept_sensitive_tool_with_sufficient_permissions() -> None:
 # 4. Sensitive tool, insufficient current_permissions → PolicyViolation
 # ---------------------------------------------------------------------------
 
-def test_intercept_sensitive_tool_permission_revoked() -> None:
+async def test_intercept_sensitive_tool_permission_revoked() -> None:
     from agentsys.harness.interceptor import PolicyViolation, intercept
 
     spec = _spec("order_writer", ["write:orders", "write:order_items"])
     runtime = _runtime([spec])
 
     with pytest.raises(PolicyViolation) as exc_info:
-        intercept(
+        await intercept(
             "order_writer",
             {},
             runtime,
@@ -128,7 +131,7 @@ def test_intercept_sensitive_tool_permission_revoked() -> None:
     assert exc_info.value.tool_name == "order_writer"
 
 
-def test_intercept_logs_blocked_on_permission_revoked() -> None:
+async def test_intercept_logs_blocked_on_permission_revoked() -> None:
     from agentsys.harness.interceptor import PolicyViolation, intercept
 
     spec = _spec("order_writer", ["write:orders", "write:order_items"])
@@ -136,7 +139,7 @@ def test_intercept_logs_blocked_on_permission_revoked() -> None:
 
     with structlog.testing.capture_logs() as logs:
         with pytest.raises(PolicyViolation):
-            intercept("order_writer", {}, runtime, current_permissions=["read:catalog"])
+            await intercept("order_writer", {}, runtime, current_permissions=["read:catalog"])
 
     assert any(e["event"] == "interceptor.call_blocked" for e in logs)
 
@@ -145,14 +148,14 @@ def test_intercept_logs_blocked_on_permission_revoked() -> None:
 # 5. Sensitive tool, current_permissions=None → PolicyViolation
 # ---------------------------------------------------------------------------
 
-def test_intercept_sensitive_tool_without_permissions_raises() -> None:
+async def test_intercept_sensitive_tool_without_permissions_raises() -> None:
     from agentsys.harness.interceptor import PolicyViolation, intercept
 
     spec = _spec("message_sender", ["send:message"])
     runtime = _runtime([spec])
 
     with pytest.raises(PolicyViolation) as exc_info:
-        intercept("message_sender", {"text": "hi"}, runtime)  # no current_permissions
+        await intercept("message_sender", {"text": "hi"}, runtime)  # no current_permissions
 
     assert exc_info.value.tool_name == "message_sender"
 
@@ -161,14 +164,14 @@ def test_intercept_sensitive_tool_without_permissions_raises() -> None:
 # 6. Non-sensitive tool — current_permissions is irrelevant, not revalidated
 # ---------------------------------------------------------------------------
 
-def test_intercept_non_sensitive_tool_ignores_current_permissions() -> None:
+async def test_intercept_non_sensitive_tool_ignores_current_permissions() -> None:
     from agentsys.harness.interceptor import intercept
 
     spec = _spec("catalog_search", ["read:catalog"])
     runtime = _runtime([spec])
 
     # read:catalog is NOT sensitive (not write: or send:) — no revalidation needed
-    result = intercept(
+    result = await intercept(
         "catalog_search",
         {"q": "sugar"},
         runtime,
@@ -182,15 +185,92 @@ def test_intercept_non_sensitive_tool_ignores_current_permissions() -> None:
 # 7. Structured events: call_allowed and call_executed on success
 # ---------------------------------------------------------------------------
 
-def test_intercept_logs_call_allowed_and_executed_on_success() -> None:
+async def test_intercept_logs_call_allowed_and_executed_on_success() -> None:
     from agentsys.harness.interceptor import intercept
 
     spec = _spec("session_state", [])
     runtime = _runtime([spec])
 
     with structlog.testing.capture_logs() as logs:
-        intercept("session_state", {}, runtime)
+        await intercept("session_state", {}, runtime)
 
     events = [e["event"] for e in logs]
     assert "interceptor.call_allowed" in events
     assert "interceptor.call_executed" in events
+
+
+# ---------------------------------------------------------------------------
+# D-009 RED tests — async connector dispatch (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+async def test_async_connector_dispatched_and_awaited() -> None:
+    """Async connector is awaited directly; session kwarg is forwarded."""
+    from agentsys.harness.interceptor import CallResult, intercept
+    from agentsys.harness.registry import ToolSpec
+
+    received_session: list[Any] = []
+
+    async def fake_async_connector(inputs: dict[str, Any], *, session: Any = None) -> dict[str, Any]:
+        received_session.append(session)
+        return {"async": True}
+
+    spec = ToolSpec(name="async_tool", required_permissions=(), connector=fake_async_connector)
+    runtime = _runtime([spec])
+    sentinel = object()
+
+    result = await intercept("async_tool", {}, runtime, session=sentinel)
+
+    assert isinstance(result, CallResult)
+    assert result.tool_name == "async_tool"
+    assert result.output == {"async": True}
+    assert len(received_session) == 1
+    assert received_session[0] is sentinel
+
+
+async def test_policy_violation_raised_for_async_connector() -> None:
+    """Enforcement (surface check) fires before async connector runs."""
+    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agentsys.harness.registry import ToolSpec
+
+    called: list[bool] = []
+
+    async def sensitive_async_connector(inputs: dict[str, Any], *, session: Any = None) -> dict[str, Any]:
+        called.append(True)
+        return {"data": "secret"}
+
+    spec = ToolSpec(
+        name="secure_async_tool",
+        required_permissions=("send:message",),
+        connector=sensitive_async_connector,
+    )
+    runtime = _runtime([spec])
+
+    with pytest.raises(PolicyViolation) as exc_info:
+        # Not passing current_permissions → revalidation_required
+        await intercept("secure_async_tool", {}, runtime)
+
+    assert exc_info.value.tool_name == "secure_async_tool"
+    assert not called, "Connector must not run before policy check passes"
+
+
+def test_connector_no_commit_rollback() -> None:
+    """Static assertion: no connector in src/agentsys/connectors/ calls commit() or rollback()."""
+    connectors_dir = (
+        Path(__file__).parent.parent / "src" / "agentsys" / "connectors"
+    )
+    py_files = list(connectors_dir.glob("*.py"))
+    assert py_files, "No connector files found — check the path"
+
+    for py_file in py_files:
+        source = py_file.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(py_file))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Attribute) and func.attr in ("commit", "rollback"):
+                    raise AssertionError(
+                        f"Connector file {py_file.name} calls "
+                        f"'{func.attr}()' at line {node.lineno}. "
+                        "Connectors must NOT manage transactions."
+                    )

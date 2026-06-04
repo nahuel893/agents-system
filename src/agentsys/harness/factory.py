@@ -30,13 +30,17 @@ client) has no skills, so its prompt is just the role body.
 from __future__ import annotations
 
 import dataclasses
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 import structlog
 
 from agentsys.harness.injector import resolve_tool_surface
 from agentsys.harness.loader import AgentDefinition, RootConfig, resolve
 from agentsys.harness.registry import ToolRegistry, ToolSpec
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 
 logger = structlog.get_logger()
 
@@ -63,6 +67,10 @@ class EquippedRuntime:
     instantiate one: the resolved definition (context / policy / autonomy live
     there), the composed system prompt, the granted tool surface, the denied
     tools (for audit), and the loaded skill modules.
+
+    D-009: session_provider is an optional async_sessionmaker. When set,
+    _execute_tools opens one AsyncSession per turn and forwards it to async
+    connectors. Defaults to None for backward compatibility.
     """
 
     definition: AgentDefinition
@@ -70,6 +78,7 @@ class EquippedRuntime:
     tools: tuple[ToolSpec, ...]
     denied_tools: tuple[tuple[str, str], ...]
     skills: tuple[LoadedSkill, ...]
+    session_provider: async_sessionmaker[AsyncSession] | None = None
 
 
 def _load_skills(
