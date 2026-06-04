@@ -291,3 +291,121 @@ async def test_stateless_run_turn_caller_owns_history() -> None:
         m.content for m in result_2 if isinstance(m, HumanMessage)
     ]
     assert all("Turn 1" not in c for c in turn_2_human_contents)
+
+
+# ---------------------------------------------------------------------------
+# D-009 RED tests — session_provider on EquippedRuntime
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_passed_to_async_connector() -> None:
+    """session_provider on EquippedRuntime opens a session; async connector receives it."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agentsys.agent.graph import AgentRuntime
+
+    received_sessions: list[Any] = []
+
+    async def async_catalog(inputs: dict[str, Any], *, session: Any = None) -> dict[str, Any]:
+        received_sessions.append(session)
+        return {"results": []}
+
+    async_spec = ToolSpec(
+        name="catalog_search",
+        required_permissions=("read:catalog",),
+        connector=async_catalog,
+        description="Async catalog search",
+        input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+    )
+
+    # Build a mock async_sessionmaker: calling it returns an async context manager
+    # that yields a mock session.
+    mock_session = MagicMock(name="mock_session")
+    mock_session_cm = AsyncMock()
+    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+    mock_session_provider = MagicMock(return_value=mock_session_cm)
+
+    runtime = EquippedRuntime(
+        definition=_fake_definition(),
+        system_prompt="You are a helpful assistant.",
+        tools=(async_spec,),
+        denied_tools=(),
+        skills=(),
+        session_provider=mock_session_provider,
+    )
+
+    tool_call_id = "call_async_001"
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": tool_call_id,
+                "name": "catalog_search",
+                "args": {"q": "sugar"},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="Found results.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    agent = AgentRuntime(runtime, model)
+    await agent.run_turn(
+        [HumanMessage(content="Search for sugar")],
+        session_id="s1",
+        permissions=("read:catalog",),
+    )
+
+    assert len(received_sessions) == 1
+    assert received_sessions[0] is mock_session
+
+
+@pytest.mark.asyncio
+async def test_no_session_provider_backward_compatible() -> None:
+    """session_provider=None (default) — turn runs; connector receives session=None."""
+    from agentsys.agent.graph import AgentRuntime
+
+    received_sessions: list[Any] = []
+
+    async def async_catalog(inputs: dict[str, Any], *, session: Any = None) -> dict[str, Any]:
+        received_sessions.append(session)
+        return {"results": []}
+
+    async_spec = ToolSpec(
+        name="catalog_search",
+        required_permissions=("read:catalog",),
+        connector=async_catalog,
+        description="Async catalog search",
+        input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+    )
+
+    # No session_provider — uses default None
+    runtime = _make_runtime(tools=(async_spec,))
+
+    tool_call_id = "call_async_002"
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": tool_call_id,
+                "name": "catalog_search",
+                "args": {"q": "sugar"},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="Found results.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    agent = AgentRuntime(runtime, model)
+    result = await agent.run_turn(
+        [HumanMessage(content="Search for sugar")],
+        session_id="s1",
+        permissions=("read:catalog",),
+    )
+
+    assert isinstance(result[-1], AIMessage)
+    assert len(received_sessions) == 1
+    assert received_sessions[0] is None
