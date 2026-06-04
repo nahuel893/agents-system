@@ -662,9 +662,41 @@
 
   <!-- Coming up -->
   <div style="margin-top:28px;">
-    <div class="section-title">Coming next</div>
+    <div class="section-title">Coming next — the stub → RAG roadmap</div>
     <div class="components-grid">
-      <div class="comp-card" style="opacity:0.5; cursor:default;">
+      <div class="comp-card" style="opacity:0.6; cursor:default;">
+        <div class="comp-header">
+          <div class="comp-icon">🔗</div>
+          <div>
+            <div class="comp-title">RAG Catalog Connector</div>
+            <div class="comp-file">connectors/catalog.py</div>
+          </div>
+        </div>
+        <div class="comp-desc">The first REAL async connector. Wraps <code>rag.search_catalog</code> and replaces the hardcoded <code>catalog_search</code> stub with vector search over Postgres+pgvector. Receives an injected <code>AsyncSession</code> (enabled by D-009), never commits.</div>
+        <div class="comp-meta">
+          <span class="badge badge-blue">D-010</span>
+          <span class="badge badge-yellow">planned</span>
+        </div>
+      </div>
+      <div class="comp-card" style="opacity:0.6; cursor:default;">
+        <div class="comp-header">
+          <div class="comp-icon">✅</div>
+          <div>
+            <div class="comp-title">Data + Smoke RAG</div>
+            <div class="comp-file">scripts/smoke_rag.py</div>
+          </div>
+        </div>
+        <div class="comp-desc">Run <code>embed_catalog</code> to populate <code>catalog_embeddings</code>, then an end-to-end smoke where the model queries REAL catalog data through the RAG connector — the payoff of the whole roadmap.</div>
+        <div class="comp-meta">
+          <span class="badge badge-blue">D-011</span>
+          <span class="badge badge-yellow">planned</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-top:24px;">Beyond the RAG roadmap</div>
+    <div class="components-grid">
+      <div class="comp-card" style="opacity:0.4; cursor:default;">
         <div class="comp-header">
           <div class="comp-icon">💾</div>
           <div>
@@ -672,13 +704,10 @@
             <div class="comp-file">agent/checkpointer.py</div>
           </div>
         </div>
-        <div class="comp-desc">LangGraph checkpointing — cross-turn session durability via in-memory or Redis backend. Decouples conversation history from the caller. Required before wiring real WhatsApp transport.</div>
-        <div class="comp-meta">
-          <span class="badge badge-blue">D-008</span>
-          <span class="badge badge-yellow">planned</span>
-        </div>
+        <div class="comp-desc">LangGraph checkpointing — cross-turn session durability via Redis. Decouples conversation history from the caller. Originally scoped into D-007, deferred until after RAG lands.</div>
+        <div class="comp-meta"><span class="badge badge-yellow">later</span></div>
       </div>
-      <div class="comp-card" style="opacity:0.5; cursor:default;">
+      <div class="comp-card" style="opacity:0.4; cursor:default;">
         <div class="comp-header">
           <div class="comp-icon">💬</div>
           <div>
@@ -686,11 +715,8 @@
             <div class="comp-file">transport/whatsapp.py</div>
           </div>
         </div>
-        <div class="comp-desc">Webhook receiver + Meta Cloud API sender. Bridges inbound WhatsApp messages to <code>AgentRuntime.run_turn()</code> and sends replies back. Depends on D-008 for session continuity.</div>
-        <div class="comp-meta">
-          <span class="badge badge-blue">D-009</span>
-          <span class="badge badge-yellow">planned</span>
-        </div>
+        <div class="comp-desc">Webhook receiver + Meta Cloud API sender. Bridges inbound WhatsApp messages to <code>AgentRuntime.run_turn()</code> and owns the transaction commit after each turn.</div>
+        <div class="comp-meta"><span class="badge badge-yellow">later</span></div>
       </div>
     </div>
   </div>
@@ -1177,7 +1203,7 @@
         </div>
       </div>
       <div class="comp-desc">Local Postgres+pgvector (<code>pgvector/pgvector:pg16</code>) + Redis. <code>pool_pre_ping</code> on the engine. A <code>SELECT 1</code> + extension smoke test. Connection layer & init_db already exist.</div>
-      <div class="comp-meta"><span class="badge badge-blue">D-008</span><span class="badge badge-orange">in progress</span></div>
+      <div class="comp-meta"><span class="badge badge-blue">D-008</span><span class="badge badge-green">done</span></div>
     </div>
 
     <div class="comp-card" style="border-color:var(--orange);">
@@ -1189,7 +1215,7 @@
         </div>
       </div>
       <div class="comp-desc">Teach the interceptor + runtime to support async-native connectors. Resolves the sync/async friction so a connector can hold an <code>AsyncSession</code>. The architectural core.</div>
-      <div class="comp-meta"><span class="badge badge-blue">D-009</span><span class="badge badge-yellow">planned</span></div>
+      <div class="comp-meta"><span class="badge badge-blue">D-009</span><span class="badge badge-green">done</span></div>
     </div>
 
     <div class="comp-card">
@@ -1227,7 +1253,7 @@
 
   <p style="font-size:13px; color:var(--text-muted); margin-bottom:8px;">From instantiating an agent to the exact pivot D-009 is changing. Legend:
     <span class="badge badge-green">✓ built</span>
-    <span class="badge badge-orange">✦ D-009</span>
+    <span class="badge badge-green">✓ D-009 done</span>
     <span class="badge badge-yellow">⏳ next</span>
   </p>
 
@@ -1245,7 +1271,7 @@
       <div class="rf-sig" style="border-color:var(--purple); margin-top:10px;">►  EquippedRuntime {<br>
         &nbsp;&nbsp;definition, system_prompt,<br>
         &nbsp;&nbsp;tools: (ToolSpec…),<br>
-        &nbsp;&nbsp;<span style="color:var(--orange);">session_provider</span> &nbsp;◄── ✦ NEW in D-009<br>
+        &nbsp;&nbsp;<span style="color:var(--green);">session_provider</span> &nbsp;◄── ✓ D-009<br>
         }</div>
     </div>
 
@@ -1275,7 +1301,7 @@
       <div class="rf-steps">
         <div class="rf-step"><span class="rf-arm">├─</span> surface check &nbsp;(is it in runtime.tools?)</div>
         <div class="rf-step"><span class="rf-arm">├─</span> sensitivity check &nbsp;(write:/send: → revalidate perms)</div>
-        <div class="rf-step"><span class="rf-arm">└─</span> <strong style="color:var(--orange);">DISPATCH the connector</strong> &nbsp;◄═══ ✦ D-009 lives here</div>
+        <div class="rf-step"><span class="rf-arm">└─</span> <strong style="color:var(--orange);">DISPATCH the connector</strong> &nbsp;◄═══ ✓ D-009 (sync/async dispatch — done)</div>
       </div>
     </div>
 
@@ -1283,7 +1309,7 @@
 
     <!-- STAGE 3 — Dispatch (D-009) -->
     <div class="rf-stage" style="border-color:var(--orange); background:var(--orange-dim);">
-      <div class="rf-head" style="color:var(--orange);">3 · Connector dispatch <span class="rf-tag">✦ what D-009 changes</span></div>
+      <div class="rf-head" style="color:var(--orange);">3 · Connector dispatch <span class="rf-tag">✓ D-009 — done</span></div>
       <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">A single branch inside <code>intercept</code> on <code>asyncio.iscoroutinefunction(connector)</code>:</div>
 
       <div class="rf-branch">
@@ -1295,7 +1321,7 @@
         <div class="rf-branch-col" style="border-color:var(--orange);">
           <div class="rf-branch-head" style="color:var(--orange);">async connector</div>
           <div class="rf-sig">await connector(<br>&nbsp;&nbsp;input, session=…)</div>
-          <div class="rf-branch-note"><span class="badge badge-orange">✦ NEW in D-009</span></div>
+          <div class="rf-branch-note"><span class="badge badge-green">✓ D-009</span></div>
         </div>
       </div>
 
