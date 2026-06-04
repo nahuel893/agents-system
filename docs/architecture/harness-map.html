@@ -291,6 +291,29 @@
   .connector-io-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 4px; }
   .connector-io-val { font-size: 11px; font-family: 'SF Mono', monospace; color: var(--text-muted); line-height: 1.5; }
 
+  /* ─────────────────────────────────────────
+     VIEW 6 — RUNTIME FLOW
+  ───────────────────────────────────────── */
+  .rf-flow { display: flex; flex-direction: column; align-items: stretch; max-width: 760px; margin: 0 auto; }
+  .rf-stage { background: var(--bg2); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .rf-head { font-size: 14px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .rf-tag { font-size: 11px; font-weight: 500; color: var(--text-dim); background: var(--bg3); padding: 2px 8px; border-radius: 10px; }
+  .rf-sig { font-family: 'SF Mono', monospace; font-size: 12px; color: var(--text); background: var(--bg3); border-left: 3px solid var(--border); border-radius: 6px; padding: 10px 12px; line-height: 1.6; }
+  .rf-steps { margin: 10px 0 0; }
+  .rf-step { font-size: 12px; color: var(--text-muted); line-height: 1.9; }
+  .rf-arm { font-family: 'SF Mono', monospace; color: var(--text-dim); margin-right: 4px; }
+  .rf-conn { text-align: center; color: var(--text-muted); font-size: 18px; line-height: 1.2; padding: 4px 0; }
+  .rf-loop { background: var(--bg3); border: 1px dashed var(--border); border-radius: 8px; padding: 12px 14px; margin-top: 12px; }
+  .rf-loop-title { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; text-align: center; }
+  .rf-loop-row { display: flex; align-items: center; justify-content: center; gap: 12px; }
+  .rf-node { background: var(--bg2); border: 1px solid var(--blue); border-radius: 6px; padding: 8px 14px; font-family: 'SF Mono', monospace; font-size: 12px; font-weight: 500; }
+  .rf-loop-arrows { display: flex; flex-direction: column; gap: 2px; font-size: 11px; font-family: 'SF Mono', monospace; color: var(--text-muted); text-align: center; }
+  .rf-branch { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .rf-branch { grid-template-columns: 1fr; } }
+  .rf-branch-col { background: var(--bg2); border: 1px solid var(--border); border-top: 3px solid var(--border); border-radius: 8px; padding: 14px; }
+  .rf-branch-head { font-size: 13px; font-weight: 600; margin-bottom: 8px; font-family: 'SF Mono', monospace; }
+  .rf-branch-note { font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+
 </style>
 </head>
 <body>
@@ -304,6 +327,7 @@
     <button class="tab"        onclick="switchTab('enforcement', this)">Enforcement</button>
     <button class="tab"        onclick="switchTab('dataflow', this)">Data Flow</button>
     <button class="tab"        onclick="switchTab('datalayer', this)">Data Layer</button>
+    <button class="tab"        onclick="switchTab('runtimeflow', this)">Runtime Flow</button>
   </div>
 </header>
 
@@ -1192,6 +1216,108 @@
       <div class="comp-meta"><span class="badge badge-blue">D-011</span><span class="badge badge-yellow">planned</span></div>
     </div>
 
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 6 — RUNTIME FLOW
+═══════════════════════════════════════════════════════════════ -->
+<div id="view-runtimeflow" class="view">
+
+  <p style="font-size:13px; color:var(--text-muted); margin-bottom:8px;">From instantiating an agent to the exact pivot D-009 is changing. Legend:
+    <span class="badge badge-green">✓ built</span>
+    <span class="badge badge-orange">✦ D-009</span>
+    <span class="badge badge-yellow">⏳ next</span>
+  </p>
+
+  <div class="rf-flow">
+
+    <!-- STAGE 1 — Build-time -->
+    <div class="rf-stage" style="border-color:var(--green);">
+      <div class="rf-head" style="color:var(--green);">1 · Instantiation <span class="rf-tag">build-time · once</span></div>
+      <div class="rf-sig">build_runtime(role_type, registry, granted_permissions, client)</div>
+      <div class="rf-steps">
+        <div class="rf-step"><span class="rf-arm">├─</span> loader.resolve() → <strong>AgentDefinition</strong> (role · tools · permissions)</div>
+        <div class="rf-step"><span class="rf-arm">├─</span> injector.resolve_surface() → <strong>L1 RBAC</strong>: granted = role.perms ∩ granted</div>
+        <div class="rf-step"><span class="rf-arm">└─</span> load skills + compose system_prompt</div>
+      </div>
+      <div class="rf-sig" style="border-color:var(--purple); margin-top:10px;">►  EquippedRuntime {<br>
+        &nbsp;&nbsp;definition, system_prompt,<br>
+        &nbsp;&nbsp;tools: (ToolSpec…),<br>
+        &nbsp;&nbsp;<span style="color:var(--orange);">session_provider</span> &nbsp;◄── ✦ NEW in D-009<br>
+        }</div>
+    </div>
+
+    <div class="rf-conn">▼</div>
+
+    <!-- STAGE 2 — Runtime -->
+    <div class="rf-stage" style="border-color:var(--blue);">
+      <div class="rf-head" style="color:var(--blue);">2 · Runtime <span class="rf-tag">per conversation turn</span></div>
+      <div class="rf-sig">AgentRuntime(equipped, model)&nbsp;&nbsp;<span style="color:var(--text-dim);"># model = any BaseChatModel</span><br>
+        await run_turn(messages, session_id, permissions)</div>
+
+      <div class="rf-loop">
+        <div class="rf-loop-title">LangGraph loop</div>
+        <div class="rf-loop-row">
+          <div class="rf-node">call_model</div>
+          <div class="rf-loop-arrows">
+            <div>── tool_calls? ──►</div>
+            <div style="color:var(--text-dim);">◄── back ──</div>
+          </div>
+          <div class="rf-node">execute_tools</div>
+        </div>
+        <div style="font-size:11px; color:var(--text-dim); text-align:center; margin-top:6px;">no tool_calls → END</div>
+      </div>
+
+      <div class="rf-step" style="margin-top:10px;"><span class="rf-arm">▼</span> inside execute_tools, for each tool_call:</div>
+      <div class="rf-sig" style="border-color:var(--orange);">await intercept(tool_name, input, runtime, permissions)&nbsp;&nbsp;<span style="color:var(--text-dim);"># L2</span></div>
+      <div class="rf-steps">
+        <div class="rf-step"><span class="rf-arm">├─</span> surface check &nbsp;(is it in runtime.tools?)</div>
+        <div class="rf-step"><span class="rf-arm">├─</span> sensitivity check &nbsp;(write:/send: → revalidate perms)</div>
+        <div class="rf-step"><span class="rf-arm">└─</span> <strong style="color:var(--orange);">DISPATCH the connector</strong> &nbsp;◄═══ ✦ D-009 lives here</div>
+      </div>
+    </div>
+
+    <div class="rf-conn">▼</div>
+
+    <!-- STAGE 3 — Dispatch (D-009) -->
+    <div class="rf-stage" style="border-color:var(--orange); background:var(--orange-dim);">
+      <div class="rf-head" style="color:var(--orange);">3 · Connector dispatch <span class="rf-tag">✦ what D-009 changes</span></div>
+      <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">A single branch inside <code>intercept</code> on <code>asyncio.iscoroutinefunction(connector)</code>:</div>
+
+      <div class="rf-branch">
+        <div class="rf-branch-col" style="border-color:var(--teal);">
+          <div class="rf-branch-head" style="color:var(--teal);">sync connector</div>
+          <div class="rf-sig">await asyncio.to_thread(<br>&nbsp;&nbsp;connector, input)</div>
+          <div class="rf-branch-note">the 5 BADIE stubs of today <span class="badge badge-green">✓ untouched</span></div>
+        </div>
+        <div class="rf-branch-col" style="border-color:var(--orange);">
+          <div class="rf-branch-head" style="color:var(--orange);">async connector</div>
+          <div class="rf-sig">await connector(<br>&nbsp;&nbsp;input, session=…)</div>
+          <div class="rf-branch-note"><span class="badge badge-orange">✦ NEW in D-009</span></div>
+        </div>
+      </div>
+
+      <div class="rf-conn" style="color:var(--orange);">▼</div>
+      <div class="rf-sig" style="border-color:var(--purple);">AsyncSession &nbsp;<span style="color:var(--text-dim);"># created by session_provider, one per turn</span></div>
+      <div class="rf-conn" style="color:var(--purple);">▼</div>
+      <div class="rf-sig" style="border-color:var(--teal);">rag.search_catalog(session, query, embedder) &nbsp;<span class="badge badge-yellow">⏳ D-010</span></div>
+      <div class="rf-conn" style="color:var(--teal);">▼</div>
+      <div class="rf-sig" style="border-color:var(--green);">Postgres + pgvector &nbsp;<span class="badge badge-green">✓ D-008</span></div>
+
+      <div style="margin-top:16px; padding:12px 14px; background:var(--red-dim); border:1px solid var(--red); border-radius:8px; font-size:12px; color:var(--text-muted);">
+        ⚠ The connector <strong style="color:var(--red);">never commits</strong>. The transaction (commit/rollback) is closed by the orchestrator (webhook), not by the data-access function — pure persistence in, entity out.
+      </div>
+    </div>
+
+  </div>
+
+  <div style="margin-top:24px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:18px 22px;">
+    <div class="section-title" style="margin-bottom:10px;">Why this is surgical</div>
+    <div style="font-size:12px; color:var(--text-muted); line-height:1.7;">
+      D-009 changes <strong>one pivot</strong> — the connector dispatch inside <code>intercept</code>. Everything above it (instantiation, the LangGraph loop, L1 RBAC, L2 enforcement) stays identical. The only structural ripple: <code>intercept()</code> becomes <code>async def</code> (so the 7 interceptor tests become async), and <code>EquippedRuntime</code> gains an optional <code>session_provider</code> (default <code>None</code>, so every existing construction site keeps working). It earns the name "the heart" because it is the exact seam where the harness meets the real database.
+    </div>
   </div>
 
 </div>
