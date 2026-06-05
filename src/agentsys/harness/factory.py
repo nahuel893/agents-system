@@ -146,6 +146,7 @@ def build_runtime(
     *,
     client: str | None = None,
     roots: RootConfig | None = None,
+    session_provider: "async_sessionmaker[AsyncSession] | None" = None,
 ) -> EquippedRuntime:
     """Assemble an ``EquippedRuntime`` for a role (optionally a client deployment).
 
@@ -187,4 +188,5 @@ def build_runtime(
         tools=surface.granted,
         denied_tools=surface.denied,
         skills=skills,
+        session_provider=session_provider,
     )
