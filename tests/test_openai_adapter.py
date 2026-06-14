@@ -297,3 +297,28 @@ def test_model_id_roundtrip():
 
     with _pytest.raises(ValueError, match="missing '__'"):
         parse_model_id("no-separator-here")
+
+
+def test_map_messages_role_types():
+    """map_messages maps user→HumanMessage, assistant→AIMessage, and drops system."""
+    from langchain_core.messages import AIMessage as LCAI
+    from langchain_core.messages import HumanMessage as LCHuman
+    from langchain_core.messages import SystemMessage as LCSystem
+
+    from agentsys.integration.openai_adapter import map_messages
+
+    mapped = map_messages(
+        [
+            {"role": "system", "content": "drop me"},
+            {"role": "user", "content": "hola"},
+            {"role": "assistant", "content": "buenas"},
+        ]
+    )
+
+    # system dropped (AD#6) → only the user + assistant turns survive, in order
+    assert len(mapped) == 2
+    assert isinstance(mapped[0], LCHuman)
+    assert mapped[0].content == "hola"
+    assert isinstance(mapped[1], LCAI)
+    assert mapped[1].content == "buenas"
+    assert not any(isinstance(m, LCSystem) for m in mapped)
