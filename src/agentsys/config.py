@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     # Slack (optional, for alerts)
     slack_webhook_url: str = ""
 
+    # OpenAI-compatible adapter (D-012)
+    adapter_api_key: str = ""
+    adapter_provider: Literal["ollama", "groq", "anthropic"] = "ollama"
+    # List of model ids to expose via /v1/models. Format: "{deployment}__{role}",
+    # e.g. "badie__sales-agent". Generic (no deployment) → "_generic__{role}".
+    adapter_runtimes: list[str] = ["badie__sales-agent"]
+
     # App
     log_level: str = "INFO"
     debug: bool = False
