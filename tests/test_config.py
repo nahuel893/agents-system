@@ -11,11 +11,19 @@ def test_settings_loads_with_defaults():
     assert settings.environment == "development"
     assert settings.debug is False
     assert "postgresql" in settings.database_url
-    assert settings.rag_threshold_direct == 0.92
-    assert settings.rag_threshold_ambiguous == 0.82
+    assert settings.rag_threshold_direct == 0.60
+    assert settings.rag_threshold_ambiguous == 0.50
     assert settings.rag_top_k == 3
     assert settings.rag_keyword_top_k == 5
     assert settings.rag_hnsw_ef_search == 40
+
+
+def test_rag_thresholds_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RAG_THRESHOLD_DIRECT", "0.70")
+    monkeypatch.setenv("RAG_THRESHOLD_AMBIGUOUS", "0.55")
+    settings = Settings(_env_file=None)
+    assert settings.rag_threshold_direct == 0.70
+    assert settings.rag_threshold_ambiguous == 0.55
 
 
 @pytest.mark.parametrize(
