@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage
 
 from agentsys.config import get_settings
 from agentsys.main import create_app
@@ -36,7 +37,9 @@ def _fake_runtimes(runtime_ids: list[str]) -> dict[str, MagicMock]:
     result: dict[str, MagicMock] = {}
     for rid in runtime_ids:
         rt = MagicMock()
-        rt.run_turn = AsyncMock(return_value=[MagicMock(content="ok")])
+        # Use a real AIMessage so _extract_assistant_text's isinstance check passes
+        fake_msg = AIMessage(content="ok")
+        rt.run_turn = AsyncMock(return_value=[fake_msg])
         result[rid] = rt
     return result
 
@@ -227,21 +230,13 @@ def test_chat_completion_stream_true_400(monkeypatch: pytest.MonkeyPatch):
 
 def test_system_message_dropped(monkeypatch: pytest.MonkeyPatch):
     """Client system message is dropped; only user/assistant turns reach run_turn."""
-    app_inner = None
-
-    client = _make_client(
-        runtime_ids=["badie__sales-agent"],
-        adapter_api_key="",
-        monkeypatch=monkeypatch,
-    )
-
-    # Grab the fake runtime to inspect what run_turn was called with
+    # Build a fresh app with an inspectable fake runtime
     import agentsys.main as main_mod
 
     app_instance = main_mod.create_app()
     app_instance.state.runtimes = {"badie__sales-agent": MagicMock()}
     fake_rt = app_instance.state.runtimes["badie__sales-agent"]
-    fake_rt.run_turn = AsyncMock(return_value=[MagicMock(content="reply", tool_calls=[])])
+    fake_rt.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
 
     import agentsys.integration.openai_adapter as adapter_mod
 
