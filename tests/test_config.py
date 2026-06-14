@@ -67,3 +67,16 @@ def test_get_settings_returns_singleton():
     s1 = get_settings()
     s2 = get_settings()
     assert s1 is s2
+
+
+# ---------------------------------------------------------------------------
+# D-012 — adapter config fields
+# ---------------------------------------------------------------------------
+
+
+def test_adapter_config_defaults():
+    """adapter_api_key, adapter_provider, and adapter_runtimes have correct defaults."""
+    settings = Settings(_env_file=None)
+    assert settings.adapter_api_key == ""
+    assert settings.adapter_provider == "ollama"
+    assert settings.adapter_runtimes == ["badie__sales-agent"]
