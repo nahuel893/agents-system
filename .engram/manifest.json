@@ -66,6 +66,22 @@
       "prompts": 4
     },
     {
+      "id": "be6cc42e",
+      "created_by": "nh",
+      "created_at": "2026-06-19T17:12:10Z",
+      "sessions": 1,
+      "memories": 0,
+      "prompts": 0
+    },
+    {
+      "id": "070f816c",
+      "created_by": "nh",
+      "created_at": "2026-06-21T16:21:33Z",
+      "sessions": 1,
+      "memories": 2,
+      "prompts": 0
+    },
+    {
       "id": "72477faf",
       "created_by": "nahuel",
       "created_at": "2026-06-30T20:40:45Z",
