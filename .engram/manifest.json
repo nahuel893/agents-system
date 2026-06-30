@@ -64,6 +64,14 @@
       "sessions": 8,
       "memories": 77,
       "prompts": 4
+    },
+    {
+      "id": "72477faf",
+      "created_by": "nahuel",
+      "created_at": "2026-06-30T20:40:45Z",
+      "sessions": 0,
+      "memories": 4,
+      "prompts": 0
     }
   ]
 }
