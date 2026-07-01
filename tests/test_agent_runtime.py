@@ -409,3 +409,53 @@ async def test_no_session_provider_backward_compatible() -> None:
     assert isinstance(result[-1], AIMessage)
     assert len(received_sessions) == 1
     assert received_sessions[0] is None
+
+
+# ---------------------------------------------------------------------------
+# D-014 S1 — run_turn permission default (design AD-4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_turn_permissions_default_to_definition_permissions() -> None:
+    """permissions=None (default) uses the runtime's own resolved grants."""
+    from agentsys.agent.graph import AgentRuntime
+
+    tool_call_id = "call_perm_001"
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": tool_call_id,
+                "name": "catalog_search",
+                "args": {"q": "sugar"},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="Here are the results.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    # _fake_definition().permissions == ("read:catalog",), matching the spec below
+    catalog_spec = _catalog_spec()
+    runtime = _make_runtime(tools=(catalog_spec,))
+    agent = AgentRuntime(runtime, model)
+
+    messages = [HumanMessage(content="Search for sugar")]
+    # No permissions passed at all — must default to the runtime's own grants
+    result = await agent.run_turn(messages, session_id="s1")
+
+    tool_messages = [m for m in result if isinstance(m, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].status != "error"
+
+
+def test_agent_runtime_permissions_property() -> None:
+    """AgentRuntime.permissions returns the equipped runtime's definition.permissions."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    assert agent.permissions == ("read:catalog",)
