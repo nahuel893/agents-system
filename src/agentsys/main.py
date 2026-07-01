@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
+import httpx
 import structlog
 from fastapi import Depends, FastAPI, Request
 from sqlalchemy import text
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agentsys.config import Settings, get_settings
 from agentsys.integration import openai_router, webhook_router
+from agentsys.integration.whatsapp_client import WhatsAppClient
 from agentsys.models.base import get_engine
 from agentsys.observability import RequestIdMiddleware, setup_logging
 from agentsys.services.redis import close_redis_pool, get_redis_client
@@ -26,6 +28,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Startup — create async engine and store on app state
     app.state.engine = get_engine(settings.database_url)
+
+    # D-014 — outbound WhatsApp client (design AD-2), built once and shared.
+    app.state.whatsapp_client = WhatsAppClient(
+        httpx.AsyncClient(),
+        phone_number_id=settings.whatsapp_phone_number_id,
+        token=settings.whatsapp_token,
+        base_url=settings.whatsapp_graph_api_url,
+    )
 
     # D-012 — build runtime cache once at startup.
     # Imports are deferred to avoid loading heavy dependencies (torch, sentence-
@@ -44,6 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from agentsys.agent.graph import AgentRuntime
         from agentsys.connectors.rag_connector import build_badie_rag_registry
         from agentsys.harness.factory import build_runtime
+        from agentsys.harness.loader import resolve
         from agentsys.services.embeddings import get_embedding_provider
 
         embedder = get_embedding_provider(settings)
@@ -66,10 +77,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 continue
             prefix, role = model_id.split("__", 1)
             deployment: str | None = None if prefix == "_generic" else prefix
+            # D-014 AD-5 — data-driven grants: resolve the definition FIRST so
+            # the role's own resolved permissions become granted_permissions.
+            # No hardcoded role -> permissions map (discovery #184).
+            definition = resolve(role, client=deployment)
             equipped = build_runtime(
                 role_type=role,
                 registry=registry,
-                granted_permissions=_runtime_permissions(role),
+                granted_permissions=definition.permissions,
                 client=deployment,
                 session_provider=session_provider,
             )
@@ -82,8 +97,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     yield
 
-    # Shutdown — dispose engine and release Redis connections
+    # Shutdown — dispose engine, close outbound HTTP client, release Redis
     await app.state.engine.dispose()
+    await app.state.whatsapp_client.aclose()
     await close_redis_pool()
 
 
@@ -114,24 +130,6 @@ def _build_chat_model(provider: str) -> Any:  # noqa: ANN401
     from langchain_ollama import ChatOllama
 
     return ChatOllama(model="qwen2.5:3b", temperature=0)
-
-
-def _runtime_permissions(role: str) -> list[str]:
-    """Return the granted permissions for a runtime by role name.
-
-    This is a thin mapping — RBAC details live in the harness definitions.
-    The sales-agent gets the full BADIE tool surface.
-    """
-    _sales_permissions = [
-        "read:catalog",
-        "read:client_registry",
-        "write:orders",
-        "write:order_items",
-        "send:message",
-    ]
-    if role == "sales-agent":
-        return _sales_permissions
-    return []
 
 
 def create_app() -> FastAPI:

@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = ""
     whatsapp_phone_number_id: str = ""
 
+    # WhatsApp runtime wiring (D-014)
+    whatsapp_runtime_id: str = "badie__sales-agent"
+    whatsapp_graph_api_url: str = "https://graph.facebook.com/v21.0"
+
     # Slack (optional, for alerts)
     slack_webhook_url: str = ""
 
