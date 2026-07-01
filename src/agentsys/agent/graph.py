@@ -193,11 +193,16 @@ class AgentRuntime:
             model_type=type(model).__name__,
         )
 
+    @property
+    def permissions(self) -> tuple[str, ...]:
+        """The runtime's own resolved permission grants (design AD-4)."""
+        return self._equipped.definition.permissions
+
     async def run_turn(
         self,
         messages: list[AnyMessage],
         session_id: str,
-        permissions: tuple[str, ...],
+        permissions: tuple[str, ...] | None = None,
     ) -> list[AnyMessage]:
         """Execute one conversational turn.
 
@@ -214,7 +219,11 @@ class AgentRuntime:
             future checkpointer integration in D-008).
         permissions:
             The caller's current permission grants used by the Layer-2 interceptor
-            to validate sensitive tool calls at execution time.
+            to validate sensitive tool calls at execution time. Defaults to
+            ``None``, in which case the runtime's own resolved grants
+            (``self.permissions``) are used (design AD-4) — this is the
+            correct default for every entry point that has no separate
+            identity of its own (OpenAI adapter, WhatsApp webhook).
 
         Returns
         -------
@@ -222,7 +231,12 @@ class AgentRuntime:
             All messages accumulated during this turn (input + model responses +
             tool messages). The caller owns cross-turn aggregation.
         """
-        compiled = _build_graph(self._equipped, self._bound_model, permissions).compile()
+        effective_permissions = (
+            permissions if permissions is not None else self.permissions
+        )
+        compiled = _build_graph(
+            self._equipped, self._bound_model, effective_permissions
+        ).compile()
         # Prepend system prompt if not already present
         all_messages = list(messages)
         if not all_messages or not isinstance(all_messages[0], SystemMessage):
@@ -230,7 +244,7 @@ class AgentRuntime:
         initial_state: AgentState = {
             "messages": all_messages,
             "session_id": session_id,
-            "current_permissions": permissions,
+            "current_permissions": effective_permissions,
         }
         result = await compiled.ainvoke(initial_state)
         return list(result["messages"])
