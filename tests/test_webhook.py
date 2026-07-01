@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from langchain_core.messages import AIMessage
 
 from agentsys.config import Settings, get_settings
 from agentsys.main import create_app
@@ -344,6 +345,228 @@ async def test_post_unregistered_client(
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     mock_lookup.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# D-014 S1 — webhook -> AgentRuntime -> WhatsAppClient wiring
+# ---------------------------------------------------------------------------
+
+
+async def test_post_unresolved_runtime_no_run_turn_no_send(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """Unresolved whatsapp_runtime_id → {"status": "ok"}, no run_turn/send call."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)  # new message
+
+    registered = Client(
+        id=10, phone_number="+5491123456789", name="Kiosco Don José", active=True
+    )
+    mock_lookup = AsyncMock(return_value=registered)
+
+    app.state.runtimes = {}  # nothing resolves
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock()
+    app.state.whatsapp_client = fake_whatsapp_client
+
+    with (
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    fake_whatsapp_client.send_text.assert_not_awaited()
+
+
+async def test_post_resolved_runtime_invokes_run_turn_and_send(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """Resolved runtime → run_turn invoked, whatsapp_client.send_text called with reply."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
+
+    registered = Client(
+        id=11, phone_number="+5491123456789", name="Kiosco Don José", active=True
+    )
+    mock_lookup = AsyncMock(return_value=registered)
+
+    fake_runtime = MagicMock()
+    fake_runtime.run_turn = AsyncMock(
+        return_value=[AIMessage(content="Hola! Como puedo ayudarte?")]
+    )
+    app.state.runtimes = {"badie__sales-agent": fake_runtime}
+
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock()
+    app.state.whatsapp_client = fake_whatsapp_client
+
+    with (
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    fake_runtime.run_turn.assert_awaited_once()
+    fake_whatsapp_client.send_text.assert_awaited_once()
+    call_kwargs = fake_whatsapp_client.send_text.call_args.kwargs
+    assert call_kwargs["body"] == "Hola! Como puedo ayudarte?"
+
+
+async def test_post_send_failure_still_returns_200(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """Outbound send raising must not crash the webhook — always 200 to Meta."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
+
+    registered = Client(
+        id=12, phone_number="+5491123456789", name="Kiosco Don José", active=True
+    )
+    mock_lookup = AsyncMock(return_value=registered)
+
+    fake_runtime = MagicMock()
+    fake_runtime.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
+    app.state.runtimes = {"badie__sales-agent": fake_runtime}
+
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock(side_effect=Exception("network down"))
+    app.state.whatsapp_client = fake_whatsapp_client
+
+    with (
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+async def test_post_write_tool_succeeds_with_default_permissions(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """Regression (discovery #184): a write:/send: tool call executes through
+    the webhook entry point identically to the adapter entry point — the
+    webhook must not force an empty permissions tuple."""
+    from langchain_core.language_models.fake_chat_models import (
+        FakeMessagesListChatModel,
+    )
+
+    from agentsys.agent.graph import AgentRuntime
+    from agentsys.harness.factory import EquippedRuntime
+    from agentsys.harness.loader import AgentDefinition
+    from agentsys.harness.registry import ToolSpec
+
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
+
+    registered = Client(
+        id=13, phone_number="+5491123456789", name="Kiosco Don José", active=True
+    )
+    mock_lookup = AsyncMock(return_value=registered)
+
+    invoked: list[dict] = []
+
+    def create_order(inputs: dict) -> dict:
+        invoked.append(inputs)
+        return {"order_id": "ord-002", "status": "created"}
+
+    order_spec = ToolSpec(
+        name="create_order",
+        required_permissions=("write:orders",),
+        connector=create_order,
+        description="Create an order",
+        input_schema={"type": "object", "properties": {}},
+    )
+    definition = AgentDefinition(
+        role_name="sales-agent",
+        version="1.0",
+        deployment=None,
+        system_prompt="You are a helpful assistant.",
+        tools=(),
+        skills=(),
+        context={},
+        permissions=("write:orders",),
+        autonomy="supervised",
+        escalation_rules={},
+        delegation_policy={},
+        memory_policy={},
+        audit_policy={},
+        execution_limits=None,
+    )
+    equipped = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(order_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+
+    class _ToolAwareFakeModel(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):  # type: ignore[override]
+            return self
+
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {"id": "call_1", "name": "create_order", "args": {}, "type": "tool_call"}
+        ],
+    )
+    final_response = AIMessage(content="Order created.")
+    model = _ToolAwareFakeModel(responses=[first_response, final_response])
+    agent = AgentRuntime(equipped, model)
+
+    app.state.runtimes = {"badie__sales-agent": agent}
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock()
+    app.state.whatsapp_client = fake_whatsapp_client
+
+    with (
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    # If the webhook forced permissions=(), the interceptor would raise
+    # PolicyViolation before the connector ever runs — invoked would stay empty.
+    assert len(invoked) == 1
 
 
 async def test_post_registered_client(
