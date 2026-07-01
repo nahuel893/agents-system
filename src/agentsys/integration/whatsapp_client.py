@@ -43,3 +43,7 @@ class WhatsAppClient:
         headers = {"Authorization": f"Bearer {self._token}"}
         response = await self._client.post(url, json=payload, headers=headers)
         response.raise_for_status()
+
+    async def aclose(self) -> None:
+        """Close the underlying httpx client. Call once at app shutdown."""
+        await self._client.aclose()
