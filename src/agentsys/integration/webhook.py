@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from starlette.responses import PlainTextResponse
 
 from agentsys.config import Settings, get_settings
@@ -18,6 +20,30 @@ from agentsys.services.redis import get_redis_client
 webhook_router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 logger = structlog.get_logger()
+
+
+def _extract_assistant_text(messages: list[AnyMessage]) -> str:
+    """Extract the final assistant text from a run_turn result list.
+
+    Mirrors openai_adapter._extract_assistant_text — handles both str and
+    list-of-blocks content, skips intermediate tool-call AIMessages.
+    """
+    final_text = ""
+    for msg in messages:
+        if not isinstance(msg, AIMessage):
+            continue
+        if msg.tool_calls:
+            continue
+        content = msg.content
+        if isinstance(content, list):
+            content = " ".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict)
+            )
+        if content:
+            final_text = str(content)
+    return final_text
 
 
 @webhook_router.get("", response_class=PlainTextResponse)
@@ -104,5 +130,35 @@ async def receive_message(
         text=text,
         timestamp=timestamp,
     )
+
+    # Resolve the cached runtime for this deployment (D-012 app.state.runtimes,
+    # no per-request build). Unknown/unresolved id → log + 200, no run_turn/send.
+    runtimes: dict[str, Any] = getattr(request.app.state, "runtimes", {})
+    runtime = runtimes.get(settings.whatsapp_runtime_id)
+    if runtime is None:
+        logger.warning(
+            "webhook.runtime_unresolved",
+            whatsapp_runtime_id=settings.whatsapp_runtime_id,
+        )
+        return {"status": "ok"}
+
+    # Invoke the agent turn. permissions default to the runtime's own grants
+    # (design AD-4) — no forced empty tuple (discovery #184).
+    result_messages = await runtime.run_turn(
+        messages=[HumanMessage(content=text)],
+        session_id=message_id,
+    )
+    assistant_text = _extract_assistant_text(result_messages)
+
+    # Best-effort outbound send — never let a Graph API failure crash the
+    # webhook. Meta must always get a 200 (design AD-2).
+    try:
+        await request.app.state.whatsapp_client.send_text(to=phone, body=assistant_text)
+    except Exception as exc:
+        logger.warning(
+            "whatsapp.send_error",
+            phone_number=phone,
+            error=str(exc),
+        )
 
     return {"status": "ok"}
