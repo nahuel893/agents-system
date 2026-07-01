@@ -17,10 +17,12 @@ Isolation strategy:
 """
 from __future__ import annotations
 
+from typing import Any, Sequence
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
 from agentsys.config import get_settings
@@ -272,6 +274,104 @@ def test_system_message_dropped(monkeypatch: pytest.MonkeyPatch):
 # ---------------------------------------------------------------------------
 # Slice 2 — model-id round-trip (unit test)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# D-014 S1 — regression: write:/send: tools succeed with real grants (#184)
+# ---------------------------------------------------------------------------
+
+
+class _ToolAwareFakeModel(FakeMessagesListChatModel):
+    """FakeMessagesListChatModel that tolerates bind_tools (returns self)."""
+
+    def bind_tools(  # type: ignore[override]
+        self, tools: Sequence[Any], **kwargs: Any
+    ) -> "_ToolAwareFakeModel":
+        return self
+
+
+def test_chat_completion_write_tool_succeeds_with_default_permissions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (discovery #184): a write:/send: tool call succeeds through
+    the adapter using the runtime's own real grants — the adapter must not
+    force ``permissions=()`` at the run_turn call site (design AD-4)."""
+    from agentsys.agent.graph import AgentRuntime
+    from agentsys.harness.factory import EquippedRuntime
+    from agentsys.harness.loader import AgentDefinition
+    from agentsys.harness.registry import ToolSpec
+
+    invoked: list[dict[str, Any]] = []
+
+    def create_order(inputs: dict[str, Any]) -> dict[str, Any]:
+        invoked.append(inputs)
+        return {"order_id": "ord-001", "status": "created"}
+
+    order_spec = ToolSpec(
+        name="create_order",
+        required_permissions=("write:orders",),
+        connector=create_order,
+        description="Create an order",
+        input_schema={"type": "object", "properties": {}},
+    )
+
+    definition = AgentDefinition(
+        role_name="sales-agent",
+        version="1.0",
+        deployment=None,
+        system_prompt="You are a helpful assistant.",
+        tools=(),
+        skills=(),
+        context={},
+        permissions=("write:orders",),
+        autonomy="supervised",
+        escalation_rules={},
+        delegation_policy={},
+        memory_policy={},
+        audit_policy={},
+        execution_limits=None,
+    )
+    equipped = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(order_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+
+    tool_call_id = "call_write_001"
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {"id": tool_call_id, "name": "create_order", "args": {}, "type": "tool_call"}
+        ],
+    )
+    final_response = AIMessage(content="Order created.")
+    model = _ToolAwareFakeModel(responses=[first_response, final_response])
+
+    agent = AgentRuntime(equipped, model)
+
+    app_instance = create_app()
+    app_instance.state.runtimes = {"badie__sales-agent": agent}
+    app_instance.state.engine = MagicMock()
+
+    import agentsys.integration.openai_adapter as adapter_mod
+
+    fake_settings = MagicMock()
+    fake_settings.adapter_api_key = ""
+    monkeypatch.setattr(adapter_mod, "get_settings", lambda: fake_settings)
+
+    client = TestClient(app_instance)
+    payload = {
+        "model": "badie__sales-agent",
+        "messages": [{"role": "user", "content": "create an order"}],
+    }
+    response = client.post("/v1/chat/completions", json=payload)
+
+    assert response.status_code == 200
+    # If the adapter still forced permissions=(), the interceptor would raise
+    # PolicyViolation before the connector ever runs — invoked would stay empty.
+    assert len(invoked) == 1
 
 
 def test_model_id_roundtrip():
