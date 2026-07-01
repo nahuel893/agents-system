@@ -208,12 +208,12 @@ async def chat_completions(request: Request) -> dict[str, Any]:
 
     # Call AgentRuntime.run_turn
     session_id = str(uuid.uuid4())
-    # Permissions: the runtime's role grants are already embedded in the runtime;
-    # for the adapter we pass an empty tuple — RBAC stays in the harness (design AD#5).
+    # Permissions: omitted — run_turn defaults to the runtime's own resolved
+    # grants (design AD-4). The adapter has no separate caller identity, so
+    # the role's own permissions ARE the correct execution-time RBAC set.
     result_messages: list[AnyMessage] = await runtime.run_turn(
         messages=lc_messages,
         session_id=session_id,
-        permissions=(),
     )
 
     # Extract final assistant text
