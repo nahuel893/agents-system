@@ -80,3 +80,31 @@ def test_adapter_config_defaults():
     assert settings.adapter_api_key == ""
     assert settings.adapter_provider == "ollama"
     assert settings.adapter_runtimes == ["badie__sales-agent"]
+
+
+# ---------------------------------------------------------------------------
+# D-014 S4 — checkpointer/persistence config fields (design AD-7)
+# ---------------------------------------------------------------------------
+
+
+def test_whatsapp_checkpointer_config_defaults():
+    """whatsapp_checkpointer_enabled defaults True, checkpointer_ttl_s defaults 86400s."""
+    settings = Settings(_env_file=None)
+    assert settings.whatsapp_checkpointer_enabled is True
+    assert settings.checkpointer_ttl_s == 86400
+
+
+def test_whatsapp_checkpointer_config_overridable_via_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WHATSAPP_CHECKPOINTER_ENABLED", "false")
+    monkeypatch.setenv("CHECKPOINTER_TTL_S", "3600")
+    settings = Settings(_env_file=None)
+    assert settings.whatsapp_checkpointer_enabled is False
+    assert settings.checkpointer_ttl_s == 3600
+
+
+def test_checkpointer_ttl_s_accepts_none() -> None:
+    """checkpointer_ttl_s=None means no expiry (design AD-7 idle expiry is optional)."""
+    settings = Settings(_env_file=None, checkpointer_ttl_s=None)
+    assert settings.checkpointer_ttl_s is None
