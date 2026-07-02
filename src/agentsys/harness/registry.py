@@ -23,6 +23,15 @@ class ToolSpec:
     """
     description: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
+    always_revalidate: bool = False
+    """Opt-in flag marking a read tool as requiring call-time revalidation.
+
+    Tools whose ``required_permissions`` start with ``write:``/``send:`` are
+    already always revalidated (see ``interceptor._is_sensitive``). Setting
+    this to True extends the same revalidation to a specific read tool
+    without a blanket prefix rule. Defaults to False — zero behavior change
+    for existing tools.
+    """
 
     def to_langchain_tool_schema(self) -> dict[str, Any]:
         return {
