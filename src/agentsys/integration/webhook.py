@@ -144,11 +144,23 @@ async def receive_message(
 
     # Invoke the agent turn. permissions default to the runtime's own grants
     # (design AD-4) — no forced empty tuple (discovery #184).
-    result_messages = await runtime.run_turn(
-        messages=[HumanMessage(content=text)],
-        session_id=message_id,
-    )
-    assistant_text = _extract_assistant_text(result_messages)
+    # Guarded: dedup already marked this message_id in Redis above, so a
+    # crash here would silently drop the customer's message forever (Meta's
+    # retry gets absorbed by dedup) — the agent turn MUST never propagate.
+    try:
+        result_messages = await runtime.run_turn(
+            messages=[HumanMessage(content=text)],
+            session_id=message_id,
+        )
+        assistant_text = _extract_assistant_text(result_messages)
+    except Exception as exc:
+        logger.warning(
+            "webhook.run_turn_error",
+            message_id=message_id,
+            phone_number=phone,
+            error=str(exc),
+        )
+        return {"status": "ok"}
 
     # Best-effort outbound send — never let a Graph API failure crash the
     # webhook. Meta must always get a 200 (design AD-2).
