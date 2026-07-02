@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Literal
 
 import httpx
@@ -21,86 +21,141 @@ from agentsys.observability import RequestIdMiddleware, setup_logging
 from agentsys.services.redis import close_redis_pool, get_redis_client
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Manage startup / shutdown resources."""
-    settings = get_settings()
+def _checkpointer_ttl_config(checkpointer_ttl_s: int | None) -> dict[str, Any] | None:
+    """Convert AD-7's ``checkpointer_ttl_s`` (seconds) into the
+    langgraph-checkpoint-redis package's ``ttl`` dict shape, whose
+    ``default_ttl`` is expressed in MINUTES."""
+    if checkpointer_ttl_s is None:
+        return None
+    return {"default_ttl": checkpointer_ttl_s / 60, "refresh_on_read": True}
 
-    # Startup — create async engine and store on app state
-    app.state.engine = get_engine(settings.database_url)
 
-    # D-014 — outbound WhatsApp client (design AD-2), built once and shared.
-    app.state.whatsapp_client = WhatsAppClient(
-        httpx.AsyncClient(),
-        phone_number_id=settings.whatsapp_phone_number_id,
-        token=settings.whatsapp_token,
-        base_url=settings.whatsapp_graph_api_url,
+def _build_checkpointer_cm(settings: Settings) -> Any:  # noqa: ANN401
+    """Build the ``AsyncRedisSaver`` async context manager (design AD-1/AD-7).
+
+    Deferred import — the checkpoint-redis package is only needed when there
+    is at least one runtime to inject it into. Builds its OWN Redis
+    connection from ``redis_url``: the shared pool in ``services/redis.py``
+    uses ``decode_responses=True``, which corrupts binary checkpoint
+    payloads — do NOT reuse ``get_redis_client`` here.
+
+    ``AsyncRedisSaver.from_conn_string(...)`` (confirmed against the
+    installed ``langgraph-checkpoint-redis==0.3.6``) is itself an
+    ``@asynccontextmanager`` classmethod: entering it constructs the saver
+    and calls ``asetup()`` (idempotent index creation) + ``aset_client_info()``
+    via ``__aenter__``; it must be held open for the app's lifetime and torn
+    down via its ``__aexit__`` at shutdown — the caller does this through the
+    lifespan's ``AsyncExitStack``.
+    """
+    from langgraph.checkpoint.redis import AsyncRedisSaver
+
+    return AsyncRedisSaver.from_conn_string(
+        settings.redis_url,
+        ttl=_checkpointer_ttl_config(settings.checkpointer_ttl_s),
     )
 
-    # D-012 — build runtime cache once at startup.
-    # Imports are deferred to avoid loading heavy dependencies (torch, sentence-
-    # transformers) when they are not needed (e.g. during testing with mocked state).
-    if settings.adapter_runtimes:
-        _logger = structlog.get_logger()
-        if not settings.adapter_api_key:
-            _logger.warning(
-                "adapter.open_mode",
-                message=(
-                    "ADAPTER_API_KEY is not set. "
-                    "The /v1/* endpoints are open — set a key in production."
-                ),
-            )
 
-        from agentsys.agent.graph import AgentRuntime
-        from agentsys.connectors.rag_connector import build_badie_rag_registry
-        from agentsys.harness.factory import build_runtime
-        from agentsys.harness.loader import resolve
-        from agentsys.services.embeddings import get_embedding_provider
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage startup / shutdown resources.
 
-        embedder = get_embedding_provider(settings)
-        registry = build_badie_rag_registry(settings, embedder)
-        session_provider = async_sessionmaker(
-            app.state.engine, expire_on_commit=False
+    D-014 S4 (carry-forward from the S1/S2/S3 gate): every teardown callback
+    is registered on a single ``AsyncExitStack`` right after its resource is
+    created, so a failure in one teardown (e.g. ``engine.dispose()`` raising)
+    can never prevent the others (``whatsapp_client.aclose()``, the
+    checkpointer context, ``close_redis_pool()``) from running —
+    ``AsyncExitStack`` still invokes every registered callback even when an
+    earlier one raises.
+    """
+    settings = get_settings()
+
+    async with AsyncExitStack() as resource_stack:
+        # Startup — create async engine and store on app state
+        app.state.engine = get_engine(settings.database_url)
+        resource_stack.push_async_callback(app.state.engine.dispose)
+
+        # D-014 — outbound WhatsApp client (design AD-2), built once and shared.
+        app.state.whatsapp_client = WhatsAppClient(
+            httpx.AsyncClient(),
+            phone_number_id=settings.whatsapp_phone_number_id,
+            token=settings.whatsapp_token,
+            base_url=settings.whatsapp_graph_api_url,
         )
+        resource_stack.push_async_callback(app.state.whatsapp_client.aclose)
 
-        # Build chat model from configured provider
-        model = _build_chat_model(settings.adapter_provider)
+        resource_stack.push_async_callback(close_redis_pool)
 
-        runtimes: dict[str, AgentRuntime] = {}
-        for model_id in settings.adapter_runtimes:
-            if "__" not in model_id:
-                _logger.error(
-                    "adapter.invalid_runtime_id",
-                    model_id=model_id,
-                    reason="Expected '{deployment}__{role}' format",
+        # D-012 — build runtime cache once at startup.
+        # Imports are deferred to avoid loading heavy dependencies (torch, sentence-
+        # transformers) when they are not needed (e.g. during testing with mocked state).
+        if settings.adapter_runtimes:
+            _logger = structlog.get_logger()
+            if not settings.adapter_api_key:
+                _logger.warning(
+                    "adapter.open_mode",
+                    message=(
+                        "ADAPTER_API_KEY is not set. "
+                        "The /v1/* endpoints are open — set a key in production."
+                    ),
                 )
-                continue
-            prefix, role = model_id.split("__", 1)
-            deployment: str | None = None if prefix == "_generic" else prefix
-            # D-014 AD-5 — data-driven grants: resolve the definition FIRST so
-            # the role's own resolved permissions become granted_permissions.
-            # No hardcoded role -> permissions map (discovery #184).
-            definition = resolve(role, client=deployment)
-            equipped = build_runtime(
-                role_type=role,
-                registry=registry,
-                granted_permissions=definition.permissions,
-                client=deployment,
-                session_provider=session_provider,
+
+            from agentsys.agent.graph import AgentRuntime
+            from agentsys.connectors.rag_connector import build_badie_rag_registry
+            from agentsys.harness.factory import build_runtime
+            from agentsys.harness.loader import resolve
+            from agentsys.services.embeddings import get_embedding_provider
+
+            embedder = get_embedding_provider(settings)
+            registry = build_badie_rag_registry(settings, embedder)
+            session_provider = async_sessionmaker(
+                app.state.engine, expire_on_commit=False
             )
-            runtimes[model_id] = AgentRuntime(runtime=equipped, model=model)
-            _logger.info("adapter.runtime_cached", model_id=model_id)
 
-        app.state.runtimes = runtimes
-    else:
-        app.state.runtimes = {}
+            # Build chat model from configured provider
+            model = _build_chat_model(settings.adapter_provider)
 
-    yield
+            # D-014 S4 (design AD-1/AD-7) — shared checkpointer, only built
+            # when checkpointing is enabled at all. Injected into every
+            # AgentRuntime; each run_turn call still opts in per-invocation
+            # via thread_id (design AD-1).
+            checkpointer = None
+            if settings.whatsapp_checkpointer_enabled:
+                checkpointer = await resource_stack.enter_async_context(
+                    _build_checkpointer_cm(settings)
+                )
 
-    # Shutdown — dispose engine, close outbound HTTP client, release Redis
-    await app.state.engine.dispose()
-    await app.state.whatsapp_client.aclose()
-    await close_redis_pool()
+            runtimes: dict[str, AgentRuntime] = {}
+            for model_id in settings.adapter_runtimes:
+                if "__" not in model_id:
+                    _logger.error(
+                        "adapter.invalid_runtime_id",
+                        model_id=model_id,
+                        reason="Expected '{deployment}__{role}' format",
+                    )
+                    continue
+                prefix, role = model_id.split("__", 1)
+                deployment: str | None = None if prefix == "_generic" else prefix
+                # D-014 AD-5 — data-driven grants: resolve the definition FIRST so
+                # the role's own resolved permissions become granted_permissions.
+                # No hardcoded role -> permissions map (discovery #184).
+                definition = resolve(role, client=deployment)
+                equipped = build_runtime(
+                    role_type=role,
+                    registry=registry,
+                    granted_permissions=definition.permissions,
+                    client=deployment,
+                    session_provider=session_provider,
+                )
+                runtimes[model_id] = AgentRuntime(
+                    runtime=equipped, model=model, checkpointer=checkpointer
+                )
+                _logger.info("adapter.runtime_cached", model_id=model_id)
+
+            app.state.runtimes = runtimes
+        else:
+            app.state.runtimes = {}
+
+        yield
 
 
 def _build_chat_model(provider: str) -> Any:  # noqa: ANN401
