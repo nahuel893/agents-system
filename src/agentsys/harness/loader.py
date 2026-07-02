@@ -68,6 +68,11 @@ _PLATFORM_DEFAULT_LIMITS: dict[str, int] = {
     "max_clarification_attempts": 3,
 }
 
+#: Public alias of ``_PLATFORM_DEFAULT_LIMITS`` — the Agent Runtime (D-014 S2,
+#: design AD-3) merges a runtime's ``execution_limits`` over this constant when
+#: enforcing ``max_tool_calls``/``total_execution_timeout_s``/``tool_call_timeout_s``.
+PLATFORM_DEFAULT_LIMITS: dict[str, int] = _PLATFORM_DEFAULT_LIMITS
+
 
 # ---------------------------------------------------------------------------
 # Public types

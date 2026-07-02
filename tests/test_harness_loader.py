@@ -321,3 +321,16 @@ def test_agent_definition_is_frozen() -> None:
 
     with pytest.raises((AttributeError, TypeError)):
         definition.role_name = "mutated"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# D-014 S2 — PLATFORM_DEFAULT_LIMITS public alias (design AD-3)
+# ---------------------------------------------------------------------------
+def test_platform_default_limits_public_alias() -> None:
+    """`agent/graph.py` resolves effective execution limits against this public
+    constant — it must be importable outside the loader module."""
+    from agentsys.harness.loader import PLATFORM_DEFAULT_LIMITS
+
+    assert PLATFORM_DEFAULT_LIMITS["max_tool_calls"] == 20
+    assert PLATFORM_DEFAULT_LIMITS["total_execution_timeout_s"] == 60
+    assert PLATFORM_DEFAULT_LIMITS["tool_call_timeout_s"] == 10
