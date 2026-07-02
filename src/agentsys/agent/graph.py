@@ -27,9 +27,12 @@ from contextlib import nullcontext
 from functools import partial
 from typing import Any, Mapping
 
+import redis.exceptions
 import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
 from agentsys.agent.state import AgentState
@@ -271,6 +274,68 @@ def _build_graph(
 
 
 # ---------------------------------------------------------------------------
+# Checkpointer opt-in invocation (design AD-1, AD-8)
+# ---------------------------------------------------------------------------
+
+
+async def _ainvoke_with_optional_checkpointer(
+    graph: StateGraph[AgentState],
+    checkpointer: BaseCheckpointSaver[Any] | None,
+    thread_id: str | None,
+    initial_state: AgentState,
+    recursion_limit: int,
+) -> dict[str, Any]:
+    """Invoke the compiled graph, honoring the AD-1 opt-in checkpointer and
+    the AD-8 same-turn checkpointer-degradation fallback.
+
+    - ``thread_id`` is ``None`` (adapter path, or
+      ``whatsapp_checkpointer_enabled=False``): compiles and invokes WITHOUT
+      a checkpointer — identical to the pre-D-014 stateless behavior.
+    - ``thread_id`` is given AND a ``checkpointer`` is configured: compiles
+      WITH the checkpointer and engages it via
+      ``config["configurable"]["thread_id"]``. If that invoke raises a
+      checkpointer BACKEND failure (``redis.RedisError`` — covers
+      ``ConnectionError``/the redis client's own ``TimeoutError``, which does
+      NOT subclass the builtin ``TimeoutError``), the failure is logged as
+      ``runtime.checkpointer_degraded`` and the SAME turn is retried,
+      compiled WITHOUT a checkpointer, over the original ``initial_state``
+      (i.e. only the caller-supplied messages for this turn — no persisted
+      history for this one turn; see design AD-8).
+
+    ``asyncio.TimeoutError``/the builtin ``TimeoutError`` from the turn-scope
+    budget (AD-3, enforced by the caller wrapping this call in
+    ``asyncio.timeout``) is a DISTINCT failure class and is never caught
+    here — it propagates to run_turn's own timeout handler. ``CancelledError``
+    is never caught either.
+    """
+    if thread_id is not None and checkpointer is not None:
+        compiled_with_checkpointer = graph.compile(checkpointer=checkpointer)
+        checkpointed_config: RunnableConfig = {
+            "recursion_limit": recursion_limit,
+            "configurable": {"thread_id": thread_id},
+        }
+        try:
+            return dict(
+                await compiled_with_checkpointer.ainvoke(
+                    initial_state, config=checkpointed_config
+                )
+            )
+        except redis.exceptions.RedisError as exc:
+            logger.warning(
+                "runtime.checkpointer_degraded",
+                thread_id=thread_id,
+                error=str(exc),
+            )
+
+    compiled = graph.compile()
+    return dict(
+        await compiled.ainvoke(
+            initial_state, config={"recursion_limit": recursion_limit}
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -286,11 +351,23 @@ class AgentRuntime:
         Any LangChain BaseChatModel instance. The runtime binds the granted tool
         surface to it at construction time. Swapping providers requires only
         changing this argument — no other runtime code changes.
+    checkpointer:
+        Optional shared LangGraph checkpointer (design AD-1). Only engaged
+        when a ``thread_id`` is also passed to a given ``run_turn`` call —
+        entry points with their own full-history contract (e.g. the OpenAI
+        adapter) never pass a ``thread_id`` and stay byte-identical to the
+        pre-D-014 stateless behavior.
     """
 
-    def __init__(self, runtime: EquippedRuntime, model: BaseChatModel) -> None:
+    def __init__(
+        self,
+        runtime: EquippedRuntime,
+        model: BaseChatModel,
+        checkpointer: BaseCheckpointSaver[Any] | None = None,
+    ) -> None:
         self._runtime = runtime
         self._equipped = runtime
+        self._checkpointer = checkpointer
         self._schemas = [spec.to_langchain_tool_schema() for spec in runtime.tools]
         # Only call bind_tools when there are tools to bind — some fake models
         # raise NotImplementedError for bind_tools even with an empty list.
@@ -311,20 +388,25 @@ class AgentRuntime:
         messages: list[AnyMessage],
         session_id: str,
         permissions: tuple[str, ...] | None = None,
+        thread_id: str | None = None,
     ) -> list[AnyMessage]:
         """Execute one conversational turn.
 
-        The runtime is stateless: it does NOT persist messages between calls.
-        The caller is responsible for maintaining and supplying the full message
-        history across turns.
+        By default the runtime is stateless: it does NOT persist messages
+        between calls, and the caller supplies the full message history each
+        turn. Passing ``thread_id`` opts THIS call into the shared checkpointer
+        (design AD-1) — cross-turn history then accumulates server-side,
+        keyed by ``thread_id``, and ``messages`` only needs to carry the new
+        turn's message(s).
 
         Parameters
         ----------
         messages:
-            Full message history for this turn (including prior context if any).
+            Message(s) for this turn. Full history when stateless
+            (``thread_id=None``); only the new turn's message(s) when a
+            checkpointer is engaged (``thread_id`` given).
         session_id:
-            Logical session identifier (passed through, stored in AgentState for
-            future checkpointer integration in D-008).
+            Logical session identifier (passed through, stored in AgentState).
         permissions:
             The caller's current permission grants used by the Layer-2 interceptor
             to validate sensitive tool calls at execution time. Defaults to
@@ -332,25 +414,33 @@ class AgentRuntime:
             (``self.permissions``) are used (design AD-4) — this is the
             correct default for every entry point that has no separate
             identity of its own (OpenAI adapter, WhatsApp webhook).
+        thread_id:
+            Opt-in checkpointer key (design AD-1), e.g. the client's
+            normalized phone number. ``None`` (default) keeps this call fully
+            stateless — no checkpointer is engaged even if one is configured
+            on this runtime. Ignored (treated as stateless) if this runtime
+            was constructed without a ``checkpointer``.
 
         Returns
         -------
         list[AnyMessage]
             All messages accumulated during this turn (input + model responses +
-            tool messages). The caller owns cross-turn aggregation.
+            tool messages). When stateless, the caller owns cross-turn
+            aggregation; when a checkpointer is engaged, the checkpointer owns
+            cross-turn accumulation and this return value already reflects it.
         """
         effective_permissions = (
             permissions if permissions is not None else self.permissions
         )
         effective_limits = _effective_limits(self._equipped.definition.execution_limits)
         max_tool_calls = effective_limits["max_tool_calls"]
-        compiled = _build_graph(
+        graph = _build_graph(
             self._equipped,
             self._bound_model,
             effective_permissions,
             max_tool_calls=max_tool_calls,
             tool_call_timeout_s=effective_limits["tool_call_timeout_s"],
-        ).compile()
+        )
         # D-014 S4 (design AD-1): the system prompt is no longer prepended
         # here — _call_model prepends it to the MODEL INPUT on every call and
         # never persists it in state (see _call_model docstring).
@@ -359,6 +449,9 @@ class AgentRuntime:
             "messages": all_messages,
             "session_id": session_id,
             "current_permissions": effective_permissions,
+            # Always set explicitly (not inherited from a prior checkpoint):
+            # a per-turn budget must reset to 0 even when this thread resumes
+            # from persisted state (design AD-1 gotcha).
             "tool_call_count": 0,
         }
         # D-014 S2 (design AD-3): a hard recursion_limit backstop derived from
@@ -370,8 +463,12 @@ class AgentRuntime:
         recursion_limit = 2 * max_tool_calls + 10
         try:
             async with asyncio.timeout(effective_limits["total_execution_timeout_s"]):
-                result = await compiled.ainvoke(
-                    initial_state, config={"recursion_limit": recursion_limit}
+                result = await _ainvoke_with_optional_checkpointer(
+                    graph,
+                    self._checkpointer,
+                    thread_id,
+                    initial_state,
+                    recursion_limit,
                 )
         except TimeoutError:
             logger.warning(
