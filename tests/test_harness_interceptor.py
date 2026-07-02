@@ -254,6 +254,93 @@ async def test_policy_violation_raised_for_async_connector() -> None:
     assert not called, "Connector must not run before policy check passes"
 
 
+# ---------------------------------------------------------------------------
+# D-014 S3 — always_revalidate opt-in for sensitive reads (design AD-4b)
+# ---------------------------------------------------------------------------
+
+
+async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
+    """An always_revalidate=True read tool is revalidated like write:/send:."""
+    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agentsys.harness.registry import ToolSpec
+
+    def connector(_input: Any) -> str:
+        return "sensitive_result"
+
+    spec = ToolSpec(
+        name="sensitive_read",
+        required_permissions=("read:orders",),
+        connector=connector,
+        always_revalidate=True,
+    )
+    runtime = _runtime([spec])
+
+    with pytest.raises(PolicyViolation) as exc_info:
+        await intercept(
+            "sensitive_read",
+            {},
+            runtime,
+            current_permissions=["read:catalog"],  # missing read:orders
+        )
+
+    assert exc_info.value.tool_name == "sensitive_read"
+    assert exc_info.value.reason == "permission_revoked"
+
+
+async def test_always_revalidate_read_allowed_when_permission_present() -> None:
+    """An always_revalidate=True read tool executes when the permission is present."""
+    from agentsys.harness.interceptor import intercept
+    from agentsys.harness.registry import ToolSpec
+
+    def connector(_input: Any) -> str:
+        return "sensitive_result"
+
+    spec = ToolSpec(
+        name="sensitive_read",
+        required_permissions=("read:orders",),
+        connector=connector,
+        always_revalidate=True,
+    )
+    runtime = _runtime([spec])
+
+    result = await intercept(
+        "sensitive_read",
+        {},
+        runtime,
+        current_permissions=["read:orders"],
+    )
+
+    assert result.revalidated is True
+    assert result.output == "sensitive_result"
+
+
+async def test_unflagged_read_proceeds_regardless_of_current_permissions() -> None:
+    """Regression guard: a read tool with always_revalidate=False (default) is
+    unaffected by current_permissions content — existing behavior unchanged."""
+    from agentsys.harness.interceptor import intercept
+    from agentsys.harness.registry import ToolSpec
+
+    def connector(_input: Any) -> str:
+        return "catalog_result"
+
+    spec = ToolSpec(
+        name="catalog_search",
+        required_permissions=("read:catalog",),
+        connector=connector,
+    )
+    runtime = _runtime([spec])
+
+    result = await intercept(
+        "catalog_search",
+        {},
+        runtime,
+        current_permissions=[],  # empty/irrelevant — not sensitive, not flagged
+    )
+
+    assert result.revalidated is False
+    assert result.output == "catalog_result"
+
+
 def test_connector_no_commit_rollback() -> None:
     """Static assertion: no connector in src/agentsys/connectors/ calls commit() or rollback()."""
     connectors_dir = (
