@@ -12,7 +12,7 @@ from typing import Any, Mapping, Sequence
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from agentsys.harness.factory import EquippedRuntime
 from agentsys.harness.loader import AgentDefinition
@@ -662,3 +662,64 @@ async def test_total_execution_timeout_returns_fallback_message() -> None:
     assert any(isinstance(m, HumanMessage) for m in result)
     assert isinstance(result[-1], AIMessage)
     assert result[-1].content
+
+
+# ---------------------------------------------------------------------------
+# D-014 S4 — system prompt moved to call time (design AD-1)
+# ---------------------------------------------------------------------------
+
+
+class _CapturingFakeModel(FakeMessagesListChatModel):
+    """FakeMessagesListChatModel that records every message list it is invoked
+    with, so tests can assert what the MODEL actually received (as opposed to
+    what ends up in the returned/persisted message list)."""
+
+    captured_inputs: list[list[Any]] = []
+
+    def bind_tools(  # type: ignore[override]
+        self, tools: Sequence[Any], **kwargs: Any
+    ) -> "_CapturingFakeModel":
+        return self
+
+    async def ainvoke(self, input: Any, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]
+        self.captured_inputs.append(list(input))
+        return await super().ainvoke(input, *args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_not_persisted_in_returned_messages() -> None:
+    """The runtime SystemMessage must never appear in run_turn's returned list
+    (design AD-1) — it is a model-input-only concern, kept out of state so a
+    checkpointer never accumulates/duplicates it across turns."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="Hi there!")])
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    result = await agent.run_turn(
+        [HumanMessage(content="Hi")], session_id="s1", permissions=()
+    )
+
+    assert not any(isinstance(m, SystemMessage) for m in result)
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_injected_at_model_call_time() -> None:
+    """_call_model prepends the runtime's system prompt to the MODEL INPUT on
+    every call, even though it is never stored in state (design AD-1)."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = _CapturingFakeModel(responses=[AIMessage(content="Hi there!")])
+    model.captured_inputs = []
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    await agent.run_turn(
+        [HumanMessage(content="Hi")], session_id="s1", permissions=()
+    )
+
+    assert len(model.captured_inputs) == 1
+    first_call_input = model.captured_inputs[0]
+    assert isinstance(first_call_input[0], SystemMessage)
+    assert first_call_input[0].content == "You are a helpful assistant."
