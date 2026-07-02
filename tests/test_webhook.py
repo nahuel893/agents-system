@@ -470,6 +470,47 @@ async def test_post_send_failure_still_returns_200(
     assert response.json() == {"status": "ok"}
 
 
+async def test_post_run_turn_failure_still_returns_200(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """Agent-turn failure (model backend down, connector error, etc.) must not
+    crash the webhook — always 200 to Meta, and the send is skipped entirely
+    (there is no reply to send)."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
+
+    registered = Client(
+        id=14, phone_number="+5491123456789", name="Kiosco Don José", active=True
+    )
+    mock_lookup = AsyncMock(return_value=registered)
+
+    fake_runtime = MagicMock()
+    fake_runtime.run_turn = AsyncMock(side_effect=Exception("model down"))
+    app.state.runtimes = {"badie__sales-agent": fake_runtime}
+
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock()
+    app.state.whatsapp_client = fake_whatsapp_client
+
+    with (
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    fake_whatsapp_client.send_text.assert_not_awaited()
+
+
 async def test_post_write_tool_succeeds_with_default_permissions(
     app, client: AsyncClient, text_payload: bytes
 ) -> None:
