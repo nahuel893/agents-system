@@ -723,3 +723,147 @@ async def test_system_prompt_injected_at_model_call_time() -> None:
     first_call_input = model.captured_inputs[0]
     assert isinstance(first_call_input[0], SystemMessage)
     assert first_call_input[0].content == "You are a helpful assistant."
+
+
+# ---------------------------------------------------------------------------
+# D-014 S4 — checkpointer opt-in (design AD-1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_thread_id_none_compiles_without_checkpointer() -> None:
+    """thread_id=None (default) — behavior is byte-identical to pre-D-014:
+    the graph compiles WITHOUT a checkpointer even when one is configured on
+    the runtime (design AD-1: opt-in per invocation, not blanket)."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = InMemorySaver()
+    model = FakeMessagesListChatModel(
+        responses=[AIMessage(content="First"), AIMessage(content="Second")]
+    )
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    result_1 = await agent.run_turn(
+        [HumanMessage(content="Turn 1")], session_id="s1", permissions=()
+    )
+    result_2 = await agent.run_turn(
+        [HumanMessage(content="Turn 2")], session_id="s2", permissions=()
+    )
+
+    # No thread_id was ever passed — no cross-turn bleed, exactly like the
+    # stateless adapter path.
+    assert result_1[-1].content == "First"
+    assert result_2[-1].content == "Second"
+    assert not any("Turn 1" in m.content for m in result_2 if isinstance(m, HumanMessage))
+
+
+@pytest.mark.asyncio
+async def test_thread_id_engages_checkpointer_for_cross_turn_retention() -> None:
+    """Two run_turn calls with the SAME thread_id retain prior-turn messages
+    via the checkpointer (spec: 'Multi-turn context retention')."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = InMemorySaver()
+    model = FakeMessagesListChatModel(
+        responses=[
+            AIMessage(content="Nice to meet you, Ana."),
+            AIMessage(content="Your name is Ana."),
+        ]
+    )
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    await agent.run_turn(
+        [HumanMessage(content="My name is Ana")],
+        session_id="s1",
+        permissions=(),
+        thread_id="+5491100000000",
+    )
+    result_2 = await agent.run_turn(
+        [HumanMessage(content="What is my name?")],
+        session_id="s2",
+        permissions=(),
+        thread_id="+5491100000000",
+    )
+
+    # Turn 1's HumanMessage must still be present — proves the checkpointer
+    # accumulated state across the two calls for the same thread_id.
+    human_contents = [m.content for m in result_2 if isinstance(m, HumanMessage)]
+    assert "My name is Ana" in human_contents
+    assert "What is my name?" in human_contents
+    assert result_2[-1].content == "Your name is Ana."
+
+
+@pytest.mark.asyncio
+async def test_tool_call_count_resets_to_zero_on_checkpointer_resume() -> None:
+    """A stale persisted tool_call_count must NOT carry over into the next
+    turn loaded from a checkpoint — it must start fresh at 0 each turn, even
+    though messages accumulate (design AD-1/AD-3)."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agentsys.agent.graph import AgentRuntime
+
+    def _tool_call(call_id: str) -> dict[str, Any]:
+        return {
+            "id": call_id,
+            "name": "catalog_search",
+            "args": {"q": "sugar"},
+            "type": "tool_call",
+        }
+
+    checkpointer = InMemorySaver()
+    catalog_spec = _catalog_spec()
+    definition = _fake_definition(execution_limits={"max_tool_calls": 1})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(catalog_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    # The fake model serves responses sequentially across BOTH run_turn calls
+    # below (it has no notion of "turn") — so the response list must account
+    # for every call_model invocation in order: turn 1 makes 2 (tool call,
+    # then a plain final reply that ends the turn at tool_call_count=1);
+    # turn 2 makes 2 more (tool call, then its own final reply) IF AND ONLY
+    # IF tool_call_count correctly reset to 0 — otherwise turn 2 would route
+    # straight to limit_reached on its first call_model response and never
+    # consume the scripted "Done with turn 2." reply.
+    model = ToolAwareFakeModel(
+        responses=[
+            AIMessage(content="", tool_calls=[_tool_call("call_t1")]),
+            AIMessage(content="Turn 1 done."),
+            AIMessage(content="", tool_calls=[_tool_call("call_t2")]),
+            AIMessage(content="Done with turn 2."),
+        ]
+    )
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    result_1 = await agent.run_turn(
+        [HumanMessage(content="Search sugar")],
+        session_id="s1",
+        permissions=("read:catalog",),
+        thread_id="+5491100000001",
+    )
+    assert len([m for m in result_1 if isinstance(m, ToolMessage)]) == 1
+    assert result_1[-1].content == "Turn 1 done."
+
+    result_2 = await agent.run_turn(
+        [HumanMessage(content="Search sugar again")],
+        session_id="s2",
+        permissions=("read:catalog",),
+        thread_id="+5491100000001",
+    )
+
+    tool_messages_turn_2 = [
+        m
+        for m in result_2
+        if isinstance(m, ToolMessage) and m.tool_call_id == "call_t2"
+    ]
+    assert len(tool_messages_turn_2) == 1
+    assert result_2[-1].content == "Done with turn 2."
