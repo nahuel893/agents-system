@@ -124,8 +124,9 @@ def map_messages(openai_messages: list[dict[str, Any]]) -> list[AnyMessage]:
 
     Design decision AD#6: the runtime's own system prompt is authoritative.
     Client ``system`` messages are DROPPED — this is the privilege-escalation
-    guard. ``run_turn`` will prepend the runtime system prompt itself
-    (graph.py:228-229).
+    guard. ``_call_model`` (graph.py) prepends the runtime system prompt to
+    the model input at call time (D-014 S4, design AD-1) — it is never part
+    of this mapped list or of persisted state.
     """
     result: list[AnyMessage] = []
     for msg in openai_messages:
