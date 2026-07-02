@@ -74,10 +74,22 @@ def _effective_limits(execution_limits: Mapping[str, Any] | None) -> dict[str, A
 # ---------------------------------------------------------------------------
 
 
-async def _call_model(state: AgentState, bound_model: Any) -> dict[str, Any]:
-    """Invoke the bound model with the current message history."""
+async def _call_model(
+    state: AgentState, bound_model: Any, system_prompt: str
+) -> dict[str, Any]:
+    """Invoke the bound model with the current message history.
+
+    D-014 S4 (design AD-1): the runtime SystemMessage is prepended to the
+    MODEL INPUT here, at call time, and is NEVER stored in state — this node
+    only ever returns the model's AIMessage, so state["messages"] (and
+    therefore any checkpointed/persisted history) never accumulates it. This
+    is what makes the system prompt checkpoint-safe: were it persisted, a
+    resumed multi-turn conversation would re-prepend and duplicate it on
+    every turn.
+    """
+    model_input = [SystemMessage(content=system_prompt), *state["messages"]]
     try:
-        response: AIMessage = await bound_model.ainvoke(state["messages"])
+        response: AIMessage = await bound_model.ainvoke(model_input)
     except Exception as exc:
         # Some providers raise BadRequestError when the model generates a
         # malformed tool call (tool_use_failed). Retry without tools so the
@@ -85,7 +97,7 @@ async def _call_model(state: AgentState, bound_model: Any) -> dict[str, Any]:
         if "tool_use_failed" in str(exc) or "tool call validation failed" in str(exc):
             logger.warning("runtime.tool_format_error_retry", error=str(exc)[:120])
             base_model = bound_model.bound
-            response = await base_model.ainvoke(state["messages"])
+            response = await base_model.ainvoke(model_input)
         else:
             raise
     logger.info("runtime.model_response", tool_calls=len(response.tool_calls or []))
@@ -233,7 +245,9 @@ def _build_graph(
 
     graph.add_node(
         "call_model",
-        partial(_call_model, bound_model=bound_model),
+        partial(
+            _call_model, bound_model=bound_model, system_prompt=equipped.system_prompt
+        ),
     )
     graph.add_node(
         "execute_tools",
@@ -337,10 +351,10 @@ class AgentRuntime:
             max_tool_calls=max_tool_calls,
             tool_call_timeout_s=effective_limits["tool_call_timeout_s"],
         ).compile()
-        # Prepend system prompt if not already present
+        # D-014 S4 (design AD-1): the system prompt is no longer prepended
+        # here — _call_model prepends it to the MODEL INPUT on every call and
+        # never persists it in state (see _call_model docstring).
         all_messages = list(messages)
-        if not all_messages or not isinstance(all_messages[0], SystemMessage):
-            all_messages = [SystemMessage(content=self._equipped.system_prompt)] + all_messages
         initial_state: AgentState = {
             "messages": all_messages,
             "session_id": session_id,
