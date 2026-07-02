@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -45,7 +45,9 @@ class ToolAwareFakeModel(FakeMessagesListChatModel):
 # ---------------------------------------------------------------------------
 
 
-def _fake_definition() -> AgentDefinition:
+def _fake_definition(
+    execution_limits: Mapping[str, Any] | None = None,
+) -> AgentDefinition:
     return AgentDefinition(
         role_name="sales-agent",
         version="1.0",
@@ -60,7 +62,7 @@ def _fake_definition() -> AgentDefinition:
         delegation_policy={},
         memory_policy={},
         audit_policy={},
-        execution_limits=None,
+        execution_limits=execution_limits,
     )
 
 
@@ -459,3 +461,204 @@ def test_agent_runtime_permissions_property() -> None:
     agent = AgentRuntime(runtime, model)
 
     assert agent.permissions == ("read:catalog",)
+
+
+# ---------------------------------------------------------------------------
+# D-014 S2 — execution limits enforcement (design AD-3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_max_tool_calls_breach_terminates_gracefully() -> None:
+    """When the model keeps requesting tool calls past max_tool_calls, the loop
+    terminates with a terminal AIMessage instead of looping/crashing (spec:
+    'max_tool_calls breach terminates gracefully')."""
+    from agentsys.agent.graph import AgentRuntime
+
+    def _tool_call(call_id: str) -> dict[str, Any]:
+        return {
+            "id": call_id,
+            "name": "catalog_search",
+            "args": {"q": "sugar"},
+            "type": "tool_call",
+        }
+
+    # The model always wants to call a tool — the limit, not the model, must
+    # stop the loop.
+    responses = [
+        AIMessage(content="", tool_calls=[_tool_call("call_limit_001")]),
+        AIMessage(content="", tool_calls=[_tool_call("call_limit_002")]),
+    ]
+    model = ToolAwareFakeModel(responses=responses)
+
+    definition = _fake_definition(execution_limits={"max_tool_calls": 1})
+    catalog_spec = _catalog_spec()
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(catalog_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(runtime, model)
+
+    messages = [HumanMessage(content="Search repeatedly")]
+    result = await agent.run_turn(
+        messages, session_id="s1", permissions=("read:catalog",)
+    )
+
+    assert isinstance(result[-1], AIMessage)
+    assert not result[-1].tool_calls
+    assert result[-1].content
+    assert "allowed" in result[-1].content.lower() or "limit" in result[-1].content.lower()
+    # Exactly one tool call executed (budget honored, not the 2nd requested one).
+    tool_messages = [m for m in result if isinstance(m, ToolMessage)]
+    assert len(tool_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_recursion_limit_backstop_allows_full_budget_turn() -> None:
+    """A turn that legitimately uses the full max_tool_calls budget must not hit
+    LangGraph's own default recursion_limit (25) — run_turn must configure a
+    recursion_limit derived from max_tool_calls (design AD-3 backstop)."""
+    from agentsys.agent.graph import AgentRuntime
+
+    catalog_spec = _catalog_spec()
+    max_tool_calls = 15
+    tool_call_responses = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": f"call_{i}",
+                    "name": "catalog_search",
+                    "args": {"q": "sugar"},
+                    "type": "tool_call",
+                }
+            ],
+        )
+        for i in range(max_tool_calls)
+    ]
+    final_response = AIMessage(content="All done.")
+    model = ToolAwareFakeModel(responses=[*tool_call_responses, final_response])
+
+    definition = _fake_definition(execution_limits={"max_tool_calls": max_tool_calls})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(catalog_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(runtime, model)
+
+    result = await agent.run_turn(
+        [HumanMessage(content="Search many times")],
+        session_id="s1",
+        permissions=("read:catalog",),
+    )
+
+    assert result[-1].content == "All done."
+
+
+@pytest.mark.asyncio
+async def test_tool_call_timeout_appends_error_tool_message_and_continues() -> None:
+    """A single slow tool call is bounded by tool_call_timeout_s — it does not
+    consume the whole turn budget and the loop continues (design AD-3)."""
+    from agentsys.agent.graph import AgentRuntime
+
+    async def slow_connector(
+        inputs: dict[str, Any], *, session: Any = None
+    ) -> dict[str, Any]:
+        await asyncio.sleep(10)
+        return {"status": "should never be reached"}
+
+    slow_spec = ToolSpec(
+        name="slow_tool",
+        required_permissions=(),
+        connector=slow_connector,
+    )
+
+    tool_call_id = "call_timeout_001"
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": tool_call_id,
+                "name": "slow_tool",
+                "args": {},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="Done despite the slow tool.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    definition = _fake_definition(execution_limits={"tool_call_timeout_s": 0.05})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(slow_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(runtime, model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Run the slow tool")],
+            session_id="s1",
+            permissions=(),
+        ),
+        timeout=2.0,
+    )
+
+    tool_messages = [m for m in result if isinstance(m, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].status == "error"
+    assert result[-1].content == "Done despite the slow tool."
+
+
+class _SlowFakeModel(FakeMessagesListChatModel):
+    """A fake model whose ainvoke never returns in time — used to exercise the
+    turn-scope total_execution_timeout_s backstop (design AD-3)."""
+
+    def bind_tools(  # type: ignore[override]
+        self, tools: Sequence[Any], **kwargs: Any
+    ) -> "_SlowFakeModel":
+        return self
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]
+        await asyncio.sleep(10)
+        return AIMessage(content="unreachable")
+
+
+@pytest.mark.asyncio
+async def test_total_execution_timeout_returns_fallback_message() -> None:
+    """When the turn exceeds total_execution_timeout_s, run_turn returns the
+    caller-supplied messages plus a fallback AIMessage instead of hanging or
+    raising (spec: 'Timeout breach terminates gracefully')."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = _SlowFakeModel(responses=[AIMessage(content="unreachable")])
+    definition = _fake_definition(execution_limits={"total_execution_timeout_s": 0.05})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(),
+        denied_tools=(),
+        skills=(),
+    )
+
+    agent = AgentRuntime(runtime, model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Hi")], session_id="s1", permissions=()
+        ),
+        timeout=2.0,
+    )
+
+    assert any(isinstance(m, HumanMessage) for m in result)
+    assert isinstance(result[-1], AIMessage)
+    assert result[-1].content
