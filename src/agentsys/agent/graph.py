@@ -21,10 +21,11 @@ per turn and owns cross-turn durability.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import nullcontext
 from functools import partial
-from typing import Any
+from typing import Any, Mapping
 
 import structlog
 from langchain_core.language_models import BaseChatModel
@@ -34,8 +35,38 @@ from langgraph.graph import END, StateGraph
 from agentsys.agent.state import AgentState
 from agentsys.harness.factory import EquippedRuntime
 from agentsys.harness.interceptor import CallResult, PolicyViolation, intercept
+from agentsys.harness.loader import PLATFORM_DEFAULT_LIMITS
 
 logger = structlog.get_logger()
+
+# Terminal node reached when a turn exhausts its max_tool_calls budget.
+_LIMIT_REACHED_NODE = "limit_reached"
+
+# The subset of PLATFORM_DEFAULT_LIMITS the agent loop enforces (it also
+# carries max_delegation_depth/max_clarification_attempts, not yet read here).
+_ENFORCED_LIMIT_KEYS = (
+    "max_tool_calls",
+    "total_execution_timeout_s",
+    "tool_call_timeout_s",
+)
+
+
+def _effective_limits(execution_limits: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Merge a runtime's execution_limits over the platform defaults, per-key.
+
+    Design AD-3: a partially-specified execution_limits dict (e.g. only
+    ``max_tool_calls`` overridden) falls back to the platform default for
+    every key it does not itself set.
+    """
+    merged: dict[str, Any] = {
+        key: PLATFORM_DEFAULT_LIMITS[key] for key in _ENFORCED_LIMIT_KEYS
+    }
+    if execution_limits:
+        for key in _ENFORCED_LIMIT_KEYS:
+            value = execution_limits.get(key)
+            if value is not None:
+                merged[key] = value
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +96,7 @@ async def _execute_tools(
     state: AgentState,
     equipped: EquippedRuntime,
     permissions: tuple[str, ...],
+    tool_call_timeout_s: float,
 ) -> dict[str, Any]:
     """Execute all tool_calls in the last AIMessage through the Layer-2 interceptor.
 
@@ -73,6 +105,13 @@ async def _execute_tools(
     is NOT committed — the orchestrator owns the transaction boundary.
     The loop is intentionally sequential: a shared AsyncSession must not be
     used concurrently (no asyncio.gather here).
+
+    D-014 S2 (design AD-3): each intercept() call is bounded by
+    tool_call_timeout_s so one slow connector cannot consume the whole turn
+    budget — on timeout an error ToolMessage is appended and the loop
+    continues (same shape as the PolicyViolation handling below).
+    tool_call_count is incremented by the number of calls attempted this node
+    execution (not just successful ones), matching max_tool_calls semantics.
     """
     last_message = state["messages"][-1]
     tool_calls: list[dict[str, Any]] = getattr(last_message, "tool_calls", []) or []
@@ -87,13 +126,14 @@ async def _execute_tools(
             call_id: str = call["id"]
 
             try:
-                outcome: CallResult = await intercept(
-                    tool_name,
-                    tool_args,
-                    equipped,
-                    current_permissions=permissions,
-                    session=session,
-                )
+                async with asyncio.timeout(tool_call_timeout_s):
+                    outcome: CallResult = await intercept(
+                        tool_name,
+                        tool_args,
+                        equipped,
+                        current_permissions=permissions,
+                        session=session,
+                    )
                 output = outcome.output
                 content = (
                     json.dumps(output) if isinstance(output, (dict, list)) else str(output)
@@ -102,6 +142,19 @@ async def _execute_tools(
                     ToolMessage(content=content, tool_call_id=call_id)
                 )
                 logger.info("runtime.tool_executed", tool=tool_name)
+            except TimeoutError:
+                result_messages.append(
+                    ToolMessage(
+                        content=f"Tool call timed out after {tool_call_timeout_s}s",
+                        tool_call_id=call_id,
+                        status="error",
+                    )
+                )
+                logger.warning(
+                    "runtime.tool_call_timeout",
+                    tool=tool_name,
+                    timeout_s=tool_call_timeout_s,
+                )
             except PolicyViolation as violation:
                 result_messages.append(
                     ToolMessage(
@@ -116,7 +169,30 @@ async def _execute_tools(
                     reason=violation.reason,
                 )
 
-    return {"messages": result_messages}
+    return {
+        "messages": result_messages,
+        "tool_call_count": state.get("tool_call_count", 0) + len(tool_calls),
+    }
+
+
+async def _limit_reached(state: AgentState) -> dict[str, Any]:
+    """Terminal node reached when tool_call_count exhausts max_tool_calls.
+
+    Design AD-3: appends a non-empty terminal AIMessage (never an empty/silent
+    reply) and logs the breach with the count that triggered it.
+    """
+    tool_call_count = state.get("tool_call_count", 0)
+    logger.warning("runtime.limit_reached", tool_call_count=tool_call_count)
+    return {
+        "messages": [
+            AIMessage(
+                content=(
+                    "I could not complete this within the allowed number of "
+                    "steps. Please rephrase or try again."
+                )
+            )
+        ]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -124,13 +200,20 @@ async def _execute_tools(
 # ---------------------------------------------------------------------------
 
 
-def _route(state: AgentState) -> str:
-    """Route to execute_tools if the last message has tool_calls, else END."""
+def _route(state: AgentState, max_tool_calls: int) -> str:
+    """Route to execute_tools if the last message has tool_calls, else END.
+
+    D-014 S2 (design AD-3): if the turn has already used its max_tool_calls
+    budget, route to the terminal limit_reached node instead of executing
+    another tool call — regardless of what the model just requested.
+    """
     last_message = state["messages"][-1]
     tool_calls = getattr(last_message, "tool_calls", None)
-    if tool_calls:
-        return "execute_tools"
-    return END
+    if not tool_calls:
+        return END
+    if state.get("tool_call_count", 0) >= max_tool_calls:
+        return _LIMIT_REACHED_NODE
+    return "execute_tools"
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +225,10 @@ def _build_graph(
     equipped: EquippedRuntime,
     bound_model: Any,
     permissions: tuple[str, ...],
+    max_tool_calls: int,
+    tool_call_timeout_s: float,
 ) -> StateGraph[AgentState]:
-    """Build the StateGraph with call_model and execute_tools nodes."""
+    """Build the StateGraph with call_model, execute_tools and limit_reached nodes."""
     graph = StateGraph(AgentState)
 
     graph.add_node(
@@ -152,12 +237,21 @@ def _build_graph(
     )
     graph.add_node(
         "execute_tools",
-        partial(_execute_tools, equipped=equipped, permissions=permissions),
+        partial(
+            _execute_tools,
+            equipped=equipped,
+            permissions=permissions,
+            tool_call_timeout_s=tool_call_timeout_s,
+        ),
     )
+    graph.add_node(_LIMIT_REACHED_NODE, _limit_reached)
 
     graph.set_entry_point("call_model")
-    graph.add_conditional_edges("call_model", _route)
+    graph.add_conditional_edges(
+        "call_model", partial(_route, max_tool_calls=max_tool_calls)
+    )
     graph.add_edge("execute_tools", "call_model")
+    graph.add_edge(_LIMIT_REACHED_NODE, END)
 
     return graph
 
@@ -234,8 +328,14 @@ class AgentRuntime:
         effective_permissions = (
             permissions if permissions is not None else self.permissions
         )
+        effective_limits = _effective_limits(self._equipped.definition.execution_limits)
+        max_tool_calls = effective_limits["max_tool_calls"]
         compiled = _build_graph(
-            self._equipped, self._bound_model, effective_permissions
+            self._equipped,
+            self._bound_model,
+            effective_permissions,
+            max_tool_calls=max_tool_calls,
+            tool_call_timeout_s=effective_limits["tool_call_timeout_s"],
         ).compile()
         # Prepend system prompt if not already present
         all_messages = list(messages)
@@ -245,6 +345,30 @@ class AgentRuntime:
             "messages": all_messages,
             "session_id": session_id,
             "current_permissions": effective_permissions,
+            "tool_call_count": 0,
         }
-        result = await compiled.ainvoke(initial_state)
+        # D-014 S2 (design AD-3): a hard recursion_limit backstop derived from
+        # max_tool_calls. LangGraph's own default (25 super-steps) is too low
+        # for a legitimately full-budget turn (roughly 2 steps per tool call
+        # plus the final call_model step) — without this override a turn that
+        # stays exactly within its own max_tool_calls budget could still crash
+        # with GraphRecursionError instead of completing normally.
+        recursion_limit = 2 * max_tool_calls + 10
+        try:
+            async with asyncio.timeout(effective_limits["total_execution_timeout_s"]):
+                result = await compiled.ainvoke(
+                    initial_state, config={"recursion_limit": recursion_limit}
+                )
+        except TimeoutError:
+            logger.warning(
+                "runtime.timeout",
+                total_execution_timeout_s=effective_limits["total_execution_timeout_s"],
+            )
+            return all_messages + [
+                AIMessage(
+                    content=(
+                        "This is taking longer than expected. Please try again."
+                    )
+                )
+            ]
         return list(result["messages"])
