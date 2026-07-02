@@ -8,9 +8,11 @@ This catches what Layer 1 cannot: model hallucinations of out-of-scope tools,
 prompt injection attempts, and incomplete injection bugs.
 
 Sensitive tools — those whose required_permissions include any write:* or
-send:* permission — are revalidated against current permissions at call time.
-This guards against permission changes that occur between runtime instantiation
-and the actual tool invocation in long-running sessions.
+send:* permission, OR whose ToolSpec opts in via ``always_revalidate=True`` —
+are revalidated against current permissions at call time. This guards against
+permission changes that occur between runtime instantiation and the actual
+tool invocation in long-running sessions. ``always_revalidate`` lets specific
+read tools opt into the same revalidation without a blanket prefix rule.
 
 D-009: intercept() is async-native. Async connectors are awaited directly;
 sync connectors are offloaded via asyncio.to_thread so the event loop stays
@@ -33,9 +35,9 @@ _SENSITIVE_PREFIXES = ("write:", "send:")
 
 
 def _is_sensitive(spec: ToolSpec) -> bool:
-    return any(
-        perm.startswith(_SENSITIVE_PREFIXES)
-        for perm in spec.required_permissions
+    return (
+        any(perm.startswith(_SENSITIVE_PREFIXES) for perm in spec.required_permissions)
+        or spec.always_revalidate
     )
 
 
