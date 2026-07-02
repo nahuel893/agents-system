@@ -14,6 +14,7 @@ from agentsys.config import Settings, get_settings
 from agentsys.integration.meta_signature import verify_signature
 from agentsys.models.base import get_session_factory
 from agentsys.services.clients import lookup_or_create_client, normalize_phone
+from agentsys.services.conversation_log import log_conversation_turn
 from agentsys.services.dedup import is_duplicate
 from agentsys.services.redis import get_redis_client
 
@@ -151,6 +152,12 @@ async def receive_message(
         result_messages = await runtime.run_turn(
             messages=[HumanMessage(content=text)],
             session_id=message_id,
+            # D-014 S4 (design AD-1/AD-7): thread_id opts THIS call into the
+            # shared checkpointer — only when the operator has enabled it.
+            # whatsapp_checkpointer_enabled=False is a deliberate CONFIGURED
+            # stateless mode (no thread_id passed, no degradation logging),
+            # distinct from AD-8's unplanned runtime-failure degradation.
+            thread_id=phone if settings.whatsapp_checkpointer_enabled else None,
         )
         assistant_text = _extract_assistant_text(result_messages)
     except Exception as exc:
@@ -162,15 +169,40 @@ async def receive_message(
         )
         return {"status": "ok"}
 
-    # Best-effort outbound send — never let a Graph API failure crash the
-    # webhook. Meta must always get a 200 (design AD-2).
+    # Best-effort audit trail (design AD-6) — own session/transaction, never
+    # blocks the reply. Order per spec: agent -> log -> send -> 200.
     try:
-        await request.app.state.whatsapp_client.send_text(to=phone, body=assistant_text)
+        log_session_factory = get_session_factory(request.app.state.engine)
+        async with log_session_factory() as log_session:
+            await log_conversation_turn(
+                log_session,
+                thread_id=phone,
+                client_id=client_record.id if client_record is not None else None,
+                user_text=text,
+                assistant_text=assistant_text,
+            )
+            await log_session.commit()
     except Exception as exc:
         logger.warning(
-            "whatsapp.send_error",
+            "conversation_log.write_error",
             phone_number=phone,
             error=str(exc),
         )
+
+    # Best-effort outbound send — never let a Graph API failure crash the
+    # webhook. Meta must always get a 200 (design AD-2). Skip entirely when
+    # there is no text to send (limit/timeout terminals are non-empty by
+    # design, but this guard stays defensive against an empty extraction).
+    if assistant_text:
+        try:
+            await request.app.state.whatsapp_client.send_text(
+                to=phone, body=assistant_text
+            )
+        except Exception as exc:
+            logger.warning(
+                "whatsapp.send_error",
+                phone_number=phone,
+                error=str(exc),
+            )
 
     return {"status": "ok"}
