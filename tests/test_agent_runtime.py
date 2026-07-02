@@ -11,8 +11,10 @@ import time
 from typing import Any, Mapping, Sequence
 
 import pytest
+import redis.exceptions
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from agentsys.harness.factory import EquippedRuntime
 from agentsys.harness.loader import AgentDefinition
@@ -867,3 +869,113 @@ async def test_tool_call_count_resets_to_zero_on_checkpointer_resume() -> None:
     ]
     assert len(tool_messages_turn_2) == 1
     assert result_2[-1].content == "Done with turn 2."
+
+
+# ---------------------------------------------------------------------------
+# D-014 S4 — checkpointer-failure degradation (design AD-8)
+# ---------------------------------------------------------------------------
+
+
+class _FailingCheckpointer(BaseCheckpointSaver[str]):
+    """A checkpointer whose backend read raises redis.ConnectionError — NO
+    real network involved, this simulates an unreachable Redis instance."""
+
+    async def aget_tuple(self, config: Any) -> Any:
+        raise redis.exceptions.ConnectionError("Redis unavailable (simulated)")
+
+
+@pytest.mark.asyncio
+async def test_checkpointer_failure_degrades_without_crashing_the_turn() -> None:
+    """A checkpointer backend failure must NOT crash run_turn — the turn
+    completes over the caller-supplied messages only, and the degradation is
+    logged (spec: 'Checkpointer unavailable')."""
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = _FailingCheckpointer()
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="Still here.")])
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    result = await agent.run_turn(
+        [HumanMessage(content="Hello")],
+        session_id="s1",
+        permissions=(),
+        thread_id="+5491100000002",
+    )
+
+    assert isinstance(result[-1], AIMessage)
+    assert result[-1].content == "Still here."
+    # Caller-supplied message is present — the fallback ran over it, not an
+    # empty/lost history.
+    assert any(
+        isinstance(m, HumanMessage) and m.content == "Hello" for m in result
+    )
+
+
+@pytest.mark.asyncio
+async def test_checkpointer_failure_degradation_is_logged(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The degradation is logged with a reason. This project's structlog setup
+    uses PrintLoggerFactory (writes straight to stdout, not routed through the
+    stdlib logging module) — so stdout capture, not caplog, is the correct
+    assertion mechanism here."""
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = _FailingCheckpointer()
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="Still here.")])
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    await agent.run_turn(
+        [HumanMessage(content="Hello")],
+        session_id="s1",
+        permissions=(),
+        thread_id="+5491100000003",
+    )
+
+    captured = capsys.readouterr()
+    assert "runtime.checkpointer_degraded" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_turn_timeout_is_not_mislabeled_as_checkpointer_degradation(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A total_execution_timeout_s breach must still be handled by AD-3's own
+    fallback (a sendable timeout AIMessage) and must NOT be logged/treated as
+    a checkpointer degradation — the two failure classes are distinct even
+    when a checkpointer is engaged (and healthy) for this turn."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = InMemorySaver()
+    definition = _fake_definition(execution_limits={"total_execution_timeout_s": 0.05})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(
+        runtime,
+        _SlowFakeModel(responses=[AIMessage(content="unreachable")]),
+        checkpointer=checkpointer,
+    )
+
+    result = await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Hi")],
+            session_id="s1",
+            permissions=(),
+            thread_id="+5491100000004",
+        ),
+        timeout=2.0,
+    )
+
+    assert isinstance(result[-1], AIMessage)
+    assert result[-1].content
+    captured = capsys.readouterr()
+    assert "checkpointer_degraded" not in captured.out
