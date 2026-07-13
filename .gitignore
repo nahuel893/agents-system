@@ -35,6 +35,11 @@ ENV/
 .claude/settings.local.json
 .claude/worktrees/
 
+# Agent skill registry — generated per machine, holds absolute local skill paths.
+# Regenerate with: gentle-ai skill-registry refresh --force
+.atl/skill-registry.md
+.atl/.skill-registry.cache.json
+
 # IDE
 .idea/
 .vscode/
