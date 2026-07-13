@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest*)",
+      "Bash(uv run ruff*)",
+      "Bash(uv run mypy*)",
+      "Bash(uv sync*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git branch*)",
+      "Bash(git show*)",
+      "Bash(rg *)",
+      "Bash(fd *)",
+      "Bash(eza *)",
+      "Bash(bat *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(jq -r '.tool_input.command // empty'); case \"$cmd\" in *\"git commit\"*|*\"git push\"*) if [ \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = \"main\" ]; then printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked: no direct commits or pushes to main. Per AGENTS.md, work on a feature branch and let the Lead integrate.\"}}'; fi ;; esac",
+            "statusMessage": "Guarding main branch"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *.py) export PATH=\"$HOME/.local/bin:$PATH\"; uv run ruff check --fix \"$f\" >/dev/null 2>&1;; esac; } 2>/dev/null || true",
+            "statusMessage": "ruff --fix"
+          }
+        ]
+      }
+    ]
+  }
+}

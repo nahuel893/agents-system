@@ -31,6 +31,10 @@ ENV/
 # Agent-generated registries / caches
 .atl/
 
+# Claude Code — commit settings.json + skills, ignore personal/local
+.claude/settings.local.json
+.claude/worktrees/
+
 # IDE
 .idea/
 .vscode/
