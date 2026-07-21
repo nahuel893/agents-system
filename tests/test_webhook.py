@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -345,6 +346,58 @@ async def test_post_unregistered_client(
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     mock_lookup.assert_called_once()
+
+
+async def test_post_invalid_phone_returns_200(client: AsyncClient) -> None:
+    """POST /webhook with an unparseable `from` returns 200 and skips processing.
+
+    The `from` field is Meta-controlled input: a value that fails phone
+    normalization must be dropped with a 200 (AD-2 always-200 contract),
+    never a 5xx that would make Meta retry the same poison message forever.
+    """
+    payload = json.dumps(
+        {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "from": "not-a-phone",
+                                        "id": "wamid.invalid-phone-1",
+                                        "timestamp": "1700000000",
+                                        "text": {"body": "hola"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ).encode()
+    sig = sign_payload(payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)  # new message
+    mock_lookup = AsyncMock()
+
+    with (
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+    ):
+        response = await client.post(
+            "/webhook",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    mock_lookup.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
