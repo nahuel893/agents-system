@@ -106,8 +106,14 @@ async def receive_message(
         logger.info("webhook.duplicate_skipped", message_id=message_id)
         return {"status": "ok"}
 
-    # Client lookup — normalize phone and find or create client
-    phone = normalize_phone(phone_number)
+    # Client lookup — normalize phone and find or create client. The `from`
+    # field is Meta-controlled input: an unparseable value is dropped with a
+    # 200 (AD-2), never a 5xx that would make Meta retry a poison message.
+    try:
+        phone = normalize_phone(phone_number)
+    except ValueError:
+        logger.warning("webhook.invalid_phone", phone_number=phone_number)
+        return {"status": "ok"}
     client_record = None
     try:
         session_factory = get_session_factory(request.app.state.engine)
