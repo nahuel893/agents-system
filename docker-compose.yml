@@ -16,7 +16,10 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    # Redis 8 bundles the Query Engine (RediSearch) required by the
+    # langgraph-checkpoint-redis checkpointer (D-014 S4). redis:7 lacks
+    # FT.* commands and crashes app startup when the checkpointer is enabled.
+    image: redis:8-alpine
     ports:
       - "6379:6379"
 

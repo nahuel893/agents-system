@@ -80,6 +80,16 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = ""
     whatsapp_phone_number_id: str = ""
 
+    # WhatsApp runtime wiring (D-014)
+    whatsapp_runtime_id: str = "badie__sales-agent"
+    whatsapp_graph_api_url: str = "https://graph.facebook.com/v21.0"
+    # D-014 S4 (design AD-7) - whatsapp_checkpointer_enabled=False is a
+    # deliberate OPERATOR CHOICE for configured-stateless mode (no thread_id
+    # passed, no degradation logging) - distinct from AD-8's unplanned
+    # runtime-failure degradation, which only applies when this is True.
+    whatsapp_checkpointer_enabled: bool = True
+    checkpointer_ttl_s: int | None = 86400
+
     # Slack (optional, for alerts)
     slack_webhook_url: str = ""
 
