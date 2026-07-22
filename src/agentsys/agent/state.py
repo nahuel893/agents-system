@@ -11,3 +11,4 @@ class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     session_id: str
     current_permissions: tuple[str, ...]
+    tool_call_count: int

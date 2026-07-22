@@ -124,8 +124,9 @@ def map_messages(openai_messages: list[dict[str, Any]]) -> list[AnyMessage]:
 
     Design decision AD#6: the runtime's own system prompt is authoritative.
     Client ``system`` messages are DROPPED — this is the privilege-escalation
-    guard. ``run_turn`` will prepend the runtime system prompt itself
-    (graph.py:228-229).
+    guard. ``_call_model`` (graph.py) prepends the runtime system prompt to
+    the model input at call time (D-014 S4, design AD-1) — it is never part
+    of this mapped list or of persisted state.
     """
     result: list[AnyMessage] = []
     for msg in openai_messages:
@@ -208,12 +209,12 @@ async def chat_completions(request: Request) -> dict[str, Any]:
 
     # Call AgentRuntime.run_turn
     session_id = str(uuid.uuid4())
-    # Permissions: the runtime's role grants are already embedded in the runtime;
-    # for the adapter we pass an empty tuple — RBAC stays in the harness (design AD#5).
+    # Permissions: omitted — run_turn defaults to the runtime's own resolved
+    # grants (design AD-4). The adapter has no separate caller identity, so
+    # the role's own permissions ARE the correct execution-time RBAC set.
     result_messages: list[AnyMessage] = await runtime.run_turn(
         messages=lc_messages,
         session_id=session_id,
-        permissions=(),
     )
 
     # Extract final assistant text
