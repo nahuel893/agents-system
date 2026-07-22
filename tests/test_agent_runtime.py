@@ -8,11 +8,13 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import pytest
+import redis.exceptions
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from agentsys.harness.factory import EquippedRuntime
 from agentsys.harness.loader import AgentDefinition
@@ -45,7 +47,9 @@ class ToolAwareFakeModel(FakeMessagesListChatModel):
 # ---------------------------------------------------------------------------
 
 
-def _fake_definition() -> AgentDefinition:
+def _fake_definition(
+    execution_limits: Mapping[str, Any] | None = None,
+) -> AgentDefinition:
     return AgentDefinition(
         role_name="sales-agent",
         version="1.0",
@@ -60,7 +64,7 @@ def _fake_definition() -> AgentDefinition:
         delegation_policy={},
         memory_policy={},
         audit_policy={},
-        execution_limits=None,
+        execution_limits=execution_limits,
     )
 
 
@@ -409,3 +413,569 @@ async def test_no_session_provider_backward_compatible() -> None:
     assert isinstance(result[-1], AIMessage)
     assert len(received_sessions) == 1
     assert received_sessions[0] is None
+
+
+# ---------------------------------------------------------------------------
+# D-014 S1 — run_turn permission default (design AD-4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_turn_permissions_default_to_definition_permissions() -> None:
+    """permissions=None (default) uses the runtime's own resolved grants."""
+    from agentsys.agent.graph import AgentRuntime
+
+    tool_call_id = "call_perm_001"
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": tool_call_id,
+                "name": "catalog_search",
+                "args": {"q": "sugar"},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="Here are the results.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    # _fake_definition().permissions == ("read:catalog",), matching the spec below
+    catalog_spec = _catalog_spec()
+    runtime = _make_runtime(tools=(catalog_spec,))
+    agent = AgentRuntime(runtime, model)
+
+    messages = [HumanMessage(content="Search for sugar")]
+    # No permissions passed at all — must default to the runtime's own grants
+    result = await agent.run_turn(messages, session_id="s1")
+
+    tool_messages = [m for m in result if isinstance(m, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].status != "error"
+
+
+def test_agent_runtime_permissions_property() -> None:
+    """AgentRuntime.permissions returns the equipped runtime's definition.permissions."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    assert agent.permissions == ("read:catalog",)
+
+
+# ---------------------------------------------------------------------------
+# D-014 S2 — execution limits enforcement (design AD-3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_max_tool_calls_breach_terminates_gracefully() -> None:
+    """When the model keeps requesting tool calls past max_tool_calls, the loop
+    terminates with a terminal AIMessage instead of looping/crashing (spec:
+    'max_tool_calls breach terminates gracefully')."""
+    from agentsys.agent.graph import AgentRuntime
+
+    def _tool_call(call_id: str) -> dict[str, Any]:
+        return {
+            "id": call_id,
+            "name": "catalog_search",
+            "args": {"q": "sugar"},
+            "type": "tool_call",
+        }
+
+    # The model always wants to call a tool — the limit, not the model, must
+    # stop the loop.
+    responses = [
+        AIMessage(content="", tool_calls=[_tool_call("call_limit_001")]),
+        AIMessage(content="", tool_calls=[_tool_call("call_limit_002")]),
+    ]
+    model = ToolAwareFakeModel(responses=responses)
+
+    definition = _fake_definition(execution_limits={"max_tool_calls": 1})
+    catalog_spec = _catalog_spec()
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(catalog_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(runtime, model)
+
+    messages = [HumanMessage(content="Search repeatedly")]
+    result = await agent.run_turn(
+        messages, session_id="s1", permissions=("read:catalog",)
+    )
+
+    assert isinstance(result[-1], AIMessage)
+    assert not result[-1].tool_calls
+    assert result[-1].content
+    assert "allowed" in result[-1].content.lower() or "limit" in result[-1].content.lower()
+    # Exactly one tool call executed (budget honored, not the 2nd requested one).
+    tool_messages = [m for m in result if isinstance(m, ToolMessage)]
+    assert len(tool_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_recursion_limit_backstop_allows_full_budget_turn() -> None:
+    """A turn that legitimately uses the full max_tool_calls budget must not hit
+    LangGraph's own default recursion_limit (25) — run_turn must configure a
+    recursion_limit derived from max_tool_calls (design AD-3 backstop)."""
+    from agentsys.agent.graph import AgentRuntime
+
+    catalog_spec = _catalog_spec()
+    max_tool_calls = 15
+    tool_call_responses = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": f"call_{i}",
+                    "name": "catalog_search",
+                    "args": {"q": "sugar"},
+                    "type": "tool_call",
+                }
+            ],
+        )
+        for i in range(max_tool_calls)
+    ]
+    final_response = AIMessage(content="All done.")
+    model = ToolAwareFakeModel(responses=[*tool_call_responses, final_response])
+
+    definition = _fake_definition(execution_limits={"max_tool_calls": max_tool_calls})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(catalog_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(runtime, model)
+
+    result = await agent.run_turn(
+        [HumanMessage(content="Search many times")],
+        session_id="s1",
+        permissions=("read:catalog",),
+    )
+
+    assert result[-1].content == "All done."
+
+
+@pytest.mark.asyncio
+async def test_tool_call_timeout_appends_error_tool_message_and_continues() -> None:
+    """A single slow tool call is bounded by tool_call_timeout_s — it does not
+    consume the whole turn budget and the loop continues (design AD-3)."""
+    from agentsys.agent.graph import AgentRuntime
+
+    async def slow_connector(
+        inputs: dict[str, Any], *, session: Any = None
+    ) -> dict[str, Any]:
+        await asyncio.sleep(10)
+        return {"status": "should never be reached"}
+
+    slow_spec = ToolSpec(
+        name="slow_tool",
+        required_permissions=(),
+        connector=slow_connector,
+    )
+
+    tool_call_id = "call_timeout_001"
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": tool_call_id,
+                "name": "slow_tool",
+                "args": {},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="Done despite the slow tool.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    definition = _fake_definition(execution_limits={"tool_call_timeout_s": 0.05})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(slow_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(runtime, model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Run the slow tool")],
+            session_id="s1",
+            permissions=(),
+        ),
+        timeout=2.0,
+    )
+
+    tool_messages = [m for m in result if isinstance(m, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].status == "error"
+    assert result[-1].content == "Done despite the slow tool."
+
+
+class _SlowFakeModel(FakeMessagesListChatModel):
+    """A fake model whose ainvoke never returns in time — used to exercise the
+    turn-scope total_execution_timeout_s backstop (design AD-3)."""
+
+    def bind_tools(  # type: ignore[override]
+        self, tools: Sequence[Any], **kwargs: Any
+    ) -> "_SlowFakeModel":
+        return self
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]
+        await asyncio.sleep(10)
+        return AIMessage(content="unreachable")
+
+
+@pytest.mark.asyncio
+async def test_total_execution_timeout_returns_fallback_message() -> None:
+    """When the turn exceeds total_execution_timeout_s, run_turn returns the
+    caller-supplied messages plus a fallback AIMessage instead of hanging or
+    raising (spec: 'Timeout breach terminates gracefully')."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = _SlowFakeModel(responses=[AIMessage(content="unreachable")])
+    definition = _fake_definition(execution_limits={"total_execution_timeout_s": 0.05})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(),
+        denied_tools=(),
+        skills=(),
+    )
+
+    agent = AgentRuntime(runtime, model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Hi")], session_id="s1", permissions=()
+        ),
+        timeout=2.0,
+    )
+
+    assert any(isinstance(m, HumanMessage) for m in result)
+    assert isinstance(result[-1], AIMessage)
+    assert result[-1].content
+
+
+# ---------------------------------------------------------------------------
+# D-014 S4 — system prompt moved to call time (design AD-1)
+# ---------------------------------------------------------------------------
+
+
+class _CapturingFakeModel(FakeMessagesListChatModel):
+    """FakeMessagesListChatModel that records every message list it is invoked
+    with, so tests can assert what the MODEL actually received (as opposed to
+    what ends up in the returned/persisted message list)."""
+
+    captured_inputs: list[list[Any]] = []
+
+    def bind_tools(  # type: ignore[override]
+        self, tools: Sequence[Any], **kwargs: Any
+    ) -> "_CapturingFakeModel":
+        return self
+
+    async def ainvoke(self, input: Any, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]
+        self.captured_inputs.append(list(input))
+        return await super().ainvoke(input, *args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_not_persisted_in_returned_messages() -> None:
+    """The runtime SystemMessage must never appear in run_turn's returned list
+    (design AD-1) — it is a model-input-only concern, kept out of state so a
+    checkpointer never accumulates/duplicates it across turns."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="Hi there!")])
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    result = await agent.run_turn(
+        [HumanMessage(content="Hi")], session_id="s1", permissions=()
+    )
+
+    assert not any(isinstance(m, SystemMessage) for m in result)
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_injected_at_model_call_time() -> None:
+    """_call_model prepends the runtime's system prompt to the MODEL INPUT on
+    every call, even though it is never stored in state (design AD-1)."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = _CapturingFakeModel(responses=[AIMessage(content="Hi there!")])
+    model.captured_inputs = []
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    await agent.run_turn(
+        [HumanMessage(content="Hi")], session_id="s1", permissions=()
+    )
+
+    assert len(model.captured_inputs) == 1
+    first_call_input = model.captured_inputs[0]
+    assert isinstance(first_call_input[0], SystemMessage)
+    assert first_call_input[0].content == "You are a helpful assistant."
+
+
+# ---------------------------------------------------------------------------
+# D-014 S4 — checkpointer opt-in (design AD-1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_thread_id_none_compiles_without_checkpointer() -> None:
+    """thread_id=None (default) — behavior is byte-identical to pre-D-014:
+    the graph compiles WITHOUT a checkpointer even when one is configured on
+    the runtime (design AD-1: opt-in per invocation, not blanket)."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = InMemorySaver()
+    model = FakeMessagesListChatModel(
+        responses=[AIMessage(content="First"), AIMessage(content="Second")]
+    )
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    result_1 = await agent.run_turn(
+        [HumanMessage(content="Turn 1")], session_id="s1", permissions=()
+    )
+    result_2 = await agent.run_turn(
+        [HumanMessage(content="Turn 2")], session_id="s2", permissions=()
+    )
+
+    # No thread_id was ever passed — no cross-turn bleed, exactly like the
+    # stateless adapter path.
+    assert result_1[-1].content == "First"
+    assert result_2[-1].content == "Second"
+    assert not any("Turn 1" in m.content for m in result_2 if isinstance(m, HumanMessage))
+
+
+@pytest.mark.asyncio
+async def test_thread_id_engages_checkpointer_for_cross_turn_retention() -> None:
+    """Two run_turn calls with the SAME thread_id retain prior-turn messages
+    via the checkpointer (spec: 'Multi-turn context retention')."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = InMemorySaver()
+    model = FakeMessagesListChatModel(
+        responses=[
+            AIMessage(content="Nice to meet you, Ana."),
+            AIMessage(content="Your name is Ana."),
+        ]
+    )
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    await agent.run_turn(
+        [HumanMessage(content="My name is Ana")],
+        session_id="s1",
+        permissions=(),
+        thread_id="+5491100000000",
+    )
+    result_2 = await agent.run_turn(
+        [HumanMessage(content="What is my name?")],
+        session_id="s2",
+        permissions=(),
+        thread_id="+5491100000000",
+    )
+
+    # Turn 1's HumanMessage must still be present — proves the checkpointer
+    # accumulated state across the two calls for the same thread_id.
+    human_contents = [m.content for m in result_2 if isinstance(m, HumanMessage)]
+    assert "My name is Ana" in human_contents
+    assert "What is my name?" in human_contents
+    assert result_2[-1].content == "Your name is Ana."
+
+
+@pytest.mark.asyncio
+async def test_tool_call_count_resets_to_zero_on_checkpointer_resume() -> None:
+    """A stale persisted tool_call_count must NOT carry over into the next
+    turn loaded from a checkpoint — it must start fresh at 0 each turn, even
+    though messages accumulate (design AD-1/AD-3)."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agentsys.agent.graph import AgentRuntime
+
+    def _tool_call(call_id: str) -> dict[str, Any]:
+        return {
+            "id": call_id,
+            "name": "catalog_search",
+            "args": {"q": "sugar"},
+            "type": "tool_call",
+        }
+
+    checkpointer = InMemorySaver()
+    catalog_spec = _catalog_spec()
+    definition = _fake_definition(execution_limits={"max_tool_calls": 1})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(catalog_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    # The fake model serves responses sequentially across BOTH run_turn calls
+    # below (it has no notion of "turn") — so the response list must account
+    # for every call_model invocation in order: turn 1 makes 2 (tool call,
+    # then a plain final reply that ends the turn at tool_call_count=1);
+    # turn 2 makes 2 more (tool call, then its own final reply) IF AND ONLY
+    # IF tool_call_count correctly reset to 0 — otherwise turn 2 would route
+    # straight to limit_reached on its first call_model response and never
+    # consume the scripted "Done with turn 2." reply.
+    model = ToolAwareFakeModel(
+        responses=[
+            AIMessage(content="", tool_calls=[_tool_call("call_t1")]),
+            AIMessage(content="Turn 1 done."),
+            AIMessage(content="", tool_calls=[_tool_call("call_t2")]),
+            AIMessage(content="Done with turn 2."),
+        ]
+    )
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    result_1 = await agent.run_turn(
+        [HumanMessage(content="Search sugar")],
+        session_id="s1",
+        permissions=("read:catalog",),
+        thread_id="+5491100000001",
+    )
+    assert len([m for m in result_1 if isinstance(m, ToolMessage)]) == 1
+    assert result_1[-1].content == "Turn 1 done."
+
+    result_2 = await agent.run_turn(
+        [HumanMessage(content="Search sugar again")],
+        session_id="s2",
+        permissions=("read:catalog",),
+        thread_id="+5491100000001",
+    )
+
+    tool_messages_turn_2 = [
+        m
+        for m in result_2
+        if isinstance(m, ToolMessage) and m.tool_call_id == "call_t2"
+    ]
+    assert len(tool_messages_turn_2) == 1
+    assert result_2[-1].content == "Done with turn 2."
+
+
+# ---------------------------------------------------------------------------
+# D-014 S4 — checkpointer-failure degradation (design AD-8)
+# ---------------------------------------------------------------------------
+
+
+class _FailingCheckpointer(BaseCheckpointSaver[str]):
+    """A checkpointer whose backend read raises redis.ConnectionError — NO
+    real network involved, this simulates an unreachable Redis instance."""
+
+    async def aget_tuple(self, config: Any) -> Any:
+        raise redis.exceptions.ConnectionError("Redis unavailable (simulated)")
+
+
+@pytest.mark.asyncio
+async def test_checkpointer_failure_degrades_without_crashing_the_turn() -> None:
+    """A checkpointer backend failure must NOT crash run_turn — the turn
+    completes over the caller-supplied messages only, and the degradation is
+    logged (spec: 'Checkpointer unavailable')."""
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = _FailingCheckpointer()
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="Still here.")])
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    result = await agent.run_turn(
+        [HumanMessage(content="Hello")],
+        session_id="s1",
+        permissions=(),
+        thread_id="+5491100000002",
+    )
+
+    assert isinstance(result[-1], AIMessage)
+    assert result[-1].content == "Still here."
+    # Caller-supplied message is present — the fallback ran over it, not an
+    # empty/lost history.
+    assert any(
+        isinstance(m, HumanMessage) and m.content == "Hello" for m in result
+    )
+
+
+@pytest.mark.asyncio
+async def test_checkpointer_failure_degradation_is_logged(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The degradation is logged with a reason. This project's structlog setup
+    uses PrintLoggerFactory (writes straight to stdout, not routed through the
+    stdlib logging module) — so stdout capture, not caplog, is the correct
+    assertion mechanism here."""
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = _FailingCheckpointer()
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="Still here.")])
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
+
+    await agent.run_turn(
+        [HumanMessage(content="Hello")],
+        session_id="s1",
+        permissions=(),
+        thread_id="+5491100000003",
+    )
+
+    captured = capsys.readouterr()
+    assert "runtime.checkpointer_degraded" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_turn_timeout_is_not_mislabeled_as_checkpointer_degradation(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A total_execution_timeout_s breach must still be handled by AD-3's own
+    fallback (a sendable timeout AIMessage) and must NOT be logged/treated as
+    a checkpointer degradation — the two failure classes are distinct even
+    when a checkpointer is engaged (and healthy) for this turn."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agentsys.agent.graph import AgentRuntime
+
+    checkpointer = InMemorySaver()
+    definition = _fake_definition(execution_limits={"total_execution_timeout_s": 0.05})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(
+        runtime,
+        _SlowFakeModel(responses=[AIMessage(content="unreachable")]),
+        checkpointer=checkpointer,
+    )
+
+    result = await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Hi")],
+            session_id="s1",
+            permissions=(),
+            thread_id="+5491100000004",
+        ),
+        timeout=2.0,
+    )
+
+    assert isinstance(result[-1], AIMessage)
+    assert result[-1].content
+    captured = capsys.readouterr()
+    assert "checkpointer_degraded" not in captured.out

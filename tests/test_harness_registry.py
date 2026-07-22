@@ -82,6 +82,31 @@ def test_to_langchain_tool_schema_shape() -> None:
     }
 
 
+def test_toolspec_always_revalidate_defaults_false() -> None:
+    from agentsys.harness.registry import ToolSpec
+
+    spec = ToolSpec(
+        name="catalog_search",
+        required_permissions=("read:catalog",),
+        connector=_connector,
+    )
+
+    assert spec.always_revalidate is False
+
+
+def test_toolspec_accepts_always_revalidate_true() -> None:
+    from agentsys.harness.registry import ToolSpec
+
+    spec = ToolSpec(
+        name="sensitive_read",
+        required_permissions=("read:orders",),
+        connector=_connector,
+        always_revalidate=True,
+    )
+
+    assert spec.always_revalidate is True
+
+
 def test_contains_and_names_reflect_registered_tools() -> None:
     from agentsys.harness.registry import ToolRegistry, ToolSpec
 
