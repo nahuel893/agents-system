@@ -279,12 +279,44 @@ Environment variables (loaded from `.env`). Key settings:
 | `DATABASE_URL` | `postgresql+asyncpg://localhost:5432/badie` | PostgreSQL connection |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
 | `ANTHROPIC_API_KEY` | — | Anthropic Claude API key |
-| `OPENAI_API_KEY` | — | OpenAI API key |
-| `ADAPTER_PROVIDER` | `ollama` | LLM provider: `ollama`, `groq`, `anthropic` |
+| `OPENAI_API_KEY` | — | OpenAI API key — **embeddings only** (see `OPENAI_COMPATIBLE_API_KEY` for chat) |
+| `ADAPTER_PROVIDER` | `ollama` | LLM provider: `ollama`, `groq`, `anthropic`, `openai_compatible` |
 | `ADAPTER_RUNTIMES` | `["badie__sales-agent"]` | Which runtimes to expose via `/v1` |
 | `EMBEDDING_PROVIDER` | `local` | Embedding provider: `local` or `openai` |
+| `OPENAI_COMPATIBLE_BASE_URL` | — | **Required** for `openai_compatible`. Chat endpoint base URL |
+| `OPENAI_COMPATIBLE_MODEL` | — | **Required** for `openai_compatible`. Model id to request |
+| `OPENAI_COMPATIBLE_API_KEY` | — | Optional — omit it for keyless local endpoints |
 
 Full reference: [`src/agentsys/config.py`](src/agentsys/config.py).
+
+### Using any OpenAI-compatible endpoint
+
+Set `ADAPTER_PROVIDER=openai_compatible` to point the agent at any service that
+speaks the OpenAI chat API — a hosted provider, or a local server such as vLLM,
+LM Studio or llama.cpp:
+
+```bash
+ADAPTER_PROVIDER=openai_compatible
+OPENAI_COMPATIBLE_BASE_URL=https://api.minimax.io/v1
+OPENAI_COMPATIBLE_MODEL=MiniMax-M2.7
+OPENAI_COMPATIBLE_API_KEY=your-key-here
+```
+
+Notes:
+
+- `OPENAI_COMPATIBLE_API_KEY` is deliberately **separate** from `OPENAI_API_KEY`.
+  The latter is the embeddings credential, so sharing one variable would stop you
+  running embeddings on OpenAI and chat on a different host at the same time.
+- `BASE_URL` and `MODEL` are required and the app fails at startup naming the
+  missing variable. Without that check the client would quietly fall back to
+  OpenAI's own API — wrong vendor, wrong credential, confusing auth error.
+- The API key is optional because keyless local endpoints are common. When it is
+  absent the app logs `openai_compatible.no_api_key` at startup, so a genuinely
+  forgotten key is still visible.
+- Reasoning models (MiniMax, and others that emit `<think>...</think>` inline in
+  the response) are sanitized automatically — see
+  [`src/agentsys/agent/reasoning.py`](src/agentsys/agent/reasoning.py). Streaming
+  is **not** sanitized; nothing in the app streams today.
 
 ---
 
