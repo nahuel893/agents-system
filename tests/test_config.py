@@ -83,6 +83,74 @@ def test_adapter_config_defaults():
 
 
 # ---------------------------------------------------------------------------
+# openai-compatible-provider — provider value + credential fields (spec R1, R2)
+# ---------------------------------------------------------------------------
+
+_OPENAI_COMPATIBLE_ENV = (
+    "OPENAI_COMPATIBLE_API_KEY",
+    "OPENAI_COMPATIBLE_BASE_URL",
+    "OPENAI_COMPATIBLE_MODEL",
+)
+
+
+def test_adapter_provider_accepts_openai_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """adapter_provider accepts the new openai_compatible value (spec R1)."""
+    monkeypatch.setenv("ADAPTER_PROVIDER", "openai_compatible")
+    settings = Settings(_env_file=None)
+    assert settings.adapter_provider == "openai_compatible"
+
+
+@pytest.mark.parametrize("provider", ["ollama", "groq", "anthropic"])
+def test_adapter_provider_still_accepts_existing_values(
+    provider: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Widening the Literal must not invalidate values that already worked."""
+    monkeypatch.setenv("ADAPTER_PROVIDER", provider)
+    assert Settings(_env_file=None).adapter_provider == provider
+
+
+def test_openai_compatible_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The three openai_compatible_* fields default to empty (spec R2).
+
+    Empty defaults keep the app bootable without an env file; enforcing the
+    required ones is _build_chat_model's job, not Settings' (design AD-6).
+    """
+    for var in _OPENAI_COMPATIBLE_ENV:
+        monkeypatch.delenv(var, raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.openai_compatible_api_key == ""
+    assert settings.openai_compatible_base_url == ""
+    assert settings.openai_compatible_model == ""
+
+
+def test_openai_compatible_config_overridable_via_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_MODEL", "some-model")
+    settings = Settings(_env_file=None)
+    assert settings.openai_compatible_base_url == "https://example.test/v1"
+    assert settings.openai_compatible_model == "some-model"
+
+
+def test_openai_compatible_key_is_independent_from_embeddings_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """openai_api_key and openai_compatible_api_key are distinct fields (spec R2).
+
+    Reusing openai_api_key (the embeddings credential) would make it impossible
+    to run embeddings against OpenAI and chat against another host at once.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "embeddings-key")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "chat-key")
+    settings = Settings(_env_file=None)
+    assert settings.openai_api_key == "embeddings-key"
+    assert settings.openai_compatible_api_key == "chat-key"
+
+
+# ---------------------------------------------------------------------------
 # D-014 S4 — checkpointer/persistence config fields (design AD-7)
 # ---------------------------------------------------------------------------
 
