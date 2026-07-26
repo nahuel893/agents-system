@@ -11,20 +11,35 @@ Left alone, that reasoning text flows straight to the end user, because
 ``agent/graph.py`` returns the message as-is and the integration layer reads
 ``content`` directly.
 
-This module holds the pure text half of the fix. The chat-model wrapper that
-applies it to real responses arrives separately.
+LIMITATIONS, all deliberate and covered by tests that assert the current
+behavior so they stay intentional rather than becoming surprises:
 
-LIMITATIONS, deliberate and covered by tests that assert the current behavior
-so they stay intentional rather than becoming surprises: only the exact
-lowercase, bare ``<think>`` spelling is recognised. Uppercase (``<THINK>``) and
-attributed (``<think type="x">``) variants pass through, as does a stray
-``</think>`` with no opener. None of these have been observed from MiniMax;
-generalising to other conventions belongs with the wider provider work.
+- Streaming is NOT sanitized. ``_stream``/``_astream`` are not overridden,
+  because nothing in this system streams today (the OpenAI adapter rejects
+  ``stream:true`` outright and the graph uses ``ainvoke``). Sanitizing a stream
+  means tracking tag boundaries across chunks. If streaming is ever enabled,
+  reasoning WILL leak until that is handled.
+- Only the exact lowercase, bare ``<think>`` spelling is recognised. Uppercase
+  (``<THINK>``) and attributed (``<think type="x">``) variants pass through, as
+  does a stray ``</think>`` with no opener. None of these have been observed
+  from MiniMax; generalising to other conventions belongs with the wider
+  provider work, not here.
+- Reasoning inside a tool call's arguments is not touched. Those arguments are
+  consumed by connectors and never shown to a user, and rewriting them could
+  corrupt a valid tool invocation.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from langchain_core.callbacks import (
+    AsyncCallbackManagerForLLMRun,
+    CallbackManagerForLLMRun,
+)
+from langchain_core.messages import BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_openai import ChatOpenAI
 
 _OPEN = "<think>"
 _CLOSE = "</think>"
@@ -43,10 +58,10 @@ def _find_block_end(text: str) -> int:
     ``<think>...</think>`` pair would otherwise terminate on the INNER closing
     tag and leave the tail of the real reasoning sitting in the answer.
 
-    Matching the LAST closing tag would also handle nesting — and would swallow
-    a legitimate answer that merely mentions the tag further down. Counting
-    depth stops at the tag that actually closes the leading block, which is the
-    only option that handles both.
+    Matching the LAST closing tag would also fix nesting — and would swallow a
+    legitimate answer that merely mentions the tag further down. Counting depth
+    stops at the tag that actually closes the leading block, which is the only
+    option that handles both.
 
     Returns -1 when the block is never closed.
     """
@@ -120,3 +135,64 @@ def strip_reasoning(content: str | list[Any]) -> str | list[Any]:
     if isinstance(content, str):
         return _strip_text(content)
     return [_strip_block(block) for block in content]
+
+
+class ReasoningSanitizedChatOpenAI(ChatOpenAI):
+    """``ChatOpenAI`` that strips leading reasoning blocks from its responses.
+
+    This MUST stay a ``ChatOpenAI`` subclass. ``agent/graph.py`` calls
+    ``.bind_tools(...)`` on whatever the model factory hands it, and a composed
+    ``model | parser`` would be a ``RunnableSequence`` with no ``bind_tools`` at
+    all. Subclassing keeps the whole chat-model surface intact and keeps the
+    override on the call path even once tools are bound.
+
+    Stateless: the app builds one instance at startup and shares it across
+    concurrent requests, so nothing here may hold per-request state.
+    """
+
+    def _sanitize(self, result: ChatResult) -> ChatResult:
+        """Return a copy of ``result`` with reasoning stripped from content.
+
+        Rebuilds each generation instead of mutating it. ``ChatGeneration.text``
+        is snapshotted from ``message.content`` when the generation is
+        constructed and does NOT follow a later in-place assignment — mutating
+        would leave the raw reasoning readable through ``.text``.
+
+        ``tool_calls`` are deliberately untouched: their arguments are consumed
+        by connectors, never shown to the user, and rewriting them would risk
+        corrupting a valid tool invocation.
+        """
+        generations: list[ChatGeneration] = []
+        for generation in result.generations:
+            message = generation.message
+            cleaned = strip_reasoning(message.content)
+            if cleaned == message.content:
+                generations.append(generation)
+                continue
+            generations.append(
+                ChatGeneration(
+                    message=message.model_copy(update={"content": cleaned}),
+                    generation_info=generation.generation_info,
+                )
+            )
+        return ChatResult(generations=generations, llm_output=result.llm_output)
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return self._sanitize(super()._generate(messages, stop, run_manager, **kwargs))
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return self._sanitize(
+            await super()._agenerate(messages, stop, run_manager, **kwargs)
+        )
