@@ -10,6 +10,7 @@ from typing import Any, Literal
 import httpx
 import structlog
 from fastapi import Depends, FastAPI, Request
+from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -158,6 +159,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
 
 
+# Sent when no API key is configured. ChatOpenAI rejects an empty key at
+# construction time, but keyless OpenAI-compatible endpoints are legitimate,
+# so the provider needs *something* to hand the client.
+_NO_API_KEY_PLACEHOLDER = "not-required"
+
+
 def _build_chat_model(provider: str) -> Any:  # noqa: ANN401
     """Construct the chat model for the configured adapter provider.
 
@@ -179,6 +186,43 @@ def _build_chat_model(provider: str) -> Any:  # noqa: ANN401
         return ChatAnthropic(  # type: ignore[call-arg]
             model="claude-3-5-haiku-latest",
             anthropic_api_key=anthropic_api_key,
+        )
+
+    if provider == "openai_compatible":
+        from agentsys.agent.reasoning import ReasoningSanitizedChatOpenAI
+
+        # Unlike the branches above, this one reads Settings instead of raw
+        # os.getenv. The divergence is deliberate — unifying all four providers
+        # on Settings belongs to D-016, not here. Please don't "fix" it.
+        settings = get_settings()
+        if not settings.openai_compatible_base_url:
+            raise ValueError(
+                "OPENAI_COMPATIBLE_BASE_URL is required when "
+                "ADAPTER_PROVIDER=openai_compatible"
+            )
+        if not settings.openai_compatible_model:
+            raise ValueError(
+                "OPENAI_COMPATIBLE_MODEL is required when "
+                "ADAPTER_PROVIDER=openai_compatible"
+            )
+
+        compatible_api_key = settings.openai_compatible_api_key
+        if not compatible_api_key:
+            # ChatOpenAI refuses to construct with None or "" even though
+            # keyless OpenAI-compatible hosts (vLLM, LM Studio, llama.cpp) are
+            # perfectly normal. Warn so a genuinely forgotten key shows up at
+            # startup rather than as an unexplained 401 much later.
+            structlog.get_logger().warning(
+                "openai_compatible.no_api_key",
+                base_url=settings.openai_compatible_base_url,
+            )
+            compatible_api_key = _NO_API_KEY_PLACEHOLDER
+
+        return ReasoningSanitizedChatOpenAI(
+            model=settings.openai_compatible_model,
+            base_url=settings.openai_compatible_base_url,
+            api_key=SecretStr(compatible_api_key),
+            temperature=0,
         )
 
     # Default: ollama
