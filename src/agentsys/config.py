@@ -95,10 +95,24 @@ class Settings(BaseSettings):
 
     # OpenAI-compatible adapter (D-012)
     adapter_api_key: str = ""
-    adapter_provider: Literal["ollama", "groq", "anthropic"] = "ollama"
+    adapter_provider: Literal[
+        "ollama", "groq", "anthropic", "openai_compatible"
+    ] = "ollama"
     # List of model ids to expose via /v1/models. Format: "{deployment}__{role}",
     # e.g. "badie__sales-agent". Generic (no deployment) → "_generic__{role}".
     adapter_runtimes: list[str] = ["badie__sales-agent"]
+
+    # Any OpenAI-compatible chat endpoint (MiniMax, vLLM, LM Studio, ...),
+    # selected with adapter_provider="openai_compatible".
+    # Deliberately NOT named openai_* — openai_api_key above is the embeddings
+    # credential, and reusing it would prevent running embeddings on OpenAI and
+    # chat on another host at the same time.
+    # base_url and model are REQUIRED when this provider is selected; the check
+    # lives in _build_chat_model, so Settings still constructs without an env
+    # file. api_key is optional — keyless local endpoints are legitimate.
+    openai_compatible_api_key: str = ""
+    openai_compatible_base_url: str = ""
+    openai_compatible_model: str = ""
 
     # App
     log_level: str = "INFO"
