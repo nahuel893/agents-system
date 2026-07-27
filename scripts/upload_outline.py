@@ -90,11 +90,11 @@ def main():
         
     # 1. Overview (English)
     overview_text = read_file("docs/architecture/agent-platform.md")
-    overview_id = create_document("Agent Platform — Overview", overview_text, col_id)
+    create_document("Agent Platform — Overview", overview_text, col_id)
     
     # 1b. Descripción General (Español)
     overview_es_text = read_file("docs/architecture_es/agent-platform.md")
-    overview_es_id = create_document("Agent Platform — Descripción General (Español)", overview_es_text, col_id)
+    create_document("Agent Platform — Descripción General (Español)", overview_es_text, col_id)
     
     # 2. Platform Primitives (parent)
     primitives_intro = (
