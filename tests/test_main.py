@@ -24,8 +24,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agentsys.agent.reasoning import ReasoningSanitizedChatOpenAI
 from agentsys.config import Settings, get_settings
-from agentsys.main import create_app, lifespan
+from agentsys.main import _build_chat_model, create_app, lifespan
 
 
 @pytest.fixture(autouse=True)
@@ -274,3 +275,135 @@ async def test_lifespan_resource_teardown_survives_engine_dispose_failure() -> N
 
         mock_aclose.assert_awaited_once()
         assert "checkpointer_exit" in aexit_calls
+
+
+# ---------------------------------------------------------------------------
+# openai-compatible-provider — _build_chat_model dispatch (spec R3, R6, R7)
+# ---------------------------------------------------------------------------
+
+
+def _openai_compatible_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = dict(
+        openai_compatible_base_url="https://example.test/v1",
+        openai_compatible_model="test-model",
+        openai_compatible_api_key="test-key",
+    )
+    values.update(overrides)
+    return _make_settings(**values)
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected_class"),
+    [
+        ("ollama", "ChatOllama"),
+        ("groq", "ChatGroq"),
+        ("anthropic", "ChatAnthropic"),
+        ("openai_compatible", "ReasoningSanitizedChatOpenAI"),
+    ],
+)
+def test_build_chat_model_dispatches_by_provider(
+    provider: str, expected_class: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each provider value builds its own model type; existing ones still work.
+
+    GROQ_API_KEY / ANTHROPIC_API_KEY are faked because those SDK constructors
+    validate eagerly and raise on a None key. Without that, this test would
+    fail for environment reasons on a clean machine instead of testing
+    dispatch — an environment crash wearing a red test's clothes.
+
+    The openai_compatible branch is deliberately left UNMOCKED so its wiring
+    is genuinely exercised.
+    """
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    with patch(
+        "agentsys.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model(provider)
+
+    assert type(model).__name__ == expected_class
+
+
+def test_build_chat_model_wires_openai_compatible_from_settings() -> None:
+    with patch(
+        "agentsys.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model("openai_compatible")
+
+    assert model.model_name == "test-model"
+    assert model.openai_api_base == "https://example.test/v1"
+    assert model.openai_api_key.get_secret_value() == "test-key"
+
+
+@pytest.mark.parametrize(
+    ("missing_field", "expected_env_var"),
+    [
+        ("openai_compatible_base_url", "OPENAI_COMPATIBLE_BASE_URL"),
+        ("openai_compatible_model", "OPENAI_COMPATIBLE_MODEL"),
+    ],
+)
+def test_build_chat_model_requires_base_url_and_model(
+    missing_field: str, expected_env_var: str
+) -> None:
+    """Missing required config fails loudly, naming the env var.
+
+    Without the base_url guard, ChatOpenAI would silently target OpenAI's own
+    API — wrong vendor, wrong credential, opaque auth error later.
+    """
+    settings = _openai_compatible_settings(**{missing_field: ""})
+    with patch("agentsys.main.get_settings", return_value=settings):
+        with pytest.raises(ValueError, match=expected_env_var) as excinfo:
+            _build_chat_model("openai_compatible")
+
+    # The message names the variable, never a credential value.
+    assert "test-key" not in str(excinfo.value)
+
+
+def test_build_chat_model_accepts_empty_api_key_for_keyless_hosts() -> None:
+    """An empty API key must not break the provider.
+
+    ChatOpenAI raises openai.OpenAIError when api_key is None or "", but
+    keyless OpenAI-compatible hosts (self-hosted vLLM, LM Studio, llama.cpp)
+    are legitimate. The branch substitutes a placeholder and warns, so the
+    provider stays usable and a forgotten key is still visible at startup.
+    """
+    fake_logger = MagicMock()
+    with (
+        patch(
+            "agentsys.main.get_settings",
+            return_value=_openai_compatible_settings(openai_compatible_api_key=""),
+        ),
+        patch("agentsys.main.structlog.get_logger", return_value=fake_logger),
+    ):
+        model = _build_chat_model("openai_compatible")
+
+    assert model.openai_api_key.get_secret_value() != ""
+    warned = [c.args[0] for c in fake_logger.warning.call_args_list if c.args]
+    assert "openai_compatible.no_api_key" in warned
+
+
+def test_openai_compatible_model_still_supports_bind_tools() -> None:
+    """graph.py binds tools to whatever the factory returns (graph.py:374).
+
+    If the binding stopped wrapping our subclass, sanitization would silently
+    stop applying the moment the agent equips a tool.
+    """
+    with patch(
+        "agentsys.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model("openai_compatible")
+
+    bound = model.bind_tools(
+        [
+            {
+                "name": "catalog_search",
+                "description": "Search the catalog.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            }
+        ]
+    )
+    assert isinstance(bound.bound, ReasoningSanitizedChatOpenAI)
