@@ -114,3 +114,32 @@ def test_registry_registers_run_report_with_expected_permissions_and_revalidatio
     assert spec.required_permissions == ("read:reports",)
     assert spec.always_revalidate is True
     assert asyncio.iscoroutinefunction(spec.connector)
+
+
+# ---------------------------------------------------------------------------
+# D-023 wiring — the tool must be registrable into an EXISTING registry
+# ---------------------------------------------------------------------------
+
+
+def test_build_report_tool_spec_can_be_added_to_an_existing_registry() -> None:
+    """`data-agent` needs four tools, only one of which is run_report.
+
+    Handing back a fresh single-tool registry would force the caller to merge
+    registries; the injector resolves every tool the role manifest names from
+    ONE registry, so the spec has to be composable into the shared one.
+    """
+    from agentsys.connectors.report_connector import build_report_tool_spec
+    from agentsys.harness.registry import ToolRegistry, ToolSpec
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(name="already_here", required_permissions=(), connector=lambda i: {})
+    )
+
+    spec = build_report_tool_spec(object(), _catalog())
+    registry.register(spec)
+
+    assert "already_here" in registry
+    assert "run_report" in registry
+    assert spec.required_permissions == ("read:reports",)
+    assert spec.always_revalidate is True

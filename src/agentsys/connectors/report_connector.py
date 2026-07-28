@@ -92,10 +92,16 @@ def build_report_connector(
     return run_report_connector
 
 
-def build_report_registry(
+def build_report_tool_spec(
     engine: AsyncEngine, catalog: dict[str, ReportSpec]
-) -> ToolRegistry:
-    """Return a ToolRegistry with the single `run_report` tool over *catalog*.
+) -> ToolSpec:
+    """Return the `run_report` ToolSpec over *catalog*, unregistered.
+
+    Handed back loose rather than pre-wrapped in a registry because the
+    injector resolves every tool a role manifest names from ONE registry:
+    `data-agent` asks for four tools and this is only one of them. A caller
+    with a populated registry composes this in; a caller with none uses
+    `build_report_registry` below.
 
     `required_permissions=("read:reports",)` reuses the permission the
     `data-agent` role already grants (no new permission needed).
@@ -103,15 +109,20 @@ def build_report_registry(
     would otherwise apply only to `write:`/`send:` tools - this is a
     sensitive read.
     """
-    registry = ToolRegistry()
-    registry.register(
-        ToolSpec(
-            name="run_report",
-            description=_RUN_REPORT_DESCRIPTION,
-            required_permissions=("read:reports",),
-            input_schema=_input_schema(catalog),
-            connector=build_report_connector(engine, catalog),
-            always_revalidate=True,
-        )
+    return ToolSpec(
+        name="run_report",
+        description=_RUN_REPORT_DESCRIPTION,
+        required_permissions=("read:reports",),
+        input_schema=_input_schema(catalog),
+        connector=build_report_connector(engine, catalog),
+        always_revalidate=True,
     )
+
+
+def build_report_registry(
+    engine: AsyncEngine, catalog: dict[str, ReportSpec]
+) -> ToolRegistry:
+    """Return a ToolRegistry holding only the `run_report` tool over *catalog*."""
+    registry = ToolRegistry()
+    registry.register(build_report_tool_spec(engine, catalog))
     return registry

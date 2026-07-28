@@ -108,6 +108,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             embedder = get_embedding_provider(settings)
             registry = build_badie_rag_registry(settings, embedder)
+
+            # D-023 — the BI `run_report` tool goes into the SAME registry the
+            # other roles resolve from, because the injector resolves every
+            # tool a manifest names from one registry and `data-agent` asks
+            # for four. Sharing is safe: the role manifest is the gate, and
+            # `sales-agent` does not list `run_report`, so it never sees it.
+            # (Per-deployment registries are D-019; this composes until then.)
+            if settings.bi_database_url:
+                from sqlalchemy.ext.asyncio import create_async_engine
+
+                from agentsys.connectors.badie_reports import CATALOG as BI_CATALOG
+                from agentsys.connectors.report_connector import (
+                    build_report_tool_spec,
+                )
+
+                # A DEDICATED engine on the read-only role (AD-3). Never
+                # app.state.engine — that one can write, and the whole point
+                # is that this path cannot, whatever the model asks for.
+                bi_engine = create_async_engine(settings.bi_database_url)
+                resource_stack.push_async_callback(bi_engine.dispose)
+                registry.register(build_report_tool_spec(bi_engine, BI_CATALOG))
+                _logger.info("bi.tool_registered", reports=sorted(BI_CATALOG))
+            else:
+                _logger.warning(
+                    "bi.disabled",
+                    message=(
+                        "BI_DATABASE_URL is not set — run_report is not "
+                        "registered. Any role whose manifest lists it will "
+                        "fail to build."
+                    ),
+                )
+
             session_provider = async_sessionmaker(
                 app.state.engine, expire_on_commit=False
             )
