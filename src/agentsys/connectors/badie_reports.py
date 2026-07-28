@@ -52,19 +52,42 @@ def _months_back_to_since(months_back: int, *, now: datetime | None = None) -> d
     return reference - timedelta(days=_DAYS_PER_MONTH * months_back)
 
 
+def _window_metadata(validated: Mapping[str, Any]) -> dict[str, Any]:
+    """Disclose the trailing window the report actually covered.
+
+    `months_back` is a 30-day multiple, not a calendar month, so "the last
+    12 months" is really the last 360 days and can exclude rows a reader
+    would expect to see. The approximation is fine; leaving it implicit is
+    not. A figure whose period the reader cannot see is a figure the reader
+    cannot check, so the period travels with the result rather than living
+    in a comment next to `_DAYS_PER_MONTH`.
+    """
+    months_back = validated.get("months_back")
+    if months_back is None:
+        return {}
+    months = int(months_back)
+    return {
+        "window_days": _DAYS_PER_MONTH * months,
+        "window_start": _months_back_to_since(months).isoformat(),
+        "window_is_calendar_months": False,
+    }
+
+
 def _status_filter_metadata(validated: Mapping[str, Any]) -> dict[str, Any]:
     statuses = _resolve_statuses(validated.get("status") or "default")
     return {
         "statuses_included": list(statuses),
         "cancelled_included": "cancelled" in statuses,
+        **_window_metadata(validated),
     }
 
 
-def _all_statuses_metadata(_validated: Mapping[str, Any]) -> dict[str, Any]:
+def _all_statuses_metadata(validated: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "statuses_included": list(ALL_STATUSES),
         "cancelled_included": True,
         "note": "breakdown by status - not filtered by status.",
+        **_window_metadata(validated),
     }
 
 

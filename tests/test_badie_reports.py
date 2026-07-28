@@ -147,3 +147,34 @@ def test_no_report_sql_contains_percent_s_or_curly_brace_placeholders() -> None:
 def test_every_report_sql_has_a_limit_bindparam() -> None:
     for name, spec in br.CATALOG.items():
         assert ":limit" in spec.sql.text, f"{name} SQL is missing a :limit bind"
+
+
+# ---------------------------------------------------------------------------
+# D-023 follow-up — the time window must be disclosed, not just the status
+# ---------------------------------------------------------------------------
+
+
+def test_every_windowed_report_discloses_its_time_window() -> None:
+    """`months_back` is a 30-day multiple, NOT a calendar month.
+
+    A caller asking for "the last 12 months" silently gets 360 days. That
+    approximation is defensible; leaving it undisclosed is not. An analytics
+    answer that does not state the period it covers cannot be checked, and a
+    number nobody can check is indistinguishable from a wrong one.
+    """
+    for name, spec in br.CATALOG.items():
+        if "months_back" not in spec.param_names():
+            continue
+        validated = validate_params(spec, {})
+        meta = spec.filter_metadata(validated)
+
+        assert "window_days" in meta, f"{name} does not disclose its window length"
+        assert "window_start" in meta, f"{name} does not disclose its window start"
+        assert meta["window_days"] == br._DAYS_PER_MONTH * validated["months_back"]
+        assert meta["window_is_calendar_months"] is False
+
+
+def test_window_metadata_tracks_the_requested_months_back() -> None:
+    spec = br.CATALOG["ventas_por_zona"]
+    meta = spec.filter_metadata(validate_params(spec, {"months_back": 3}))
+    assert meta["window_days"] == 90
