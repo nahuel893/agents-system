@@ -265,3 +265,51 @@ async def test_run_report_propagates_validation_error_before_touching_engine() -
 
     with pytest.raises(ReportValidationError):
         await run_report(_ExplodingEngine(), spec, {"months_back": 999})
+
+
+# ---------------------------------------------------------------------------
+# D-023 — tool output must survive plain JSON serialization
+# ---------------------------------------------------------------------------
+
+
+def test_json_safe_converts_decimal_and_datetime_exactly() -> None:
+    """Postgres NUMERIC arrives as `Decimal`, which `json.dumps` refuses.
+
+    Caught end-to-end, not in unit tests: every direct call here had been
+    printing with `default=str`, which silently papered over it. Through the
+    real agent the tool result is serialized without that fallback and the
+    request died with HTTP 500.
+
+    Money converts to `str`, not `float`: `float` would introduce binary
+    representation artifacts in figures a human is going to reconcile against
+    the database, and the agent has no reason to do arithmetic on them.
+    """
+    import json
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from agentsys.services.reports import json_safe
+
+    row = {
+        "revenue": Decimal("5014100.00"),
+        "when": datetime(2026, 7, 28, 3, 47, tzinfo=UTC),
+        "count": 31,
+        "zone": "Morón",
+        "nothing": None,
+    }
+    safe = json_safe(row)
+
+    assert safe["revenue"] == "5014100.00"
+    assert safe["count"] == 31
+    assert safe["zone"] == "Morón"
+    assert safe["nothing"] is None
+    json.dumps(safe)  # must not raise
+
+
+def test_json_safe_handles_nested_rows() -> None:
+    import json
+    from decimal import Decimal
+
+    from agentsys.services.reports import json_safe
+
+    json.dumps(json_safe([{"a": Decimal("1.5")}, {"a": Decimal("2.5")}]))

@@ -16,6 +16,8 @@ this module only knows how to validate parameters against a spec and run it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Callable, Mapping
 
 from sqlalchemy import TextClause
@@ -190,6 +192,30 @@ def build_bind_params(spec: ReportSpec, validated: Mapping[str, Any]) -> dict[st
     return bind_params
 
 
+def json_safe(value: Any) -> Any:
+    """Convert DB-native values into something `json.dumps` accepts.
+
+    The tool result is serialized into the agent's message history with a
+    plain encoder, so a `Decimal` straight out of a Postgres NUMERIC column
+    raises `TypeError` and takes the whole request down with a 500.
+
+    Money becomes `str`, deliberately, not `float`. These figures get
+    reconciled against the database by a human, and `float` would introduce
+    binary-representation artifacts in exactly the digits that make a
+    reconciliation fail. The agent should be reporting these numbers, not
+    doing arithmetic on them.
+    """
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [json_safe(item) for item in value]
+    return value
+
+
 async def fetch_rows(
     engine: AsyncEngine, spec: ReportSpec, bind_params: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
@@ -203,7 +229,8 @@ async def fetch_rows(
     """
     async with engine.connect() as conn:
         result = await conn.execute(spec.sql, dict(bind_params))
-        return [dict(row._mapping) for row in result]
+        rows: list[dict[str, Any]] = [dict(row._mapping) for row in result]
+    return [json_safe(row) for row in rows]
 
 
 async def run_report(
