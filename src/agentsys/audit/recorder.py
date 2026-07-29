@@ -109,6 +109,14 @@ async def record_tool_call_attempted(
         elapsed_ms=elapsed_ms,
         revalidated=revalidated,
         error=error,
+        payload={
+            "tool_name": tool_name,
+            "sensitive": sensitive,
+            "executed": executed,
+            "elapsed_ms": elapsed_ms,
+            "revalidated": revalidated,
+            "error": error,
+        },
     )
 
 
@@ -133,6 +141,7 @@ async def record_tool_call_blocked(
         actor=actor,
         tool_name=tool_name,
         reason=reason,  # type: ignore[arg-type]
+        payload={"tool_name": tool_name, "reason": reason},
     )
 
 
@@ -155,6 +164,7 @@ async def record_tool_granted(
         deployment=deployment,
         actor=actor,
         tool_name=tool_name,
+        payload={"tool_name": tool_name},
     )
 
 
@@ -179,6 +189,7 @@ async def record_tool_denied(
         actor=actor,
         tool_name=tool_name,
         reason=reason,
+        payload={"tool_name": tool_name, "reason": reason},
     )
 
 
@@ -201,6 +212,7 @@ async def record_unknown_tool(
         deployment=deployment,
         actor=actor,
         tool_name=tool_name,
+        payload={"tool_name": tool_name},
     )
 
 
@@ -223,6 +235,7 @@ async def record_skill_loaded(
         deployment=deployment,
         actor=actor,
         skill=skill,
+        payload={"skill": skill},
     )
 
 
@@ -247,6 +260,7 @@ async def record_skill_missing(
         actor=actor,
         skill=skill,
         path=path,
+        payload={"skill": skill, "path": path},
     )
 
 
@@ -273,6 +287,7 @@ async def record_runtime_built(
         tools=tools_count,
         denied=denied_count,
         skills=skills_count,
+        payload={"tools": tools_count, "denied": denied_count, "skills": skills_count},
     )
 
 
@@ -297,6 +312,7 @@ async def record_runtime_initialized(
         actor=actor,
         tools=tools_count,
         model_type=model_type,
+        payload={"tools": tools_count, "model_type": model_type},
     )
 
 
@@ -319,4 +335,5 @@ async def record_runtime_timeout(
         deployment=deployment,
         actor=actor,
         total_execution_timeout_s=total_execution_timeout_s,
+        payload={"total_execution_timeout_s": total_execution_timeout_s},
     )
