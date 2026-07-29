@@ -156,6 +156,9 @@ def test_build_badie_registry_has_exactly_the_expected_tools() -> None:
         "message_sender",
         "session_state",
         "run_report",
+        "knowledge_retrieval",
+        "conversation_summarizer",
+        "escalation_notifier",
     }
 
 
