@@ -31,9 +31,24 @@ ENV/
 # Agent-generated registries / caches
 .atl/
 
-# Claude Code — commit settings.json + skills, ignore personal/local
+# Claude Code — commit settings.json + the PROJECT skills, ignore the rest.
+# Only skills authored for this repo belong in git (harness-conventions,
+# run-app). Third-party skills installed by the marketplace are per-developer
+# tooling: they are large, they churn on their own release cycle, and a stray
+# `git add -A` once swept ~6900 lines of them into a feature branch.
 .claude/settings.local.json
 .claude/worktrees/
+.claude/skills/*
+!.claude/skills/harness-conventions/
+!.claude/skills/run-app/
+
+# Installed agent skills + their lockfile — machine-local tooling, not project
+# source. Same reasoning as above.
+.agents/
+skills-lock.json
+
+# CodeGraph index — generated, machine-local, and large.
+.codegraph/
 
 # Agent skill registry — generated per machine, holds absolute local skill paths.
 # Regenerate with: gentle-ai skill-registry refresh --force
