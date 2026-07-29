@@ -1,12 +1,26 @@
+# SECURITY — every port here binds to 127.0.0.1 on purpose.
+#
+# On 2026-07-28 this stack was published on 0.0.0.0 with the password below.
+# An automated scanner found it, dropped every database, disabled the
+# `postgres` role, created a `readme_to_recover` ransom database and planted a
+# privilege-escalation trigger. "5432:5432" means ALL interfaces, not
+# localhost — including any public or tailnet address the host holds. There is
+# no such thing as a dev database that is only reachable by you.
+#
+# If you need to reach these from another machine, tunnel (`ssh -L`,
+# `tailscale serve`); do not widen the binding.
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: postgres
+      # Local-only credential. It is weak on purpose (dev ergonomics) and that
+      # is ONLY tolerable because the port above is not routable. If you ever
+      # widen the binding, this must change first.
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: badie
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,8 +34,11 @@ services:
     # langgraph-checkpoint-redis checkpointer (D-014 S4). redis:7 lacks
     # FT.* commands and crashes app startup when the checkpointer is enabled.
     image: redis:8-alpine
+    # Redis ships with NO authentication. Exposed on 0.0.0.0 it is a
+    # remote-code-execution vector, not just a data leak — this was open
+    # alongside Postgres during the 2026-07-28 incident.
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
 
 volumes:
   pgdata:
