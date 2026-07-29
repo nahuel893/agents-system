@@ -133,7 +133,24 @@ accepting passwords, despite 97,919 tries — was not guessed.
 
 **This is not a reason to relax.** It is a near miss measured in password
 strength alone, on a service that should never have been answering the
-internet in the first place. See `scripts/harden_host.sh`.
+internet in the first place.
+
+### Host tooling lives outside this repository
+
+Remediation for the workstation is deliberately not kept here — a hardening
+script for a Linux host is not part of an agent platform, and the forensic
+dumps carry account names and source addresses that do not belong in a
+repository. They live in `~/security/`:
+
+| File | Purpose |
+|---|---|
+| `harden_host.sh` | sshd, ufw, the `DOCKER-USER` guard, sysctl. Dry-run by default; `--audit` reports current state |
+| `audit-prompt.md` | a self-contained brief for a dedicated full-host audit session |
+| `ssh_logs` | the `lastb` dump behind the numbers above |
+
+What stays in this repository is the part that constrains *project* code: the
+`127.0.0.1` bindings in `docker-compose.yml`, and the reasoning above for why
+they are not negotiable.
 
 ### What could not be determined
 
