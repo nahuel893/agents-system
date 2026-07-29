@@ -6,17 +6,21 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 
 class _AuditEventBase(BaseModel):
-    """Shared fields for all audit event sub-models."""
+    """Shared fields for all audit event sub-models.
+
+    REQ-AUDIT-31: payload carries event-specific structured data as JSONB.
+    """
 
     event_id: UUID
     occurred_at: datetime
     correlation_id: str
     sequence: int
     role: str
+    payload: dict[str, Any] = Field(default_factory=dict)
     deployment: str | None = None
     actor: str | None = None
 

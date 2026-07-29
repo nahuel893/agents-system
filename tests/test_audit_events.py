@@ -184,3 +184,108 @@ class TestAllEventFamilies:
         event = AuditEvent.model_validate(payload)
         assert isinstance(event, RuntimeTimeout)
         assert event.total_execution_timeout_s == 30.0
+
+
+class TestAuditEventPayload:
+    """T-16 RED: payload field must exist on all event sub-models (REQ-AUDIT-31)."""
+
+    def test_tool_call_attempted_has_payload_field(self) -> None:
+        """ToolCallAttempted.payload exists and is a dict (REQ-AUDIT-31)."""
+        from agentsys.audit.events import ToolCallAttempted
+
+        event = ToolCallAttempted(
+            event_id=uuid4(),
+            occurred_at=datetime.now(timezone.utc),
+            correlation_id="abc",
+            sequence=1,
+            role="sales-agent",
+            tool_name="order_writer",
+            sensitive=True,
+            executed=True,
+            elapsed_ms=42.5,
+            revalidated=True,
+            error=None,
+        )
+        # payload must exist and be a dict (populated by recorder, defaults to {} on direct ctor)
+        assert hasattr(event, "payload")
+        assert isinstance(event.payload, dict)
+
+    def test_recorder_populates_payload(self) -> None:
+        """Recorder helpers must populate payload with event-specific data (REQ-AUDIT-31)."""
+        import asyncio
+        from agentsys.audit.events import ToolCallAttempted
+        from agentsys.audit.recorder import record_tool_call_attempted
+
+        class FakeDef:
+            role_name = "sales-agent"
+            client = "badie"
+
+        event = asyncio.run(
+            record_tool_call_attempted(
+                FakeDef(),
+                tool_name="order_writer",
+                sensitive=True,
+                executed=True,
+                elapsed_ms=42.5,
+                revalidated=True,
+                error=None,
+            )
+        )
+        assert isinstance(event, ToolCallAttempted)
+        assert event.payload == {
+            "tool_name": "order_writer",
+            "sensitive": True,
+            "executed": True,
+            "elapsed_ms": 42.5,
+            "revalidated": True,
+            "error": None,
+        }
+
+    def test_audit_event_model_validate_with_payload_round_trip(self) -> None:
+        """AuditEvent.model_validate then model_dump includes payload (REQ-AUDIT-31)."""
+        from agentsys.audit.events import AuditEvent
+
+        data = {
+            "event_type": "skill_loaded",
+            "event_id": str(uuid4()),
+            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "correlation_id": "req-abc",
+            "sequence": 1,
+            "role": "sales-agent",
+            "deployment": "badie",
+            "actor": None,
+            "skill": "sales-kb",
+            "payload": {"skill": "sales-kb"},
+        }
+        event = AuditEvent.model_validate(data)
+        dumped = event.model_dump()
+        assert "payload" in dumped
+        assert dumped["payload"] == {"skill": "sales-kb"}
+
+    def test_map_to_audit_event_no_key_error(self) -> None:
+        """T-18: round-trip ToolCallAttempted → model_dump → map_to_audit_event (C4).
+
+        map_to_audit_event accesses event_data['payload'] directly.
+        If payload is absent from model_dump(), this raises KeyError.
+        """
+        from agentsys.audit.events import ToolCallAttempted
+        from agentsys.models.audit_event import map_to_audit_event
+
+        event = ToolCallAttempted(
+            event_id=uuid4(),
+            occurred_at=datetime.now(timezone.utc),
+            correlation_id="req-test",
+            sequence=1,
+            role="sales-agent",
+            tool_name="catalog_search",
+            sensitive=False,
+            executed=True,
+            elapsed_ms=10.0,
+            revalidated=False,
+            error=None,
+        )
+        data = event.model_dump()
+        # Must not raise KeyError: 'payload'
+        orm_row = map_to_audit_event(data)
+        assert orm_row.payload is not None
+        assert isinstance(orm_row.payload, dict)
