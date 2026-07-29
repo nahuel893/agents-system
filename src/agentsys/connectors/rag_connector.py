@@ -10,6 +10,11 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable
 
 from agentsys.config import Settings
+from agentsys.connectors.platform_stubs import (
+    conversation_summarizer,
+    escalation_notifier,
+    knowledge_retrieval,
+)
 from agentsys.connectors.stubs import (
     client_lookup,
     message_sender,
@@ -87,7 +92,12 @@ def build_catalog_rag_connector(
 def build_badie_rag_registry(
     settings: Settings, embedder: EmbeddingProvider | None = None
 ) -> ToolRegistry:
-    """Return a ToolRegistry with the async RAG catalog connector and 4 sync stubs.
+    """Return a ToolRegistry with the async RAG catalog connector and 7 sync stubs.
+
+    The sync stubs are the 4 BADIE sales-agent connectors plus the 3
+    platform-generic connectors (knowledge_retrieval, conversation_summarizer,
+    escalation_notifier) declared by the generic roles under
+    ``platform/roles/``.
 
     The embedder is resolved once at build time and captured in the connector
     closure (BGE-M3 is heavy — load once per registry, not per call).
@@ -202,6 +212,88 @@ def build_badie_rag_registry(
                 "required": ["action", "session_id"],
             },
             connector=session_state,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="knowledge_retrieval",
+            description=(
+                "Search the organizational knowledge base. Returns a list of "
+                "matching knowledge hits with id, title, and snippet."
+            ),
+            required_permissions=("read:knowledge_base",),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "q": {
+                        "type": "string",
+                        "description": (
+                            "Natural-language knowledge query, e.g. "
+                            "'return policy' or 'delivery zones'."
+                        ),
+                    }
+                },
+                "required": ["q"],
+            },
+            connector=knowledge_retrieval,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="conversation_summarizer",
+            description=(
+                "Summarize a conversation session. Returns the session_id, a "
+                "summary text, and message_count. Use max_messages to bound "
+                "how many recent messages are considered."
+            ),
+            required_permissions=("read:conversation_logs",),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Conversation session identifier",
+                    },
+                    "max_messages": {
+                        "type": "integer",
+                        "description": (
+                            "Optional cap on the number of most recent "
+                            "messages to summarize"
+                        ),
+                    },
+                },
+                "required": ["session_id"],
+            },
+            connector=conversation_summarizer,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="escalation_notifier",
+            description=(
+                "Notify a human operator that the conversation needs "
+                "escalation. Requires a reason and supporting details. "
+                "Returns the notification status and escalation_id."
+            ),
+            required_permissions=("send:escalation",),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "Short reason for the escalation, "
+                            "e.g. 'customer_angry'"
+                        ),
+                    },
+                    "details": {
+                        "type": "string",
+                        "description": "Supporting context for the human operator",
+                    },
+                },
+                "required": ["reason", "details"],
+            },
+            connector=escalation_notifier,
         )
     )
     return registry
