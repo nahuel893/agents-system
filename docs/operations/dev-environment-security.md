@@ -61,6 +61,36 @@ internet-based attacker to have reached `5432`, the router must forward it —
 a static port-forward or DMZ rule, which UPnP would not list. The alternative
 is that the source was already inside the LAN.
 
+### Answered: the router had DMZ enabled toward this host
+
+The operator confirmed it. The router was configured with **DMZ pointing at
+`192.168.1.3`**, which forwards all unsolicited inbound traffic to this
+machine. That is why the UPnP mapping table was empty and still misleading —
+UPnP lists only *dynamic* mappings; a DMZ is a static setting it never
+reports. Treat an empty UPnP table as no evidence either way.
+
+**DMZ does not expose a port. It exposes the host.** During the window,
+everything bound to `0.0.0.0` was reachable from the internet:
+
+| Port | Service | Exposure |
+|---|---|---|
+| `5432` | Postgres, password `postgres` | compromised |
+| `6379` | Redis, no authentication | an RCE vector, not just a data leak |
+| `8080` | Open WebUI, `WEBUI_AUTH=False` | unauthenticated admin, API key in its env |
+| `22` | OpenSSH | **accepting passwords** — see below |
+
+**SSH is the one that matters most.** There is no explicit
+`PasswordAuthentication no` anywhere in `/etc/ssh/sshd_config` or
+`sshd_config.d/`, so the OpenSSH default of `yes` applied: internet-facing
+password authentication for the whole exposure window.
+
+No evidence of SSH compromise was found — every remote login in `wtmp` comes
+from `100.110.122.37`, the operator's own tailnet host, and none from a public
+address. That is reassuring but not conclusive; `wtmp` records successful
+logins, and `lastb` (failed attempts) needs root to read.
+
+A lost database of regenerable demo data is an inconvenience. A shell is not.
+
 ### What could not be determined
 
 **The source IP was never recorded.** The `pgvector/pgvector:pg16` image ships
@@ -78,11 +108,20 @@ volume would not have answered the question.
 > the Docker bridge. What matters is the host-side publish in
 > `docker-compose.yml`. Do not confuse the two and "fix" the wrong one.
 
-### Open question for the operator
+### Actions this implies
 
-Whether the router forwards `5432` (or has this host in a DMZ) can only be
-answered from the router's admin interface at `192.168.1.1`. That check is
-worth doing before any real credential lands on this machine.
+1. **Disable DMZ on the router.** Nothing on this host should be reachable
+   from the internet by default. Forward individual ports deliberately, or
+   use Tailscale, which is already installed.
+2. **Set `PasswordAuthentication no`** and use keys. This is worth doing
+   whether or not DMZ comes back.
+3. **Rotate the API key that was in the Open WebUI container.** It sat behind
+   an unauthenticated admin panel on a port that was internet-facing, not
+   merely LAN-facing. Absence of evidence of abuse is not evidence of absence
+   — that container's volume was destroyed during containment, so its history
+   is gone.
+4. **Run `sudo lastb`** to see the volume of failed SSH attempts during the
+   window. Informational, but it calibrates how hard the door was tried.
 
 ---
 
