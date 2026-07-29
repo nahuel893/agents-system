@@ -44,9 +44,47 @@ logger = structlog.get_logger()
 # ---------------------------------------------------------------------------
 # Repo-level default roots (overridable via RootConfig)
 # ---------------------------------------------------------------------------
+# Two candidate locations for the platform/ tree that ships the generic
+# agent roles:
+#   1. packaged      — two hops up from this file, next to the installed
+#      `agentsys` package (populated by pyproject.toml's
+#      [tool.hatch.build.targets.wheel.force-include], which maps the
+#      repo-root `platform/` to `agentsys/platform` inside the wheel).
+#   2. dev-checkout   — four hops up from this file, the repo-root sibling
+#      of `src/` (this repo, before packaging).
+#
+# `deployments_root` is deliberately NOT resolved this way: a client's
+# deployments are the client's own and are never packaged with the library
+# (see docs/platform/library-usage.md). It keeps the dev-checkout default
+# only — a consumer must pass its own `deployments_root` explicitly.
+_PACKAGED_PLATFORM_ROOT = pathlib.Path(__file__).parent.parent / "platform"
 _REPO_ROOT = pathlib.Path(__file__).parent.parent.parent.parent
-_DEFAULT_PLATFORM_ROOT = _REPO_ROOT / "platform"
+_CHECKOUT_PLATFORM_ROOT = _REPO_ROOT / "platform"
 _DEFAULT_DEPLOYMENTS_ROOT = _REPO_ROOT / "deployments"
+
+
+def _default_platform_root() -> pathlib.Path:
+    """Resolve the default ``platform_root``.
+
+    Tries, in order, the packaged location and the dev-checkout location
+    (see the module comment above). Raises ``DefinitionError`` naming BOTH
+    attempted paths if neither exists — a silent, nonexistent default used
+    to fail later with a confusing per-file error instead of naming the
+    actual problem.
+    """
+    if _PACKAGED_PLATFORM_ROOT.is_dir():
+        return _PACKAGED_PLATFORM_ROOT
+    if _CHECKOUT_PLATFORM_ROOT.is_dir():
+        return _CHECKOUT_PLATFORM_ROOT
+    raise DefinitionError(
+        "Could not locate the platform/ directory that ships the generic "
+        "agent roles. Tried:\n"
+        f"  - packaged location: {_PACKAGED_PLATFORM_ROOT}\n"
+        f"  - dev-checkout location: {_CHECKOUT_PLATFORM_ROOT}\n"
+        "Pass an explicit RootConfig(platform_root=...) if your platform "
+        "roles live elsewhere."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Autonomy rank — lower rank is more restrictive (safer)
@@ -84,7 +122,7 @@ class RootConfig:
     """Injectable path roots so tests can point at fixtures."""
 
     platform_root: pathlib.Path = dataclasses.field(
-        default_factory=lambda: _DEFAULT_PLATFORM_ROOT
+        default_factory=_default_platform_root
     )
     deployments_root: pathlib.Path = dataclasses.field(
         default_factory=lambda: _DEFAULT_DEPLOYMENTS_ROOT
