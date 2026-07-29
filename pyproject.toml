@@ -41,6 +41,14 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentsys"]
 
+# Ship the generic platform roles (platform/roles/**) inside the wheel so
+# `agentsys.harness.loader.resolve()` works after a plain `pip install`.
+# Target is `agentsys/platform` — two `.parent` hops up from loader.py,
+# matching `_PACKAGED_PLATFORM_ROOT` in src/agentsys/harness/loader.py.
+# deployments/ is NOT included: a client's deployments are the client's own.
+[tool.hatch.build.targets.wheel.force-include]
+"platform" = "agentsys/platform"
+
 [tool.ruff]
 src = ["src"]
 target-version = "py312"
