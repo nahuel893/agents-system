@@ -50,6 +50,13 @@ skills-lock.json
 # CodeGraph index — generated, machine-local, and large.
 .codegraph/
 
+# Host forensic dumps (lastb/last/journal output). Machine-local evidence, and
+# they carry usernames and source addresses that have no business in a public
+# repository. Keep them, just not here.
+ssh_logs
+*.authlog
+auth-*.log
+
 # Agent skill registry — generated per machine, holds absolute local skill paths.
 # Regenerate with: gentle-ai skill-registry refresh --force
 .atl/skill-registry.md
