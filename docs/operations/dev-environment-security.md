@@ -84,12 +84,56 @@ everything bound to `0.0.0.0` was reachable from the internet:
 `sshd_config.d/`, so the OpenSSH default of `yes` applied: internet-facing
 password authentication for the whole exposure window.
 
-No evidence of SSH compromise was found — every remote login in `wtmp` comes
-from `100.110.122.37`, the operator's own tailnet host, and none from a public
-address. That is reassuring but not conclusive; `wtmp` records successful
-logins, and `lastb` (failed attempts) needs root to read.
-
 A lost database of regenerable demo data is an inconvenience. A shell is not.
+
+### What `lastb` showed: 97,919 failed attempts over 18 days
+
+`btmp` begins 2026-07-10 08:41 and the last attempt lands 2026-07-28 23:35 —
+roughly 220 attempts an hour, sustained, for eighteen days. This was not
+opportunistic scanning. The door was being worked on continuously.
+
+| | |
+|---|---|
+| Failed attempts | **97,919** |
+| Distinct source addresses | 339 |
+| Distinct usernames tried | 2,187 |
+| Attempts against the real account (`nh`) | 24 |
+
+Traffic concentrates in a handful of hosting ranges — `91.92.0.0/16` alone
+accounts for 41,271 attempts, followed by `45.153.0.0/16` (13,729) and
+`45.156.0.0/16` (8,609).
+
+The username list is the usual dictionary — `root` (18,696), `admin`, `user`,
+`ubuntu`, `deploy`, `postgres` — with one detail worth noting: **`claude`
+(769 attempts) and `openclaw` (521)**. Scanners now include AI-agent tooling
+accounts in their wordlists. Assume any convention-named service account is
+already on someone's list.
+
+### Verdict: SSH held
+
+Checked along four independent lines, and all four agree:
+
+- **`wtmp`** — every successful login originates from the physical console or
+  a Tailscale CGNAT address (`100.64.0.0/10`). Not one from a public address.
+- **Accounts** — only `nh` (uid 1000) and `root` (uid 0). No account was added;
+  `/etc/passwd` and `/etc/shadow` were last written 2026-07-26, before the
+  database attack, with no resulting account.
+- **Key persistence** — no `authorized_keys` file exists anywhere under
+  `/home` or `/root`. Nothing was planted, and the operator genuinely has no
+  keys installed (see below).
+- **Scheduled persistence** — the only user crontab is a personal `rclone`
+  sync; `/etc/cron.d` holds stock entries only; no systemd unit in
+  `/etc/systemd/system` was modified in 25 days. The only `/etc` files touched
+  on the day of the attack were `ld.so.cache` and Tailscale's `resolv.conf`
+  management.
+
+The database fell and the host did not. That is worth being precise about:
+Postgres was reachable with a guessable password, while SSH — despite
+accepting passwords, despite 97,919 tries — was not guessed.
+
+**This is not a reason to relax.** It is a near miss measured in password
+strength alone, on a service that should never have been answering the
+internet in the first place. See `scripts/harden_host.sh`.
 
 ### What could not be determined
 
