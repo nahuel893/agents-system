@@ -25,14 +25,45 @@
 
 ---
 
-## Active wave: W1 — Harness build-out (2026-05-28)
+> **Where status lives.** This ledger is the authority on **agent assignment and isolation** — who owns which slice, on which branch, in which worktree. **Notion is the authority on project/task status** (Proyectos → D-0XX, with linked Tareas). When the two disagree, Notion wins for *status* and this file wins for *ownership*. Technical prose belongs in `docs/` and Engram, never here.
+>
+> **This file drifted.** Wave W1 stayed marked "active" from 2026-05-28 until 2026-07-29 while work ran through D-024, so anyone following rule 1 above read a two-month-old picture. If you close a wave, say so in the same commit that closes it.
+
+## Active wave: W3 — Platform reuse + BI (2026-07-28)
 
 | ID | Slice / Feature | Agent | Model | Cx | Branch | Depends on | Status | Result |
 |----|-----------------|-------|-------|----|--------|-----------|--------|--------|
-| D-003 | Sync architecture diagram + complete Spanish docs | antigravity | gemini-3.5-flash-high | low | `feat/D-003-docs-diagram-sync` | — | done | Merged to `main` (`351be60`). diagram.html + 7 platform_es files + extras (architecture_es, delivery_es, Outline scripts). |
-| D-004 | Agent Factory — assemble EquippedRuntime (loader + injector + skills) | claude-code | (session) | high | `feat/D-004-agent-factory` | D-002 | done | Merged to `main`. build_runtime() + EquippedRuntime; 11 tests, 100% cov, verify PASS. |
-| D-005 | Tool Call Interceptor — Layer-2 execution-time enforcement | claude-code | (session) | medium | `feat/D-005-tool-call-interceptor` | D-004 | done | Merged to `main`. interceptor.py + 9 tests, 177 suite, ruff+mypy clean. |
-| D-006 | BADIE connector stubs — 5 sales-agent tools with realistic fake responses | claude-code | (session) | low | `feat/D-006-connector-stubs` | D-005 | in_progress | — |
+| D-023 | BI agent — parameterized report catalog over a read-only DB | claude-code | (session) | high | `feat/D-023-bi-agent` | — | in_review | PR #15, CI green. 2615 lines — **size decision pending**: chain or `size:exception`. Every reported figure reconciles with hand-run SQL. |
+| D-024 | Public library API — client-injected ToolRegistry + shipped platform roles | claude-code + sonnet worker | sonnet | medium | `feat/D-024-library-api` | — | in_review | PR #17. Verified against an installed wheel run from outside the repo: `platform_root` → `site-packages/agentsys/platform`, `resolve('sales-agent')` OK, no FastAPI/LangGraph at import. |
+| D-025 | Dev-environment security record + `.gitignore` hygiene | claude-code | (session) | low | `docs/dev-environment-security` | — | in_review | PR #16, CI green. Docs + config only. |
+
+### Blocked / awaiting the human
+
+| Item | Blocked on | Note |
+|---|---|---|
+| Real catalog for the sales agent | `MEDALLION_DB_*` in `.env` | `scripts/sync_articles.py` is finished and idempotent. Use `readonly_user`; `MEDALLION_DB_NAME=medallion_db` — the code default `medallion` is wrong. Until then the sales agent invents products. |
+| Attack entry vector | Router admin UI at `192.168.1.1` | Host has no public IP and UPnP shows no mappings, so it is either a static forward/DMZ rule or a LAN-internal source. Settle it **before** a real BADIE credential lands here. |
+| PR #15 size | Your call | Chain it or record `size:exception`. |
+
+### Known defects, filed not fixed
+
+| Defect | Where | Why it matters |
+|---|---|---|
+| A typo'd deployment name silently **widens** the tool surface | `loader.py:670` — `resolve` falls through to the generic role when `load_override` returns `None` | Deployments may only narrow the platform role, so falling back to generic grants the role's **full** allowance instead of the deployment's subset. No log, no error. Security-relevant, not cosmetic. |
+| Foreign-language token leakage | model output | The model has emitted Chinese and Russian into business-facing answers. Nothing detects it automatically. |
+
+---
+
+## Closed wave: W1 — Harness build-out (2026-05-28 → 2026-06)
+
+All slices merged to `main`; details in the archive at the bottom of this file.
+
+| ID | Slice / Feature | Agent | Status |
+|----|-----------------|-------|--------|
+| D-003 | Sync architecture diagram + complete Spanish docs | antigravity | done (`351be60`) |
+| D-004 | Agent Factory — assemble EquippedRuntime | claude-code | done |
+| D-005 | Tool Call Interceptor — Layer-2 enforcement | claude-code | done |
+| D-006 | BADIE connector stubs — 5 sales-agent tools | claude-code | done — `src/agentsys/connectors/stubs.py`, wired from `main.py` |
 
 ---
 
