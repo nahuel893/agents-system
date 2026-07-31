@@ -120,7 +120,13 @@ async def receive_message(
         async with session_factory() as session:
             client_record = await lookup_or_create_client(session, phone)
     except Exception:
+        # BLOCKER 2 — fail CLOSED on a swallowed DB lookup error. Return 200 to
+        # Meta (design AD-2) but do NOT fall through to run_turn / outbound
+        # send: lookup_or_create_client never returns None on success, so a
+        # None client_record here is unambiguously the DB-error path — an
+        # unverified phone must not reach the agent or receive a reply.
         logger.warning("client_lookup.db_error", phone_number=phone)
+        return {"status": "ok"}
 
     if client_record is not None and not client_record.active:
         logger.info(

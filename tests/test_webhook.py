@@ -899,12 +899,17 @@ async def test_post_conversation_log_failure_still_returns_200(
     fake_whatsapp_client.send_text = AsyncMock()
     app.state.whatsapp_client = fake_whatsapp_client
 
+    # Fail ONLY the log-write session factory (second get_session_factory call),
+    # not the client-lookup one — otherwise the DB-error fail-closed guard
+    # (BLOCKER 2) would correctly short-circuit before run_turn.
+    lookup_session_factory, _ = await _make_log_session_factory()
+
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
         patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
         patch(
             "agentsys.integration.webhook.get_session_factory",
-            side_effect=Exception("DB down"),
+            side_effect=[lookup_session_factory, Exception("DB down")],
         ),
     ):
         response = await client.post(
@@ -966,15 +971,27 @@ async def test_post_skips_send_when_assistant_text_empty(
     fake_whatsapp_client.send_text.assert_not_awaited()
 
 
-async def test_post_db_failure_fail_open(
-    client: AsyncClient, text_payload: bytes
+async def test_post_db_failure_fails_closed_no_run_turn(
+    app, client: AsyncClient, text_payload: bytes
 ) -> None:
-    """POST /webhook with DB failure still processes message (fail-open)."""
+    """BLOCKER 2 — a swallowed DB lookup error must FAIL CLOSED: return 200 to
+    Meta (design AD-2) but NEVER invoke run_turn or send an outbound reply for
+    an unverified phone. A resolved runtime is installed so the request would
+    reach run_turn if the guard were missing (this distinguishes fail-closed
+    from the unrelated runtime_unresolved short-circuit)."""
     sig = sign_payload(text_payload, TEST_SECRET)
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)  # new message
 
     mock_lookup = AsyncMock(side_effect=Exception("DB unavailable"))
+
+    fake_runtime = MagicMock()
+    fake_runtime.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
+    app.state.runtimes = {"badie__sales-agent": fake_runtime}
+
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock()
+    app.state.whatsapp_client = fake_whatsapp_client
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
@@ -991,3 +1008,53 @@ async def test_post_db_failure_fail_open(
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    fake_runtime.run_turn.assert_not_awaited()
+    fake_whatsapp_client.send_text.assert_not_awaited()
+
+
+async def test_post_db_success_active_client_runs_turn(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """Positive control for the BLOCKER 2 guard: when the DB lookup SUCCEEDS
+    and returns an ACTIVE client, the happy path still runs the agent turn and
+    sends the reply — proving the fail-closed early return does not regress the
+    normal flow."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
+
+    registered = Client(
+        id=42, phone_number="+5491123456789", name="Kiosco Don José", active=True
+    )
+    mock_lookup = AsyncMock(return_value=registered)
+
+    fake_runtime = MagicMock()
+    fake_runtime.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
+    app.state.runtimes = {"badie__sales-agent": fake_runtime}
+
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock()
+    app.state.whatsapp_client = fake_whatsapp_client
+
+    mock_session_factory, _ = await _make_log_session_factory()
+
+    with (
+        patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
+        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch(
+            "agentsys.integration.webhook.get_session_factory",
+            return_value=mock_session_factory,
+        ),
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    fake_runtime.run_turn.assert_awaited_once()
+    fake_whatsapp_client.send_text.assert_awaited_once()

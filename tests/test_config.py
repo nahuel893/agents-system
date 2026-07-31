@@ -176,3 +176,106 @@ def test_checkpointer_ttl_s_accepts_none() -> None:
     """checkpointer_ttl_s=None means no expiry (design AD-7 idle expiry is optional)."""
     settings = Settings(_env_file=None, checkpointer_ttl_s=None)
     assert settings.checkpointer_ttl_s is None
+
+
+# ---------------------------------------------------------------------------
+# D-014 S5 — fail-CLOSED security guards (BLOCKER 1: no empty-secret boot)
+# ---------------------------------------------------------------------------
+
+
+def test_allow_insecure_defaults_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The insecure opt-in must default OFF (secure-by-default).
+
+    The test suite sets ALLOW_INSECURE=true in conftest so unrelated tests can
+    build empty-secret Settings; remove it here to observe the real default.
+    """
+    monkeypatch.delenv("ALLOW_INSECURE", raising=False)
+    settings = Settings(
+        _env_file=None,
+        adapter_runtimes=[],
+        meta_webhook_secret="s",
+    )
+    assert settings.allow_insecure is False
+
+
+def test_settings_raises_when_adapter_runtimes_set_and_adapter_api_key_empty() -> None:
+    """adapter_runtimes configured + empty adapter_api_key must fail closed."""
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            adapter_runtimes=["badie__sales-agent"],
+            adapter_api_key="",
+            meta_webhook_secret="s",  # isolate: only the adapter guard should fire
+            allow_insecure=False,
+        )
+    assert "adapter_api_key" in str(excinfo.value)
+
+
+def test_settings_boots_when_adapter_api_key_set() -> None:
+    """adapter_runtimes + a non-empty adapter_api_key boots normally."""
+    settings = Settings(
+        _env_file=None,
+        adapter_runtimes=["badie__sales-agent"],
+        adapter_api_key="k",
+        meta_webhook_secret="s",
+        allow_insecure=False,
+    )
+    assert settings.adapter_api_key == "k"
+
+
+def test_settings_boots_when_adapter_runtimes_empty_and_key_empty() -> None:
+    """No adapter runtimes → the adapter key is not required."""
+    settings = Settings(
+        _env_file=None,
+        adapter_runtimes=[],
+        adapter_api_key="",
+        meta_webhook_secret="s",
+        allow_insecure=False,
+    )
+    assert settings.adapter_runtimes == []
+
+
+def test_settings_boots_in_explicit_insecure_mode() -> None:
+    """allow_insecure=True is the deliberate dev opt-in — empty adapter key OK."""
+    settings = Settings(
+        _env_file=None,
+        adapter_runtimes=["badie__sales-agent"],
+        adapter_api_key="",
+        meta_webhook_secret="s",
+        allow_insecure=True,
+    )
+    assert settings.allow_insecure is True
+
+
+def test_settings_raises_when_meta_webhook_secret_empty() -> None:
+    """Empty meta_webhook_secret makes HMAC forgeable — must fail closed."""
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            adapter_runtimes=[],  # isolate: only the meta guard should fire
+            meta_webhook_secret="",
+            allow_insecure=False,
+        )
+    assert "meta_webhook_secret" in str(excinfo.value)
+
+
+def test_settings_boots_when_meta_webhook_secret_set() -> None:
+    """A non-empty meta_webhook_secret boots normally."""
+    settings = Settings(
+        _env_file=None,
+        adapter_runtimes=[],
+        meta_webhook_secret="s",
+        allow_insecure=False,
+    )
+    assert settings.meta_webhook_secret == "s"
+
+
+def test_settings_boots_in_explicit_insecure_mode_meta() -> None:
+    """allow_insecure=True bypasses the empty-webhook-secret guard for dev."""
+    settings = Settings(
+        _env_file=None,
+        adapter_runtimes=[],
+        meta_webhook_secret="",
+        allow_insecure=True,
+    )
+    assert settings.allow_insecure is True
