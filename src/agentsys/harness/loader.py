@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+import re
 from typing import Any, Mapping
 
 import structlog
@@ -64,21 +65,31 @@ _DEFAULT_DEPLOYMENTS_ROOT = _REPO_ROOT / "deployments"
 
 
 def _default_platform_root() -> pathlib.Path:
-    """Resolve the default ``platform_root``.
+    """Best guess at ``platform_root``: packaged location, else dev checkout.
 
-    Tries, in order, the packaged location and the dev-checkout location
-    (see the module comment above). Raises ``DefinitionError`` naming BOTH
-    attempted paths if neither exists — a silent, nonexistent default used
-    to fail later with a confusing per-file error instead of naming the
-    actual problem.
+    Deliberately does NOT validate. ``default_factory`` is evaluated per FIELD,
+    not per object, so raising here would make a bare ``RootConfig()`` — one
+    built solely to reach ``deployments_root`` — fail over a directory the
+    caller never reads. ``load_override`` is exactly that caller.
+
+    Validation happens at first real use, in ``_require_platform_root``.
     """
     if _PACKAGED_PLATFORM_ROOT.is_dir():
         return _PACKAGED_PLATFORM_ROOT
-    if _CHECKOUT_PLATFORM_ROOT.is_dir():
-        return _CHECKOUT_PLATFORM_ROOT
+    return _CHECKOUT_PLATFORM_ROOT
+
+
+def _require_platform_root(root: pathlib.Path) -> pathlib.Path:
+    """Fail loudly, naming what was searched, before reading role files.
+
+    Without this the missing directory surfaces as a per-file "role.md not
+    found", which points at the wrong problem.
+    """
+    if root.is_dir():
+        return root
     raise DefinitionError(
         "Could not locate the platform/ directory that ships the generic "
-        "agent roles. Tried:\n"
+        f"agent roles. Looked in: {root}\n"
         f"  - packaged location: {_PACKAGED_PLATFORM_ROOT}\n"
         f"  - dev-checkout location: {_CHECKOUT_PLATFORM_ROOT}\n"
         "Pass an explicit RootConfig(platform_root=...) if your platform "
@@ -230,14 +241,45 @@ def _as_str_list(value: Any) -> list[str]:
     return [str(value)]
 
 
+# A role or client name is a single directory name, nothing else. Anything
+# with a separator, a dot segment, or a leading dash is rejected before it can
+# reach the filesystem.
+_SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+def _validate_segment(value: str, *, kind: str) -> str:
+    """Reject any name that could escape the root it is joined to.
+
+    These names are joined onto ``platform_root``/``deployments_root`` to build
+    filesystem paths, and since D-024 they arrive from consuming applications —
+    a tenant slug, a user-selected agent type. A traversing ``role_type`` does
+    not *override* a role, it REPLACES the generic one, so none of ``merge``'s
+    subset invariants apply: the traversed manifest becomes the parent and can
+    declare any tools, any permissions and ``autonomy: full``.
+
+    Validate here rather than in the callers so every path-building site is
+    covered by construction.
+    """
+    if not _SAFE_SEGMENT.fullmatch(value):
+        raise DefinitionError(
+            f"Invalid {kind} {value!r}. Must match {_SAFE_SEGMENT.pattern} — "
+            "a single directory name, with no path separators or dot segments."
+        )
+    return value
+
+
 def _role_folder(platform_root: pathlib.Path, role_type: str) -> pathlib.Path:
-    return platform_root / "roles" / role_type
+    return platform_root / "roles" / _validate_segment(role_type, kind="role_type")
 
 
 def _deployment_folder(
     deployments_root: pathlib.Path, client: str, role_type: str
 ) -> pathlib.Path:
-    return deployments_root / client / role_type
+    return (
+        deployments_root
+        / _validate_segment(client, kind="client")
+        / _validate_segment(role_type, kind="role_type")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +300,7 @@ def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefin
     if roots is None:
         roots = RootConfig()
 
-    folder = _role_folder(roots.platform_root, role_type)
+    folder = _role_folder(_require_platform_root(roots.platform_root), role_type)
 
     role_fm, role_body = _read_md(folder / "role.md")
     manifest_fm, _ = _read_md(folder / "manifest.md")
@@ -300,6 +342,17 @@ def load_override(
     folder = _deployment_folder(roots.deployments_root, client, role_type)
 
     if not folder.exists():
+        # Not an error — a role may legitimately have no override. But it is
+        # not neutral either: `resolve` falls back to the generic role, and
+        # since a deployment may only NARROW the platform role, that fallback
+        # WIDENS the tool surface to the role's full allowance. A typo in the
+        # client name therefore grants more, not less. Make it observable.
+        logger.warning(
+            "loader.override_not_found",
+            client=client,
+            role_type=role_type,
+            path=str(folder),
+        )
         return None
 
     role_fm, role_body = _read_md(folder / "role.md")
