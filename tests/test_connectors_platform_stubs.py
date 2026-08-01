@@ -95,6 +95,32 @@ def test_knowledge_retrieval_is_deterministic() -> None:
     assert first == second
 
 
+def test_knowledge_retrieval_missing_query_returns_all_hits() -> None:
+    from agentsys.connectors.platform_stubs import knowledge_retrieval
+
+    result = knowledge_retrieval({})
+
+    assert len(result["results"]) == 3
+
+
+def test_knowledge_retrieval_no_match_returns_first_two_hits() -> None:
+    from agentsys.connectors.platform_stubs import knowledge_retrieval
+
+    result = knowledge_retrieval({"q": "zzz-no-such-topic"})
+
+    assert [hit["id"] for hit in result["results"]] == ["kb-001", "kb-002"]
+
+
+def test_knowledge_retrieval_query_is_case_insensitive() -> None:
+    from agentsys.connectors.platform_stubs import knowledge_retrieval
+
+    lower = knowledge_retrieval({"q": "pricing"})
+    upper = knowledge_retrieval({"q": "PRICING"})
+
+    assert upper["results"]
+    assert upper == lower
+
+
 # ---------------------------------------------------------------------------
 # conversation_summarizer
 # ---------------------------------------------------------------------------
@@ -127,6 +153,25 @@ def test_conversation_summarizer_max_messages_caps_count() -> None:
 
     assert capped["message_count"] == 1
     assert capped["message_count"] < full["message_count"]
+
+
+@pytest.mark.parametrize("bad_max", ["2", 2.5])
+def test_conversation_summarizer_non_int_max_messages_ignored(bad_max: Any) -> None:
+    from agentsys.connectors.platform_stubs import conversation_summarizer
+
+    full = conversation_summarizer({"session_id": "s-001"})
+    result = conversation_summarizer({"session_id": "s-001", "max_messages": bad_max})
+
+    assert result["message_count"] == full["message_count"]
+
+
+def test_conversation_summarizer_missing_session_id_uses_default() -> None:
+    from agentsys.connectors.platform_stubs import conversation_summarizer
+
+    result = conversation_summarizer({})
+
+    assert result["session_id"] == "s-unknown"
+    assert result["message_count"] >= 1
 
 
 # ---------------------------------------------------------------------------
