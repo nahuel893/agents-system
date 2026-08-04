@@ -51,7 +51,17 @@ testpaths = ["tests"]
 markers = [
     "integration: requires real models / external services (slow, opt-in)",
 ]
-# Skip integration tests by default. Run them explicitly with: pytest -m integration
+# Skip integration tests by default (they need models, a GPU, or a live DB).
+# Run them explicitly with: pytest -m integration
+#
+# This deselection is UNCONDITIONAL, which is fine for slow opt-in tests and
+# was NOT fine for one of them: test_bi_readonly_engine_refuses_writes is the
+# only automated check that the BI role is actually read-only — the layer
+# meant to hold even if validation and the interceptor both have bugs — and
+# nothing ever ran it. It now runs in the `bi-readonly` CI job, which
+# provisions the role with scripts/provision_bi_readonly.sql and then tries
+# to write through it. If you add another integration test that guarantees a
+# security property, add it to that job too; a marker is not coverage.
 addopts = "-m 'not integration'"
 
 [tool.mypy]
