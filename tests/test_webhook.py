@@ -318,9 +318,18 @@ async def test_post_dedup_redis_failure(
 
 
 async def test_post_unregistered_client(
-    client: AsyncClient, text_payload: bytes
+    app, client: AsyncClient, text_payload: bytes
 ) -> None:
-    """POST /webhook with unregistered client returns 200 but skips processing."""
+    """An INACTIVE client must never reach the agent or receive a reply.
+
+    A resolved runtime and outbound client are installed on app.state on
+    purpose. Without them the request short-circuits earlier at
+    ``webhook.runtime_unresolved`` — ``getattr(app.state, "runtimes", {})`` is
+    empty because ASGITransport does not run lifespan — and the assertions pass
+    even with the ``not client_record.active`` early return deleted. That was
+    the previous shape of this test: it asserted only 200 + body + lookup-called
+    and was proven to survive removing the guard it names.
+    """
     sig = sign_payload(text_payload, TEST_SECRET)
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)  # new message
@@ -329,6 +338,14 @@ async def test_post_unregistered_client(
         id=1, phone_number="+5491123456789", name="Pendiente de alta", active=False
     )
     mock_lookup = AsyncMock(return_value=unregistered)
+
+    fake_runtime = MagicMock()
+    fake_runtime.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
+    app.state.runtimes = {"badie__sales-agent": fake_runtime}
+
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock()
+    app.state.whatsapp_client = fake_whatsapp_client
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
@@ -346,6 +363,8 @@ async def test_post_unregistered_client(
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     mock_lookup.assert_called_once()
+    fake_runtime.run_turn.assert_not_awaited()
+    fake_whatsapp_client.send_text.assert_not_awaited()
 
 
 async def test_post_invalid_phone_returns_200(client: AsyncClient) -> None:
