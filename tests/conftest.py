@@ -11,9 +11,19 @@ default (init kwargs win over environment variables in pydantic-settings).
 
 This is set at conftest import time — before any test module imports
 ``agentsys.main`` (whose module-level ``app = create_app()`` would otherwise
-trip the fail-closed validator during collection).
+trip the fail-closed validator during collection). It CANNOT be an autouse
+fixture: fixtures run after collection, and collection is what explodes.
+
+The assignment is unconditional, NOT ``setdefault``. ``setdefault`` is a no-op
+against an inherited value, so any environment that exports ALLOW_INSECURE=false
+(hardened CI, or a developer checking a production-like config) turned the whole
+suite into four collection-time ValidationErrors with nothing pointing at the
+cause. The suite's need for the dev mode is not negotiable by the ambient
+environment; the security boundary is still tested honestly because those tests
+pass ``allow_insecure=False`` as an init kwarg, which outranks the env var.
+``tests/test_conftest_contract.py`` pins this.
 """
 
 import os
 
-os.environ.setdefault("ALLOW_INSECURE", "true")
+os.environ["ALLOW_INSECURE"] = "true"
