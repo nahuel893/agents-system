@@ -18,7 +18,7 @@ lazily inside the function body).
 """
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -407,3 +407,161 @@ def test_openai_compatible_model_still_supports_bind_tools() -> None:
         ]
     )
     assert isinstance(bound.bound, ReasoningSanitizedChatOpenAI)
+
+
+# ---------------------------------------------------------------------------
+# D-023 — the BI engine and the read-only guarantee it rests on
+#
+# The BI block lives inside `if settings.adapter_runtimes:`, so these tests
+# supply a runtime and patch the heavy dependencies the surrounding branch
+# pulls in. A first draft passed `adapter_runtimes=[]`, never reached the
+# block at all, and one assertion passed against unwritten code.
+# ---------------------------------------------------------------------------
+
+
+def _stack(patchers: tuple[Any, ...]) -> ExitStack:
+    """Enter a tuple of context managers under a single ExitStack."""
+    stack = ExitStack()
+    for patcher in patchers:
+        stack.enter_context(patcher)
+    return stack
+
+
+def _bi_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = dict(
+        adapter_runtimes=["badie__sales-agent"],
+        whatsapp_checkpointer_enabled=False,
+        bi_database_url="postgresql+asyncpg://bi_readonly:pw@localhost:5432/badie",
+    )
+    values.update(overrides)
+    return _make_settings(**values)
+
+
+def _fake_bi_engine(value: str | None, *, raises: Exception | None = None) -> Any:
+    """Fake engine whose `SHOW default_transaction_read_only` answers *value*."""
+
+    class _Result:
+        def scalar(self) -> Any:
+            return value
+
+    class _Conn:
+        async def execute(self, *_: Any, **__: Any) -> Any:
+            if raises is not None:
+                raise raises
+            return _Result()
+
+        async def __aenter__(self) -> "_Conn":
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    engine = MagicMock()
+    engine.connect = lambda: _Conn()
+    engine.dispose = AsyncMock()
+    return engine
+
+
+def _bi_lifespan_patches(settings: Settings, bi_engine: Any) -> tuple[Any, ...]:
+    app_engine = MagicMock()
+    app_engine.dispose = AsyncMock()
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog", "read:reports")
+    fake_definition.execution_limits = None
+
+    return (
+        patch("agentsys.main.get_settings", return_value=settings),
+        patch(
+            "agentsys.main.get_engine",
+            side_effect=lambda url: bi_engine
+            if url == settings.bi_database_url
+            else app_engine,
+        ),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "agentsys.connectors.rag_connector.build_badie_rag_registry",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
+        patch("agentsys.harness.factory.build_runtime", return_value=MagicMock()),
+        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+    )
+
+
+@pytest.mark.asyncio
+async def test_bi_engine_is_built_through_get_engine() -> None:
+    """The BI engine must get `pool_pre_ping`, like every other engine here.
+
+    `get_engine` sets `pool_pre_ping=True`; a bare `create_async_engine` does
+    not. The BI engine is the one most likely to sit behind a connection its
+    pool has held idle — a separate, possibly remote, read-only replica — so
+    it is the worst one to leave without stale-connection detection.
+    """
+    settings = _bi_settings()
+    bi_engine = _fake_bi_engine("on")
+    patches = _bi_lifespan_patches(settings, bi_engine)
+
+    with patches[0] as _, patches[1] as mock_get:
+        with _stack(patches[2:]):
+            app = create_app()
+            async with lifespan(app):
+                pass
+
+    assert settings.bi_database_url in [c.args[0] for c in mock_get.call_args_list]
+
+
+@pytest.mark.asyncio
+async def test_bi_tool_is_not_registered_when_the_role_can_write() -> None:
+    """Fail CLOSED when the database says the role is not read-only.
+
+    The dedicated read-only role is the guardrail that is supposed to hold
+    even if validation and the interceptor both have bugs. Nothing verified
+    it — the URL was simply trusted to point at a role someone configured by
+    hand. If `default_transaction_read_only` is off, the guardrail is absent,
+    so the tool is not registered at all.
+    """
+    settings = _bi_settings()
+    bi_engine = _fake_bi_engine("off")
+
+    with _stack(_bi_lifespan_patches(settings, bi_engine)):
+        with patch(
+            "agentsys.connectors.report_connector.build_report_tool_spec"
+        ) as mock_spec:
+            app = create_app()
+            async with lifespan(app):
+                pass
+
+    mock_spec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bi_tool_is_still_registered_when_the_check_cannot_run() -> None:
+    """An unreachable reporting database must not become a boot failure.
+
+    "Could not determine" is not "determined to be writable". Coupling
+    startup to the reporting replica being up would take the whole sales bot
+    down for a BI dependency; the tool degrades at call time instead, which
+    this slice already turned into a structured error rather than an
+    exception.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    settings = _bi_settings()
+    bi_engine = _fake_bi_engine(
+        None, raises=OperationalError("SHOW", {}, Exception("refused"))
+    )
+
+    with _stack(_bi_lifespan_patches(settings, bi_engine)):
+        with patch(
+            "agentsys.connectors.report_connector.build_report_tool_spec"
+        ) as mock_spec:
+            app = create_app()
+            async with lifespan(app):
+                pass
+
+    mock_spec.assert_called_once()

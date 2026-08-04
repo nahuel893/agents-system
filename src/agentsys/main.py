@@ -56,6 +56,33 @@ def _build_checkpointer_cm(settings: Settings) -> Any:  # noqa: ANN401
     )
 
 
+async def _bi_role_is_read_only(engine: Any) -> bool | None:  # noqa: ANN401
+    """Ask the database whether the BI role really is read-only.
+
+    Returns True / False, or None when the question could not be answered —
+    those are three different situations and collapsing the third into either
+    of the other two is the bug. "Could not determine" must not read as
+    "determined to be writable" (that would take the app down whenever the
+    reporting replica is briefly unreachable), and it must not read as
+    "determined to be read-only" either (that would restore the very
+    assumption this check exists to remove).
+
+    The dedicated read-only role is the layer that is meant to hold even if
+    parameter validation and the Layer-2 interceptor both have bugs, and
+    nothing anywhere confirmed it was configured. `BI_DATABASE_URL` was
+    trusted to point at a role someone had set up by hand.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SHOW default_transaction_read_only"))
+            return str(result.scalar()).strip().lower() == "on"
+    except SQLAlchemyError:
+        structlog.get_logger().warning("bi.read_only_check_failed", exc_info=True)
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage startup / shutdown resources.
@@ -108,6 +135,75 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             embedder = get_embedding_provider(settings)
             registry = build_badie_rag_registry(settings, embedder)
+
+            # D-023 — the BI `run_report` tool goes into the SAME registry the
+            # other roles resolve from, because the injector resolves every
+            # tool a manifest names from one registry and `data-agent` asks
+            # for four. Sharing is safe: the role manifest is the gate, and
+            # `sales-agent` does not list `run_report`, so it never sees it.
+            # (Per-deployment registries are D-019; this composes until then.)
+            if settings.bi_database_url:
+                from agentsys.connectors.badie_reports import CATALOG as BI_CATALOG
+                from agentsys.connectors.report_connector import (
+                    build_report_tool_spec,
+                )
+
+                # A DEDICATED engine on the read-only role (AD-3). Never
+                # app.state.engine — that one can write, and the whole point
+                # is that this path cannot, whatever the model asks for.
+                #
+                # Built through get_engine, like every other engine here, so
+                # it gets pool_pre_ping. This is the engine most likely to sit
+                # behind a connection its pool has held idle — a separate,
+                # possibly remote, read-only replica — which makes it the
+                # worst one to leave without stale-connection detection.
+                bi_engine = get_engine(settings.bi_database_url)
+                resource_stack.push_async_callback(bi_engine.dispose)
+
+                read_only = await _bi_role_is_read_only(bi_engine)
+                if read_only is False:
+                    # Fail CLOSED. The read-only role is the guardrail that is
+                    # supposed to hold even if validation and the interceptor
+                    # both have bugs; nothing verified it, the URL was simply
+                    # trusted to point somewhere someone had configured by
+                    # hand. If it can write, the guardrail is absent, so the
+                    # tool does not exist for this process.
+                    _logger.error(
+                        "bi.role_not_read_only",
+                        message=(
+                            "BI_DATABASE_URL points at a role with "
+                            "default_transaction_read_only = off. run_report "
+                            "is NOT registered. Fix the role, do not work "
+                            "around this."
+                        ),
+                    )
+                else:
+                    if read_only is None:
+                        # "Could not determine" is not "determined to be
+                        # writable". Coupling startup to the reporting replica
+                        # being reachable would take the sales bot down for a
+                        # BI dependency; the tool degrades at call time into a
+                        # structured error instead.
+                        _logger.warning(
+                            "bi.read_only_unverified",
+                            message=(
+                                "Could not verify that BI_DATABASE_URL is "
+                                "read-only — the database did not answer. "
+                                "Registering run_report anyway."
+                            ),
+                        )
+                    registry.register(build_report_tool_spec(bi_engine, BI_CATALOG))
+                    _logger.info("bi.tool_registered", reports=sorted(BI_CATALOG))
+            else:
+                _logger.warning(
+                    "bi.disabled",
+                    message=(
+                        "BI_DATABASE_URL is not set — run_report is not "
+                        "registered. Any role whose manifest lists it will "
+                        "fail to build."
+                    ),
+                )
+
             session_provider = async_sessionmaker(
                 app.state.engine, expire_on_commit=False
             )
