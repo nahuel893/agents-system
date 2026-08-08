@@ -493,6 +493,39 @@ def _bi_lifespan_patches(settings: Settings, bi_engine: Any) -> tuple[Any, ...]:
     )
 
 
+def _run_lifespan_capturing_bi_engine(settings: Settings, bi_engine: Any) -> Any:
+    """Run lifespan and return the `bi_engine` the registry builder received.
+
+    The decision this asserts is BINDING, not registering. `run_report` is now
+    always registered — a tool a manifest names but the registry lacks makes
+    the whole role unbuildable — so "is it usable" is exactly "was an engine
+    bound", which is the argument captured here.
+    """
+    captured: dict[str, Any] = {}
+
+    def fake_build_registry(_settings: Any, _embedder: Any, engine: Any = None) -> Any:
+        captured["bi_engine"] = engine
+        return MagicMock()
+
+    async def _run() -> Any:
+        with _stack(_bi_lifespan_patches(settings, bi_engine)):
+            with patch(
+                "agentsys.connectors.rag_connector.build_badie_rag_registry",
+                side_effect=fake_build_registry,
+            ):
+                app = create_app()
+                async with lifespan(app):
+                    pass
+        # NOT captured.get(): a builder that was never called would return
+        # None, which is indistinguishable from the fail-closed result the
+        # "role can write" test asserts. Missing means the patch target is
+        # wrong, and that must be a failure, not a pass.
+        assert "bi_engine" in captured, "build_badie_rag_registry was never called"
+        return captured["bi_engine"]
+
+    return _run()
+
+
 @pytest.mark.asyncio
 async def test_bi_engine_is_built_through_get_engine() -> None:
     """The BI engine must get `pool_pre_ping`, like every other engine here.
@@ -506,7 +539,7 @@ async def test_bi_engine_is_built_through_get_engine() -> None:
     bi_engine = _fake_bi_engine("on")
     patches = _bi_lifespan_patches(settings, bi_engine)
 
-    with patches[0] as _, patches[1] as mock_get:
+    with patches[0], patches[1] as mock_get:
         with _stack(patches[2:]):
             app = create_app()
             async with lifespan(app):
@@ -516,52 +549,43 @@ async def test_bi_engine_is_built_through_get_engine() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bi_tool_is_not_registered_when_the_role_can_write() -> None:
+async def test_bi_tool_is_left_unbound_when_the_role_can_write() -> None:
     """Fail CLOSED when the database says the role is not read-only.
 
-    The dedicated read-only role is the guardrail that is supposed to hold
-    even if validation and the interceptor both have bugs. Nothing verified
-    it — the URL was simply trusted to point at a role someone configured by
-    hand. If `default_transaction_read_only` is off, the guardrail is absent,
-    so the tool is not registered at all.
+    The dedicated read-only role is the guardrail meant to hold even if
+    validation and the interceptor both have bugs. Nothing verified it — the
+    URL was simply trusted to point at a role someone configured by hand. If
+    `default_transaction_read_only` is off the guardrail is absent, so no
+    engine is bound and every call reports reporting unavailable.
     """
-    settings = _bi_settings()
-    bi_engine = _fake_bi_engine("off")
-
-    with _stack(_bi_lifespan_patches(settings, bi_engine)):
-        with patch(
-            "agentsys.connectors.report_connector.build_report_tool_spec"
-        ) as mock_spec:
-            app = create_app()
-            async with lifespan(app):
-                pass
-
-    mock_spec.assert_not_called()
+    bound = await _run_lifespan_capturing_bi_engine(
+        _bi_settings(), _fake_bi_engine("off")
+    )
+    assert bound is None
 
 
 @pytest.mark.asyncio
-async def test_bi_tool_is_still_registered_when_the_check_cannot_run() -> None:
+async def test_bi_tool_is_still_bound_when_the_check_cannot_run() -> None:
     """An unreachable reporting database must not become a boot failure.
 
-    "Could not determine" is not "determined to be writable". Coupling
-    startup to the reporting replica being up would take the whole sales bot
-    down for a BI dependency; the tool degrades at call time instead, which
-    this slice already turned into a structured error rather than an
-    exception.
+    "Could not determine" is not "determined to be writable". Coupling startup
+    to the reporting replica being up would take the whole sales bot down for
+    a BI dependency; the tool degrades at call time into a structured error,
+    which this slice already built.
     """
     from sqlalchemy.exc import OperationalError
 
-    settings = _bi_settings()
-    bi_engine = _fake_bi_engine(
+    engine = _fake_bi_engine(
         None, raises=OperationalError("SHOW", {}, Exception("refused"))
     )
+    bound = await _run_lifespan_capturing_bi_engine(_bi_settings(), engine)
+    assert bound is engine
 
-    with _stack(_bi_lifespan_patches(settings, bi_engine)):
-        with patch(
-            "agentsys.connectors.report_connector.build_report_tool_spec"
-        ) as mock_spec:
-            app = create_app()
-            async with lifespan(app):
-                pass
 
-    mock_spec.assert_called_once()
+@pytest.mark.asyncio
+async def test_bi_tool_is_unbound_when_no_url_is_configured() -> None:
+    """No URL is the ordinary case, and it must not raise either."""
+    bound = await _run_lifespan_capturing_bi_engine(
+        _bi_settings(bi_database_url=""), _fake_bi_engine("on")
+    )
+    assert bound is None

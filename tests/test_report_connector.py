@@ -308,3 +308,44 @@ async def test_adapter_logs_and_reports_a_failed_turn(monkeypatch: Any) -> None:
     # The client is told something went wrong, not what — an internal
     # exception message can carry a DSN, a prompt, or a customer's data.
     assert "connector blew up" not in str(excinfo.value.detail)
+
+
+# ---------------------------------------------------------------------------
+# A manifest is a promise about what the platform CAN equip
+#
+# `platform/roles/data-agent/manifest.md` names run_report. Registering it only
+# inside main.py's lifespan, behind `if settings.bi_database_url`, means the
+# platform cannot keep that promise anywhere else — `resolve_tool_surface`
+# raises InjectionError and the role is not partially usable, it is entirely
+# unbuildable. That is the exact failure the manifest itself documents for
+# `knowledge_retrieval` in v1.0, reintroduced by a different route, and since
+# D-024 made the platform importable it now reaches library consumers too.
+#
+# So the tool is always registerable. Whether a database sits behind it is a
+# runtime fact the tool reports honestly, the same way an unreachable database
+# already degrades into a structured error rather than an exception.
+# ---------------------------------------------------------------------------
+
+
+def test_run_report_is_in_the_static_registry() -> None:
+    from agentsys.connectors.stubs import build_badie_registry
+
+    assert "run_report" in build_badie_registry()
+
+
+async def test_unconfigured_report_tool_reports_it_instead_of_crashing() -> None:
+    """With no BI engine bound, the tool must answer, not raise.
+
+    `engine=None` reaches `engine.connect()` as an AttributeError, which is not
+    a SQLAlchemyError and so escapes the handler added for finding 2 — landing
+    right back at the uncaught-exception behaviour that fix removed.
+    """
+    from agentsys.connectors import report_connector as rc
+
+    connector = rc.build_report_connector(None, _catalog())
+    result = await connector({"report": "ventas_por_zona", "params": {}})
+
+    assert result["error_kind"] == "bi_not_configured"
+    # Operator configuration detail does not belong in text the model will
+    # read out to a customer — the startup log names the variable instead.
+    assert "BI_DATABASE_URL" not in result["error"]

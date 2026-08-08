@@ -56,6 +56,13 @@ def _build_checkpointer_cm(settings: Settings) -> Any:  # noqa: ANN401
     )
 
 
+def BI_CATALOG_NAMES() -> list[str]:
+    """Report names, imported lazily to keep module import light."""
+    from agentsys.connectors.badie_reports import CATALOG
+
+    return sorted(CATALOG)
+
+
 async def _bi_role_is_read_only(engine: Any) -> bool | None:  # noqa: ANN401
     """Ask the database whether the BI role really is read-only.
 
@@ -134,20 +141,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from agentsys.services.embeddings import get_embedding_provider
 
             embedder = get_embedding_provider(settings)
-            registry = build_badie_rag_registry(settings, embedder)
 
-            # D-023 — the BI `run_report` tool goes into the SAME registry the
-            # other roles resolve from, because the injector resolves every
-            # tool a manifest names from one registry and `data-agent` asks
-            # for four. Sharing is safe: the role manifest is the gate, and
-            # `sales-agent` does not list `run_report`, so it never sees it.
-            # (Per-deployment registries are D-019; this composes until then.)
+            # D-023 — resolve the BI engine BEFORE the registry, so the
+            # registry has a single registration point for `run_report`.
+            # The tool is registered either way: platform/roles/data-agent
+            # names it, and a tool a manifest names but the registry lacks
+            # makes the whole role unbuildable through InjectionError — not
+            # partially usable. Unbound, it answers that reporting is
+            # unavailable. Sharing one registry is safe because the role
+            # manifest is the gate: `sales-agent` does not list run_report,
+            # so it never sees it. (Per-deployment registries are D-019.)
+            bi_engine = None
             if settings.bi_database_url:
-                from agentsys.connectors.badie_reports import CATALOG as BI_CATALOG
-                from agentsys.connectors.report_connector import (
-                    build_report_tool_spec,
-                )
-
                 # A DEDICATED engine on the read-only role (AD-3). Never
                 # app.state.engine — that one can write, and the whole point
                 # is that this path cannot, whatever the model asks for.
@@ -157,24 +162,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # behind a connection its pool has held idle — a separate,
                 # possibly remote, read-only replica — which makes it the
                 # worst one to leave without stale-connection detection.
-                bi_engine = get_engine(settings.bi_database_url)
-                resource_stack.push_async_callback(bi_engine.dispose)
+                candidate = get_engine(settings.bi_database_url)
+                resource_stack.push_async_callback(candidate.dispose)
 
-                read_only = await _bi_role_is_read_only(bi_engine)
+                read_only = await _bi_role_is_read_only(candidate)
                 if read_only is False:
                     # Fail CLOSED. The read-only role is the guardrail that is
                     # supposed to hold even if validation and the interceptor
                     # both have bugs; nothing verified it, the URL was simply
-                    # trusted to point somewhere someone had configured by
-                    # hand. If it can write, the guardrail is absent, so the
-                    # tool does not exist for this process.
+                    # trusted to point somewhere someone configured by hand.
+                    # If it can write, the guardrail is absent, so no engine
+                    # gets bound and every call reports reporting unavailable.
                     _logger.error(
                         "bi.role_not_read_only",
                         message=(
                             "BI_DATABASE_URL points at a role with "
                             "default_transaction_read_only = off. run_report "
-                            "is NOT registered. Fix the role, do not work "
-                            "around this."
+                            "is registered but UNBOUND and will refuse every "
+                            "call. Fix the role, do not work around this."
                         ),
                     )
                 else:
@@ -189,20 +194,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                             message=(
                                 "Could not verify that BI_DATABASE_URL is "
                                 "read-only — the database did not answer. "
-                                "Registering run_report anyway."
+                                "Binding run_report anyway."
                             ),
                         )
-                    registry.register(build_report_tool_spec(bi_engine, BI_CATALOG))
-                    _logger.info("bi.tool_registered", reports=sorted(BI_CATALOG))
+                    bi_engine = candidate
+                    _logger.info("bi.tool_bound", reports=sorted(BI_CATALOG_NAMES()))
             else:
                 _logger.warning(
                     "bi.disabled",
                     message=(
-                        "BI_DATABASE_URL is not set — run_report is not "
-                        "registered. Any role whose manifest lists it will "
-                        "fail to build."
+                        "BI_DATABASE_URL is not set — run_report is registered "
+                        "but UNBOUND and will refuse every call."
                     ),
                 )
+
+            registry = build_badie_rag_registry(settings, embedder, bi_engine)
 
             session_provider = async_sessionmaker(
                 app.state.engine, expire_on_commit=False
