@@ -16,7 +16,11 @@ from typing import Any
 
 import pytest
 
-ALL_EIGHT_TOOLS = {
+# D-023 added run_report to both registries. It is registered unbound when
+# no BI engine is configured, because platform/roles/data-agent names it
+# and a tool a manifest names but the registry lacks makes the whole role
+# unbuildable through InjectionError.
+ALL_PLATFORM_TOOLS = {
     "catalog_search",
     "client_lookup",
     "order_writer",
@@ -25,6 +29,7 @@ ALL_EIGHT_TOOLS = {
     "knowledge_retrieval",
     "conversation_summarizer",
     "escalation_notifier",
+    "run_report",
 }
 
 GENERIC_ROLES = ("sales-agent", "data-agent", "summary-agent", "orchestrator")
@@ -201,19 +206,19 @@ def test_escalation_notifier_ids_increment() -> None:
 # ---------------------------------------------------------------------------
 
 def _assert_platform_tools(registry: Any) -> None:
-    assert set(registry.names()) == ALL_EIGHT_TOOLS
+    assert set(registry.names()) == ALL_PLATFORM_TOOLS
     assert registry.get("knowledge_retrieval").required_permissions == ("read:knowledge_base",)
     assert registry.get("conversation_summarizer").required_permissions == ("read:conversation_logs",)
     assert registry.get("escalation_notifier").required_permissions == ("send:escalation",)
 
 
-def test_build_badie_registry_contains_all_eight_tools() -> None:
+def test_build_badie_registry_contains_all_platform_tools() -> None:
     from agentsys.connectors.stubs import build_badie_registry
 
     _assert_platform_tools(build_badie_registry())
 
 
-def test_build_badie_rag_registry_contains_all_eight_tools() -> None:
+def test_build_badie_rag_registry_contains_all_platform_tools() -> None:
     _assert_platform_tools(_rag_registry())
 
 

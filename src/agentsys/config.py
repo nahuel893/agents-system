@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://localhost:5432/badie"
     medallion_database_url: str = "postgresql+asyncpg://localhost:5432/medallion"
 
+    # D-023 — dedicated READ-ONLY connection for the BI report tool. Point this
+    # at a login role with `default_transaction_read_only = on` and a
+    # `statement_timeout` (see architecture/bi-readonly-db-role). Empty means
+    # the BI tool is not registered at all; it deliberately does NOT fall back
+    # to `database_url`, because that engine can write and this one must not.
+    bi_database_url: str = ""
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 

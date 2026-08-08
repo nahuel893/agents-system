@@ -237,7 +237,7 @@ def test_catalog_toolspec_description_has_no_price_or_stock() -> None:
 # Test 9: registry has exactly 8 tools; catalog is async, others sync
 # ---------------------------------------------------------------------------
 
-def test_registry_has_eight_tools_with_async_catalog() -> None:
+def test_registry_has_the_expected_tools_with_async_catalog() -> None:
     registry = _make_registry()
 
     assert set(registry.names()) == {
@@ -249,6 +249,10 @@ def test_registry_has_eight_tools_with_async_catalog() -> None:
         "knowledge_retrieval",
         "conversation_summarizer",
         "escalation_notifier",
+        # Registered unbound when no BI engine is passed. It must be present
+        # in BOTH registries or `data-agent`, whose manifest names it, is
+        # unbuildable through whichever one the caller happens to use.
+        "run_report",
     }
 
     catalog_spec = registry.get("catalog_search")

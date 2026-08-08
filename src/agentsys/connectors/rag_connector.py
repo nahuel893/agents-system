@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
+from sqlalchemy.ext.asyncio import AsyncEngine
+
 from agentsys.config import Settings
 from agentsys.connectors.platform_stubs import (
     conversation_summarizer,
@@ -21,6 +23,8 @@ from agentsys.connectors.stubs import (
     order_writer,
     session_state,
 )
+from agentsys.connectors.badie_reports import CATALOG as _BI_CATALOG
+from agentsys.connectors.report_connector import build_report_tool_spec
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 from agentsys.services.embeddings import (
     EmbeddingProvider,
@@ -90,7 +94,9 @@ def build_catalog_rag_connector(
 
 
 def build_badie_rag_registry(
-    settings: Settings, embedder: EmbeddingProvider | None = None
+    settings: Settings,
+    embedder: EmbeddingProvider | None = None,
+    bi_engine: AsyncEngine | None = None,
 ) -> ToolRegistry:
     """Return a ToolRegistry with the async RAG catalog connector and 7 sync stubs.
 
@@ -296,4 +302,10 @@ def build_badie_rag_registry(
             connector=escalation_notifier,
         )
     )
+    # Always present, bound only when a verified read-only engine exists.
+    # platform/roles/data-agent names run_report, and a tool a manifest
+    # names but the registry lacks makes the whole role unbuildable via
+    # InjectionError. Unbound, it answers that reporting is unavailable.
+    registry.register(build_report_tool_spec(bi_engine, _BI_CATALOG))
+
     return registry

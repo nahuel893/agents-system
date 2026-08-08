@@ -233,6 +233,10 @@ def test_data_agent_boots_with_knowledge_retrieval_denied() -> None:
         "catalog_search",
         "client_lookup",
         "session_state",
+        # D-023 added run_report to the data-agent manifest. Narrowing
+        # read:knowledge_base denies knowledge_retrieval only; run_report
+        # needs read:reports, which this role still grants.
+        "run_report",
     }
     denied = dict(runtime.denied_tools)
     assert set(denied) == {"knowledge_retrieval"}

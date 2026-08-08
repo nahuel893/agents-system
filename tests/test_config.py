@@ -385,3 +385,19 @@ def test_shipped_env_example_boots_the_app(monkeypatch: pytest.MonkeyPatch) -> N
 
     settings = Settings(_env_file=str(env_example))
     assert settings.adapter_api_key or settings.allow_insecure
+# D-023 — dedicated read-only BI connection
+# ---------------------------------------------------------------------------
+
+
+def test_bi_database_url_defaults_to_empty_and_is_env_overridable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty means 'BI disabled', not 'fall back to the main engine'.
+
+    The BI tool must never borrow the app's read-write engine — the read-only
+    role is the guardrail that survives a bug in every layer above it.
+    """
+    assert Settings(_env_file=None).bi_database_url == ""
+
+    monkeypatch.setenv("BI_DATABASE_URL", "postgresql+asyncpg://ro@localhost/x")
+    assert Settings(_env_file=None).bi_database_url.endswith("/x")

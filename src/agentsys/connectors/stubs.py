@@ -16,6 +16,8 @@ from agentsys.connectors.platform_stubs import (
     escalation_notifier,
     knowledge_retrieval,
 )
+from agentsys.connectors.badie_reports import CATALOG as _BI_CATALOG
+from agentsys.connectors.report_connector import build_report_tool_spec
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 
 _order_counter = itertools.count(1)
@@ -142,4 +144,10 @@ def build_badie_registry() -> ToolRegistry:
         input_schema={"type": "object", "properties": {"reason": {"type": "string", "description": "Short reason for the escalation, e.g. 'customer_angry'"}, "details": {"type": "string", "description": "Supporting context for the human operator"}}, "required": ["reason", "details"]},
         connector=escalation_notifier,
     ))
+    # Unbound (engine=None): it answers "reporting is not configured"
+    # rather than being absent. platform/roles/data-agent names run_report,
+    # and a tool a manifest names but the registry lacks makes the whole
+    # role unbuildable via InjectionError — not partially usable. main.py
+    # supplies the real read-only engine at startup.
+    registry.register(build_report_tool_spec(None, _BI_CATALOG))
     return registry
