@@ -30,6 +30,27 @@ from agentsys.services.reports import ReportSpec, ReportValidationError, run_rep
 
 _logger = structlog.get_logger(__name__)
 
+_NOT_CONFIGURED_MESSAGE = (
+    "Reporting is not available on this deployment — no read-only reporting "
+    "database is bound — so no report can be run. Say so plainly: do not "
+    "estimate, and do not present any number as if a report had returned."
+)
+"""What the tool answers when no BI engine is bound.
+
+`platform/roles/data-agent/manifest.md` names `run_report`, and a manifest is
+a promise about what the platform CAN equip: registering the tool only inside
+the app's lifespan, behind an env var, makes `resolve_tool_surface` raise
+`InjectionError` everywhere else and leaves the role not partially usable but
+entirely unbuildable. The tool therefore always exists; whether a database
+sits behind it is a runtime fact it reports, not an import-time landmine.
+
+Deliberately names no environment variable. This text reaches the model and
+from there a customer, so it is the wrong place for operator configuration
+detail — and it is also the fail-closed path when the role turns out to be
+writable, where "the variable is unset" would simply be false. Operators
+get the specific reason in the startup log.
+"""
+
 _DB_UNAVAILABLE_MESSAGE = (
     "The reporting database is unavailable right now, so this report could "
     "not be run. Say so plainly — do not estimate, and do not present any "
@@ -80,7 +101,7 @@ def _input_schema(catalog: dict[str, ReportSpec]) -> dict[str, Any]:
 
 
 def build_report_connector(
-    engine: AsyncEngine, catalog: dict[str, ReportSpec]
+    engine: AsyncEngine | None, catalog: dict[str, ReportSpec]
 ) -> AsyncConnector:
     """Build the async `run_report` connector closure over *engine*/*catalog*.
 
@@ -91,6 +112,17 @@ def build_report_connector(
     async def run_report_connector(
         inputs: dict[str, Any], *, session: Any = None
     ) -> ConnectorOutput:
+        if engine is None:
+            # Registered but unbound. Falling through would reach
+            # `engine.connect()` as an AttributeError — not a
+            # SQLAlchemyError, so it would escape the handler below and
+            # land back at the uncaught-exception behaviour that handler
+            # exists to remove.
+            return {
+                "error": _NOT_CONFIGURED_MESSAGE,
+                "error_kind": "bi_not_configured",
+            }
+
         report_name = inputs.get("report")
         if report_name not in catalog:
             valid = ", ".join(sorted(catalog.keys()))
@@ -141,7 +173,7 @@ def build_report_connector(
 
 
 def build_report_tool_spec(
-    engine: AsyncEngine, catalog: dict[str, ReportSpec]
+    engine: AsyncEngine | None, catalog: dict[str, ReportSpec]
 ) -> ToolSpec:
     """Return the `run_report` ToolSpec over *catalog*, unregistered.
 
@@ -168,7 +200,7 @@ def build_report_tool_spec(
 
 
 def build_report_registry(
-    engine: AsyncEngine, catalog: dict[str, ReportSpec]
+    engine: AsyncEngine | None, catalog: dict[str, ReportSpec]
 ) -> ToolRegistry:
     """Return a ToolRegistry holding only the `run_report` tool over *catalog*."""
     registry = ToolRegistry()
