@@ -9,6 +9,7 @@ context:
   org_context: false
 permissions:
   - read:conversation_logs
+  - read:knowledge_base
   - read:session
   - write:summary_output
 ---

@@ -135,7 +135,7 @@ def test_session_state_set_returns_ok() -> None:
 # build_badie_registry — end-to-end wiring
 # ---------------------------------------------------------------------------
 
-def test_build_badie_registry_has_all_five_tools() -> None:
+def test_build_badie_registry_has_all_eight_tools() -> None:
     from agentsys.connectors.stubs import build_badie_registry
 
     registry = build_badie_registry()
@@ -146,6 +146,9 @@ def test_build_badie_registry_has_all_five_tools() -> None:
         "order_writer",
         "message_sender",
         "session_state",
+        "knowledge_retrieval",
+        "conversation_summarizer",
+        "escalation_notifier",
     }
 
 
