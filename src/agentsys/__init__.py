@@ -105,4 +105,17 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(__all__) | set(globals()))
+    """The public surface, and only that.
+
+    Not `set(__all__) | set(globals())`: this module's globals hold its own
+    imports (`importlib`, `Any`, `annotations`, `_metadata`, `_EXPORTS`), and
+    the union advertised them as exports. `from agentsys import *` was never
+    affected — it honours `__all__` — but `dir()` is what autocomplete,
+    `help()` and doc tooling read, and defining the public surface is this
+    module's entire job.
+
+    The union was also unstable: `__getattr__` caches each resolved export
+    into `globals()`, so the answer depended on which attributes had already
+    been touched.
+    """
+    return sorted(__all__)

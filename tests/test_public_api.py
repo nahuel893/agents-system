@@ -218,3 +218,43 @@ def test_consumer_builds_own_registry_and_tool_comes_back_granted() -> None:
     assert isinstance(runtime, agentsys.EquippedRuntime)
     granted_names = {spec.name for spec in runtime.tools}
     assert "catalog_search" in granted_names
+
+
+def test_dir_advertises_only_the_public_surface() -> None:
+    """`dir(agentsys)` is the public surface, not the module's globals.
+
+    `__dir__` returned `set(__all__) | set(globals())`, so it advertised
+    `importlib`, `Any`, `annotations`, `_metadata` and `_EXPORTS` alongside
+    the real exports. `from agentsys import *` was always safe — it honours
+    `__all__` — but `dir()` is what autocomplete, help() and doc tooling read,
+    and this module exists precisely to say what the public surface is.
+
+    Worse, the union grows as the lazy loader runs: `__getattr__` caches each
+    resolved export into `globals()`, so what `dir()` reported depended on
+    which attributes had already been touched.
+    """
+    import agentsys
+
+    assert dir(agentsys) == sorted(agentsys.__all__)
+
+
+def test_dir_is_stable_once_lazy_exports_have_been_resolved() -> None:
+    """Touching an export must not change what `dir()` reports.
+
+    Pins the caching half of the bug above: resolving `ToolRegistry` writes it
+    into `globals()`, which the old union then surfaced. Same list before and
+    after.
+    """
+    import agentsys
+
+    before = dir(agentsys)
+    agentsys.ToolRegistry  # noqa: B018 — resolving it is the point
+    agentsys.build_runtime  # noqa: B018
+    assert dir(agentsys) == before
+
+
+def test_private_implementation_names_are_not_advertised() -> None:
+    import agentsys
+
+    for leaked in ("importlib", "Any", "annotations", "_metadata", "_EXPORTS"):
+        assert leaked not in dir(agentsys), f"{leaked} leaks into the public surface"
