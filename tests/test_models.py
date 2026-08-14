@@ -9,6 +9,21 @@ from agentsys.models import (
     OrderItem,
 )
 
+# Imported for its side effect: registering audit_event in Base.metadata.
+# Without this import the inventory assertions below depend on whether some
+# other test module imported the audit model first — they passed in isolation
+# and failed in a full run.
+from agentsys.models.audit_event import AuditEvent  # noqa: F401
+
+EXPECTED_TABLES = {
+    "clients",
+    "orders",
+    "order_items",
+    "conversation_logs",
+    "catalog_embeddings",
+    "audit_event",
+}
+
 
 #: Every table the ORM declares. Importing ``agentsys.models`` must register
 #: all of them, so this inventory is the same whether the suite runs whole or
