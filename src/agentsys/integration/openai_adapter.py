@@ -212,10 +212,26 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     # Permissions: omitted — run_turn defaults to the runtime's own resolved
     # grants (design AD-4). The adapter has no separate caller identity, so
     # the role's own permissions ARE the correct execution-time RBAC set.
-    result_messages: list[AnyMessage] = await runtime.run_turn(
-        messages=lc_messages,
-        session_id=session_id,
-    )
+    try:
+        result_messages: list[AnyMessage] = await runtime.run_turn(
+            messages=lc_messages,
+            session_id=session_id,
+        )
+    except Exception:
+        # Anything escaping run_turn used to leave here as a raw 500 with
+        # nothing written anywhere: RequestIdMiddleware is try/finally with no
+        # `except`, and this codebase has neither Sentry nor metrics, so an
+        # unlogged 500 is an outage nobody can see. Log it with the stack, and
+        # answer with a fixed message — an internal exception string can carry
+        # a DSN, a prompt, or a customer's data, and this response goes
+        # straight to the client.
+        structlog.get_logger(__name__).exception(
+            "adapter.turn_failed", model_id=model_id, session_id=session_id
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="The agent could not complete this turn. The failure has been logged.",
+        ) from None
 
     # Extract final assistant text
     assistant_text = _extract_assistant_text(result_messages)
