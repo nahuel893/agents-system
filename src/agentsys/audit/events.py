@@ -13,6 +13,7 @@ class _AuditEventBase(BaseModel):
     """Shared fields for all audit event sub-models.
 
     REQ-AUDIT-31: payload carries event-specific structured data as JSONB.
+    REQ-AUDIT-21: pii_keys lists which payload top-level keys contained PII.
     """
 
     event_id: UUID
@@ -21,6 +22,7 @@ class _AuditEventBase(BaseModel):
     sequence: int
     role: str
     payload: dict[str, Any] = Field(default_factory=dict)
+    pii_keys: list[str] = Field(default_factory=list)
     deployment: str | None = None
     actor: str | None = None
 

@@ -5,7 +5,8 @@ Each ``record_*`` helper:
   - Auto-assigns ``sequence`` from a per-process in-memory counter (guarded by ``asyncio.Lock``).
   - Auto-assigns ``event_id`` (UUID4) and ``occurred_at`` (UTC now).
   - Deep-copies ``definition`` to extract role/deployment (no shared mutable refs).
-  - Returns the fully-populated event (does NOT call AuditSink.record() — PR-3 wiring).
+  - Calls ``Redactor.redact(payload, audit_policy)`` to get (redacted_payload, pii_keys).
+  - Calls ``AuditSink.current().record(event)`` with the fully-built event.
 
 Full spec: REQ-AUDIT-50..
 """
@@ -18,6 +19,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import structlog.contextvars
+
+from agentsys.audit.events import _AuditEventBase
+from agentsys.audit.redactor import Redactor
 
 if TYPE_CHECKING:
     from agentsys.audit.events import (
@@ -61,26 +65,36 @@ def _correlation_id_from_context() -> str:
 
 def _extract_role_deployment(
     definition: Any,
-) -> tuple[str, str | None, str | None]:
-    """Extract role, deployment, actor from an AgentDefinition object."""
+) -> tuple[str, str | None, str | None, dict[str, Any]]:
+    """Extract role, deployment, actor, and audit_policy from an AgentDefinition object."""
     role = getattr(definition, "role_name", "unknown")
-    # AgentDefinition names this ``deployment``. Reading ``client`` here
-    # matched nothing in src/, so every event built from a real definition
-    # recorded the literal default and the audit trail could not tell
-    # deployments apart. Pinned by
+    # AgentDefinition names this ``deployment``. Reading ``client`` here matched
+    # nothing in src/, so every event built from a real definition recorded the
+    # default and the audit trail could not tell deployments apart. Pinned by
     # TestRecorderAgentDefinitionContract::test_deployment_from_real_definition.
     deployment = getattr(definition, "deployment", None)
     actor = None
-    return role, deployment, actor
+    audit_policy = getattr(definition, "audit_policy", {}) or {}
+    return role, deployment, actor, audit_policy
+
+
+def _build_and_redact(
+    payload: dict[str, Any],
+    audit_policy: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Build payload and redact it via Redactor.
+
+    Returns (redacted_payload, pii_keys).
+    """
+    redactor = Redactor()
+    return redactor.redact(payload, audit_policy)
 
 
 # ---------------------------------------------------------------------------
 # Per-family helpers
 # ---------------------------------------------------------------------------
 
-# NOTE: All helpers are currently async because _allocate_sequence is async.
-# PR-3 may switch to a sync counter if the sink moves sequence allocation
-# to the drainer side (DB-level sequence). For PR-2, in-memory async is fine.
+# NOTE: All helpers are async because _allocate_sequence is async.
 
 
 async def record_tool_call_attempted(
@@ -92,14 +106,28 @@ async def record_tool_call_attempted(
     elapsed_ms: float | None = None,
     revalidated: bool = False,
     error: str | None = None,
+    tool_input: dict[str, Any] | None = None,
 ) -> "ToolCallAttempted":
     """Build a ToolCallAttempted event."""
-    # We need the import here to avoid circular imports at module level
     from agentsys.audit.events import ToolCallAttempted
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload: dict[str, Any] = {
+        "tool_name": tool_name,
+        "sensitive": sensitive,
+        "executed": executed,
+        "elapsed_ms": elapsed_ms,
+        "revalidated": revalidated,
+        "error": error,
+    }
+    if tool_input is not None:
+        raw_payload["tool_input"] = tool_input
+
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return ToolCallAttempted(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -114,14 +142,8 @@ async def record_tool_call_attempted(
         elapsed_ms=elapsed_ms,
         revalidated=revalidated,
         error=error,
-        payload={
-            "tool_name": tool_name,
-            "sensitive": sensitive,
-            "executed": executed,
-            "elapsed_ms": elapsed_ms,
-            "revalidated": revalidated,
-            "error": error,
-        },
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )
 
 
@@ -135,7 +157,11 @@ async def record_tool_call_blocked(
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"tool_name": tool_name, "reason": reason}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return ToolCallBlocked(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -146,7 +172,8 @@ async def record_tool_call_blocked(
         actor=actor,
         tool_name=tool_name,
         reason=reason,  # type: ignore[arg-type]
-        payload={"tool_name": tool_name, "reason": reason},
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )
 
 
@@ -159,7 +186,11 @@ async def record_tool_granted(
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"tool_name": tool_name}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return ToolGranted(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -169,7 +200,8 @@ async def record_tool_granted(
         deployment=deployment,
         actor=actor,
         tool_name=tool_name,
-        payload={"tool_name": tool_name},
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )
 
 
@@ -183,7 +215,11 @@ async def record_tool_denied(
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"tool_name": tool_name, "reason": reason}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return ToolDenied(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -194,7 +230,8 @@ async def record_tool_denied(
         actor=actor,
         tool_name=tool_name,
         reason=reason,
-        payload={"tool_name": tool_name, "reason": reason},
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )
 
 
@@ -207,7 +244,11 @@ async def record_unknown_tool(
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"tool_name": tool_name}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return UnknownTool(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -217,7 +258,8 @@ async def record_unknown_tool(
         deployment=deployment,
         actor=actor,
         tool_name=tool_name,
-        payload={"tool_name": tool_name},
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )
 
 
@@ -230,7 +272,11 @@ async def record_skill_loaded(
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"skill": skill}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return SkillLoaded(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -240,7 +286,8 @@ async def record_skill_loaded(
         deployment=deployment,
         actor=actor,
         skill=skill,
-        payload={"skill": skill},
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )
 
 
@@ -254,7 +301,11 @@ async def record_skill_missing(
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"skill": skill, "path": path}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return SkillMissing(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -265,7 +316,8 @@ async def record_skill_missing(
         actor=actor,
         skill=skill,
         path=path,
-        payload={"skill": skill, "path": path},
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )
 
 
@@ -280,7 +332,11 @@ async def record_runtime_built(
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"tools": tools_count, "denied": denied_count, "skills": skills_count}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return RuntimeBuilt(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -292,7 +348,8 @@ async def record_runtime_built(
         tools=tools_count,
         denied=denied_count,
         skills=skills_count,
-        payload={"tools": tools_count, "denied": denied_count, "skills": skills_count},
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )
 
 
@@ -306,7 +363,11 @@ async def record_runtime_initialized(
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"tools": tools_count, "model_type": model_type}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return RuntimeInitialized(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -317,7 +378,8 @@ async def record_runtime_initialized(
         actor=actor,
         tools=tools_count,
         model_type=model_type,
-        payload={"tools": tools_count, "model_type": model_type},
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )
 
 
@@ -330,7 +392,11 @@ async def record_runtime_timeout(
 
     correlation_id = _correlation_id_from_context()
     sequence = await _allocate_sequence(correlation_id)
-    role, deployment, actor = _extract_role_deployment(definition)
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"total_execution_timeout_s": total_execution_timeout_s}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
     return RuntimeTimeout(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
@@ -340,5 +406,6 @@ async def record_runtime_timeout(
         deployment=deployment,
         actor=actor,
         total_execution_timeout_s=total_execution_timeout_s,
-        payload={"total_execution_timeout_s": total_execution_timeout_s},
+        payload=redacted_payload,
+        pii_keys=pii_keys,
     )

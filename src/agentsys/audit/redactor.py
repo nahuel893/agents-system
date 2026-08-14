@@ -9,6 +9,13 @@ from typing import Any
 import phonenumbers
 
 
+# Phone-related key names that are always added to pii_keys when redacted
+_PHONE_KEYS: frozenset[str] = frozenset({
+    "phone", "tel", "telephone", "phone_number",
+    "mobile", "cell", "contact_phone",
+})
+
+
 class Redactor:
     """Redacts PII from audit event payloads using a default-deny policy.
 
@@ -30,8 +37,8 @@ class Redactor:
         self,
         payload: dict[str, Any],
         audit_policy: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Redact PII from ``payload`` in-place (deep-copy) and return it.
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Redact PII from ``payload`` and return it with a list of redacted keys.
 
         Args:
             payload: The raw event payload to redact.
@@ -41,7 +48,8 @@ class Redactor:
                 - ``redact_keys`` (list[str]): Additional top-level keys to always redact.
 
         Returns:
-            A deep-copied payload with PII values replaced.
+            A tuple of (redacted_payload, pii_keys) where pii_keys is a list of
+            top-level keys whose values were redacted.
             Values replaced with ``[REDACTED:phone]``, ``[REDACTED:email]``,
             ``[REDACTED:body]``, or ``[REDACTED:custom]``.
         """
@@ -49,6 +57,7 @@ class Redactor:
             audit_policy = {}
 
         payload = copy.deepcopy(payload)
+        pii_keys: list[str] = []
         capture_tool_input = audit_policy.get("capture_tool_input", False)
         extra_keys = set(audit_policy.get("redact_keys", []))
 
@@ -61,22 +70,29 @@ class Redactor:
             # 1. Phone detection (always active)
             if self._contains_phone(value):
                 payload[key] = "[REDACTED:phone]"
+                pii_keys.append(key)
+                if key in _PHONE_KEYS or self._contains_phone(payload.get(key, "")):
+                    # Phone-related key always in pii_keys when value was redacted
+                    pass
                 continue
 
             # 2. Email regex (always active)
             if self.EMAIL_RE.search(value):
                 payload[key] = "[REDACTED:email]"
+                pii_keys.append(key)
                 continue
 
-            # 3. Default sensitive keys
+            # 3. Default sensitive keys + extra redact_keys
             if key in redact_keys:
                 # Only redact free-text body if capture_tool_input is False
                 if key in self.DEFAULT_SENSITIVE_KEYS and not capture_tool_input:
                     payload[key] = f"[REDACTED:{key}]"
+                    pii_keys.append(key)
                 elif key in extra_keys:
                     payload[key] = "[REDACTED:custom]"
+                    pii_keys.append(key)
 
-        return payload
+        return payload, pii_keys
 
     @staticmethod
     def _contains_phone(value: str) -> bool:
