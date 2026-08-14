@@ -445,6 +445,7 @@ The test suite (30+ files) covers:
 |------|------|----------|
 | Agent Platform Architecture | [`docs/architecture/`](docs/architecture/) | EN |
 | Platform Specification | [`docs/platform/`](docs/platform/) | EN |
+| Library Usage (integrating `agentsys` into your app) | [`docs/platform/library-usage.md`](docs/platform/library-usage.md) | EN |
 | Especificación de Plataforma | [`docs/platform_es/`](docs/platform_es/) | ES |
 | Delivery & Delegation Protocol | [`docs/delivery/`](docs/delivery/) | EN + ES |
 | Product Requirements (BADIE) | [`PRD_WhatsApp_Sales_Agent.md`](PRD_WhatsApp_Sales_Agent.md) | ES |
