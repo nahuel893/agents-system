@@ -234,7 +234,7 @@ def test_catalog_toolspec_description_has_no_price_or_stock() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 9: registry has exactly 5 tools; catalog is async, others sync
+# Test 9: registry has exactly 8 tools; catalog is async, others sync
 # ---------------------------------------------------------------------------
 
 def test_registry_has_the_expected_tools_with_async_catalog() -> None:
@@ -250,12 +250,23 @@ def test_registry_has_the_expected_tools_with_async_catalog() -> None:
         # in BOTH registries or `data-agent`, whose manifest names it, is
         # unbuildable through whichever one the caller happens to use.
         "run_report",
+        "knowledge_retrieval",
+        "conversation_summarizer",
+        "escalation_notifier",
     }
 
     catalog_spec = registry.get("catalog_search")
     assert asyncio.iscoroutinefunction(catalog_spec.connector)
 
-    for name in ("client_lookup", "order_writer", "message_sender", "session_state"):
+    for name in (
+        "client_lookup",
+        "order_writer",
+        "message_sender",
+        "session_state",
+        "knowledge_retrieval",
+        "conversation_summarizer",
+        "escalation_notifier",
+    ):
         spec = registry.get(name)
         assert not asyncio.iscoroutinefunction(spec.connector), (
             f"{name} should be sync but iscoroutinefunction returned True"

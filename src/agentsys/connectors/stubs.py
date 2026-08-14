@@ -13,6 +13,11 @@ from typing import Any
 
 from agentsys.connectors.badie_reports import CATALOG as _BI_CATALOG
 from agentsys.connectors.report_connector import build_report_tool_spec
+from agentsys.connectors.platform_stubs import (
+    conversation_summarizer,
+    escalation_notifier,
+    knowledge_retrieval,
+)
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 
 _order_counter = itertools.count(1)
@@ -74,7 +79,14 @@ def session_state(inputs: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_badie_registry() -> ToolRegistry:
-    """Return a ToolRegistry wired with all five BADIE sales-agent stubs."""
+    """Return a ToolRegistry wired with the five BADIE sales-agent stubs plus
+    the three platform-generic stubs (knowledge_retrieval,
+    conversation_summarizer, escalation_notifier) declared by the generic
+    roles under ``platform/roles/``.
+
+    Extra entries are inert for BADIE: the injector only iterates over
+    ``definition.tools``, so the sales-agent surface is unchanged.
+    """
     registry = ToolRegistry()
     registry.register(ToolSpec(
         name="catalog_search",
@@ -117,4 +129,25 @@ def build_badie_registry() -> ToolRegistry:
     # role unbuildable via InjectionError — not partially usable. main.py
     # supplies the real read-only engine at startup.
     registry.register(build_report_tool_spec(None, _BI_CATALOG))
+    registry.register(ToolSpec(
+        name="knowledge_retrieval",
+        description="Search the organizational knowledge base. Returns a list of matching knowledge hits with id, title, and snippet.",
+        required_permissions=("read:knowledge_base",),
+        input_schema={"type": "object", "properties": {"q": {"type": "string", "description": "Natural-language knowledge query, e.g. 'return policy' or 'delivery zones'"}}, "required": ["q"]},
+        connector=knowledge_retrieval,
+    ))
+    registry.register(ToolSpec(
+        name="conversation_summarizer",
+        description="Summarize a conversation session. Returns the session_id, a summary text, and message_count. Use max_messages to bound how many recent messages are considered.",
+        required_permissions=("read:conversation_logs",),
+        input_schema={"type": "object", "properties": {"session_id": {"type": "string", "description": "Conversation session identifier"}, "max_messages": {"type": "integer", "description": "Optional cap on the number of most recent messages to summarize"}}, "required": ["session_id"]},
+        connector=conversation_summarizer,
+    ))
+    registry.register(ToolSpec(
+        name="escalation_notifier",
+        description="Notify a human operator that the conversation needs escalation. Requires a reason and supporting details. Returns the notification status and escalation_id.",
+        required_permissions=("send:escalation",),
+        input_schema={"type": "object", "properties": {"reason": {"type": "string", "description": "Short reason for the escalation, e.g. 'customer_angry'"}, "details": {"type": "string", "description": "Supporting context for the human operator"}}, "required": ["reason", "details"]},
+        connector=escalation_notifier,
+    ))
     return registry

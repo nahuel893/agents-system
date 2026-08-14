@@ -1,7 +1,7 @@
 ---
 role: data-agent
 version: "1.1"
-tools: [catalog_search, client_lookup, run_report, session_state]
+tools: [catalog_search, client_lookup, knowledge_retrieval, run_report, session_state]
 skills: []
 context:
   session: true
