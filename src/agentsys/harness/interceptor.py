@@ -27,6 +27,7 @@ from typing import Any, Iterable
 import structlog
 
 from agentsys.harness.factory import EquippedRuntime
+from agentsys.harness.injector import _emit_async
 from agentsys.harness.registry import ToolSpec
 
 logger = structlog.get_logger()
@@ -88,10 +89,22 @@ async def intercept(
     """
     surface: dict[str, ToolSpec] = {t.name: t for t in runtime.tools}
 
+    import time
+
+    _start = time.monotonic()
+    _call_allowed_emitted = False
+
     if tool_name not in surface:
         logger.warning(
             "interceptor.call_blocked",
             tool=tool_name,
+            reason="not_in_surface",
+        )
+        # D-007: record tool_call_blocked event
+        _emit_async(
+            "record_tool_call_blocked",
+            definition=runtime.definition,
+            tool_name=tool_name,
             reason="not_in_surface",
         )
         raise PolicyViolation(tool_name, "not_in_surface")
@@ -107,6 +120,13 @@ async def intercept(
                 tool=tool_name,
                 reason="revalidation_required",
             )
+            # D-007: record tool_call_blocked event
+            _emit_async(
+                "record_tool_call_blocked",
+                definition=runtime.definition,
+                tool_name=tool_name,
+                reason="revalidation_required",
+            )
             raise PolicyViolation(tool_name, "revalidation_required")
 
         effective = set(current_permissions)
@@ -114,6 +134,13 @@ async def intercept(
             logger.warning(
                 "interceptor.call_blocked",
                 tool=tool_name,
+                reason="permission_revoked",
+            )
+            # D-007: record tool_call_blocked event
+            _emit_async(
+                "record_tool_call_blocked",
+                definition=runtime.definition,
+                tool_name=tool_name,
                 reason="permission_revoked",
             )
             raise PolicyViolation(tool_name, "permission_revoked")
@@ -127,6 +154,21 @@ async def intercept(
     else:
         output = await asyncio.to_thread(spec.connector, tool_input)
 
-    logger.info("interceptor.call_executed", tool=tool_name)
+    elapsed_ms = (time.monotonic() - _start) * 1000
+    logger.info(
+        "interceptor.call_executed",
+        tool=tool_name,
+        elapsed_ms=round(elapsed_ms, 2),
+    )
+    # D-007: record tool_call_attempted event (call_allowed + executed in one)
+    _emit_async(
+        "record_tool_call_attempted",
+        definition=runtime.definition,
+        tool_name=tool_name,
+        sensitive=sensitive,
+        executed=True,
+        elapsed_ms=round(elapsed_ms, 2),
+        revalidated=revalidated,
+    )
 
     return CallResult(tool_name=tool_name, output=output, revalidated=revalidated)

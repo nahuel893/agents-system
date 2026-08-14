@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Iterable
 
 import structlog
 
-from agentsys.harness.injector import resolve_tool_surface
+from agentsys.harness.injector import _emit_async, resolve_tool_surface
 from agentsys.harness.loader import AgentDefinition, RootConfig, resolve
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 
@@ -113,6 +113,13 @@ def _load_skills(
                 deployment=definition.deployment,
                 path=str(path),
             )
+            # D-007: record skill_missing event before raising
+            _emit_async(
+                "record_skill_missing",
+                definition=definition,
+                skill=name,
+                path=str(path),
+            )
             raise FactoryError(
                 f"Skill '{name}' declared by {definition.role_name}/"
                 f"{client} has no file at {path}"
@@ -124,6 +131,12 @@ def _load_skills(
             skill=name,
             role=definition.role_name,
             deployment=definition.deployment,
+        )
+        # D-007: record skill_loaded event
+        _emit_async(
+            "record_skill_loaded",
+            definition=definition,
+            skill=name,
         )
 
     return tuple(loaded)
@@ -180,6 +193,14 @@ def build_runtime(
         tools=len(surface.granted),
         denied=len(surface.denied),
         skills=len(skills),
+    )
+    # D-007: record runtime_built event
+    _emit_async(
+        "record_runtime_built",
+        definition=definition,
+        tools_count=len(surface.granted),
+        denied_count=len(surface.denied),
+        skills_count=len(skills),
     )
 
     return EquippedRuntime(
