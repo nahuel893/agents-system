@@ -63,8 +63,13 @@ def _extract_role_deployment(
     definition: Any,
 ) -> tuple[str, str | None, str | None]:
     """Extract role, deployment, actor from an AgentDefinition object."""
-    role = getattr(definition, "role_name", getattr(definition, "role", "unknown"))
-    deployment = getattr(definition, "client", None)
+    role = getattr(definition, "role_name", "unknown")
+    # AgentDefinition names this ``deployment``. Reading ``client`` here
+    # matched nothing in src/, so every event built from a real definition
+    # recorded the literal default and the audit trail could not tell
+    # deployments apart. Pinned by
+    # TestRecorderAgentDefinitionContract::test_deployment_from_real_definition.
+    deployment = getattr(definition, "deployment", None)
     actor = None
     return role, deployment, actor
 
