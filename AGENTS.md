@@ -6,6 +6,23 @@ Shared instructions for every AI agent working on this repository (Claude Code, 
 
 `agents-system` is a reusable AI agent platform (formerly `agents-badie`). The first delivery is a WhatsApp sales bot for Distribuidora BADIE S.A. Architecture and specs live in `docs/`. Start with `docs/architecture/agent-platform.md`.
 
+## Golden rule — CodeGraph before you read code
+
+This repository is indexed by CodeGraph. **Before** grepping, globbing, reading source files to understand something, or delegating an exploration to a sub-agent, call `codegraph_explore` (MCP tool) or `codegraph explore "<question>"` (shell). One call returns the verbatim, line-numbered source of the relevant symbols, the call path between them, and the blast radius — what depends on the thing you are about to change.
+
+This is not a style preference. A grep-and-read exploration costs dozens of calls and a sub-agent's whole context to reproduce an index that already exists. Delegating the lookup does not avoid the cost — it moves it.
+
+**The trap that makes this rule necessary.** `.codegraph/` is listed in `.gitignore`, and `fd`/`rg` respect `.gitignore` by default — including with `-H`. So:
+
+```bash
+fd -H -t d '^\.codegraph$'      # finds NOTHING. Not evidence of anything.
+fd -H -I -t d '^\.codegraph$'   # -I / --no-ignore: finds it
+```
+
+An agent once concluded "no index here, skip CodeGraph" from the first command and spent a sub-agent reading twelve files by hand. **Do not probe for the index — just call the tool.** If it is genuinely unavailable it will say so, which is a real answer; a silent `fd` miss is not.
+
+Skip CodeGraph only when you already know the exact file and line you need.
+
 ## You are working under a multi-agent protocol
 
 Multiple agents work this repo **in parallel**. There is no direct communication between you — coordination is asynchronous through **git + Engram + `delegations.md`**. Full methodology: `docs/delivery/delegation-protocol.md`. Read it before starting delegated work.

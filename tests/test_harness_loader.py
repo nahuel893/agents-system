@@ -334,3 +334,281 @@ def test_platform_default_limits_public_alias() -> None:
     assert PLATFORM_DEFAULT_LIMITS["max_tool_calls"] == 20
     assert PLATFORM_DEFAULT_LIMITS["total_execution_timeout_s"] == 60
     assert PLATFORM_DEFAULT_LIMITS["tool_call_timeout_s"] == 10
+
+
+# ---------------------------------------------------------------------------
+# D-024 — default platform_root resolution (packaged wheel vs. dev checkout)
+#
+# Before D-024, `_REPO_ROOT` was a single hardcoded four-hop-up path. In an
+# installed wheel that lands above site-packages, where no `platform/`
+# exists, so `resolve()` raised a confusing per-file DefinitionError instead
+# of naming the actual problem. These tests drive both resolution branches
+# via monkeypatch + tmp_path — they must NOT assert on this machine's real
+# repo layout (that is covered separately by test_real_badie_sales_agent_merge
+# using REAL_ROOTS).
+# ---------------------------------------------------------------------------
+def test_default_platform_root_prefers_packaged_location(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agentsys.harness.loader as loader_module
+
+    packaged = tmp_path / "packaged" / "platform"
+    packaged.mkdir(parents=True)
+    checkout = tmp_path / "checkout" / "platform"  # deliberately absent
+
+    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+
+    resolved = loader_module._default_platform_root()
+
+    assert resolved == packaged
+
+
+def test_default_platform_root_falls_back_to_checkout_location(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agentsys.harness.loader as loader_module
+
+    packaged = tmp_path / "packaged" / "platform"  # deliberately absent
+    checkout = tmp_path / "checkout" / "platform"
+    checkout.mkdir(parents=True)
+
+    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+
+    resolved = loader_module._default_platform_root()
+
+    assert resolved == checkout
+
+
+def test_default_platform_root_both_missing_defers_instead_of_raising(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolution is a guess; the check belongs at first use, not here.
+
+    This used to raise. It cannot: `default_factory` runs per field, so a bare
+    `RootConfig()` built only to reach `deployments_root` would fail over a
+    directory the caller never reads. The "names both paths" guarantee moved
+    to `_require_platform_root` and is asserted below.
+    """
+    import agentsys.harness.loader as loader_module
+    from agentsys.harness.loader import DefinitionError
+
+    packaged = tmp_path / "packaged" / "platform"
+    checkout = tmp_path / "checkout" / "platform"
+
+    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+
+    assert loader_module._default_platform_root() == checkout
+
+    with pytest.raises(DefinitionError) as exc_info:
+        loader_module._require_platform_root(checkout)
+
+    message = str(exc_info.value)
+    assert str(packaged) in message
+    assert str(checkout) in message
+
+
+def test_root_config_default_uses_packaged_then_checkout_resolution(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RootConfig() with no explicit platform_root must go through the same
+    resolution — not a hardcoded single default."""
+    import agentsys.harness.loader as loader_module
+
+    packaged = tmp_path / "packaged" / "platform"
+    packaged.mkdir(parents=True)
+    checkout = tmp_path / "checkout" / "platform"  # deliberately absent
+
+    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+
+    roots = loader_module.RootConfig()
+
+    assert roots.platform_root == packaged
+
+
+def test_root_config_deployments_root_default_untouched_by_resolution(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`deployments_root` keeps its dev-checkout default regardless of the
+    platform_root packaged/checkout resolution — a consumer's deployments are
+    never shipped inside the package."""
+    import agentsys.harness.loader as loader_module
+
+    packaged = tmp_path / "packaged" / "platform"
+    packaged.mkdir(parents=True)
+
+    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+
+    roots = loader_module.RootConfig()
+
+    assert roots.deployments_root == loader_module._DEFAULT_DEPLOYMENTS_ROOT
+
+
+# ---------------------------------------------------------------------------
+# Path-segment validation — role_type / client must never traverse
+#
+# `_role_folder`/`_deployment_folder` build filesystem paths by joining
+# caller-supplied strings. Once `resolve`/`build_runtime` became a documented
+# public API (D-024), those strings can come from a consuming application —
+# a tenant slug, a user-selected "agent type". A traversed role_type is not an
+# override, it REPLACES the generic role, so none of merge()'s subset
+# invariants apply: the loaded manifest is the parent.
+# ---------------------------------------------------------------------------
+def _evil_role_tree(tmp_path: pathlib.Path) -> pathlib.Path:
+    """A complete, valid role definition planted OUTSIDE any platform root."""
+    evil = tmp_path / "evil_role"
+    evil.mkdir(parents=True)
+    (evil / "role.md").write_text(
+        '---\nname: evil-role\nversion: "9.9"\n---\nUnauthorised.\n',
+        encoding="utf-8",
+    )
+    (evil / "manifest.md").write_text(
+        "---\nrole: evil-role\ntools: [wire_transfer]\n"
+        'permissions: ["admin:*", "write:*"]\n---\n',
+        encoding="utf-8",
+    )
+    (evil / "policy.md").write_text(
+        "---\nautonomy: full\n---\n", encoding="utf-8"
+    )
+    return evil
+
+
+def test_resolve_refuses_a_traversing_role_type(tmp_path: pathlib.Path) -> None:
+    """The headline case: ../../ escapes platform_root and grants everything."""
+    from agentsys.harness.loader import DefinitionError, RootConfig, resolve
+
+    _evil_role_tree(tmp_path)
+    platform = tmp_path / "platform"
+    (platform / "roles").mkdir(parents=True)
+    roots = RootConfig(
+        platform_root=platform, deployments_root=tmp_path / "deployments"
+    )
+
+    with pytest.raises(DefinitionError) as excinfo:
+        resolve("../../evil_role", roots=roots)
+
+    assert "../../evil_role" in str(excinfo.value)
+
+
+def test_load_generic_refuses_traversing_and_absolute_role_types(
+    tmp_path: pathlib.Path,
+) -> None:
+    from agentsys.harness.loader import DefinitionError, RootConfig, load_generic
+
+    # The platform root EXISTS here on purpose. With a missing root, _read_md
+    # raises DefinitionError anyway and the test would pass without validating
+    # anything — a green for the wrong reason.
+    platform = tmp_path / "platform"
+    (platform / "roles").mkdir(parents=True)
+    roots = RootConfig(
+        platform_root=platform, deployments_root=tmp_path / "deployments"
+    )
+    for bad in ("../escape", "a/b", "/etc/passwd", "", ".", ".."):
+        with pytest.raises(DefinitionError) as excinfo:
+            load_generic(bad, roots=roots)
+        # Must be rejected as an invalid name, not stumbled over as a missing
+        # file further down.
+        assert "role.md" not in str(excinfo.value), (
+            f"{bad!r} reached the filesystem instead of being rejected"
+        )
+
+
+def test_load_override_refuses_traversing_client_and_role(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Both segments are caller-supplied; both must be validated."""
+    from agentsys.harness.loader import DefinitionError, RootConfig, load_override
+
+    roots = RootConfig(
+        platform_root=tmp_path / "platform",
+        deployments_root=tmp_path / "deployments",
+    )
+    with pytest.raises(DefinitionError):
+        load_override("../escape", "sales-agent", roots=roots)
+    with pytest.raises(DefinitionError):
+        load_override("badie", "../escape", roots=roots)
+
+
+def test_real_role_and_client_names_still_load() -> None:
+    """Regression guard: the validator must not reject legitimate names."""
+    from agentsys.harness.loader import resolve
+
+    definition = resolve("sales-agent", client="badie", roots=_real_roots())
+    assert definition.role_name == "sales-agent"
+    assert definition.deployment == "badie"
+
+
+# ---------------------------------------------------------------------------
+# RootConfig must not validate platform_root eagerly
+#
+# `default_factory` runs per FIELD, not per object, so a bare RootConfig()
+# built only to read deployments_root used to pay a platform_root existence
+# check — and load_override, which never reads platform_root, crashed with an
+# error about a directory it does not use.
+# ---------------------------------------------------------------------------
+def test_load_override_works_without_any_platform_directory(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentsys.harness import loader as loader_module
+
+    monkeypatch.setattr(
+        loader_module, "_PACKAGED_PLATFORM_ROOT", tmp_path / "no" / "packaged"
+    )
+    monkeypatch.setattr(
+        loader_module, "_CHECKOUT_PLATFORM_ROOT", tmp_path / "no" / "checkout"
+    )
+    monkeypatch.setattr(
+        loader_module, "_DEFAULT_DEPLOYMENTS_ROOT", tmp_path / "deployments"
+    )
+
+    # Must not raise: this call never reads platform_root.
+    assert loader_module.load_override("badie", "sales-agent") is None
+
+
+def test_missing_platform_root_still_fails_loudly_naming_both_paths(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deferring the check must not weaken the error when it does matter."""
+    from agentsys.harness import loader as loader_module
+
+    packaged = tmp_path / "no" / "packaged"
+    checkout = tmp_path / "no" / "checkout"
+    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+
+    with pytest.raises(loader_module.DefinitionError) as excinfo:
+        loader_module.load_generic("sales-agent")
+
+    message = str(excinfo.value)
+    assert str(packaged) in message
+    assert str(checkout) in message
+
+
+# ---------------------------------------------------------------------------
+# A missing deployment must be observable
+#
+# load_override returns None when the folder is absent, and resolve then falls
+# back to the generic role. Because a deployment may only NARROW the platform
+# role, that fallback WIDENS the tool surface to the role's full allowance.
+# The behaviour is out of scope to change here; going silent is not.
+# ---------------------------------------------------------------------------
+def test_missing_deployment_emits_a_warning(tmp_path: pathlib.Path) -> None:
+    import structlog
+
+    from agentsys.harness.loader import RootConfig, load_override
+
+    roots = RootConfig(
+        platform_root=tmp_path / "platform",
+        deployments_root=tmp_path / "deployments",
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        assert load_override("typo-client", "sales-agent", roots=roots) is None
+
+    events = [e for e in logs if e["event"] == "loader.override_not_found"]
+    assert events, "a missing deployment override must be logged, not silent"
+    assert events[0]["client"] == "typo-client"
+    assert events[0]["role_type"] == "sales-agent"

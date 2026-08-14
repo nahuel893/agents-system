@@ -48,6 +48,14 @@ def _make_settings(**overrides: object) -> Settings:
     return Settings(**defaults)  # type: ignore[arg-type]
 
 
+def _stack(patchers: tuple[Any, ...]) -> ExitStack:
+    """Enter a tuple of context managers under a single ExitStack."""
+    stack = ExitStack()
+    for p in patchers:
+        stack.enter_context(p)
+    return stack
+
+
 def _fake_checkpointer_cm_factory(
     fake_checkpointer: Any, aexit_calls: list[str] | None = None
 ):
@@ -74,6 +82,7 @@ async def test_lifespan_uses_data_driven_grants() -> None:
 
     fake_definition = MagicMock()
     fake_definition.permissions = ("read:catalog", "write:orders")
+    fake_definition.execution_limits = None
 
     fake_equipped = MagicMock()
     mock_engine = MagicMock()
@@ -150,6 +159,7 @@ async def test_lifespan_injects_checkpointer_into_runtimes() -> None:
     test_settings = _make_settings()
     fake_definition = MagicMock()
     fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = None
     fake_equipped = MagicMock()
     mock_engine = MagicMock()
     mock_engine.dispose = AsyncMock()
@@ -193,6 +203,7 @@ async def test_lifespan_skips_checkpointer_when_disabled() -> None:
     test_settings = _make_settings(whatsapp_checkpointer_enabled=False)
     fake_definition = MagicMock()
     fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = None
     fake_equipped = MagicMock()
     mock_engine = MagicMock()
     mock_engine.dispose = AsyncMock()
@@ -233,6 +244,7 @@ async def test_lifespan_resource_teardown_survives_engine_dispose_failure() -> N
     test_settings = _make_settings()
     fake_definition = MagicMock()
     fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = None
     fake_equipped = MagicMock()
 
     mock_engine = MagicMock()
@@ -410,6 +422,205 @@ def test_openai_compatible_model_still_supports_bind_tools() -> None:
 
 
 # ---------------------------------------------------------------------------
+# D-014 S5 — dedup-TTL invariant (BLOCKER 3: total_execution_timeout_s must be
+# < DEDUP_TTL_SECONDS or a slow turn can outlive the dedup key and Meta's retry
+# triggers a second full processing + double send).
+# ---------------------------------------------------------------------------
+
+
+def _dedup_invariant_patches(fake_definition: Any):
+    """Common lifespan patches for the dedup-TTL invariant tests. Checkpointer
+    is disabled so no real Redis connection is attempted."""
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+    return mock_engine, (
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "agentsys.connectors.rag_connector.build_badie_rag_registry",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
+        patch("agentsys.harness.factory.build_runtime", return_value=MagicMock()),
+        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+    )
+
+
+@pytest.mark.parametrize("timeout_s", [300, 301])
+@pytest.mark.asyncio
+async def test_lifespan_rejects_runtime_when_total_timeout_ge_dedup_ttl(
+    timeout_s: int,
+) -> None:
+    """A runtime whose effective total_execution_timeout_s >= DEDUP_TTL_SECONDS
+    (300) must make the app refuse to boot, with both values in the message."""
+    from agentsys.services.dedup import DEDUP_TTL_SECONDS
+
+    test_settings = _make_settings(whatsapp_checkpointer_enabled=False)
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = {"total_execution_timeout_s": timeout_s}
+
+    _, patches = _dedup_invariant_patches(fake_definition)
+
+    with patch("agentsys.main.get_settings", return_value=test_settings):
+        with _stack(patches):
+            app = create_app()
+            with pytest.raises(
+                (ValueError, RuntimeError)
+            ) as excinfo:
+                async with lifespan(app):
+                    pass
+
+    message = str(excinfo.value)
+    assert str(timeout_s) in message
+    assert str(DEDUP_TTL_SECONDS) in message
+
+
+@pytest.mark.asyncio
+async def test_lifespan_accepts_runtime_just_under_dedup_ttl() -> None:
+    """Boundary: total_execution_timeout_s = 299 (< 300) boots cleanly.
+
+    This pins the guard's comparison as ``>=`` (strictly-less passes), i.e. it
+    is a negative control against a guard that rejects everything. It does NOT
+    certify 299 as an operationally safe budget: the dedup key's 300s TTL starts
+    BEFORE the client lookup and the reply is sent AFTER the conversation-log
+    write, so ``total_execution_timeout_s`` (which bounds only the graph invoke)
+    has no headroom for the surrounding work at that value. Giving the
+    invariant real headroom is a source change — see the module docstring note.
+    """
+    test_settings = _make_settings(whatsapp_checkpointer_enabled=False)
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = {"total_execution_timeout_s": 299}
+
+    _, patches = _dedup_invariant_patches(fake_definition)
+
+    with patch("agentsys.main.get_settings", return_value=test_settings):
+        with _stack(patches):
+            app = create_app()
+            async with lifespan(app):
+                assert app.state.runtimes
+
+
+@pytest.mark.asyncio
+async def test_lifespan_accepts_default_limits_invariant_holds() -> None:
+    """Platform default (60 < 300) boots cleanly when no override is set."""
+    test_settings = _make_settings(whatsapp_checkpointer_enabled=False)
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = None
+
+    _, patches = _dedup_invariant_patches(fake_definition)
+
+    with patch("agentsys.main.get_settings", return_value=test_settings):
+        with _stack(patches):
+            app = create_app()
+            async with lifespan(app):
+                assert app.state.runtimes
+
+
+@pytest.mark.parametrize(
+    ("execution_limits", "case"),
+    [
+        ({"max_tool_calls": 5}, "partial-override-without-timeout-key"),
+        ({"total_execution_timeout_s": None}, "explicit-none-timeout"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_lifespan_guard_reads_the_merged_effective_limits(
+    execution_limits: dict[str, Any], case: str
+) -> None:
+    """The guard must go through ``_effective_limits``, not index the raw dict.
+
+    Design AD-3 lets a role override execution_limits PARTIALLY: any key it
+    omits (or sets to None) falls back to the platform default. A guard that
+    read ``definition.execution_limits["total_execution_timeout_s"]`` directly
+    would raise KeyError/TypeError on exactly these shapes and take the whole
+    app down at startup for a perfectly legal role config.
+    """
+    test_settings = _make_settings(whatsapp_checkpointer_enabled=False)
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = execution_limits
+
+    _, patches = _dedup_invariant_patches(fake_definition)
+
+    with patch("agentsys.main.get_settings", return_value=test_settings):
+        with _stack(patches):
+            app = create_app()
+            async with lifespan(app):
+                assert app.state.runtimes
+
+
+def _load_main_as_fresh_module(module_name: str) -> Any:
+    """Execute ``src/agentsys/main.py`` again under a throwaway module name.
+
+    ``importlib.reload`` would rebind the real ``agentsys.main`` (and rebuild
+    its module-level ``app``) for every test that ran before or after this one.
+    A fresh spec keeps ``sys.modules['agentsys.main']`` untouched while still
+    executing every module-level statement — which is the only way to observe
+    an import-time ``assert``.
+    """
+    import importlib.util
+
+    import agentsys.main as real_main
+
+    spec = importlib.util.spec_from_file_location(module_name, real_main.__file__)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("violating_default", [300, 301, 600])
+def test_import_time_guard_rejects_a_violating_platform_default(
+    monkeypatch: pytest.MonkeyPatch, violating_default: int
+) -> None:
+    """main.py must refuse to IMPORT when the shipped platform default itself
+    violates the dedup-TTL coupling.
+
+    The predecessor of this test re-asserted ``PLATFORM_DEFAULT_LIMITS[...] <
+    DEDUP_TTL_SECONDS`` in its own body and never loaded the module whose guard
+    it named — it passed with the production ``assert`` deleted. This one
+    re-executes main.py with the platform default poisoned, so the assert is
+    the only thing that can produce the expected failure.
+    """
+    from agentsys.harness.loader import PLATFORM_DEFAULT_LIMITS
+
+    monkeypatch.setitem(
+        PLATFORM_DEFAULT_LIMITS, "total_execution_timeout_s", violating_default
+    )
+
+    with pytest.raises(AssertionError) as excinfo:
+        _load_main_as_fresh_module(f"_main_guard_probe_{violating_default}")
+
+    message = str(excinfo.value)
+    assert "total_execution_timeout_s" in message
+    assert str(violating_default) in message
+    assert "double-send" in message
+
+
+def test_shipped_platform_default_satisfies_dedup_ttl_invariant() -> None:
+    """The shipped platform default must satisfy the coupling on its own.
+
+    Deliberately duplicated with the import-time ``assert``: ``assert``
+    statements are stripped under ``python -O`` / ``PYTHONOPTIMIZE=1``, so in an
+    optimised interpreter this test is the ONLY thing left checking the shipped
+    default. It also gives a named failure instead of a collection-time
+    explosion in every module that imports ``agentsys.main``.
+    """
+    from agentsys.harness.loader import PLATFORM_DEFAULT_LIMITS
+    from agentsys.services.dedup import DEDUP_TTL_SECONDS
+
+    assert PLATFORM_DEFAULT_LIMITS["total_execution_timeout_s"] < DEDUP_TTL_SECONDS
+
+
+# ---------------------------------------------------------------------------
 # D-023 — the BI engine and the read-only guarantee it rests on
 #
 # The BI block lives inside `if settings.adapter_runtimes:`, so these tests
@@ -417,14 +628,6 @@ def test_openai_compatible_model_still_supports_bind_tools() -> None:
 # pulls in. A first draft passed `adapter_runtimes=[]`, never reached the
 # block at all, and one assertion passed against unwritten code.
 # ---------------------------------------------------------------------------
-
-
-def _stack(patchers: tuple[Any, ...]) -> ExitStack:
-    """Enter a tuple of context managers under a single ExitStack."""
-    stack = ExitStack()
-    for patcher in patchers:
-        stack.enter_context(patcher)
-    return stack
 
 
 def _bi_settings(**overrides: object) -> Settings:
