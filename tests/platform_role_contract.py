@@ -48,7 +48,13 @@ def discover_platform_roles() -> tuple[str, ...]:
 #: a change here is a change to what a platform role is allowed to do.
 EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
     "data-agent": frozenset(
-        {"catalog_search", "client_lookup", "knowledge_retrieval", "session_state"}
+        {
+            "catalog_search",
+            "client_lookup",
+            "knowledge_retrieval",
+            "run_report",
+            "session_state",
+        }
     ),
     "orchestrator": frozenset(
         {"client_lookup", "session_state", "escalation_notifier"}
