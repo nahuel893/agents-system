@@ -8,6 +8,11 @@ file is intentionally NOT marked ``@pytest.mark.integration``: pyproject
 deselects that marker by default (``addopts = "-m 'not integration'"``) and
 these tests must run in the default suite.
 
+The role list is discovered from ``platform/roles/`` on disk, not hardcoded, so
+a role added tomorrow is boot-checked without anyone remembering to extend a
+tuple. Expected tool surfaces are pinned literals in ``platform_role_contract``
+so the boot assertion stops grading a manifest against itself.
+
 asyncio_mode = "auto" (set in pyproject.toml) — async tests need NO marker.
 """
 from __future__ import annotations
@@ -17,7 +22,11 @@ from typing import Any
 
 import pytest
 
-GENERIC_ROLES = ("sales-agent", "data-agent", "summary-agent", "orchestrator")
+from platform_role_contract import (
+    EXPECTED_ROLE_TOOLS,
+    PINNED_ROLES,
+    discover_platform_roles,
+)
 
 _ESCALATION_INPUT = {"reason": "customer_angry", "details": "Asked for a manager"}
 
@@ -41,6 +50,14 @@ def _registry() -> Any:
     return build_badie_registry()
 
 
+def _rag_registry() -> Any:
+    """The registry production actually boots with (main.py, scripts/chat.py)."""
+    from agentsys.config import Settings
+    from agentsys.connectors.rag_connector import build_badie_rag_registry
+
+    return build_badie_rag_registry(Settings(_env_file=None), embedder=SpyEmbedder())
+
+
 def _build_runtime(role_type: str, granted_permissions: Any = None) -> Any:
     """Boot a generic role through the real loader + injector + factory.
 
@@ -56,11 +73,27 @@ def _build_runtime(role_type: str, granted_permissions: Any = None) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Scenario 1 — every generic role boots end-to-end with its full tool surface
+# Scenario 0 — the role list under test tracks the roles that exist on disk
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("role_type", GENERIC_ROLES)
-def test_generic_role_boots_end_to_end(role_type: str) -> None:
+def test_platform_roles_on_disk_match_the_pinned_contract() -> None:
+    """A new role folder must be pinned before it is considered covered.
+
+    Without this, adding ``platform/roles/billing-agent/`` leaves the suite
+    green while ``main.py`` fails to boot the role in its lifespan loop.
+    """
+    assert set(discover_platform_roles()) == set(EXPECTED_ROLE_TOOLS), (
+        "platform/roles/ and EXPECTED_ROLE_TOOLS disagree — pin the new role's "
+        "expected tool surface in tests/platform_role_contract.py"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenario 1 — every role on disk boots end-to-end, against BOTH registries
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("role_type", discover_platform_roles())
+def test_every_platform_role_boots_end_to_end(role_type: str) -> None:
     from agentsys.harness import loader
     from agentsys.harness.factory import build_runtime
     from agentsys.harness.injector import resolve_tool_surface
@@ -72,28 +105,45 @@ def test_generic_role_boots_end_to_end(role_type: str) -> None:
     # injector: the role's own manifest permissions are the grants
     surface = resolve_tool_surface(definition, registry, definition.permissions)
     assert surface.denied == ()
-    assert {t.name for t in surface.granted} == set(definition.tools)
 
     # factory: the assembled runtime carries every manifest tool, nothing denied
     runtime = build_runtime(role_type, registry, definition.permissions, client=None)
     assert runtime.denied_tools == ()
-    assert {t.name for t in runtime.tools} == set(definition.tools)
+    assert len(runtime.tools) == len(definition.tools)
 
 
-def test_orchestrator_boots_against_rag_registry() -> None:
+@pytest.mark.parametrize("role_type", discover_platform_roles())
+def test_every_platform_role_boots_against_the_production_registry(
+    role_type: str,
+) -> None:
     """Mirror the production wiring in main.py: async RAG catalog + 7 sync stubs."""
-    from agentsys.config import Settings
-    from agentsys.connectors.rag_connector import build_badie_rag_registry
     from agentsys.harness import loader
     from agentsys.harness.factory import build_runtime
 
-    registry = build_badie_rag_registry(Settings(_env_file=None), embedder=SpyEmbedder())
-    definition = loader.resolve("orchestrator", client=None)
+    definition = loader.resolve(role_type, client=None)
 
-    runtime = build_runtime("orchestrator", registry, definition.permissions, client=None)
+    runtime = build_runtime(
+        role_type, _rag_registry(), definition.permissions, client=None
+    )
 
     assert runtime.denied_tools == ()
-    assert {t.name for t in runtime.tools} == set(definition.tools)
+    assert len(runtime.tools) == len(definition.tools)
+
+
+@pytest.mark.parametrize("role_type", PINNED_ROLES)
+def test_booted_runtime_carries_the_pinned_tool_surface(role_type: str) -> None:
+    """Expected tools are a literal, not ``set(definition.tools)``.
+
+    Comparing the runtime surface to the manifest that produced it cannot catch
+    a tool being deleted from that manifest — both sides shrink together.
+    """
+    from agentsys.harness import loader
+
+    definition = loader.resolve(role_type, client=None)
+    runtime = _build_runtime(role_type)
+
+    assert set(definition.tools) == EXPECTED_ROLE_TOOLS[role_type]
+    assert {t.name for t in runtime.tools} == EXPECTED_ROLE_TOOLS[role_type]
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +158,7 @@ async def test_knowledge_retrieval_executes_on_data_agent() -> None:
     result = await intercept("knowledge_retrieval", {"q": "pricing"}, runtime)
 
     assert result.revalidated is False  # read tool — no call-time revalidation
-    assert isinstance(result.output["results"], list)
-    assert result.output["results"]
+    assert [hit["id"] for hit in result.output["results"]] == ["kb-001"]
 
 
 async def test_conversation_summarizer_executes_on_summary_agent() -> None:
@@ -122,9 +171,9 @@ async def test_conversation_summarizer_executes_on_summary_agent() -> None:
     )
 
     assert result.revalidated is False
-    assert isinstance(result.output["summary"], str)
-    assert result.output["summary"]
-    assert isinstance(result.output["message_count"], int)
+    assert result.output["session_id"] == "s-001"
+    assert result.output["message_count"] == 3
+    assert "purchase" in result.output["summary"]
 
 
 async def test_escalation_notifier_executes_on_orchestrator() -> None:

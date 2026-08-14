@@ -71,4 +71,8 @@ def conversation_summarizer(inputs: dict[str, Any]) -> dict[str, Any]:
 
 def escalation_notifier(inputs: dict[str, Any]) -> dict[str, Any]:
     escalation_id = f"esc-{next(_escalation_counter):04d}"
-    return {"status": "notified", "escalation_id": escalation_id}
+    return {
+        "status": "notified",
+        "escalation_id": escalation_id,
+        "reason": inputs.get("reason"),
+    }
