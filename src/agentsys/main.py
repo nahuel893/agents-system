@@ -122,6 +122,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.engine = get_engine(settings.database_url)
         resource_stack.push_async_callback(app.state.engine.dispose)
 
+        # D-007 — AuditSink: async fire-and-forget event sink.
+        from agentsys.audit.sink import AuditSink
+        from agentsys.models.base import get_session_factory
+
+        _audit_session_factory = get_session_factory(settings.database_url)
+        audit_sink = AuditSink(session_factory=_audit_session_factory)
+        await audit_sink.start()
+        AuditSink.set_current(audit_sink)
+        app.state.audit_sink = audit_sink
+        resource_stack.push_async_callback(audit_sink.stop)
+
         # D-014 — outbound WhatsApp client (design AD-2), built once and shared.
         app.state.whatsapp_client = WhatsAppClient(
             httpx.AsyncClient(),
