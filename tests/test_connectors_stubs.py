@@ -135,7 +135,16 @@ def test_session_state_set_returns_ok() -> None:
 # build_badie_registry — end-to-end wiring
 # ---------------------------------------------------------------------------
 
-def test_build_badie_registry_has_all_five_tools() -> None:
+def test_build_badie_registry_has_exactly_the_expected_tools() -> None:
+    """Exact set, on purpose: the registry is the platform's promise about what
+    it can equip, so silent growth is as much a defect as a missing tool.
+
+    `run_report` is here unbound (no BI engine) rather than absent.
+    `platform/roles/data-agent` names it, and a tool a manifest names but the
+    registry lacks makes the whole role unbuildable through InjectionError —
+    not partially usable. Calling it without BI_DATABASE_URL returns a
+    "not configured" result; main.py swaps in the real read-only engine.
+    """
     from agentsys.connectors.stubs import build_badie_registry
 
     registry = build_badie_registry()
@@ -146,6 +155,7 @@ def test_build_badie_registry_has_all_five_tools() -> None:
         "order_writer",
         "message_sender",
         "session_state",
+        "run_report",
     }
 
 

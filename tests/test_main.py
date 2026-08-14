@@ -618,3 +618,177 @@ def test_shipped_platform_default_satisfies_dedup_ttl_invariant() -> None:
     from agentsys.services.dedup import DEDUP_TTL_SECONDS
 
     assert PLATFORM_DEFAULT_LIMITS["total_execution_timeout_s"] < DEDUP_TTL_SECONDS
+
+
+# ---------------------------------------------------------------------------
+# D-023 — the BI engine and the read-only guarantee it rests on
+#
+# The BI block lives inside `if settings.adapter_runtimes:`, so these tests
+# supply a runtime and patch the heavy dependencies the surrounding branch
+# pulls in. A first draft passed `adapter_runtimes=[]`, never reached the
+# block at all, and one assertion passed against unwritten code.
+# ---------------------------------------------------------------------------
+
+
+def _bi_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = dict(
+        adapter_runtimes=["badie__sales-agent"],
+        whatsapp_checkpointer_enabled=False,
+        bi_database_url="postgresql+asyncpg://bi_readonly:pw@localhost:5432/badie",
+    )
+    values.update(overrides)
+    return _make_settings(**values)
+
+
+def _fake_bi_engine(value: str | None, *, raises: Exception | None = None) -> Any:
+    """Fake engine whose `SHOW default_transaction_read_only` answers *value*."""
+
+    class _Result:
+        def scalar(self) -> Any:
+            return value
+
+    class _Conn:
+        async def execute(self, *_: Any, **__: Any) -> Any:
+            if raises is not None:
+                raise raises
+            return _Result()
+
+        async def __aenter__(self) -> "_Conn":
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    engine = MagicMock()
+    engine.connect = lambda: _Conn()
+    engine.dispose = AsyncMock()
+    return engine
+
+
+def _bi_lifespan_patches(settings: Settings, bi_engine: Any) -> tuple[Any, ...]:
+    app_engine = MagicMock()
+    app_engine.dispose = AsyncMock()
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog", "read:reports")
+    fake_definition.execution_limits = None
+
+    return (
+        patch("agentsys.main.get_settings", return_value=settings),
+        patch(
+            "agentsys.main.get_engine",
+            side_effect=lambda url: bi_engine
+            if url == settings.bi_database_url
+            else app_engine,
+        ),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "agentsys.connectors.rag_connector.build_badie_rag_registry",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
+        patch("agentsys.harness.factory.build_runtime", return_value=MagicMock()),
+        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+    )
+
+
+def _run_lifespan_capturing_bi_engine(settings: Settings, bi_engine: Any) -> Any:
+    """Run lifespan and return the `bi_engine` the registry builder received.
+
+    The decision this asserts is BINDING, not registering. `run_report` is now
+    always registered — a tool a manifest names but the registry lacks makes
+    the whole role unbuildable — so "is it usable" is exactly "was an engine
+    bound", which is the argument captured here.
+    """
+    captured: dict[str, Any] = {}
+
+    def fake_build_registry(_settings: Any, _embedder: Any, engine: Any = None) -> Any:
+        captured["bi_engine"] = engine
+        return MagicMock()
+
+    async def _run() -> Any:
+        with _stack(_bi_lifespan_patches(settings, bi_engine)):
+            with patch(
+                "agentsys.connectors.rag_connector.build_badie_rag_registry",
+                side_effect=fake_build_registry,
+            ):
+                app = create_app()
+                async with lifespan(app):
+                    pass
+        # NOT captured.get(): a builder that was never called would return
+        # None, which is indistinguishable from the fail-closed result the
+        # "role can write" test asserts. Missing means the patch target is
+        # wrong, and that must be a failure, not a pass.
+        assert "bi_engine" in captured, "build_badie_rag_registry was never called"
+        return captured["bi_engine"]
+
+    return _run()
+
+
+@pytest.mark.asyncio
+async def test_bi_engine_is_built_through_get_engine() -> None:
+    """The BI engine must get `pool_pre_ping`, like every other engine here.
+
+    `get_engine` sets `pool_pre_ping=True`; a bare `create_async_engine` does
+    not. The BI engine is the one most likely to sit behind a connection its
+    pool has held idle — a separate, possibly remote, read-only replica — so
+    it is the worst one to leave without stale-connection detection.
+    """
+    settings = _bi_settings()
+    bi_engine = _fake_bi_engine("on")
+    patches = _bi_lifespan_patches(settings, bi_engine)
+
+    with patches[0], patches[1] as mock_get:
+        with _stack(patches[2:]):
+            app = create_app()
+            async with lifespan(app):
+                pass
+
+    assert settings.bi_database_url in [c.args[0] for c in mock_get.call_args_list]
+
+
+@pytest.mark.asyncio
+async def test_bi_tool_is_left_unbound_when_the_role_can_write() -> None:
+    """Fail CLOSED when the database says the role is not read-only.
+
+    The dedicated read-only role is the guardrail meant to hold even if
+    validation and the interceptor both have bugs. Nothing verified it — the
+    URL was simply trusted to point at a role someone configured by hand. If
+    `default_transaction_read_only` is off the guardrail is absent, so no
+    engine is bound and every call reports reporting unavailable.
+    """
+    bound = await _run_lifespan_capturing_bi_engine(
+        _bi_settings(), _fake_bi_engine("off")
+    )
+    assert bound is None
+
+
+@pytest.mark.asyncio
+async def test_bi_tool_is_still_bound_when_the_check_cannot_run() -> None:
+    """An unreachable reporting database must not become a boot failure.
+
+    "Could not determine" is not "determined to be writable". Coupling startup
+    to the reporting replica being up would take the whole sales bot down for
+    a BI dependency; the tool degrades at call time into a structured error,
+    which this slice already built.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    engine = _fake_bi_engine(
+        None, raises=OperationalError("SHOW", {}, Exception("refused"))
+    )
+    bound = await _run_lifespan_capturing_bi_engine(_bi_settings(), engine)
+    assert bound is engine
+
+
+@pytest.mark.asyncio
+async def test_bi_tool_is_unbound_when_no_url_is_configured() -> None:
+    """No URL is the ordinary case, and it must not raise either."""
+    bound = await _run_lifespan_capturing_bi_engine(
+        _bi_settings(bi_database_url=""), _fake_bi_engine("on")
+    )
+    assert bound is None
