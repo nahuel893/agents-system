@@ -32,7 +32,11 @@ from platform_role_contract import (
     discover_platform_roles,
 )
 
-ALL_EIGHT_TOOLS = {
+# run_report arrived with D-023. It is registered unbound when no BI
+# engine is configured, because platform/roles/data-agent names it and a
+# tool a manifest names but the registry lacks makes the whole role
+# unbuildable through InjectionError.
+ALL_PLATFORM_TOOLS = {
     "catalog_search",
     "client_lookup",
     "order_writer",
@@ -41,6 +45,7 @@ ALL_EIGHT_TOOLS = {
     "knowledge_retrieval",
     "conversation_summarizer",
     "escalation_notifier",
+    "run_report",
 }
 
 #: The knowledge base fixture, written out independently of the module under
@@ -73,10 +78,21 @@ EXPECTED_SUMMARY = (
     "two units."
 )
 
-#: Tools both registry builders must wire identically. catalog_search is
-#: excluded on purpose: the RAG registry swaps in a semantic-search connector
-#: with its own schema.
-SHARED_TOOLS = tuple(sorted(ALL_EIGHT_TOOLS - {"catalog_search"}))
+#: Tools both registry builders must wire identically. Two exclusions, both
+#: because the connector is a closure over something the builder is given
+#: rather than a shared module-level function, so object identity cannot hold:
+#:
+#:   catalog_search — the RAG registry swaps in a semantic-search connector
+#:                    closed over the embedder, with its own schema.
+#:   run_report     — closed over the BI engine, which is exactly the point:
+#:                    the RAG registry can be handed a real read-only engine
+#:                    while the stub registry stays unbound.
+#:
+#: Drift is guarded structurally instead: both registries build run_report
+#: through the one `build_report_tool_spec` factory, so there are no
+#: hand-duplicated specs to diverge — which is the failure mode this test
+#: exists to catch for the others.
+SHARED_TOOLS = tuple(sorted(ALL_PLATFORM_TOOLS - {"catalog_search", "run_report"}))
 
 
 @dataclass
@@ -382,10 +398,10 @@ def test_escalation_notifier_echoes_the_reason_it_was_given() -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("builder_name", sorted(REGISTRY_BUILDERS))
-def test_registry_contains_all_eight_tools(builder_name: str) -> None:
+def test_registry_contains_all_platform_tools(builder_name: str) -> None:
     registry = REGISTRY_BUILDERS[builder_name]()
 
-    assert set(registry.names()) == ALL_EIGHT_TOOLS
+    assert set(registry.names()) == ALL_PLATFORM_TOOLS
     assert registry.get("knowledge_retrieval").required_permissions == (
         "read:knowledge_base",
     )
