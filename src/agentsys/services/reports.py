@@ -41,7 +41,9 @@ class ReportValidationError(ValueError):
     """
 
 
-def _no_metadata(_validated: Mapping[str, Any]) -> Mapping[str, Any]:
+def _no_metadata(
+    _validated: Mapping[str, Any], _bind_params: Mapping[str, Any]
+) -> Mapping[str, Any]:
     """Default `ReportSpec.filter_metadata` - a report with no business
     filter to disclose need not override this."""
     return {}
@@ -84,8 +86,14 @@ class ReportSpec:
     `.bindparams(...)` already applied for typed/expanding binds) - never a
     plain string assembled at call time. `filter_metadata` computes what to
     disclose about which business filter (e.g. order status) was actually
-    applied, given the VALIDATED parameters - callers must never have to
-    guess what a report's numbers do or do not include.
+    applied - callers must never have to guess what a report's numbers do or
+    do not include.
+
+    It receives BOTH the validated caller values and the bind params that
+    went into the SQL. The bind params are what makes a disclosure DERIVED
+    rather than recomputed: a value produced by a `transform` (a time window
+    from a clock read, say) exists only after `build_bind_params`, and
+    recomputing it in the disclosure describes a query that was never run.
     """
 
     name: str
@@ -93,7 +101,9 @@ class ReportSpec:
     sql: TextClause
     params: tuple[ParamSpec, ...] = ()
     limit_param: str | None = "limit"
-    filter_metadata: Callable[[Mapping[str, Any]], Mapping[str, Any]] = _no_metadata
+    filter_metadata: Callable[
+        [Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]
+    ] = _no_metadata
 
     def param_names(self) -> tuple[str, ...]:
         return tuple(p.name for p in self.params)
@@ -272,5 +282,5 @@ async def run_report(
         # `meta` rides in the same JSON payload as `rows`, so it needs the
         # same treatment: a window boundary is a datetime and a monetary
         # threshold is a Decimal, and both are natural things to disclose.
-        "meta": json_safe(dict(spec.filter_metadata(validated))),
+        "meta": json_safe(dict(spec.filter_metadata(validated, bind_params))),
     }

@@ -28,3 +28,64 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+  # The read-only database role is the layer that is supposed to hold even if
+  # parameter validation and the Layer-2 interceptor both have bugs. Nothing
+  # verified it: `addopts = "-m 'not integration'"` deselected
+  # test_bi_readonly_engine_refuses_writes unconditionally, and no script
+  # created the role at all, so the guarantee was prose plus a manual step.
+  # This job provisions the role for real and then tries to write through it.
+  bi-readonly:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: badie
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d badie"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/badie
+      BI_DATABASE_URL: postgresql+asyncpg://bi_readonly:ci-only-password@localhost:5432/badie
+      ALLOW_INSECURE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      # create_all, not alembic: the migration chain lands with D-007 and is
+      # not on main yet. Swap this line when it is.
+      - name: Create schema
+        run: uv run python scripts/init_db.py
+
+      - name: Seed demo data
+        run: uv run python scripts/seed_demo_data.py
+
+      # Provisioned AFTER the tables exist: the GRANT SELECT ON ALL TABLES is
+      # a snapshot of what exists when it runs, and ALTER DEFAULT PRIVILEGES
+      # only covers tables created later.
+      - name: Provision the bi_readonly role
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/badie" \
+            -v ON_ERROR_STOP=1 \
+            -v bi_password="'ci-only-password'" \
+            -f scripts/provision_bi_readonly.sql
+
+      - name: Verify the role really is read-only
+        run: uv run pytest -m integration tests/test_reports_integration.py -v
