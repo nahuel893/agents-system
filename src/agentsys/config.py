@@ -119,6 +119,47 @@ class Settings(BaseSettings):
     debug: bool = False
     environment: str = "development"
 
+    # D-014 S5 — security fail-closed opt-out (BLOCKER 1). Default OFF so the
+    # app is secure-by-default: the guards below refuse to boot with empty
+    # adapter/webhook secrets. Set ALLOW_INSECURE=true ONLY for local dev to
+    # deliberately run the open/forgeable-signature modes. Do NOT reuse
+    # ``debug``/``environment`` for this — the insecure switch must be explicit.
+    allow_insecure: bool = False
+
+    @model_validator(mode="after")
+    def validate_security_fail_closed(self) -> "Settings":
+        """Fail CLOSED at boot on insecure-secret configurations (BLOCKER 1).
+
+        Two live fail-OPEN defaults are refused unless ``allow_insecure`` is
+        explicitly enabled:
+
+        - ``adapter_runtimes`` configured with an empty ``adapter_api_key``:
+          the ``/v1/*`` endpoints would run with the runtime's full write
+          grants for any unauthenticated caller.
+        - an empty ``meta_webhook_secret``: HMAC-SHA256 with an empty key is
+          attacker-computable, so any webhook signature is forgeable.
+
+        Centralised here (not only in the lifespan) so the guard is
+        unit-testable without spinning up FastAPI.
+        """
+        if self.allow_insecure:
+            return self
+
+        if self.adapter_runtimes and not self.adapter_api_key:
+            raise ValueError(
+                "adapter_api_key is required when adapter_runtimes is configured; "
+                "set ADAPTER_API_KEY or explicitly set ALLOW_INSECURE=true for dev"
+            )
+
+        if not self.meta_webhook_secret:
+            raise ValueError(
+                "meta_webhook_secret is required (an empty secret makes webhook "
+                "signatures forgeable); set META_WEBHOOK_SECRET or explicitly set "
+                "ALLOW_INSECURE=true for dev"
+            )
+
+        return self
+
     @model_validator(mode="after")
     def validate_rag_thresholds(self) -> "Settings":
         if self.rag_threshold_direct <= self.rag_threshold_ambiguous:
