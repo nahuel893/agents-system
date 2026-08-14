@@ -234,7 +234,7 @@ async def test_run_report_clamps_limit_and_attaches_metadata(monkeypatch: Any) -
             ParamSpec(name="limit", type=int, default=10),
             ParamSpec(name="status", type=str, default="all"),
         ),
-        filter_metadata=lambda validated: {"statuses_included": [validated["status"]]},
+        filter_metadata=lambda validated, _bound: {"statuses_included": [validated["status"]]},
     )
 
     captured: dict[str, Any] = {}
@@ -455,7 +455,7 @@ async def test_run_report_json_safes_metadata(monkeypatch: Any) -> None:
 
     spec = _spec(
         params=(ParamSpec(name="limit", type=int, default=10),),
-        filter_metadata=lambda validated: {
+        filter_metadata=lambda validated, _bound: {
             "window_start": datetime(2025, 8, 1, tzinfo=UTC),
             "min_amount": Decimal("100.00"),
         },
