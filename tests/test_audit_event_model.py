@@ -3,9 +3,6 @@
 import uuid
 from datetime import datetime, timezone
 
-import pytest
-from sqlalchemy import text
-
 
 class TestAuditEventModelImports:
     """T-01: RED — import must fail until model exists."""
@@ -105,12 +102,6 @@ class TestAuditEventModelImports:
         from agentsys.models.audit_event import AuditEvent
 
         table = AuditEvent.__table__
-        index_names = {idx.name for idx in table.indexes}
-        indexed_columns = {
-            tuple(sorted(idx.columns.keys()))
-            for idx in table.indexes
-            if hasattr(idx, "columns")
-        }
 
         # BTree index on (role, occurred_at DESC)
         role_occurred_idx = any(
