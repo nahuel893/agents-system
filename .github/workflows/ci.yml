@@ -69,10 +69,16 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
-      # create_all, not alembic: the migration chain lands with D-007 and is
-      # not on main yet. Swap this line when it is.
-      - name: Create schema
+      # Two steps, not one, because two different things own this schema.
+      # init_db.py creates the ORM-owned tables; alembic creates the ones the
+      # ORM cannot express. audit_event is RANGE partitioned, so creating it
+      # from metadata would yield a plain unpartitioned table with no error —
+      # which is why create_orm_owned_tables skips it. See models/base.py.
+      - name: Create ORM-owned schema
         run: uv run python scripts/init_db.py
+
+      - name: Apply migrations (Alembic-owned schema)
+        run: uv run alembic upgrade head
 
       - name: Seed demo data
         run: uv run python scripts/seed_demo_data.py
@@ -89,3 +95,55 @@ jobs:
 
       - name: Verify the role really is read-only
         run: uv run pytest -m integration tests/test_reports_integration.py -v
+
+  # audit_event is RANGE partitioned, and partitioning is the one part of that
+  # schema SQLAlchemy cannot express — the ORM model carries no partitions at
+  # all. So no unit test can tell whether a row actually lands in a partition,
+  # and SQLite cannot even compile the DDL. Only a real PostgreSQL round trip
+  # can, which is what this job is for.
+  #
+  # It exists because of a specific failure mode the unit suite is blind to:
+  # the migration creates a fixed number of monthly partitions, and without a
+  # DEFAULT partition PostgreSQL rejects the first row past the last bound
+  # ("no partition of relation ... found for row"). The audit log would stop
+  # recording months after install, with no code change to blame.
+  audit-migration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: audit_migration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d audit_migration_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # A throwaway database: these tests run `alembic upgrade head` and
+      # `alembic downgrade base` for real.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/audit_migration_test
+      AUDIT_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/audit_migration_test
+      ALLOW_INSECURE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      # No schema setup step: the tests own the full upgrade/downgrade cycle,
+      # so anything created here would just be state they did not expect.
+      - name: Verify the partitioned audit schema
+        run: uv run pytest -m integration tests/test_audit_migration_integration.py -v

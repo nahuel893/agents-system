@@ -5,12 +5,29 @@ Revises:
 Create Date: 2026-07-29
 
 Creates the partitioned audit_event table for the D-007 audit persistence
-feature. Partitioning is by RANGE (occurred_at) monthly.
+feature. Partitioning is by RANGE (occurred_at), one partition per month.
 
-The first three partitions (current month, current+1, current+2) are
-created at install time. Additional partitions are created via the
-create_audit_event_partition() helper at the bottom of this file,
-intended to be called by a cron job monthly.
+Three monthly partitions are created at install time, plus a DEFAULT
+partition. The DEFAULT one is not a nicety — it is what keeps the audit log
+from failing closed on the calendar. PostgreSQL rejects an INSERT whose
+partition key falls outside every partition::
+
+    no partition of relation "audit_event" found for row
+
+Without a DEFAULT partition, that is what the audit log does on the first day
+of the fourth month after install, with no code change and no deploy. A
+monthly job that adds partitions ahead of time then becomes a hard
+availability dependency: miss it once and events stop being recorded. With a
+DEFAULT partition present, rows always land, and adding monthly partitions
+stays what it should be — an optimization for query pruning and retention.
+
+Cost of the DEFAULT partition, stated plainly: while it holds rows, attaching
+a new partition whose range would cover any of them takes an ACCESS EXCLUSIVE
+lock and scans it. Keep it small by adding monthly partitions on schedule.
+
+Partition naming is uniform ``audit_event_YYYY_MM``, computed here so the name
+and the range it holds always agree. Relative names (``_current``, ``_next``)
+were wrong within a month of install and could not be enumerated by pattern.
 
 PostgreSQL requirement: all PRIMARY KEY and UNIQUE constraints on a
 partitioned table must include all partition key columns.
@@ -21,8 +38,9 @@ Therefore:
 
 from __future__ import annotations
 
-from alembic import op
+from datetime import date, datetime, timezone
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "001"
@@ -30,10 +48,44 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+#: Monthly partitions created at install time, counting from the current month.
+#: Three gives roughly a quarter of pruning-friendly storage before the DEFAULT
+#: partition starts collecting; the monthly job extends the run.
+_INITIAL_MONTHS = 3
+
+
+def _month_start(year: int, month: int) -> date:
+    """First day of ``month``, normalizing a 13th month to the next January."""
+    return date(year + (month - 1) // 12, (month - 1) % 12 + 1, 1)
+
+
+def partition_name(start: date) -> str:
+    """``audit_event_YYYY_MM`` for the month beginning at *start*."""
+    return f"audit_event_{start.year}_{start.month:02d}"
+
+
+def create_monthly_partition(start: date) -> None:
+    """Attach one monthly partition covering ``[start, start + 1 month)``.
+
+    Bounds are half-open, which is PostgreSQL's own convention for RANGE
+    partitions, so consecutive months tile with no gap and no overlap.
+
+    Written as UTC timestamps rather than bare dates: ``occurred_at`` is
+    TIMESTAMPTZ, and a bare date literal would be read in the session's
+    TimeZone, putting the boundary hours off for any non-UTC session and
+    splitting a month differently depending on who ran the migration.
+    """
+    end = _month_start(start.year, start.month + 1)
+    op.execute(
+        f"CREATE TABLE IF NOT EXISTS {partition_name(start)} "
+        f"PARTITION OF audit_event FOR VALUES "
+        f"FROM ('{start.isoformat()} 00:00:00+00') "
+        f"TO ('{end.isoformat()} 00:00:00+00')"
+    )
+
 
 def upgrade() -> None:
-    """Create audit_event parent table + first 3 monthly partitions + indexes."""
-    # Parent table with monthly range partitioning
+    """Create the audit_event parent, its initial partitions, and its indexes."""
     # PostgreSQL requires all PK/UK constraints to include partition key columns
     op.execute("""
         CREATE TABLE IF NOT EXISTS audit_event (
@@ -56,28 +108,23 @@ def upgrade() -> None:
         ) PARTITION BY RANGE (occurred_at)
     """)
 
-    # Partition 1: current month
-    op.execute("""
-        CREATE TABLE audit_event_current PARTITION OF audit_event
-          FOR VALUES FROM (date_trunc('month', now())::date)
-                       TO (date_trunc('month', now())::date + INTERVAL '1 month')
-    """)
+    # Install-time monthly partitions, named for the month each one holds.
+    # UTC, matching the TIMESTAMPTZ bounds above: at the edges of the day the
+    # local date can be the previous or next month, which would name the first
+    # partition for a month whose range it does not cover.
+    today = datetime.now(timezone.utc).date()
+    first = _month_start(today.year, today.month)
+    for offset in range(_INITIAL_MONTHS):
+        create_monthly_partition(_month_start(first.year, first.month + offset))
 
-    # Partition 2: next month
-    op.execute("""
-        CREATE TABLE audit_event_next PARTITION OF audit_event
-          FOR VALUES FROM (date_trunc('month', now())::date + INTERVAL '1 month')
-                       TO (date_trunc('month', now())::date + INTERVAL '2 months')
-    """)
+    # Catch-all. See the module docstring: without this the table stops
+    # accepting rows once the monthly partitions above run out.
+    op.execute(
+        "CREATE TABLE IF NOT EXISTS audit_event_default "
+        "PARTITION OF audit_event DEFAULT"
+    )
 
-    # Partition 3: month after next
-    op.execute("""
-        CREATE TABLE audit_event_future PARTITION OF audit_event
-          FOR VALUES FROM (date_trunc('month', now())::date + INTERVAL '2 months')
-                       TO (date_trunc('month', now())::date + INTERVAL '3 months')
-    """)
-
-    # Indexes on parent (inherited by all partitions)
+    # Indexes on the parent, inherited by every partition including new ones.
     op.execute("""
         CREATE INDEX ix_audit_event_role_occurred
           ON audit_event (role, occurred_at DESC)
@@ -94,49 +141,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop all partitions and the parent table.
+    """Drop audit_event and every partition attached to it.
 
-    Partitions MUST be dropped before the parent table.
+    Dropping the parent of a partitioned table drops its partitions, so this
+    also removes partitions the monthly job added after install. Enumerating
+    partition names here instead would orphan those and then fail on the
+    parent — the reason this is one statement.
     """
-    op.execute("DROP TABLE IF EXISTS audit_event_future")
-    op.execute("DROP TABLE IF EXISTS audit_event_next")
-    op.execute("DROP TABLE IF EXISTS audit_event_current")
-    op.drop_table("audit_event")
-
-
-# -----------------------------------------------------------------------------
-# Helper for cron: create a future monthly partition.
-# Run from an alembic revision or cron script with:
-#
-#   from alembic import op
-#   import sys; sys.path.insert(0, '/path/to/project')
-#   from alembic.versions.add_audit_event_partition import create_audit_event_partition
-#   create_audit_event_partition(op, '2026-10')
-# -----------------------------------------------------------------------------
-def create_audit_event_partition(op_instance, month: str) -> None:
-    """Create a monthly partition for audit_event.
-
-    Args:
-        op_instance: The Alembic ``op`` operations object (passed by caller).
-        month: Month in 'YYYY-MM' format, e.g. '2026-10'.
-    """
-    import re
-    from datetime import date
-
-    if not re.match(r"^\d{4}-\d{2}$", month):
-        raise ValueError(f"Invalid month format: {month!r}. Expected 'YYYY-MM'.")
-
-    year_str, mon_str = month.split("-")
-    year_i, mon_i = int(year_str), int(mon_str)
-
-    part_name = f"audit_event_{year_i}_{mon_i:02d}"
-    start = date(year_i, mon_i, 1)
-    if mon_i == 12:
-        end = date(year_i + 1, 1, 1)
-    else:
-        end = date(year_i, mon_i + 1, 1)
-
-    op_instance.execute(f"""
-        CREATE TABLE IF NOT EXISTS {part_name} PARTITION OF audit_event
-          FOR VALUES FROM ('{start.isoformat()}') TO ('{end.isoformat()}')
-    """)
+    op.execute("DROP TABLE IF EXISTS audit_event")
