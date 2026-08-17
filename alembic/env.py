@@ -1,12 +1,37 @@
-"""Alembic async environment for agentsystem migrations."""
+"""Alembic async environment for agentsys migrations.
 
-from logging.config import fileConfig
+The database URL comes from the application's own ``Settings`` — the same
+composed ``database_url`` the app connects with — not from ``alembic.ini``.
+Migrating a server must not require editing a versioned file, and a checked-in
+``sqlalchemy.url`` is a standing invitation to commit production credentials.
+
+``DATABASE_URL`` in the environment overrides it, which is how the migration
+integration tests point alembic at a throwaway database.
+"""
+
+# Make `agentsys` importable before any agentsys import below. This block must
+# run at module level, above those imports, so E402/E401 are silenced there
+# rather than reordered away.
+import sys  # noqa: I001
 from pathlib import Path
 
-from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+SRC_PATH = Path(__file__).resolve().parents[1] / "src"
+if str(SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(SRC_PATH))
+
+import os  # noqa: E402
+from logging.config import fileConfig  # noqa: E402
+
+from alembic import context  # noqa: E402
+from sqlalchemy import pool  # noqa: E402
+from sqlalchemy.engine import Connection  # noqa: E402
+from sqlalchemy.ext.asyncio import async_engine_from_config  # noqa: E402
+
+# Importing the package (not a submodule) registers EVERY table in
+# Base.metadata. Autogenerate diffs against this metadata, so a partial
+# inventory would make it propose dropping the tables it could not see.
+from agentsys.config import get_settings  # noqa: E402
+from agentsys.models import Base  # noqa: E402
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -16,51 +41,23 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# --- agentsys imports ---
-# Build path to src so 'agentsys' can be imported when running migrations
-SRC_PATH = Path(__file__).resolve().parents[1] / "src"
-import sys
-if str(SRC_PATH) not in sys.path:
-    sys.path.insert(0, str(SRC_PATH))
 
-from agentsys.models.base import Base  # noqa: E402
-from agentsys.models.audit_event import AuditEvent  # noqa: E402
+def _database_url() -> str:
+    """Resolve the target database URL.
+
+    Precedence: ``DATABASE_URL`` in the environment, then the application's
+    composed ``Settings.database_url``. ``alembic.ini`` is deliberately not
+    consulted — see the module docstring.
+    """
+    return os.environ.get("DATABASE_URL") or get_settings().database_url
+
+
+# Feed the resolved URL back into the Alembic config so async_engine_from_config
+# below builds the engine against it.
+config.set_main_option("sqlalchemy.url", _database_url())
 
 # target_metadata for autogenerate support
 target_metadata = Base.metadata
-
-# --- partition creation helper (for cron use) ---
-
-
-def create_audit_event_partition(month: str) -> None:
-    """Create a monthly partition for audit_event.
-
-    Args:
-        month: Month string in 'YYYY-MM' format, e.g. '2026-10'.
-
-    Raises:
-        ValueError: If the month string is invalid.
-    """
-    from datetime import date
-    import re
-
-    if not re.match(r"^\d{4}-\d{2}$", month):
-        raise ValueError(f"Invalid month format: {month!r}. Expected 'YYYY-MM'.")
-
-    year, mon = month.split("-")
-    year_i, mon_i = int(year), int(mon)
-
-    part_name = f"audit_event_{year_i}_{mon_i:02d}"
-    start = date(year_i, mon_i, 1)
-    if mon_i == 12:
-        end = date(year_i + 1, 1, 1)
-    else:
-        end = date(year_i, mon_i + 1, 1)
-
-    op.execute(f"""
-        CREATE TABLE IF NOT EXISTS {part_name} PARTITION OF audit_event
-          FOR VALUES FROM ('{start.isoformat()}') TO ('{end.isoformat()}')
-    """)
 
 
 # --- offline mode ---
@@ -68,9 +65,8 @@ def create_audit_event_partition(month: str) -> None:
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=_database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -94,6 +90,7 @@ async def run_migrations_online_async() -> None:
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
         await connection.commit()
+    await connectable.dispose()
 
 
 def do_run_migrations(connection: Connection) -> None:
@@ -110,4 +107,5 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     import asyncio
+
     asyncio.run(run_migrations_online_async())
