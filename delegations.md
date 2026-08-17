@@ -29,13 +29,34 @@
 >
 > **This file drifted.** Wave W1 stayed marked "active" from 2026-05-28 until 2026-07-29 while work ran through D-024, so anyone following rule 1 above read a two-month-old picture. If you close a wave, say so in the same commit that closes it.
 
-## Active wave: W3 — Platform reuse + BI (2026-07-28)
+## Active wave: W4 — Runtime, deployment, generic agents (2026-08-17)
 
-| ID | Slice / Feature | Agent | Model | Cx | Branch | Depends on | Status | Result |
-|----|-----------------|-------|-------|----|--------|-----------|--------|--------|
-| D-023 | BI agent — parameterized report catalog over a read-only DB | claude-code | (session) | high | `feat/D-023-bi-agent` | — | in_review | PR #15, CI green. 2615 lines — **size decision pending**: chain or `size:exception`. Every reported figure reconciles with hand-run SQL. |
-| D-024 | Public library API — client-injected ToolRegistry + shipped platform roles | claude-code + sonnet worker | sonnet | medium | `feat/D-024-library-api` | — | in_review | PR #17. Verified against an installed wheel run from outside the repo: `platform_root` → `site-packages/agentsys/platform`, `resolve('sales-agent')` OK, no FastAPI/LangGraph at import. |
-| D-025 | Dev-environment security record + `.gitignore` hygiene | claude-code | (session) | low | `docs/dev-environment-security` | — | in_review | PR #16, CI green. Docs + config only. |
+Full path, ordering rationale, and measured current state:
+[`docs/delivery/w4-runtime-and-deployment.md`](docs/delivery/w4-runtime-and-deployment.md).
+
+The order is dependency-driven: the topology decision (D-029) determines whether
+guards can be in-process or must be Redis-backed, so it precedes them. The
+webhook fix precedes the guards because it is what creates a place to admit
+into — today the request *is* the work.
+
+| ID | Slice / Feature | Agent | Cx | Branch | Depends on | Status | Result |
+|----|-----------------|-------|----|--------|-----------|--------|--------|
+| D-007-pr1 | Alembic infra + `AuditEvent` + table-ownership rule + partition lifecycle | claude-code | high | `feat/D-007-pr1-schema-model-migration` | — | in_review | 549 unit + 5 integration green, ruff + mypy clean. Fixed 4 defects beyond the original scope — see task details. 1282 lines, **size decision pending**. |
+| D-026 | Audit events + redactor (Pydantic union, PII default-deny) | — | high | `feat/D-007-pr2-events-redactor` | D-007-pr1 | wip | ~1790 lines over pr1. Commit says "do not open a PR from this as-is". Needs splitting. |
+| D-027 | Audit sink wiring (injector, interceptor, factory, graph) | — | high | `feat/D-007-pr3-sink-wiring` | D-026 | wip | ~930 lines over pr2. Not green. |
+| D-028 | Monthly partition job — operational entrypoint | — | low | — | D-007-pr1 | todo | Downgraded from critical to optimization by the DEFAULT partition. |
+| D-029 | Runtime topology decision record | — | medium | — | — | todo | Docs only. Blocks D-030/032/033/036. |
+| D-030 | Webhook returns 200 before the turn; turn + send to background | — | high | — | D-029 | todo | Fixes silent message loss. |
+| D-031 | Dedup claim/release so a failed turn does not swallow the message | — | medium | — | D-030 | todo | Must land with D-030 to be correct. |
+| D-032 | Pool sizing from settings, both engines | — | low | — | D-029 | todo | Today: 15 connections total, defaulted. |
+| D-033 | Admission control — bounded concurrent turns | — | medium | — | D-030 | todo | |
+| D-034 | Per-client rate limiting | — | medium | — | D-033 | todo | |
+| D-035 | Session invalidation on order confirmation | — | low | — | — | todo | Independent; can start any time. |
+| D-036 | Server provisioning: units, migrations on deploy, health checks | — | high | — | D-029 | todo | |
+| D-037 | Provider + model config per agent, no code edits | — | medium | — | — | todo | Manifests are already the surface. |
+| D-038 | Configuration TUI over D-037 | — | medium | — | D-037 | todo | Last on purpose — ergonomics, not availability. |
+| D-039 | Audit what the four platform roles actually do end to end | — | medium | — | — | todo | Only `sales-agent` is exercised. |
+| D-040 | Multi-level and multi-role composition | — | high | — | D-039 | todo | Inheritance exists and can only subtract; the gaps are depth and the `loader.py:670` widening fallback. |
 
 ### Blocked / awaiting the human
 
@@ -43,14 +64,40 @@
 |---|---|---|
 | Real catalog for the sales agent | `MEDALLION_DB_*` in `.env` | `scripts/sync_articles.py` is finished and idempotent. Use `readonly_user`; `MEDALLION_DB_NAME=medallion_db` — the code default `medallion` is wrong. Until then the sales agent invents products. |
 | Attack entry vector | Router admin UI at `192.168.1.1` | Host has no public IP and UPnP shows no mappings, so it is either a static forward/DMZ rule or a LAN-internal source. Settle it **before** a real BADIE credential lands here. |
-| PR #15 size | Your call | Chain it or record `size:exception`. |
+| D-007-pr1 size | Your call | 1282 lines. ~240 is `alembic init` scaffolding (`alembic.ini`, `script.py.mako`, `uv.lock`) and 151 is the migration — both categories the `chained-pr` rule names as hard to split. Chain it (infra+model+ownership ≈700 / migration+partitions+CI ≈580, neither under 400) or record `size:exception`. |
 
 ### Known defects, filed not fixed
 
 | Defect | Where | Why it matters |
 |---|---|---|
-| A typo'd deployment name silently **widens** the tool surface | `loader.py:670` — `resolve` falls through to the generic role when `load_override` returns `None` | Deployments may only narrow the platform role, so falling back to generic grants the role's **full** allowance instead of the deployment's subset. No log, no error. Security-relevant, not cosmetic. |
+| A typo'd deployment name silently **widens** the tool surface | `loader.py:670` — `resolve` falls through to the generic role when `load_override` returns `None` | Deployments may only narrow the platform role, so falling back to generic grants the role's **full** allowance instead of the deployment's subset. No log, no error. Security-relevant, not cosmetic. D-040 depends on this being closed. |
 | Foreign-language token leakage | model output | The model has emitted Chinese and Russian into business-facing answers. Nothing detects it automatically. |
+| Webhook answers Meta only after the full agent turn | `integration/webhook.py` | The turn's budget is 60s (`loader.py:114`) and the 200 comes after it plus the outbound send. Meta retries (`dedup.py:10` says so), the retry hits the dedup mark set *before* the turn, and the customer's message is dropped. Scheduled as D-030/D-031. |
+| No concurrency guard of any kind | `src/` | `rg -i 'semaphore\|rate_limit\|limiter\|throttl\|max_concurren' src/` returns nothing. 1000 concurrent messages launch 1000 concurrent turns against the LLM quota. Scheduled as D-033/D-034. |
+
+---
+
+## Closed wave: W3 — Platform reuse + BI (2026-07-28 → 2026-08-17)
+
+All ten PRs merged. `main` at `67592cb`: 536 unit tests, ruff and mypy clean.
+
+| ID | Slice / Feature | Agent | Status |
+|----|-----------------|-------|--------|
+| D-023 | BI agent — parameterized report catalog over a read-only DB | claude-code | done (split into a 6-PR chain, #20–#25 + tracker #15) |
+| D-024 | Public library API — client-injected ToolRegistry + shipped platform roles | claude-code + sonnet worker | done (PR #17) |
+| D-025 | Dev-environment security record + `.gitignore` hygiene | claude-code | done (PR #16) |
+
+Two defects were found only by merging all ten PRs into a scratch branch, which
+per-PR CI cannot do — it builds each PR against its own base:
+
+1. `run_report` made `data-agent` unbuildable outside `main.py`'s lifespan, and
+   `data-agent` was **already** unbuildable on `main` (`knowledge_retrieval`
+   with no connector). A manifest naming a tool the registry lacks raises
+   `InjectionError` for the whole role, not part of it.
+2. `agentsys.__dir__` leaked `Any`/`annotations`/`importlib` — found by building
+   the wheel and installing it in a clean venv outside the repo.
+
+Both closed. `data-agent` now resolves all five tools with zero denials.
 
 ---
 
@@ -68,6 +115,72 @@ All slices merged to `main`; details in the archive at the bottom of this file.
 ---
 
 ## Task details
+
+### D-007-pr1 — Alembic infra, `AuditEvent`, table ownership, partition lifecycle
+
+Branch `feat/D-007-pr1-schema-model-migration`, rebased on `67592cb`.
+Gate: 549 unit + 5 integration passing, ruff clean, mypy clean on 47 files.
+
+The slice arrived with the alembic scaffolding, the ORM model and its unit tests
+already written. It was not mergeable: it left the suite at 2 failures and 18
+errors, and three further defects only showed up under a real PostgreSQL. All
+four are fixed, in four separate commits.
+
+**1. Non-deterministic table inventory.** `audit_event` was reachable only by
+importing `agentsys.models.audit_event` directly, so `Base.metadata` held five
+tables or six depending on import order. `test_models` asserted the inventory
+and so passed alone and failed in a full run; every SQLite fixture calling
+`Base.metadata.create_all` raised `CompileError: SQLite does not support
+autoincrement for composite primary keys` once the model was registered — 18
+errors in modules unrelated to auditing. `agentsys/models/__init__.py` now
+imports every model.
+
+**2. ORM creating a table it cannot express.** `audit_event` is RANGE
+partitioned; SQLAlchemy has no construct for that. Creating it from metadata
+does not raise on PostgreSQL — it silently emits a plain unpartitioned table
+that differs from what the migration builds. `scripts/init_db.py` did exactly
+that. A table now declares `{"info": {ALEMBIC_OWNED: True}}` and
+`create_orm_owned_tables` (in `models/base.py`) skips it; discovery is by the
+flag, not a name list, so a second partitioned table inherits the behavior.
+Both the fixtures and `init_db.py` go through it. Verified: after
+`init_db.py` + `alembic upgrade head`, `audit_event` is `relkind='p'` and the
+five ORM tables are `'r'`.
+
+**3. The audit log expired on the calendar.** The migration created three
+monthly partitions and no DEFAULT partition. PostgreSQL rejects a row outside
+every partition (`no partition of relation "audit_event" found for row`), so
+auditing would have stopped on the first day of the fourth month after install
+— no code change, no deploy. The monthly partition job was therefore a hard
+availability dependency. A DEFAULT partition removes that: verified against
+PostgreSQL 16 that `occurred_at = now() + INTERVAL '10 years'` lands in
+`audit_event_default` where it was previously rejected. Partition names are now
+uniformly `audit_event_YYYY_MM` with explicit UTC bounds (they were
+`_current`/`_next`/`_future`, a second convention that also stopped being true
+after a month), and `downgrade` drops the parent in one statement instead of
+three partitions by name — which orphaned anything added later.
+
+**4. Migrations were not deployable.** `alembic.ini` carried
+`sqlalchemy.url = postgresql+asyncpg://postgres:postgres@localhost:5432/badie`
+and `env.py` read it from there, ignoring `DATABASE_URL` and
+`Settings.database_url` both. Migrating a server meant editing a versioned file,
+and a checked-in URL is how production credentials reach git history. `env.py`
+now resolves `DATABASE_URL` → `Settings.database_url`. Also deleted a dead copy
+of `create_audit_event_partition` from `env.py` that called `op.execute` with no
+`op` in scope — a guaranteed `NameError`, and `op` only exists inside a
+migration, so the "for cron use" it documented could never have worked.
+
+New `audit-migration` CI job runs the migration tests against real PostgreSQL,
+and the `bi-readonly` job's TODO is closed — it now runs `init_db.py` then
+`alembic upgrade head`, which is the path production takes. These are
+integration tests because they must be: the ORM model has no partitions, so no
+unit test can tell whether a row lands in one, and SQLite cannot compile the
+DDL. Wired into CI rather than left behind `-m integration`, because this
+project already shipped a security check that sat behind that marker and ran
+nowhere.
+
+**Out of scope, deliberately:** the monthly partition job (D-028 — no longer
+critical), and D-026/D-027, which remain `wip` and whose commits say not to open
+a PR from them as-is.
 
 ### D-002 — ToolRegistry + Capability Injector (Layer 1 enforcement)
 
