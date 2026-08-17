@@ -17,7 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from agentsys.models.base import Base
+from agentsys.models.base import ALEMBIC_OWNED, Base
 
 
 class AuditEvent(Base):
@@ -108,6 +108,12 @@ class AuditEvent(Base):
             "payload",
             postgresql_using="gin",
         ),
+        # Alembic owns this table's DDL, and the ORM must never create it.
+        # The RANGE partitioning above has no SQLAlchemy construct, so
+        # `Base.metadata.create_all` would emit a plain unpartitioned table on
+        # PostgreSQL (silently) and fail on SQLite (on the composite PK).
+        # `create_orm_owned_tables` reads this flag; see models/base.py.
+        {"info": {ALEMBIC_OWNED: True}},
     )
 
 

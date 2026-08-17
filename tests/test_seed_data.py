@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from agentsys.models.base import Base
+from agentsys.models.base import create_orm_owned_tables
 from agentsys.models.tables import Client, Order, OrderItem
 from agentsys.services.seed_data import (
     BUSINESS_TYPES,
@@ -167,7 +167,7 @@ def test_generate_demo_dataset_default_counts_within_spec_range() -> None:
 async def db_engine():
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(create_orm_owned_tables)
     yield engine
     await engine.dispose()
 
