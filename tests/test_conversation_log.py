@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from agentsys.models.base import Base
+from agentsys.models.base import create_orm_owned_tables
 from agentsys.models.tables import Client, ConversationLog
 from agentsys.services.conversation_log import log_conversation_turn
 
@@ -23,7 +23,7 @@ async def db_session() -> Any:
     """SQLite async in-memory session with tables created."""
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(create_orm_owned_tables)
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with factory() as session:

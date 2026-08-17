@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from agentsys.models.base import Base
+from agentsys.models.base import create_orm_owned_tables
 from agentsys.models.tables import Client
 from agentsys.services.sync_clients import sync_clients
 
@@ -59,7 +59,7 @@ async def medallion_engine():
 async def bot_engine():
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(create_orm_owned_tables)
     yield engine
     await engine.dispose()
 
