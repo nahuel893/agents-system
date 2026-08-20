@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -76,13 +76,22 @@ class TestAuditSinkQueueOverflow:
 
 
 class _FakeSession:
-    """A minimal fake async session that records events."""
+    """A minimal fake async session that records events.
+
+    ``add`` is SYNCHRONOUS because ``sqlalchemy.ext.asyncio.AsyncSession.add``
+    is (verified: ``inspect.iscoroutinefunction`` returns False). It used to be
+    ``async def`` here, which matched the sink's ``await session.add(...)`` —
+    so the fake and the buggy code agreed with each other and disagreed with
+    SQLAlchemy. Against a real session that await raises TypeError, the
+    drainer's ``except Exception`` swallows it, and no audit row is ever
+    written. A double that mirrors the defect tests the double.
+    """
 
     def __init__(self) -> None:
         self.added: list = []
         self.commit_count = 0
 
-    async def add(self, event) -> None:
+    def add(self, event) -> None:
         self.added.append(event)
 
     async def commit(self) -> None:
