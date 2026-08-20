@@ -363,10 +363,6 @@ class TestRecorderRedaction:
     """
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="recorder.py never calls Redactor, so free-text reasons reach the payload raw",
-    )
     async def test_tool_denied_reason_is_redacted(self) -> None:
         """A denial reason quoting a customer phone must not be stored verbatim."""
         from agentsys.audit.recorder import record_tool_denied
@@ -379,10 +375,6 @@ class TestRecorderRedaction:
         assert "+5491123456789" not in repr(event.payload)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="recorder.py never calls Redactor, so DB error text reaches the payload raw",
-    )
     async def test_tool_call_error_is_redacted(self) -> None:
         """A driver error echoing customer data must not be stored verbatim."""
         from agentsys.audit.recorder import record_tool_call_attempted

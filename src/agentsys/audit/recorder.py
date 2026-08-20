@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 import structlog.contextvars
 
-from agentsys.audit.events import _AuditEventBase
 from agentsys.audit.redactor import Redactor
 
 if TYPE_CHECKING:

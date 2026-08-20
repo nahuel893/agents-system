@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Iterable
 
 import structlog
 
-from agentsys.harness.injector import _emit_async, resolve_tool_surface
+from agentsys.harness.injector import _emit, resolve_tool_surface
 from agentsys.harness.loader import AgentDefinition, RootConfig, resolve
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 
@@ -114,7 +114,7 @@ def _load_skills(
                 path=str(path),
             )
             # D-007: record skill_missing event before raising
-            _emit_async(
+            _emit(
                 "record_skill_missing",
                 definition=definition,
                 skill=name,
@@ -133,7 +133,7 @@ def _load_skills(
             deployment=definition.deployment,
         )
         # D-007: record skill_loaded event
-        _emit_async(
+        _emit(
             "record_skill_loaded",
             definition=definition,
             skill=name,
@@ -195,7 +195,7 @@ def build_runtime(
         skills=len(skills),
     )
     # D-007: record runtime_built event
-    _emit_async(
+    _emit(
         "record_runtime_built",
         definition=definition,
         tools_count=len(surface.granted),
