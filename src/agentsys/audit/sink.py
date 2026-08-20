@@ -65,6 +65,7 @@ class AuditSink:
                 "Ensure AuditSink is constructed in main.py lifespan and assigned "
                 "to app.state.audit_sink."
             )
+        assert isinstance(sink, AuditSink)
         return sink
 
     @classmethod
@@ -186,7 +187,7 @@ class AuditSink:
             async with self._session_factory() as session:
                 for event in batch:
                     orm_row = map_to_audit_event(event.model_dump())
-                    await session.add(orm_row)
+                    session.add(orm_row)  # synchronous: awaiting None raises
                 await session.commit()
         except Exception:
             # Drainer must NEVER crash — log and continue

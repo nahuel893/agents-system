@@ -37,7 +37,7 @@ from langgraph.graph import END, StateGraph
 
 from agentsys.agent.state import AgentState
 from agentsys.harness.factory import EquippedRuntime
-from agentsys.harness.injector import _emit_async
+from agentsys.harness.injector import _emit
 from agentsys.harness.interceptor import CallResult, PolicyViolation, intercept
 from agentsys.harness.loader import PLATFORM_DEFAULT_LIMITS
 
@@ -379,7 +379,7 @@ class AgentRuntime:
             model_type=type(model).__name__,
         )
         # D-007: record runtime_initialized event
-        _emit_async(
+        _emit(
             "record_runtime_initialized",
             definition=self._equipped.definition,
             tools_count=len(self._schemas),
@@ -484,7 +484,7 @@ class AgentRuntime:
                 total_execution_timeout_s=effective_limits["total_execution_timeout_s"],
             )
             # D-007: record runtime_timeout event
-            _emit_async(
+            _emit(
                 "record_runtime_timeout",
                 definition=self._equipped.definition,
                 total_execution_timeout_s=effective_limits["total_execution_timeout_s"],

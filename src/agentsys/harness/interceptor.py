@@ -27,7 +27,7 @@ from typing import Any, Iterable
 import structlog
 
 from agentsys.harness.factory import EquippedRuntime
-from agentsys.harness.injector import _emit_async
+from agentsys.harness.injector import _emit
 from agentsys.harness.registry import ToolSpec
 
 logger = structlog.get_logger()
@@ -101,7 +101,7 @@ async def intercept(
             reason="not_in_surface",
         )
         # D-007: record tool_call_blocked event
-        _emit_async(
+        _emit(
             "record_tool_call_blocked",
             definition=runtime.definition,
             tool_name=tool_name,
@@ -121,7 +121,7 @@ async def intercept(
                 reason="revalidation_required",
             )
             # D-007: record tool_call_blocked event
-            _emit_async(
+            _emit(
                 "record_tool_call_blocked",
                 definition=runtime.definition,
                 tool_name=tool_name,
@@ -137,7 +137,7 @@ async def intercept(
                 reason="permission_revoked",
             )
             # D-007: record tool_call_blocked event
-            _emit_async(
+            _emit(
                 "record_tool_call_blocked",
                 definition=runtime.definition,
                 tool_name=tool_name,
@@ -161,7 +161,7 @@ async def intercept(
         elapsed_ms=round(elapsed_ms, 2),
     )
     # D-007: record tool_call_attempted event (call_allowed + executed in one)
-    _emit_async(
+    _emit(
         "record_tool_call_attempted",
         definition=runtime.definition,
         tool_name=tool_name,

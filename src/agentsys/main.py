@@ -126,7 +126,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from agentsys.audit.sink import AuditSink
         from agentsys.models.base import get_session_factory
 
-        _audit_session_factory = get_session_factory(settings.database_url)
+        # get_session_factory takes the engine, not the URL. app.state.engine
+        # is already built and disposed by resource_stack above.
+        _audit_session_factory = get_session_factory(app.state.engine)
         audit_sink = AuditSink(session_factory=_audit_session_factory)
         await audit_sink.start()
         AuditSink.set_current(audit_sink)
