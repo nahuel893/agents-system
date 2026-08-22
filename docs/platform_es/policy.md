@@ -123,6 +123,26 @@ Estos son los valores predeterminados de la plataforma. La política `policy.md`
 
 ---
 
+## Política de auditoría (*Audit policy*)
+
+El subsistema de auditoría lee `audit_policy` en el momento de emisión. Todas las
+claves son opcionales; los valores por defecto son los seguros.
+
+| Clave | Tipo | Por defecto | Efecto |
+|---|---|---|---|
+| `retention_days` | `int \| null` | valor de plataforma | Cuánto tiempo se conservan los registros antes de descartar la partición |
+| `capture_tool_input` | `bool` | `false` | En `true`, los valores de texto libre (`message`, `body`, `text`) se almacenan en lugar de redactarse |
+| `redact_keys` | `list[str]` | `[]` | Claves adicionales de primer nivel del payload que siempre se redactan |
+
+`capture_tool_input` es una habilitación acotada, no global. Los números de
+teléfono y las direcciones de correo se eliminan incluso cuando está activada:
+habilitar la captura de texto libre no habilita el almacenamiento de
+identificadores de clientes.
+
+Implementación y tabla completa de redacción: `docs/platform_es/audit.md`.
+
+---
+
 ## Modos de fallo (*Failure modes*)
 
 | Fallo | Comportamiento |
@@ -130,7 +150,27 @@ Estos son los valores predeterminados de la plataforma. La política `policy.md`
 | Conector de herramienta inalcanzable | Reintentar una vez tras 2s; si sigue fallando, escalar |
 | Proveedor de LLM inalcanzable | Fallar rápido, devolver error al cliente, log de auditoría |
 | Error en pipeline de inyección (falta herramienta) | Bloquear la ejecución por completo, alertar al operador de plataforma |
-| Fallo en persistencia de auditoría | Bloquear la ejecución — no hay ejecución sin auditabilidad |
+| Fallo en persistencia de auditoría | **No bloquea.** El evento se descarta, se registra `audit.event_dropped` y se incrementa `dropped_count` |
+
+### Decisión abierta: auditabilidad frente a disponibilidad
+
+Esta especificación decía originalmente *"Bloquear la ejecución — no hay
+ejecución sin auditabilidad"*, y el `AuditSink` implementado hace lo contrario:
+es *fire-and-forget* por construcción, así que una falla de escritura de
+auditoría nunca alcanza el camino de la petición.
+
+Ambas posturas son defendibles y son genuinamente incompatibles:
+
+- **Bloquear ante la falla** es la postura correcta si el registro de auditoría
+  es un artefacto de cumplimiento: una acción no auditable no debe ocurrir.
+- **No bloquear nunca** es la postura correcta si la prioridad es la
+  disponibilidad: el subsistema de auditoría no debe volverse una dependencia
+  de latencia ni de falla del tráfico de clientes.
+
+El código implementa hoy la segunda. Esta fila se corrigió para coincidir con el
+código, y no al revés, porque invertirlo es una decisión de plataforma con
+consecuencias reales sobre el camino de WhatsApp, no una corrección de bug.
+Queda registrada aquí para que la elección sea explícita y no accidental.
 
 ---
 
@@ -140,3 +180,4 @@ Estos son los valores predeterminados de la plataforma. La política `policy.md`
 - Definición de herramientas y flag `sensitive`: `docs/platform_es/tool.md`
 - Reglas de delegación: `docs/architecture/delegation-policy.md`
 - Implementación de control en el harness: `docs/platform_es/harness.md`
+- Subsistema de auditoría: `docs/platform_es/audit.md`
