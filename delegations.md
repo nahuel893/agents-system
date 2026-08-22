@@ -42,9 +42,10 @@ into — today the request *is* the work.
 | ID | Slice / Feature | Agent | Cx | Branch | Depends on | Status | Result |
 |----|-----------------|-------|----|--------|-----------|--------|--------|
 | D-007-pr1 | Alembic infra + `AuditEvent` + table-ownership rule + partition lifecycle | claude-code | high | `feat/D-007-pr1-schema-model-migration` | — | in_review | 549 unit + 5 integration green, ruff + mypy clean. Fixed 4 defects beyond the original scope — see task details. 1282 lines, **size decision pending**. |
-| D-026 | Audit events + redactor (Pydantic union, PII default-deny) | — | high | `feat/D-007-pr2-events-redactor` | D-007-pr1 | wip | ~1790 lines over pr1. Commit says "do not open a PR from this as-is". Needs splitting. |
-| D-027 | Audit sink wiring (injector, interceptor, factory, graph) | — | high | `feat/D-007-pr3-sink-wiring` | D-026 | wip | ~930 lines over pr2. Not green. |
+| D-026 | Audit events + redactor (Pydantic union, PII default-deny) | claude-code | high | `feat/D-007-pr2-events-redactor` | D-007-pr1 | in_review | 606 green, ruff + mypy clean. 1711 lines over pr1. Found the `client`/`deployment` mock divergence: every event recorded `"unknown"` as the deployment. Two strict xfails left as forcing functions for pr3. |
+| D-027 | Audit sink wiring (injector, interceptor, factory, graph) | claude-code | high | `feat/D-007-pr3-sink-wiring` | D-026 | in_review | 633 green, ruff + mypy clean on 52 files. 1122 lines over pr2. Fixed 4 chained silent defects that made the whole feature inert — see task details. `AuditSink.stop()` tail loss pinned as strict xfail. |
 | D-028 | Monthly partition job — operational entrypoint | — | low | — | D-007-pr1 | todo | Downgraded from critical to optimization by the DEFAULT partition. |
+| D-041 | `AuditSink.stop()` loses the queue tail on graceful shutdown | — | medium | — | D-027 | todo | Pinned as `strict=True` xfail in `tests/test_audit_wiring.py`. `stop()` must await the drainer's exit instead of cancelling it. Remove the marker as part of the fix. |
 | D-029 | Runtime topology decision record | — | medium | — | — | todo | Docs only. Blocks D-030/032/033/036. |
 | D-030 | Webhook returns 200 before the turn; turn + send to background | — | high | — | D-029 | todo | Fixes silent message loss. |
 | D-031 | Dedup claim/release so a failed turn does not swallow the message | — | medium | — | D-030 | todo | Must land with D-030 to be correct. |

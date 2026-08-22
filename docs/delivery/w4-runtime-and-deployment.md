@@ -73,9 +73,10 @@ promises; anything over ~400 needs a chain decision per the `chained-pr` rule.
 | ID | Slice | Depends on | Est. | Note |
 |---|---|---|---|---|
 | D-007-pr1 | Alembic infra, `AuditEvent`, table-ownership rule, partition lifecycle | — | 1282 | **Done, verified.** Size decision pending. |
-| D-026 | Audit events + redactor (Pydantic discriminated union, PII default-deny) | D-007-pr1 | ~1790 | Currently `wip` on `feat/D-007-pr2-events-redactor`. Needs splitting before a PR. |
-| D-027 | Audit sink wiring through injector, interceptor, factory, graph | D-026 | ~930 | Currently `wip` on `feat/D-007-pr3-sink-wiring`. |
+| D-026 | Audit events + redactor (Pydantic discriminated union, PII default-deny) | D-007-pr1 | 1711 | **Done, verified.** 606 green on `feat/D-007-pr2-events-redactor`. |
+| D-027 | Audit sink wiring through injector, interceptor, factory, graph | D-026 | 1122 | **Done, verified.** 633 green on `feat/D-007-pr3-sink-wiring`. Four chained silent defects fixed; documented in `docs/platform/audit.md`. |
 | D-028 | Monthly partition job — operational entrypoint with its own connection | D-007-pr1 | ~80 | **No longer critical**: the DEFAULT partition means missing a run costs query pruning, not availability. Was a hard dependency before. |
+| D-041 | `AuditSink.stop()` must await the drainer instead of cancelling it | D-027 | ~40 | Graceful shutdown currently discards the queue tail. Pinned as a strict xfail, so the fix is forced to remove the marker. Belongs here because the shutdown handshake is a deployment concern. |
 
 ### Phase 1 — decide the topology
 
