@@ -68,13 +68,13 @@ first work item after D-007, ahead of anything about capacity.
 Each row is a delegation-ledger candidate. Line estimates are for planning, not
 promises; anything over ~400 needs a chain decision per the `chained-pr` rule.
 
-### Phase 0 — finish D-007 (in flight)
+### Phase 0 — finish D-007 (complete, merged 2026-08-22)
 
 | ID | Slice | Depends on | Est. | Note |
 |---|---|---|---|---|
-| D-007-pr1 | Alembic infra, `AuditEvent`, table-ownership rule, partition lifecycle | — | 1282 | **Done, verified.** Size decision pending. |
-| D-026 | Audit events + redactor (Pydantic discriminated union, PII default-deny) | D-007-pr1 | 1711 | **Done, verified.** 606 green on `feat/D-007-pr2-events-redactor`. |
-| D-027 | Audit sink wiring through injector, interceptor, factory, graph | D-026 | 1122 | **Done, verified.** 633 green on `feat/D-007-pr3-sink-wiring`. Four chained silent defects fixed; documented in `docs/platform/audit.md`. |
+| D-007-pr1 | Alembic infra, `AuditEvent`, table-ownership rule, partition lifecycle | — | 1282 | **Merged**, PR #26. |
+| D-026 | Audit events + redactor (Pydantic discriminated union, PII default-deny) | D-007-pr1 | 1711 | **Merged**, PR #27. 606 green. |
+| D-027 | Audit sink wiring through injector, interceptor, factory, graph | D-026 | 1122 | **Merged**, PR #28. 634 green. Five chained silent defects fixed; documented in `docs/platform/audit.md`. |
 | D-028 | Monthly partition job — operational entrypoint with its own connection | D-007-pr1 | ~80 | **No longer critical**: the DEFAULT partition means missing a run costs query pruning, not availability. Was a hard dependency before. |
 | D-041 | `AuditSink.stop()` must await the drainer instead of cancelling it | D-027 | ~40 | Graceful shutdown currently discards the queue tail. Pinned as a strict xfail, so the fix is forced to remove the marker. Belongs here because the shutdown handshake is a deployment concern. |
 | D-042 | `_seq_counter` prune strategy, and a sequence source that survives N workers | D-029 | ~120 | Unbounded growth plus a per-process counter. Belongs after the topology decision: per-request cleanup, a TTL, or moving the sequence to the database trade differently, and which one is correct depends on the worker count. |
