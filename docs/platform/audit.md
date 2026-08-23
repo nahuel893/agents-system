@@ -219,12 +219,37 @@ the month differently depending on who ran the migration.
    event reaches `_flush_batch`; `tests/test_audit_wiring.py` has the
    `CapturingSink` pattern for this.
 
+## Sequencing
+
+`sequence` is monotonic within a `correlation_id`, and `(occurred_at,
+correlation_id, sequence)` is a UNIQUE constraint — so the counter is what
+guarantees an execution's events can be ordered after the fact, and a duplicate
+fails the INSERT for the whole batch.
+
+The allocator is a module-level dict behind an `asyncio.Lock`. Two consequences
+that are not visible from the call site:
+
+- **The counter is per process.** With more than one uvicorn worker, each has its
+  own. Distinct requests carry distinct `request_id` values so they do not
+  collide, but `_correlation_id_from_context()` falls back to the literal
+  `"none"` when there is no request context — and every worker counts `"none"`
+  from 1 independently. Two workers emitting a contextless event in the same
+  microsecond violate the UNIQUE and lose the entire batch.
+- **The dict is never pruned.** It gains one entry per `correlation_id` and
+  nothing removes it, so a long-lived process grows without bound. Only the test
+  suite calls `_seq_counter.clear()`, which is why the suite cannot see it.
+
+Tracked as D-041's sibling in the ledger. The fix is not obvious — per-request
+cleanup, a TTL, or moving the sequence to the database each trade differently —
+so it is filed rather than patched.
+
 ## Operational signals
 
 | Log event | Meaning | Action |
 |---|---|---|
 | `audit.event_dropped` | Queue full, event lost | Raise `maxsize`, or investigate drainer stalls |
 | `audit.emit_failed` | The emit path raised | Read `exc_info` — the request itself was unaffected |
+| `audit.drain_failed` | A batch INSERT failed; those events are gone | Read `error` and `exc_info`. Carries `batch_size`, so the loss is quantified |
 | `audit.emit_skipped_no_loop` | No running event loop | Expected in sync tests and CLI entry points |
 
 ## Implementation

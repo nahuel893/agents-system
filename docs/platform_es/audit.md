@@ -228,12 +228,38 @@ la sesión, lo que partiría el mes distinto según quién corriera la migració
    y verificar que el evento llega a `_flush_batch`; `tests/test_audit_wiring.py`
    tiene el patrón `CapturingSink` para eso.
 
+## Secuenciado
+
+`sequence` es monótono dentro de un `correlation_id`, y `(occurred_at,
+correlation_id, sequence)` es una restricción UNIQUE — así que el contador es lo
+que garantiza que los eventos de una ejecución puedan ordenarse después, y un
+duplicado hace fallar el INSERT de todo el lote.
+
+El asignador es un diccionario a nivel de módulo detrás de un `asyncio.Lock`.
+Dos consecuencias que no se ven desde el sitio de llamada:
+
+- **El contador es por proceso.** Con más de un worker de uvicorn, cada uno tiene
+  el suyo. Requests distintos llevan `request_id` distintos y por eso no
+  colisionan, pero `_correlation_id_from_context()` cae al literal `"none"`
+  cuando no hay contexto de request — y cada worker cuenta `"none"` desde 1 de
+  forma independiente. Dos workers emitiendo un evento sin contexto en el mismo
+  microsegundo violan la UNIQUE y pierden el lote entero.
+- **El diccionario nunca se poda.** Gana una entrada por `correlation_id` y nada
+  la quita, así que un proceso de larga vida crece sin techo. Solo la suite de
+  tests llama a `_seq_counter.clear()`, que es por lo que la suite no puede
+  verlo.
+
+Registrado en el ledger junto a D-041. El arreglo no es obvio — limpieza por
+request, un TTL, o mover la secuencia a la base de datos tienen compromisos
+distintos — así que queda fichado y no parchado.
+
 ## Señales operativas
 
 | Evento de log | Significado | Acción |
 |---|---|---|
 | `audit.event_dropped` | Cola llena, evento perdido | Subir `maxsize`, o investigar demoras del drainer |
 | `audit.emit_failed` | El camino de emisión lanzó una excepción | Leer `exc_info` — la petición en sí no se vio afectada |
+| `audit.drain_failed` | Falló el INSERT de un lote; esos eventos se perdieron | Leer `error` y `exc_info`. Lleva `batch_size`, así que la pérdida queda cuantificada |
 | `audit.emit_skipped_no_loop` | No hay loop de eventos en ejecución | Esperado en tests síncronos y entrypoints de CLI |
 
 ## Implementación

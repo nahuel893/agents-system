@@ -189,10 +189,14 @@ class AuditSink:
                     orm_row = map_to_audit_event(event.model_dump())
                     session.add(orm_row)  # synchronous: awaiting None raises
                 await session.commit()
-        except Exception:
-            # Drainer must NEVER crash — log and continue
+        except Exception as exc:
+            # Drainer must NEVER crash — log and continue.
+            # `exc` must be bound: `str(Exception())` constructs a fresh empty
+            # exception and stringifies THAT, so the only record of a failed
+            # audit write carried an empty string.
             logger.error(
                 "audit.drain_failed",
                 batch_size=len(batch),
-                error=str(Exception()),
+                error=str(exc),
+                exc_info=True,
             )

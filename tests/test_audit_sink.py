@@ -360,3 +360,47 @@ class TestAuditSinkSequenceAllocation:
         assert sorted(all_seqs) == list(range(1, 51)), "Sequences 1..50 in order"
         # Cleanup
         _seq_counter.clear()
+
+
+class TestDrainFailureIsDiagnosable:
+    """The drainer must never crash — but a swallowed failure has to say what failed.
+
+    This path had no coverage at all, which is how ``error=str(Exception())``
+    survived: it constructs a *new* empty exception and stringifies that, so the
+    only record of a failed audit write carried an empty string. The write
+    failed, the log fired, and the log said nothing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_flush_failure_logs_the_actual_exception(self):
+        """A failing session surfaces its own message, not an empty string."""
+        sentinel = "asyncpg: relation \"audit_event\" does not exist"
+
+        class _ExplodingSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc_info):
+                return False
+
+            def add(self, row):
+                raise RuntimeError(sentinel)
+
+            async def commit(self):  # pragma: no cover - never reached
+                raise AssertionError("commit must not be reached")
+
+        sink = AuditSink(session_factory=lambda: _ExplodingSession())
+
+        with patch("agentsys.audit.sink.logger") as mock_logger:
+            # Must not raise: the drainer's contract is that it never crashes.
+            await sink._flush_batch([make_event()])
+
+        assert mock_logger.error.called, "a failed flush must be logged"
+        _, kwargs = mock_logger.error.call_args
+
+        reported = str(kwargs.get("error", ""))
+        assert reported, "the log recorded an empty error string"
+        assert sentinel in reported, (
+            f"the log must carry the real failure, got {reported!r}"
+        )
+        assert kwargs.get("batch_size") == 1
