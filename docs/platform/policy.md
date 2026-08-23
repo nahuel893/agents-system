@@ -123,6 +123,25 @@ These are platform-level defaults. An agent's `policy.md` may define stricter va
 
 ---
 
+## Audit policy
+
+`audit_policy` is read by the audit subsystem at emit time. Every key is
+optional; the defaults are the safe ones.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `retention_days` | `int \| null` | platform default | How long records are kept before the partition is dropped |
+| `capture_tool_input` | `bool` | `false` | When `true`, free-text values (`message`, `body`, `text`) are stored instead of redacted |
+| `redact_keys` | `list[str]` | `[]` | Additional top-level payload keys to always redact |
+
+`capture_tool_input` is a narrow opt-in, not a global one. Phone numbers and
+email addresses are stripped even when it is enabled — turning on free-text
+capture is not turning on storage of customer identifiers.
+
+Implementation and the full redaction table: `docs/platform/audit.md`.
+
+---
+
 ## Failure modes
 
 | Failure | Behavior |
@@ -130,7 +149,27 @@ These are platform-level defaults. An agent's `policy.md` may define stricter va
 | Tool connector unreachable | Retry once after 2s; if still failing, escalate |
 | LLM provider unreachable | Fail fast, return error to caller, audit log |
 | Injection pipeline error (missing tool) | Block execution entirely, alert platform operator |
-| Audit persistence failure | Block execution — no execution without auditability |
+| Audit persistence failure | **Does not block.** The event is dropped, `audit.event_dropped` is logged, and `dropped_count` increments |
+
+### Open decision: auditability vs. availability
+
+This specification originally read *"Block execution — no execution without
+auditability"*, and the implemented `AuditSink` does the opposite: it is
+fire-and-forget by construction, so an audit write failure never reaches the
+request path.
+
+Both positions are defensible and they are genuinely incompatible:
+
+- **Block on failure** is the right posture if the audit trail is a compliance
+  artifact — an unauditable action must not happen.
+- **Never block** is the right posture if availability is the priority — the
+  audit subsystem must not become a latency or failure dependency of customer
+  traffic.
+
+The code currently implements the second. This row was corrected to match the
+code rather than the code changed to match the row, because reversing it is a
+platform-level decision with real consequences for the WhatsApp path, not a bug
+fix. It is recorded here so the choice is explicit rather than accidental.
 
 ---
 
