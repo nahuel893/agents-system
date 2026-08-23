@@ -10,21 +10,27 @@ from agentsys.models import (
 )
 
 
+#: Every table the ORM declares. Importing ``agentsys.models`` must register
+#: all of them, so this inventory is the same whether the suite runs whole or
+#: one module at a time — it did not used to be.
+EXPECTED_TABLES = {
+    "clients",
+    "orders",
+    "order_items",
+    "conversation_logs",
+    "catalog_embeddings",
+    "audit_event",
+}
+
+
 def test_all_models_importable() -> None:
-    """All five tables are registered in metadata."""
-    assert len(Base.metadata.tables) == 5
+    """Every declared table is registered in metadata, and nothing else is."""
+    assert len(Base.metadata.tables) == len(EXPECTED_TABLES)
 
 
 def test_table_names() -> None:
-    """Table names match the PRD schema."""
-    expected = {
-        "clients",
-        "orders",
-        "order_items",
-        "conversation_logs",
-        "catalog_embeddings",
-    }
-    assert set(Base.metadata.tables.keys()) == expected
+    """Table names match the PRD schema plus the D-007 audit log."""
+    assert set(Base.metadata.tables.keys()) == EXPECTED_TABLES
 
 
 def test_catalog_embedding_vector_dimension() -> None:
