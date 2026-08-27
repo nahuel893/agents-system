@@ -10,6 +10,7 @@ from sqlalchemy import (
     ARRAY,
     JSON,
     BigInteger,
+    DateTime,
     Index,
     PrimaryKeyConstraint,
     String,
@@ -47,7 +48,17 @@ class AuditEvent(Base):
     )
 
     # Partition key + PK component (composite PK in __table_args__)
+    #
+    # DateTime(timezone=True) is NOT decoration. A bare `Mapped[datetime]`
+    # makes SQLAlchemy infer `DateTime()`, which is `timezone=False`, and the
+    # INSERT then compiles with a `::TIMESTAMP WITHOUT TIME ZONE` cast. The
+    # migration creates TIMESTAMPTZ, so asyncpg rejected every batch with
+    # "can't subtract offset-naive and offset-aware datetimes" — and the
+    # drainer, which must never crash, logged it and dropped the batch. The
+    # audit log recorded nothing at all against real PostgreSQL. Same class of
+    # ORM/DDL divergence `models/base.py` warns about for partitioning.
     occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )

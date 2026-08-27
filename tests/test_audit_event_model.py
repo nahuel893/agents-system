@@ -163,3 +163,53 @@ class TestMapToAuditEventMapper:
         assert orm_row.sequence == 1
         assert orm_row.tool_name == "order_writer"
         assert orm_row.policy_decision == "allowed"
+
+
+class TestOccurredAtMatchesTheMigration:
+    """D-043: the ORM column type must match the DDL Alembic actually creates.
+
+    The migration creates `occurred_at TIMESTAMPTZ` (001_add_audit_event.py).
+    The model annotated it as a bare `Mapped[datetime]`, and SQLAlchemy infers
+    `DateTime()` from that annotation — which defaults to `timezone=False`.
+
+    Nothing raised. The INSERT simply compiled with a
+    `::TIMESTAMP WITHOUT TIME ZONE` cast while `default` supplied an aware
+    datetime, so asyncpg rejected every batch with
+
+        invalid input for query argument $2 ...
+        can't subtract offset-naive and offset-aware datetimes
+
+    and the drainer — which must never crash — logged and moved on. The audit
+    log persisted NOTHING against a real PostgreSQL, and the unit suite could
+    not see it because it mocks the session.
+
+    This is the same class of ORM/DDL divergence that `models/base.py` already
+    warns about for partitioning: metadata and migration disagree, silently.
+    """
+
+    def test_occurred_at_is_timezone_aware(self) -> None:
+        """`occurred_at` must compile to TIMESTAMP WITH TIME ZONE."""
+        from agentsys.models.audit_event import AuditEvent
+
+        column = AuditEvent.__table__.c.occurred_at
+        assert getattr(column.type, "timezone", False) is True, (
+            "occurred_at compiles to TIMESTAMP WITHOUT TIME ZONE, but the "
+            "migration creates TIMESTAMPTZ. Every INSERT carrying an aware "
+            "datetime is rejected by asyncpg."
+        )
+
+    def test_default_supplies_an_aware_datetime(self) -> None:
+        """The column default is aware, which is what the DDL expects.
+
+        Pinned so a future 'fix' that strips tzinfo from the default — the
+        other way to make the mismatch stop erroring — is caught here instead
+        of silently recording every event in an unknown timezone.
+        """
+        from agentsys.models.audit_event import AuditEvent
+
+        default = AuditEvent.__table__.c.occurred_at.default
+        assert default is not None, "occurred_at must carry a default"
+        value = default.arg(None) if callable(default.arg) else default.arg
+        assert isinstance(value, datetime)
+        assert value.tzinfo is not None, "the default must be timezone-aware"
+        assert value.utcoffset() == timezone.utc.utcoffset(None)

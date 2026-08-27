@@ -25,8 +25,10 @@ sat behind the marker and never ran anywhere. It is wired into the
 from __future__ import annotations
 
 import os
+import uuid
 import subprocess
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -224,3 +226,67 @@ async def test_downgrade_removes_partitions_created_after_install(
 
     # The fixture's teardown downgrade must stay a no-op, not an error.
     _run_alembic("upgrade head", url)
+
+
+class TestAuditSinkActuallyWritesThroughTheORM:
+    """D-043: close the coverage hole that let a total audit outage ship.
+
+    Every existing audit test either mocks the session (unit suite) or checks
+    the migration's DDL directly (this file, above). Nothing drove a real ORM
+    INSERT against the migrated table — so a mismatch between the model's
+    column type and the DDL Alembic creates was invisible to all 634 tests,
+    while in production it rejected 100% of audit writes.
+    """
+
+    async def test_orm_insert_round_trips_against_the_migrated_table(
+        self, migrated_engine: AsyncEngine
+    ) -> None:
+        """An AuditEvent built by the ORM must land in a partition and read back.
+
+        Guards the exact failure: `occurred_at` compiled to TIMESTAMP WITHOUT
+        TIME ZONE while the migration created TIMESTAMPTZ, so asyncpg raised
+        "can't subtract offset-naive and offset-aware datetimes" on every batch.
+        """
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from agentsys.models.audit_event import AuditEvent
+
+        occurred = datetime.now(timezone.utc)
+        event_id = uuid.uuid4()
+
+        session_factory = async_sessionmaker(migrated_engine, expire_on_commit=False)
+        async with session_factory() as session:
+            session.add(
+                AuditEvent(
+                    event_id=event_id,
+                    occurred_at=occurred,
+                    correlation_id="d043-roundtrip",
+                    sequence=1,
+                    event_type="tool_granted",
+                    role="sales-agent",
+                    deployment="acme",
+                    payload={"tool_name": "catalog_search"},
+                    pii_keys=[],
+                )
+            )
+            await session.commit()
+
+        async with migrated_engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        "SELECT occurred_at, tableoid::regclass::text AS partition "
+                        "FROM audit_event WHERE event_id = :eid"
+                    ),
+                    {"eid": event_id},
+                )
+            ).one()
+
+        stored, partition = row
+        assert stored.tzinfo is not None, (
+            "occurred_at came back naive — the column lost its time zone"
+        )
+        assert stored == occurred
+        assert partition != "audit_event", (
+            f"row landed on the parent table, not a partition (got {partition!r})"
+        )
