@@ -211,5 +211,11 @@ class TestOccurredAtMatchesTheMigration:
         assert default is not None, "occurred_at must carry a default"
         value = default.arg(None) if callable(default.arg) else default.arg
         assert isinstance(value, datetime)
-        assert value.tzinfo is not None, "the default must be timezone-aware"
-        assert value.utcoffset() == timezone.utc.utcoffset(None)
+        # `utcoffset() == timedelta(0)` is NOT enough: the classic mistake is
+        # `datetime.now().replace(tzinfo=timezone.utc)` -- local wall clock
+        # stamped as UTC. That is aware, offset zero, and wrong by hours, so
+        # events near a month boundary land in the wrong partition.
+        assert value.tzinfo is timezone.utc, (
+            "the default must be UTC itself, not merely an aware datetime "
+            "whose offset happens to be zero"
+        )
