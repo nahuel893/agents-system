@@ -24,31 +24,46 @@ salva agregando workers. Medido sobre la máquina de desarrollo:
 | `superuser_reserved_connections` | 3 | `show superuser_reserved_connections` |
 | `shared_buffers` | 128 MB (default de fábrica, sin tunear) | `show shared_buffers` |
 | Pool de conexiones | **sin configurar** → default de SQLAlchemy 5 + 10 = 15 por engine | `models/base.py:65` |
-| Engines por proceso | hasta 3 (operacional, BI, medallion) | `main.py:122,193` · `services/medallion.py:19` |
+| Engines por proceso **servidor** | **2** (operacional + BI) | `main.py:122`, `main.py:193` |
+| Engines por proceso de **script de sync** | 2 (operacional + medallion) | `scripts/sync_articles.py:36-37` · `sync_clients.py:28-29` |
 | Default de `embedding_provider` | `"local"` | `config.py` |
 
 Dos de esos números imponen techos duros, y ambos son costos **por proceso**.
 
 **El embedder se resuelve una vez por registry, no por llamada.** `main.py:171`
 construye el registry dentro del lifespan y captura el embedder en el closure
-del conector (`rag_connector.py:112` lo documenta: "BGE-M3 es pesado — cargar
+del conector (`rag_connector.py:108-109` lo documenta: "BGE-M3 es pesado — cargar
 una vez por registry, no por llamada"). Ese diseño es correcto, y significa que
 cada proceso worker sostiene su propia copia de 4,3 GB del modelo.
 
 **Las conexiones a la base también son por proceso.** Con el pool en el default
-de SQLAlchemy (`pool_size=5, max_overflow=10`), cada engine puede abrir 15
-conexiones, y un proceso sostiene entre 2 y 3 engines:
+de SQLAlchemy (`pool_size=5, max_overflow=10`, verificado contra un engine
+async real, no supuesto de los defaults sync), cada engine puede abrir 15
+conexiones.
 
-| Procesos | Conexiones (2 engines) | Conexiones (3 engines) | Contra 97 utilizables |
-|---|---|---|---|
-| 1 | 30 | 45 | entra |
-| 2 | 60 | 90 | ajustado |
-| 3 | 90 | 135 | **agota** |
-| 4 | 120 | 180 | **agota** |
+Un proceso **servidor** sostiene dos: el engine operacional, siempre, y el de
+BI cuando `adapter_runtimes` y `bi_database_url` están ambos seteados — que es
+el caso del despliegue de ACME, porque el `data-agent` lo necesita. El engine
+de medallion NO es uno de ellos: `main.py` nunca lo construye. Existe solo en
+`scripts/sync_articles.py` y `scripts/sync_clients.py`, que son procesos
+separados y efímeros que lo emparejan con el operacional.
 
-Es decir: con los defaults de hoy, PostgreSQL se queda sin conexiones al tercer
-proceso worker — antes de que cualquier otra cosa del sistema se vuelva el
-cuello de botella.
+| Procesos servidor | Conexiones | Contra 97 utilizables |
+|---|---|---|
+| 1 | 30 | entra |
+| 2 | 60 | entra |
+| 3 | 90 | entra, con 7 de margen |
+| 4 | 120 | **agota** |
+
+O sea: con los defaults de hoy el techo son **cuatro** procesos servidor.
+
+El margen de siete conexiones con tres procesos es lo que vale mirar. Un script
+de sync abre su propio par de engines — hasta 30 conexiones más — y esos
+scripts son exactamente lo que un cron dispara mientras el servicio está
+arriba. Tres procesos servidor más un sync corriendo son 120 contra 97: el
+servicio empieza a fallar al pedir conexiones porque se disparó una
+sincronización de catálogo. Dimensionar el pool (D-032) tiene que contemplar
+los scripts, no solo los workers.
 
 ## Decisión
 
@@ -94,7 +109,7 @@ vuelve inaceptable; no construirlo especulativamente.
 Diez turnos concurrentes están dominados por la latencia del LLM, que es I/O.
 Un solo event loop lo maneja cómodo. Un proceso único no requiere ningún
 trabajo de estado compartido: `_seq_counter` es correcto dentro de un proceso,
-una sola cola de auditoría significa un solo `dropped_count`, y 30–45
+una sola cola de auditoría significa un solo `dropped_count`, y 30
 conexiones entran en `max_connections` sin tocar nada.
 
 Esto significa que la configuración de lanzamiento es **el código actual más
@@ -116,7 +131,7 @@ Inventariado leyendo el runtime, no supuesto:
 |---|---|---|
 | `_seq_counter` | dict de módulo, `audit/recorder.py:44` | **No — D-042.** Cada proceso cuenta el fallback `"none"` desde 1, así que dos workers emitiendo un evento sin contexto en el mismo instante violan `uq_audit_event_correlation_sequence` y pierden el lote entero. |
 | Cola de auditoría + `dropped_count` | en memoria, `audit/sink.py` | **Parcialmente.** Cada proceso tiene su propia cola de 1000 y su propio contador; nada los agrega, así que la pérdida de auditoría se vuelve N números invisibles en lugar de uno. Necesita D-046. |
-| Pools de conexiones | SQLAlchemy, sin configurar | **No — D-032.** 3 procesos agotan `max_connections` con los defaults actuales. |
+| Pools de conexiones | SQLAlchemy, sin configurar | **No — D-032.** 4 procesos servidor agotan `max_connections` con los defaults actuales, y 3 más un script de sync corriendo ya lo hacen. |
 | Embedder BGE-M3 local | RAM del proceso | **No.** N × 4,3 GB. Resuelto por la decisión 1. |
 | Control de admisión | *no existe* | **N/A — D-033.** No hay semáforo ni límite de turnos concurrentes en ninguna parte del código. La advertencia del roadmap de que "el techo real es 4× lo que escribiste" todavía no aplica, porque no hay nada escrito. |
 | `app.state.runtimes` | cacheado al boot | Sí — solo lectura después de que el lifespan lo construye. |
@@ -149,7 +164,7 @@ Ordenadas como deben hacerse, con lo que cambió en cada una:
 | **D-033** control de admisión | medium | **Requerido para la Etapa A.** Hoy nada acota los turnos concurrentes. Sin límite, 100 conversaciones que llegan abren 100 turnos y agotan el pool sin importar la cantidad de procesos. Es la protección más barata de la lista y hace falta con 10, no solo con 100. |
 | **D-030** el webhook devuelve 200 antes del turno | high | Sin cambios, y ahora desbloqueada. Requerida para la Etapa A. |
 | **D-031** claim/release de dedup | medium | Tiene que aterrizar junto con D-030, por lo dicho arriba. |
-| **D-032** dimensionamiento del pool | **low** | **Elevada.** Es la restricción que ata a partir de 3 procesos, así que es prerrequisito de la Etapa B, no una optimización. Configurar `pool_size`/`max_overflow` desde settings en ambos engines, dimensionados como `max_connections` ÷ procesos esperados, con margen. |
+| **D-032** dimensionamiento del pool | **low** | **Elevada.** Es la restricción que ata a partir de 4 procesos servidor, así que es prerrequisito de la Etapa B, no una optimización. Configurar `pool_size`/`max_overflow` desde settings en ambos engines, dimensionados como `max_connections` ÷ procesos esperados — dejando lugar para los scripts de sync, que abren su propio par de engines y pueden pasar del límite a un despliegue de 3 procesos por sí solos. |
 | **D-042** `_seq_counter` | medium | Ahora es decidible. Como la Etapa B es un objetivo real, el arreglo tiene que sobrevivir a N procesos: mover la secuencia a la base de datos (una secuencia por correlación, o una expresión en el INSERT), no un contador en memoria más astuto. Limpiar por request no alcanza. |
 | **D-041** `stop()` pierde la cola | medium | Sin cambios, y más importante en la Etapa B, donde N procesos pierden cada uno su cola en cada despliegue. |
 | **D-046** exponer `dropped_count` | medium | Sube de valor: en la Etapa B es la única forma de ver la pérdida agregada de auditoría. |
@@ -178,3 +193,14 @@ Registrado para que nadie confunda ausencia con cero:
 - Memoria residente de un BGE-M3 cargado (4,3 GB es el tamaño en disco).
 - Si `max_connections=100` es lo que va a correr el PostgreSQL de producción; es
   lo que reporta el contenedor de desarrollo.
+
+## Correcciones
+
+- **2026-08-27, surgida de la revisión.** La primera versión de este ADR
+  afirmaba hasta 3 engines por proceso (operacional, BI, medallion) y concluía
+  que PostgreSQL se agota con tres procesos worker. Ambas cosas eran falsas:
+  `main.py` nunca construye el engine de medallion
+  (`rg -n medallion src/agentsys/main.py` → sin resultados), así que un proceso
+  servidor sostiene 2 como máximo. El techo real son cuatro procesos, no tres.
+  El error hacía ver la restricción más ajustada de lo que es, y apareció al
+  verificar cada afirmación contra el código en lugar de releer el documento.
