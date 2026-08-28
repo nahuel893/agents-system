@@ -1,0 +1,125 @@
+# Pre-commit hooks for agents-system.
+#
+# WHAT THIS IS FOR, AND WHAT IT IS NOT
+#
+# These hooks catch mechanical problems at the moment they are introduced, so
+# that neither CI minutes nor a human reviewer's attention is spent on them.
+# Every comment a reviewer spends on trailing whitespace is a comment they did
+# not spend on the business logic.
+#
+# This is a net, NOT a guarantee. `git commit --no-verify` bypasses all of it,
+# so pre-commit NEVER replaces CI. The split is deliberate:
+#
+#   pre-commit  ->  speed     (fast feedback, skippable)
+#   CI          ->  guarantee (authoritative, not skippable)
+#
+# Anything that must hold runs in BOTH places. `ruff check` is here and in
+# .github/workflows/ci.yml for exactly that reason.
+#
+# DELIBERATELY ABSENT
+#
+# - pytest. The single most common way to kill a pre-commit setup. The suite
+#   takes ~9s and the integration jobs need live Postgres; a hook that slow
+#   trains everyone to type --no-verify, and then the whole thing is theatre.
+#   Tests run in CI.
+#
+# - mypy. Measured on this repo: 50s cold, 1.1s warm, with strict = true.
+#   The cold case alone disqualifies it. Worse, the mypy hook only sees the
+#   files being committed, while mypy needs the whole project to be correct --
+#   so it would be both slow AND wrong. It runs in CI over src/ as a unit.
+#
+# - ruff format. It would reformat 74 of 117 files on first run, because this
+#   project has never been ruff-formatted and CI only runs `ruff check`.
+#   Adopting it is a real decision with a noisy migration commit attached, not
+#   something to slip in through a hooks config. See the note at the bottom.
+#
+# Install once:   uv run pre-commit install
+# Run manually:   uv run pre-commit run --all-files
+
+repos:
+  # ---------------------------------------------------------------- hygiene
+  # Cheap, universal checks. These run on every commit regardless of language.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # --- formatting: these REWRITE the file and then fail the commit.
+      # That is not an error. The file they fixed is not the file you staged,
+      # so you `git add` again and commit. It only surprises you once.
+      - id: trailing-whitespace
+        # Two trailing spaces are a hard line break in Markdown, and every
+        # role/deployment manifest in platform/ and deployments/ is Markdown.
+        # Stripping them silently would change how those documents render.
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+      # --- syntax: does this file even parse?
+      # Catching a broken docker-compose.yml here beats catching it when the
+      # stack refuses to come up.
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-ast # Python parses
+
+      # --- repo hygiene
+      - id: check-added-large-files
+        # Largest tracked file today is uv.lock at ~452KB, so 1MB leaves room
+        # for it to grow while still stopping the real hazard: this project
+        # pulls a 4.3GB BGE-M3 model and writes .engram/chunks/*.gz. A binary
+        # committed by accident is effectively permanent -- rewriting history
+        # to remove it is far more expensive than this check.
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+        # Load-bearing here specifically. Multiple agents work this repo in
+        # parallel through separate worktrees, so conflict markers surviving a
+        # resolution is a live failure mode, not a theoretical one.
+      - id: check-case-conflict
+        # Filenames differing only in case break on macOS/Windows checkouts.
+
+      # --- security
+      - id: detect-private-key
+        # The second net under .gitignore's `.env*`. gitignore protects paths
+        # it knows about; this reads content, so it also catches a key pasted
+        # into a script, a test fixture, or a doc. A credential that reaches
+        # a remote is compromised the moment it lands -- deleting the commit
+        # does not un-leak it. Cheap insurance given this repo already lost a
+        # database to an exposure incident (see docker-compose.yml's header).
+
+  # ------------------------------------------------------------------- ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # PINNED to the ruff version in pyproject.toml, NOT to latest. pre-commit
+    # runs each hook in its own isolated environment, so this rev decides which
+    # ruff runs here -- independently of your venv. `pre-commit autoupdate`
+    # moved this to 0.16.5 and the hook immediately reported 199 errors on a
+    # tree that CI passes clean, because 0.16 ships rules 0.15 does not have.
+    # A hook that rejects what CI accepts is worse than no hook: it trains you
+    # to use --no-verify. Bump this and the pyproject pin together, never one
+    # alone, and re-run `pre-commit run --all-files` when you do.
+    rev: v0.15.9
+    hooks:
+      - id: ruff
+        # --fix so the hook repairs what it can rather than just complaining.
+        # --exit-non-zero-on-fix makes the commit fail even when everything was
+        # auto-fixed, so you always re-stage deliberately and never commit a
+        # version of the file you have not looked at.
+        args: [--fix, --exit-non-zero-on-fix]
+
+# ---------------------------------------------------------------------------
+# NOT ENABLED, ON PURPOSE -- revisit deliberately
+#
+# ruff-format: `ruff format --check .` currently reports 74 of 117 files would
+#   be reformatted. Enabling the hook would reformat files gradually as they
+#   are touched, which quietly inflates the diff of every unrelated change --
+#   painful right now with D-044 (real order_writer/client_lookup connectors)
+#   about to land. If you want it, do it as its own commit:
+#       uv run ruff format .
+#       git commit -m "style: adopt ruff format across the tree"
+#   then add the hook and `ruff format --check .` to CI in the same PR, so the
+#   reformat is one reviewable commit instead of noise spread across twenty.
+#
+# bandit: static security analysis for Python. Worth considering, but it is a
+#   new dependency and it would not have caught this project's actual incident
+#   (an exposed port in docker-compose, not a code pattern). Add it when there
+#   is a code-level threat it addresses.
+# ---------------------------------------------------------------------------
