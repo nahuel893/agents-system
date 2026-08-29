@@ -7,73 +7,104 @@
 # Every comment a reviewer spends on trailing whitespace is a comment they did
 # not spend on the business logic.
 #
-# This is a net, NOT a guarantee. `git commit --no-verify` bypasses all of it,
-# so pre-commit NEVER replaces CI. The split is deliberate:
-#
-#   pre-commit  ->  speed     (fast feedback, skippable)
-#   CI          ->  guarantee (authoritative, not skippable)
-#
-# Anything that must hold runs in BOTH places. `ruff check` is here and in
-# .github/workflows/ci.yml for exactly that reason.
+# This is a net, NOT a guarantee. `git commit --no-verify` bypasses all of it.
+# CI is the layer that is not skippable -- though note that `main` currently
+# has no branch protection, so CI does not block a merge either. Treat both as
+# feedback and the reviewer as the actual gate, until branch protection is on.
 #
 # DELIBERATELY ABSENT
 #
-# - pytest. The single most common way to kill a pre-commit setup. The suite
-#   takes ~9s and the integration jobs need live Postgres; a hook that slow
-#   trains everyone to type --no-verify, and then the whole thing is theatre.
-#   Tests run in CI.
+# - pytest. The integration jobs need live Postgres, and a slow hook trains
+#   everyone to type --no-verify. Tests run in CI.
 #
-# - mypy. Measured on this repo: 50s cold, 1.1s warm, with strict = true.
-#   The cold case alone disqualifies it. Worse, the mypy hook only sees the
-#   files being committed, while mypy needs the whole project to be correct --
-#   so it would be both slow AND wrong. It runs in CI over src/ as a unit.
+# - mypy. Measured here: 50s cold, 1.1s warm, with strict = true. Worse than
+#   slow -- the hook only sees staged files while mypy needs the whole project
+#   to be correct, so it would be slow AND wrong. It runs in CI over src/.
 #
-# - ruff format. It would reformat 74 of 117 files on first run, because this
-#   project has never been ruff-formatted and CI only runs `ruff check`.
-#   Adopting it is a real decision with a noisy migration commit attached, not
-#   something to slip in through a hooks config. See the note at the bottom.
+# - ruff format. It would reformat 74 of 117 files on first run. See the note
+#   at the bottom.
 #
-# Install once:   uv run pre-commit install
+# REQUIREMENTS
+#
+# pre-commit >= 3.2.0. Several hooks below declare `minimum_pre_commit_version:
+# 3.2.0`, and an older runner raises a hard ValidationError that stops the
+# WHOLE config from loading -- not just those hooks. Debian 12 ships 3.0.4.
+# The version this project resolves is fixed in uv.lock, which is why
+# pre-commit is a declared dev dependency rather than something you install
+# however you happen to have it.
+#
+# INSTALL (once per clone):
+#
+#     uv sync --group dev
+#     uv run pre-commit install --allow-missing-config
+#
+# `--allow-missing-config` is NOT optional here. Git hooks live in the shared
+# gitdir, so one install arms every worktree -- including branches that predate
+# this file. Without the flag, committing on any such branch aborts with
+# "No .pre-commit-config.yaml file was found".
+#
 # Run manually:   uv run pre-commit run --all-files
+# Uninstall:      uv run pre-commit uninstall
+
+# Merge commits run the `pre-merge-commit` hook, NOT `pre-commit`. Without this
+# line only the pre-commit type is installed, so every conflict-resolution
+# commit -- the exact event check-merge-conflict exists for, in a repo whose
+# protocol is parallel worktrees merging main -- would go entirely unchecked.
+default_install_hook_types: [pre-commit, pre-merge-commit]
 
 repos:
   # ---------------------------------------------------------------- hygiene
-  # Cheap, universal checks. These run on every commit regardless of language.
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       # --- formatting: these REWRITE the file and then fail the commit.
-      # That is not an error. The file they fixed is not the file you staged,
-      # so you `git add` again and commit. It only surprises you once.
+      # The file they fixed is not the file you staged, so you `git add` again.
+      #
+      # Caveat worth knowing: with a PARTIALLY staged file (`git add -p`),
+      # pre-commit stashes the unstaged hunks, and if reapplying them conflicts
+      # with the auto-fix it rolls the fix back entirely. You then get a failed
+      # commit with nothing changed on disk, reproducibly. Stage the whole file
+      # when a fixer is involved.
       - id: trailing-whitespace
-        # Two trailing spaces are a hard line break in Markdown, and every
-        # role/deployment manifest in platform/ and deployments/ is Markdown.
-        # Stripping them silently would change how those documents render.
+        # Two trailing spaces are a hard line break in Markdown.
         args: [--markdown-linebreak-ext=md]
       - id: end-of-file-fixer
+        # .engram/ is machine-written: `engram sync` rewrites manifest.json
+        # without a trailing newline every time. Of its 11 committed versions,
+        # 10 end without one, and the single exception was stripped back by the
+        # next sync. Without this exclude the hook re-adds the byte, the sync
+        # removes it, forever, on a file no human authors -- exactly the
+        # --no-verify spiral this config is written to avoid.
+        exclude: '^\.engram/'
       - id: mixed-line-ending
         args: [--fix=lf]
 
       # --- syntax: does this file even parse?
-      # Catching a broken docker-compose.yml here beats catching it when the
-      # stack refuses to come up.
       - id: check-yaml
       - id: check-toml
       - id: check-json
-      - id: check-ast # Python parses
 
       # --- repo hygiene
       - id: check-added-large-files
-        # Largest tracked file today is uv.lock at ~452KB, so 1MB leaves room
-        # for it to grow while still stopping the real hazard: this project
-        # pulls a 4.3GB BGE-M3 model and writes .engram/chunks/*.gz. A binary
-        # committed by accident is effectively permanent -- rewriting history
-        # to remove it is far more expensive than this check.
-        args: [--maxkb=1024]
+        # Default 500KB, deliberately NOT raised.
+        #
+        # This hook inspects only files being ADDED (`git diff --staged
+        # --diff-filter=A`), so already-tracked files are invisible to it at
+        # any threshold. An earlier version of this config raised the limit to
+        # 1MB "to leave room for uv.lock" -- which the hook can never see,
+        # since uv.lock has been tracked for months. That raise bought nothing
+        # and let a stray 500KB-1MB blob through.
+        #
+        # What it does catch is the real hazard: a new binary committed by
+        # accident. This project pulls a 4.3GB BGE-M3 model and writes
+        # .engram/chunks/*.gz, and a blob in history is effectively permanent.
       - id: check-merge-conflict
-        # Load-bearing here specifically. Multiple agents work this repo in
-        # parallel through separate worktrees, so conflict markers surviving a
-        # resolution is a live failure mode, not a theoretical one.
+        # --assume-in-merge because the hook returns 0 immediately unless git
+        # is mid-merge (it checks for MERGE_MSG plus MERGE_HEAD). Without the
+        # flag it is a no-op on ordinary commits AND inert under
+        # `run --all-files`, so a conflict marker committed after a resolution
+        # -- a live failure mode with parallel worktrees -- sails through.
+        args: [--assume-in-merge]
       - id: check-case-conflict
         # Filenames differing only in case break on macOS/Windows checkouts.
 
@@ -94,8 +125,8 @@ repos:
         # So: real value against the key class it covers, and NO coverage for
         # the token class -- which is the one that actually leaked here. The
         # control for generic tokens is GitHub's
-        # `secret_scanning_non_provider_patterns`, which is a repository
-        # setting, not a hook. Enable it there; do not assume this covers it.
+        # `secret_scanning_non_provider_patterns`, a repository setting, not a
+        # hook. Enable it there; do not assume this covers it.
         #
         # A credential that reaches a remote is compromised the moment it
         # lands: deleting the commit does not un-leak it. Rotation is the only
@@ -103,38 +134,67 @@ repos:
 
   # ------------------------------------------------------------------- ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # PINNED to the ruff version in pyproject.toml, NOT to latest. pre-commit
-    # runs each hook in its own isolated environment, so this rev decides which
-    # ruff runs here -- independently of your venv. `pre-commit autoupdate`
-    # moved this to 0.16.5 and the hook immediately reported 199 errors on a
-    # tree that CI passes clean, because 0.16 ships rules 0.15 does not have.
-    # A hook that rejects what CI accepts is worse than no hook: it trains you
-    # to use --no-verify. Bump this and the pyproject pin together, never one
-    # alone, and re-run `pre-commit run --all-files` when you do.
+    # Kept in step with the ruff that uv.lock resolves (0.15.9), NOT with
+    # latest. pre-commit runs each hook in its own isolated environment, so
+    # this rev alone decides which ruff runs here.
+    #
+    # `pre-commit autoupdate` moved this to 0.16.5 and the hook immediately
+    # reported 199 errors on a tree CI passes clean, because 0.16 ships rules
+    # 0.15 does not. A hook that rejects what CI accepts trains you to use
+    # --no-verify.
+    #
+    # Note that pyproject declares FLOORS, not pins: `ruff>=0.8` in
+    # optional-dependencies and `ruff>=0.15.9` in dependency-groups. The only
+    # thing fixing a version is uv.lock, which CI installs via
+    # `uv sync --group dev`. So `uv lock --upgrade` can move CI to 0.16.x while
+    # this rev stays behind -- the same divergence, inverted. When you upgrade
+    # ruff, bump this rev to match uv.lock and re-run `pre-commit run
+    # --all-files` in the same change.
     rev: v0.15.9
     hooks:
-      - id: ruff
-        # --fix so the hook repairs what it can rather than just complaining.
-        # --exit-non-zero-on-fix makes the commit fail even when everything was
-        # auto-fixed, so you always re-stage deliberately and never commit a
-        # version of the file you have not looked at.
-        args: [--fix, --exit-non-zero-on-fix]
+      # `ruff-check` is the canonical id; the bare `ruff` id still resolves but
+      # reports itself as "ruff (legacy alias)".
+      - id: ruff-check
+        # --fix so the hook repairs what it can. No --exit-non-zero-on-fix:
+        # pre-commit already fails any run in which a hook modified a file, so
+        # the flag changes nothing here.
+        args: [--fix]
 
 # ---------------------------------------------------------------------------
-# NOT ENABLED, ON PURPOSE -- revisit deliberately
+# KNOWN GAPS -- filed, not silently ignored
 #
-# ruff-format: `ruff format --check .` currently reports 74 of 117 files would
-#   be reformatted. Enabling the hook would reformat files gradually as they
-#   are touched, which quietly inflates the diff of every unrelated change --
-#   painful right now with D-044 (real order_writer/client_lookup connectors)
-#   about to land. If you want it, do it as its own commit:
+# - `.claude/settings.json` has a PostToolUse hook running `uv run ruff --fix`
+#   on every Python Write/Edit. For agent-authored code the file is already
+#   rewritten before any diff is shown, and that ruff comes from uv.lock while
+#   this one comes from an isolated env at the rev above. Two ruffs on the same
+#   file is a divergence waiting to happen; see the rev note.
+#
+# - No `.gitattributes`, so `mixed-line-ending --fix=lf` cannot make LF
+#   durable. The tree has zero CR bytes today, but on a `core.autocrlf=true`
+#   clone the hook would rewrite and fail on every commit. `* text=auto eol=lf`
+#   is the fix, and it belongs in its own change.
+#
+# - `.engram/` is not gitignored, so 13 generated .jsonl.gz blobs are tracked
+#   and every sync adds more. The size hook will start blocking sync commits
+#   once they cross the threshold. The real fix is deciding whether that
+#   directory belongs in git at all -- out of scope here.
+#
+# - CI never runs pre-commit, so these hooks exist only as a local convenience.
+#   One job running `pre-commit run --all-files` would make the set enforceable
+#   and dissolve the rev-sync problem above.
+#
+# NOT ENABLED, ON PURPOSE
+#
+# ruff-format: `ruff format --check .` reports 74 of 117 files would be
+#   reformatted. Enabling the hook reformats files gradually as they are
+#   touched, inflating the diff of every unrelated change. If you want it, do
+#   it as its own commit:
 #       uv run ruff format .
 #       git commit -m "style: adopt ruff format across the tree"
-#   then add the hook and `ruff format --check .` to CI in the same PR, so the
-#   reformat is one reviewable commit instead of noise spread across twenty.
+#   then add the hook and `ruff format --check .` to CI in the same PR.
 #
-# bandit: static security analysis for Python. Worth considering, but it is a
-#   new dependency and it would not have caught this project's actual incident
-#   (an exposed port in docker-compose, not a code pattern). Add it when there
-#   is a code-level threat it addresses.
+# bandit: static security analysis for Python. It would not have caught either
+#   incident this repo has had -- an exposed port in docker-compose, and a
+#   hardcoded bearer token. Add it when there is a code-level threat it
+#   addresses.
 # ---------------------------------------------------------------------------
