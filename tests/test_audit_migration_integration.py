@@ -25,8 +25,10 @@ sat behind the marker and never ran anywhere. It is wired into the
 from __future__ import annotations
 
 import os
+import uuid
 import subprocess
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -224,3 +226,176 @@ async def test_downgrade_removes_partitions_created_after_install(
 
     # The fixture's teardown downgrade must stay a no-op, not an error.
     _run_alembic("upgrade head", url)
+
+
+class TestOrmMatchesTheMigration:
+    """D-043: catch ORM/DDL divergence as a class, not one column at a time.
+
+    D-043 shipped because `occurred_at` was annotated `Mapped[datetime]` with
+    no explicit type: SQLAlchemy inferred `DateTime(timezone=False)`, the
+    migration created TIMESTAMPTZ, and every INSERT was rejected by asyncpg
+    while all 634 tests passed.
+
+    Pinning that one column would leave the class of defect alive -- and it
+    already was: review of the D-043 fix found `payload` declared generic JSON
+    against a JSONB column (surviving only on an assignment cast, and making
+    the GIN index below it un-creatable), plus an `event_id` `unique=True`
+    that PostgreSQL cannot honour on a partitioned table and the migration
+    never created.
+
+    This compares every column the ORM compiles against the DDL Alembic
+    actually produced, so the next drift fails here instead of in production.
+    """
+
+    # PostgreSQL treats unbounded VARCHAR and TEXT as the same type -- same
+    # storage, same performance, no truncation on either. SQLAlchemy renders
+    # `Mapped[str]` as bare VARCHAR while the migration writes TEXT, so nine
+    # columns differ textually and none differ in behaviour.
+    #
+    # Only the UNBOUNDED form is normalised: `VARCHAR(50)` compiles to
+    # "VARCHAR(50)", never matches these keys, and stays a real difference --
+    # which it is, since it would truncate where TEXT does not.
+    _EQUIVALENT_TYPES = {"VARCHAR": "TEXT", "VARCHAR[]": "TEXT[]"}
+
+    @classmethod
+    def _normalise(cls, compiled_type: str) -> str:
+        return cls._EQUIVALENT_TYPES.get(compiled_type, compiled_type)
+
+    async def test_every_column_type_matches_the_migrated_ddl(
+        self, migrated_engine: AsyncEngine
+    ) -> None:
+        """Each ORM column must compile to the type the migration created."""
+        from sqlalchemy import MetaData, Table
+        from sqlalchemy.dialects import postgresql
+
+        from agentsys.models.audit_event import AuditEvent
+
+        async with migrated_engine.connect() as conn:
+            reflected = await conn.run_sync(
+                lambda sync_conn: Table(
+                    "audit_event", MetaData(), autoload_with=sync_conn
+                )
+            )
+
+        dialect = postgresql.dialect()
+        mismatches = []
+        for column in AuditEvent.__table__.c:
+            orm_type = self._normalise(column.type.compile(dialect))
+            ddl_type = self._normalise(reflected.c[column.name].type.compile(dialect))
+            if orm_type != ddl_type:
+                mismatches.append(f"{column.name}: ORM {orm_type} != DDL {ddl_type}")
+
+        assert not mismatches, (
+            "the ORM and the migration disagree on column types, which fails "
+            "silently at INSERT time rather than at startup:\n  "
+            + "\n  ".join(mismatches)
+        )
+
+    async def test_orm_declares_no_constraint_the_database_lacks(
+        self, migrated_engine: AsyncEngine
+    ) -> None:
+        """A `unique=True` the migration never created is a constraint that
+        exists only in the ORM's mental model.
+
+        PostgreSQL requires every UNIQUE on a partitioned table to include the
+        partition key, so `unique=True` on a lone column is DDL it refuses.
+        Declaring it anyway makes idempotency logic look protected when two
+        identical rows insert cleanly.
+        """
+        from sqlalchemy import inspect
+
+        from agentsys.models.audit_event import AuditEvent
+
+        def _unique_columns(sync_conn: object) -> set[str]:
+            inspector = inspect(sync_conn)
+            found = {
+                frozenset(uc["column_names"])
+                for uc in inspector.get_unique_constraints("audit_event")
+            }
+            indexes = {
+                frozenset(ix["column_names"])
+                for ix in inspector.get_indexes("audit_event")
+                if ix.get("unique")
+            }
+            return {next(iter(c)) for c in (found | indexes) if len(c) == 1}
+
+        async with migrated_engine.connect() as conn:
+            single_column_uniques = await conn.run_sync(_unique_columns)
+
+        claimed = {c.name for c in AuditEvent.__table__.c if c.unique}
+        phantom = claimed - single_column_uniques
+        assert not phantom, (
+            f"ORM claims UNIQUE on {sorted(phantom)}, but the migrated table "
+            "has no such constraint -- duplicates insert cleanly"
+        )
+
+
+class TestAuditSinkWritesThroughTheProductionPath:
+    """The round trip the unit suite cannot do: mapper -> ORM -> PostgreSQL.
+
+    Every other audit test either mocks the session or asserts on DDL. The
+    production write is `event.model_dump()` -> `map_to_audit_event(...)` ->
+    `session.add` (sink.py), and none of it was ever exercised against a real
+    database -- which is why a column-type mismatch rejected 100% of audit
+    writes with the suite green.
+
+    So this drives `map_to_audit_event` itself rather than hand-building a row:
+    a regression in the mapper reproduces D-043 exactly, and the drainer's
+    blanket `except Exception` would swallow it just the same.
+    """
+
+    async def test_mapper_output_round_trips_into_the_right_partition(
+        self, migrated_engine: AsyncEngine
+    ) -> None:
+        """A mapped row must persist, keep its offset, and land in its month."""
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from agentsys.models.audit_event import map_to_audit_event
+
+        occurred = datetime.now(timezone.utc)
+        event_id = uuid.uuid4()
+
+        # Shaped exactly like the dict sink.py hands the mapper.
+        row = map_to_audit_event(
+            {
+                "event_id": event_id,
+                "occurred_at": occurred,
+                "correlation_id": "d043-roundtrip",
+                "sequence": 1,
+                "event_type": "tool_granted",
+                "role": "sales-agent",
+                "deployment": "acme",
+                "payload": {"tool_name": "catalog_search"},
+                "pii_keys": [],
+            }
+        )
+
+        session_factory = async_sessionmaker(migrated_engine, expire_on_commit=False)
+        async with session_factory() as session:
+            session.add(row)
+            await session.commit()
+
+        async with migrated_engine.connect() as conn:
+            stored, partition = (
+                await conn.execute(
+                    text(
+                        "SELECT occurred_at, tableoid::regclass::text "
+                        "FROM audit_event WHERE event_id = :eid"
+                    ),
+                    {"eid": event_id},
+                )
+            ).one()
+
+        assert stored.tzinfo is not None, (
+            "occurred_at came back naive -- the column lost its time zone"
+        )
+        assert stored == occurred
+
+        # The EXACT monthly partition, not merely "not the parent". Asserting
+        # `!= "audit_event"` is satisfied by audit_event_default, so it stays
+        # green precisely when the monthly partitions are missing or misdated
+        # -- the one failure the audit-migration CI job exists to catch.
+        assert partition == f"audit_event_{occurred:%Y_%m}", (
+            f"row landed in {partition!r}, not its month's partition; "
+            "audit_event_default means the monthly bounds are wrong"
+        )

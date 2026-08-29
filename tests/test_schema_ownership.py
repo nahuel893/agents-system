@@ -19,7 +19,7 @@ A second partitioned table should inherit the behavior for free.
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import DateTime, inspect
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentsys.models import Base
@@ -82,3 +82,30 @@ async def test_plain_create_all_still_fails_on_sqlite() -> None:
                 await conn.run_sync(Base.metadata.create_all)
     finally:
         await engine.dispose()
+
+
+def test_every_datetime_column_is_timezone_aware() -> None:
+    """No column in the project may compile to TIMESTAMP WITHOUT TIME ZONE.
+
+    Every migration here creates TIMESTAMPTZ, so a naive column is always a
+    defect -- and one that cannot fail loudly: the INSERT compiles with a
+    `::TIMESTAMP WITHOUT TIME ZONE` cast and asyncpg rejects the aware value at
+    runtime, which for audit_event meant the drainer logged and dropped 100% of
+    events (D-043) with the whole suite green.
+
+    This lives in the default suite on purpose. The integration test comparing
+    the ORM against reflected DDL is stronger, but it only runs in the
+    audit-migration CI job; this one fails in ~9 seconds, on every commit, for
+    every table -- including ones not written yet.
+    """
+    naive = [
+        f"{table.name}.{column.name}"
+        for table in Base.metadata.sorted_tables
+        for column in table.columns
+        if isinstance(column.type, DateTime) and not column.type.timezone
+    ]
+    assert not naive, (
+        "these columns compile to TIMESTAMP WITHOUT TIME ZONE while the "
+        f"migrations create TIMESTAMPTZ: {naive}. Base.type_annotation_map "
+        "should make DateTime(timezone=True) the default -- check it is intact."
+    )

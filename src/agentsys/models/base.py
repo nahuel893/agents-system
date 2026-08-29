@@ -3,7 +3,9 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from sqlalchemy import Connection, Table
+from datetime import datetime
+
+from sqlalchemy import Connection, DateTime, Table
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -18,7 +20,33 @@ ALEMBIC_OWNED = "alembic_owned"
 
 
 class Base(DeclarativeBase):
-    """Base class for all ORM models."""
+    """Base class for all ORM models.
+
+    ``type_annotation_map`` is load-bearing, not tidiness. SQLAlchemy derives a
+    column's type from its ``Mapped[...]`` annotation when ``mapped_column``
+    receives no explicit type, and its stock answer for ``datetime`` is
+    ``DateTime()`` — which is ``timezone=False``, i.e. TIMESTAMP WITHOUT TIME
+    ZONE.
+
+    Every migration in this project creates TIMESTAMPTZ, so that default is
+    always wrong here, and it fails in the worst possible way: nothing raises.
+    The INSERT simply compiles with a ``::TIMESTAMP WITHOUT TIME ZONE`` cast,
+    and asyncpg then rejects any aware datetime with "can't subtract
+    offset-naive and offset-aware datetimes".
+
+    That is not hypothetical. ``audit_event.occurred_at`` was written as a bare
+    ``Mapped[datetime]``, and the audit log recorded NOTHING against real
+    PostgreSQL until D-043 — while all 634 tests passed, because the unit suite
+    mocks the session and the migration tests assert on DDL rather than driving
+    an ORM INSERT.
+
+    Mapping the annotation here makes the default correct for every model,
+    including ones not yet written. The explicit ``DateTime(timezone=True)``
+    calls in ``tables.py`` are now redundant; they are kept because they are
+    correct and removing them is churn, not because they are needed.
+    """
+
+    type_annotation_map = {datetime: DateTime(timezone=True)}
 
 
 def alembic_owned_tables() -> tuple[Table, ...]:
