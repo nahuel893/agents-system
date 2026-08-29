@@ -39,6 +39,35 @@ Multiple agents work this repo **in parallel**. There is no direct communication
 
 The `Agent roster` table at the top of `delegations.md` maps slot → agent → model and is edited freely. Any agent can take the **Lead** role by reading Engram (`methodology/multi-agent-delegation` + `delegations/*`) and the ledger. The human switches the model per task based on each task's complexity tier.
 
+## Delivery flow — DIRECTIVE
+
+`docs/delivery/delivery-flow.md` defines the delivery process for this
+repository, effective 2026-08-29. It is the industry-standard flow, not a
+description of local habit. Read it before opening a PR.
+
+The rules it makes non-negotiable, summarised so they cannot be missed:
+
+- **Definition of Ready.** A task is not started until it states the problem
+  (not the solution), checkable acceptance criteria, dependencies, file scope,
+  and size. An underspecified task is sent back or marked blocked — never
+  started "to see how it goes".
+- **Branches live one to two days.** Longer than that is a fork.
+- **400 changed lines is a hard ceiling.** Above it, split into a chain before
+  opening the PR, not after review complains.
+- **Every PR body answers four questions**: what problem, how verified, what
+  is the blast radius, and how it is rolled back. The rollback answer is not
+  optional.
+- **The author never approves their own work.** For agents this is literal: an
+  agent that wrote a change may not be the one that clears it.
+- **A red build is never merged**, including "just to unblock".
+- **Definition of Done** requires all of: merged, CI green, reviewed by
+  another party, documentation updated in the same PR, deployed and verified,
+  and any deferred work carrying its own ticket. Not most of them — all.
+
+Where the repository does not yet enforce a rule — `main` has no branch
+protection as of this writing — the rule still applies, and closing that gap
+is tracked work rather than an excuse.
+
 ## SDD flow — how it maps onto this ledger
 
 Gentle AI already installs the SDD skills and Strict TDD in your config — you know the flow. What is **project-specific** (and was being skipped) is how it maps onto our delegation model:
