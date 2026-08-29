@@ -79,12 +79,27 @@ repos:
 
       # --- security
       - id: detect-private-key
-        # The second net under .gitignore's `.env*`. gitignore protects paths
-        # it knows about; this reads content, so it also catches a key pasted
-        # into a script, a test fixture, or a doc. A credential that reaches
-        # a remote is compromised the moment it lands -- deleting the commit
-        # does not un-leak it. Cheap insurance given this repo already lost a
-        # database to an exposure incident (see docker-compose.yml's header).
+        # KNOW WHAT THIS DOES AND DOES NOT CATCH.
+        #
+        # It matches PEM and SSH key headers -- BEGIN RSA/DSA/EC/OPENSSH/PGP
+        # PRIVATE KEY, and PuTTY-User-Key-File. That is all. It does NOT catch
+        # API tokens, bearer tokens, passwords, or connection strings.
+        #
+        # This is not hypothetical. While reviewing this very PR, an Outline
+        # API token was found as a plain literal in scripts/upload_outline.py
+        # and scripts/cleanup_outline_duplicates.py, public since 2026-05-28.
+        # This hook ran over both files and passed, because a bearer token
+        # looks nothing like a PEM header.
+        #
+        # So: real value against the key class it covers, and NO coverage for
+        # the token class -- which is the one that actually leaked here. The
+        # control for generic tokens is GitHub's
+        # `secret_scanning_non_provider_patterns`, which is a repository
+        # setting, not a hook. Enable it there; do not assume this covers it.
+        #
+        # A credential that reaches a remote is compromised the moment it
+        # lands: deleting the commit does not un-leak it. Rotation is the only
+        # remediation.
 
   # ------------------------------------------------------------------- ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
