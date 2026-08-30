@@ -23,33 +23,45 @@ An agent once concluded "no index here, skip CodeGraph" from the first command a
 
 Skip CodeGraph only when you already know the exact file and line you need.
 
-## You are working under a multi-agent protocol
+## Work tracking — GitHub Issues
 
-Multiple agents work this repo **in parallel**. There is no direct communication between you — coordination is asynchronous through **git + Engram + `delegations.md`**. Full methodology: `docs/delivery/delegation-protocol.md`. Read it before starting delegated work.
+Tasks live in **GitHub Issues**, not in a file. `delegations.md` is gone: it
+was a ledger for coordinating several agents in parallel, and that is no longer
+the situation.
 
-### Standing rules
+Refer to a task as **`#44 — order_writer does not persist orders`**: the number
+so it can be linked, the title so it reads without opening it. Never the bare
+number alone.
 
-1. **Your task lives in `delegations.md`.** Scan the active wave table for the row(s) where the **Agent** column matches your identity (`claude-code`, `antigravity`, `opencode`) and the status is `todo`. Those are yours — do only that slice. No one needs to hand you an ID.
-2. **Isolation.** Work in your own git worktree + branch (`feat/D-00X-<slug>`, worktree `../agents-system-D-00X`). A separate terminal is **not** isolation — the **directory** is: `cd` into your worktree and stay there, never operate in the main checkout, never `git checkout`/`git reset` shared history. Touch only files inside your task's declared **Scope (files)**. Need something out of scope? Stop and set your row to `blocked` with a note — never expand scope silently.
-3. **Load context first.** `mem_search` Engram for `delegations/<task-id>` and any referenced topics. Load the skill paths your task lists.
-4. **Use the Gentle AI SDD flow** for the work itself (see the section below — it is mandatory, not optional).
-5. **On finish:** commit on your branch (conventional commits, **no AI attribution**) → save to Engram under `topic_key: delegations/<task-id>` (what you built, decisions, gotchas, files) → set your row to `in_review` and fill the **Result** note → tell the human. **Do not merge to `main`** — the Lead integrates.
+```bash
+gh issue list --label priority:high     # what is urgent
+gh issue view 44                        # the full context
+gh issue create --title "..." --label "priority:high,reliability"
+```
 
-### Roles are slots, not fixed agents
+**Link the PR to its issue.** A PR body containing `Closes #44` closes that
+issue on merge — the state lives in the platform, so nobody edits a shared file
+and the whole class of ledger merge conflicts disappears.
 
-The `Agent roster` table at the top of `delegations.md` maps slot → agent → model and is edited freely. Any agent can take the **Lead** role by reading Engram (`methodology/multi-agent-delegation` + `delegations/*`) and the ledger. The human switches the model per task based on each task's complexity tier.
+Labels carry what the old table's columns did: `priority:high|medium|low` for
+urgency, and `security` / `reliability` / `infra` / `platform` / `process` for
+what the task is about. Dependencies are stated in the body ("blocked by #49"),
+which GitHub renders as a live link.
 
-## SDD flow — how it maps onto this ledger
+Branch naming keeps the issue number so branch, PR and issue are one thread:
+`fix/44-real-order-writer`, `feat/49-deploy-units`.
+
+## SDD flow — how it maps onto issues
 
 Gentle AI already installs the SDD skills and Strict TDD in your config — you know the flow. What is **project-specific** (and was being skipped) is how it maps onto our delegation model:
 
 | SDD phase | Owner |
 |---|---|
-| explore → propose → spec → design → tasks (planning) | Lead — your ledger task block **is** the resulting spec/design/tasks |
-| apply (Strict TDD) + verify | **You (worker)** — run them on your slice |
-| archive | Lead, at integration |
+| explore → propose → spec → design → tasks (planning) | The issue body **is** the resulting spec/design/tasks |
+| apply (Strict TDD) + verify | Run them on the issue's scope |
+| archive | At merge — `Closes #NN` |
 
-So: treat your task block as the contract, run apply + verify on it, and do not mark `in_review` until verify passes **every** acceptance criterion. If the task is underspecified, set it `blocked` — don't re-plan or expand scope.
+So: treat the issue as the contract, run apply + verify against it, and do not close it until every acceptance criterion passes. If the issue is underspecified, say so on the issue rather than guessing — see the Definition of Ready in the delivery flow.
 
 ## Engram persistent memory
 
