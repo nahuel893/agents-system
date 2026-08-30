@@ -1,3 +1,12 @@
+> **SUPERSEDED — 2026-08-30.** This document described coordinating several
+> agents working the repository in parallel through a shared `delegations.md`
+> ledger. That is no longer the situation: one agent works this repo, and task
+> tracking moved to GitHub Issues.
+>
+> Kept for the reasoning it records — the file-scope declaration and the
+> worktree isolation rules came from real failures. The mechanism it describes
+> is gone; see `docs/delivery/delivery-flow.md` for the process in force.
+
 # Multi-Agent Delegation Protocol
 
 This document defines how multiple AI coding agents — Claude Code, Antigravity, and OpenCode — collaborate on the `agents-system` repository. All three share Gentle AI configuration (Engram persistent memory + the SDD flow), but they run as **separate processes with no direct inter-process communication**.

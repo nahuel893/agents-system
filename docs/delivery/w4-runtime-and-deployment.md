@@ -174,7 +174,7 @@ Two real gaps remain, and they are what D-040 is:
 2. A typo'd deployment name **widens** the surface instead of failing —
    `loader.py:670` falls through to the generic role when `load_override`
    returns `None`, granting the role's full allowance rather than the
-   deployment's subset. Filed as a known defect in `delegations.md` and still
+   deployment's subset. Filed as a known defect in `GitHub Issues` and still
    open. Multi-level composition multiplies the blast radius of that fallback,
    so it should be closed first or in the same slice.
 
@@ -186,5 +186,5 @@ once.
 ## Not in this path
 
 - Anything requiring `MEDALLION_DB_*` or the host-hardening run — both are
-  blocked on the human, tracked in `delegations.md`.
+  blocked on the human, tracked in `GitHub Issues`.
 - Foreign-language token leakage in model output (known defect, unfiled work).
