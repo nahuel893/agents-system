@@ -29,6 +29,20 @@ Nothing in that table is exotic. All of it is missing.
 
 ## The flow
 
+### Where work is tracked
+
+**GitHub Issues.** One issue per task, referred to as `#44 — order_writer does
+not persist orders`: the number to link it, the title to read it.
+
+A PR body containing `Closes #44` closes the issue on merge, so status lives in
+the platform rather than in a versioned file. That is not a convenience — a
+shared status file is edited by every branch, and the three rebases in this
+repository's last integration all conflicted on exactly that file.
+
+Labels carry priority (`priority:high|medium|low`) and area (`security`,
+`reliability`, `infra`, `platform`, `process`). Dependencies go in the body as
+`blocked by #49`, which GitHub renders as a live link.
+
 ### 0. Definition of Ready — before work starts
 
 A task may not be picked up until it states:
@@ -38,9 +52,8 @@ A task may not be picked up until it states:
 - **Acceptance criteria that can be checked.** Someone other than the author
   must be able to decide whether it is met. "Works well" is not a criterion.
 - **Dependencies.** What must land first, and what breaks if this lands alone.
-- **Scope.** Which files or modules are in play. In this repository this is
-  mandatory rather than courteous: agents work in parallel and cannot ask each
-  other what they are touching.
+- **Scope.** Which files or modules are in play. Stating it up front is what
+  keeps a task from quietly growing into a refactor halfway through.
 - **Size.** If it obviously exceeds ~400 changed lines, it is split *before*
   work starts, not after the PR is opened.
 
@@ -52,8 +65,8 @@ blocked. Starting an underspecified task is how scope creep enters.
 Trunk-based: branch from `main`, live **one to two days**, merge back. A branch
 that lives a week has stopped being a branch and become a fork.
 
-Naming carries the task ID so the branch, the PR and the ticket are one thread:
-`feat/D-044-real-order-writer`, `fix/D-030-webhook-ack`.
+Naming carries the issue number so branch, PR and issue are one thread:
+`fix/39-real-order-writer`, `feat/43-webhook-ack`.
 
 ### 2. Commits — atomic, conventional
 
@@ -170,15 +183,15 @@ and that the hook we added to catch it matched PEM headers exclusively.
 
 Ordered by how much each one buys:
 
-1. **Branch protection on `main`** — required checks, required review, no
-   direct pushes. Without this every rule above is voluntary, and this is the
+1. **Branch protection on `main`** (#54) — required checks, required review,
+   no direct pushes. Without this every rule above is voluntary, and it is the
    single highest-value change in the list.
-2. **PR template** — makes the four questions in step 3 unavoidable.
-3. **CODEOWNERS** — routes review instead of leaving it to chance.
-4. **Versioning and CHANGELOG** — SemVer driven by the commit prefixes we
+2. **PR template** (#55) — makes the four questions in step 3 unavoidable.
+3. **CODEOWNERS** (#56) — routes review instead of leaving it to chance.
+4. **Versioning and CHANGELOG** (#57) — SemVer driven by the commit prefixes we
    already write.
-5. **Environments and deploy pipeline** — depends on D-036.
-6. **DORA measurement** — meaningful only once deploys actually happen.
+5. **Environments and deploy pipeline** (#49) — the deployment work itself.
+6. **DORA measurement** (#58) — meaningful only once deploys actually happen.
 
 Items 1 through 4 are configuration and cost hours. Items 5 and 6 need the
 deployment work to exist first.
