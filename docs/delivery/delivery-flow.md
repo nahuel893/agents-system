@@ -25,7 +25,10 @@ enforcement:
 | Rollback | A defined path back, per deploy | Undefined |
 | Delivery metrics | DORA four keys | Not measured |
 
-Nothing in that table is exotic. All of it is missing.
+Nothing in that table is exotic. All of it was missing when this document was
+written. One line has since changed: branch protection landed on 2026-08-30,
+with one criterion deliberately unmet. The closing section records exactly what
+is and is not enforced today.
 
 ## The flow
 
@@ -115,6 +118,14 @@ understanding without the fact.
 to agents literally: an agent that wrote a change may not be the one that
 clears it.
 
+> **This one is not enforced yet.** `required_approving_review_count` on `main`
+> is `0`. Every pull request here is authored by the single account that owns
+> the repository — the account whose token a coding agent also uses — and
+> GitHub refuses self-approval, so at `1` nothing could ever merge. Until a
+> second reviewing identity exists (#59), an agent *can* merge work it wrote.
+> Read the rule above as the standard being aimed at, not a guarantee the
+> platform makes.
+
 ### 6. Merge — with the branch deleted
 
 `main` stays deployable at every commit. If `main` is broken, everyone is
@@ -179,19 +190,44 @@ this public repository for three months, the finding was not that someone
 pasted it: it was that secret scanning was enabled for provider patterns only,
 and that the hook we added to catch it matched PEM headers exclusively.
 
-## What this repository must add to comply
+## What is enforced, and what is not
 
-Ordered by how much each one buys:
+### Landed — branch protection on `main` (2026-08-30, #54)
 
-1. **Branch protection on `main`** (#54) — required checks, required review,
-   no direct pushes. Without this every rule above is voluntary, and it is the
-   single highest-value change in the list.
-2. **PR template** (#55) — makes the four questions in step 3 unavoidable.
-3. **CODEOWNERS** (#56) — routes review instead of leaving it to chance.
-4. **Versioning and CHANGELOG** (#57) — SemVer driven by the commit prefixes we
-   already write.
+Read back from the API rather than trusted because a call returned `200`:
+
+| Setting | Value |
+|---|---|
+| Pull request required | yes — a direct `push` to `main` is refused |
+| Required status checks | `ci`, `bi-readonly`, `audit-migration` |
+| Branch must be up to date before merge | yes |
+| Stale approvals dismissed on new commits | yes |
+| Applies to administrators | yes |
+| Force pushes, branch deletion | both refused |
+| **Required approving reviews** | **`0`** |
+
+That last row is the one deviation and it is deliberate. Every pull request in
+this repository is authored by the single account that owns it, including the
+ones a coding agent opens, because the agent uses that account's token — and
+GitHub does not permit self-approval. At `1`, no pull request could ever be
+merged. Raising it is tracked as #59, and what it waits on is a second
+reviewing identity, not a settings change.
+
+So CI is now genuinely blocking and `main` cannot be pushed to directly. The
+second pair of eyes does not exist yet.
+
+### Still missing, ordered by how much each one buys
+
+1. **PR template** (#55) — makes the four questions in step 3 unavoidable. The
+   pull request that introduced this very document answered none of them, which
+   is the argument for the template rather than against it.
+2. **CODEOWNERS** (#56) — routes review instead of leaving it to chance.
+3. **Versioning and CHANGELOG** (#57) — SemVer driven by the commit prefixes we
+   already write. `agentsys` is consumed as a library, so until tags exist a
+   downstream project has no version it can pin.
+4. **Required approving reviews at `1`** (#59) — blocked on a second identity.
 5. **Environments and deploy pipeline** (#49) — the deployment work itself.
 6. **DORA measurement** (#58) — meaningful only once deploys actually happen.
 
-Items 1 through 4 are configuration and cost hours. Items 5 and 6 need the
-deployment work to exist first.
+Items 1 through 3 are configuration and cost hours. Item 4 needs a second
+account to exist. Items 5 and 6 need the deployment work first.
