@@ -18,6 +18,7 @@ lazily inside the function body).
 """
 from __future__ import annotations
 
+import pathlib
 from contextlib import ExitStack, asynccontextmanager
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,7 +27,13 @@ import pytest
 
 from agentsys.agent.reasoning import ReasoningSanitizedChatOpenAI
 from agentsys.config import Settings, get_settings
+from agentsys.harness.loader import RootConfig
 from agentsys.main import _build_chat_model, create_app, lifespan
+
+# consumer-root-configuration spec, "Co-located checkout unaffected" — this
+# repo still ships `deployments/` alongside `agentsys`, so the explicit root
+# the lifespan call site passes must resolve to the real, existing directory.
+REPO_ROOT = pathlib.Path(__file__).parent.parent
 
 
 @pytest.fixture(autouse=True)
@@ -118,8 +125,25 @@ async def test_lifespan_uses_data_driven_grants() -> None:
         async with lifespan(app):
             assert app.state.runtimes
 
-        # resolve() called for the sales-agent role with the acme deployment
-        mock_resolve.assert_any_call("sales-agent", client="acme")
+        # resolve() called for the sales-agent role with the acme deployment,
+        # AND an explicit `roots=` — never a bare resolve(role, client=...)
+        # that would rely on the library's own default deployments_root
+        # resolution (consumer-root-configuration spec, precondition fix).
+        call_for_acme = next(
+            call
+            for call in mock_resolve.call_args_list
+            if call.args[:1] == ("sales-agent",) and call.kwargs.get("client") == "acme"
+        )
+        assert "roots" in call_for_acme.kwargs, (
+            "resolve() must be called with an explicit `roots=` argument, "
+            f"got call: {call_for_acme}"
+        )
+        roots = call_for_acme.kwargs["roots"]
+        assert isinstance(roots, RootConfig)
+        # Co-located checkout unaffected: the explicit root must still point
+        # at THIS repo's real `deployments/` directory.
+        assert roots.deployments_root == REPO_ROOT / "deployments"
+        assert roots.deployments_root.is_dir()
 
         # build_runtime received the resolved definition's permissions —
         # NOT a hardcoded role -> permissions map.
