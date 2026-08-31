@@ -448,6 +448,74 @@ def test_root_config_deployments_root_default_untouched_by_resolution(
 
 
 # ---------------------------------------------------------------------------
+# D-024 slice 2 — deployments_root guard (mirrors _require_platform_root)
+#
+# Before this, `deployments_root` had no existence check at all, unlike
+# `platform_root`. A client override requested against a missing root (e.g.
+# agentsys installed as a dependency, with no co-located `deployments/`)
+# silently fell through `load_override`'s "not found" warning straight to the
+# generic role — WIDENING tools/autonomy/permissions past what the (absent)
+# override would have restricted, since a deployment may only NARROW the
+# generic role, never broaden it. See consumer-root-configuration spec,
+# "Loud failure instead of a silent wrong answer".
+# ---------------------------------------------------------------------------
+def test_require_deployments_root_raises_naming_the_path(
+    tmp_path: pathlib.Path,
+) -> None:
+    import agentsys.harness.loader as loader_module
+    from agentsys.harness.loader import DefinitionError
+
+    missing = tmp_path / "no-such-deployments"
+
+    with pytest.raises(DefinitionError) as exc_info:
+        loader_module._require_deployments_root(missing)
+
+    assert str(missing) in str(exc_info.value)
+
+
+def test_require_deployments_root_returns_existing_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    import agentsys.harness.loader as loader_module
+
+    existing = tmp_path / "deployments"
+    existing.mkdir()
+
+    assert loader_module._require_deployments_root(existing) == existing
+
+
+def test_resolve_with_client_and_missing_deployments_root_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    """consumer-root-configuration spec, scenario 'Installed as a dependency,
+    no co-located deployments/'."""
+    from agentsys.harness.loader import DefinitionError, RootConfig, resolve
+
+    missing = tmp_path / "no-such-deployments"
+    roots = RootConfig(platform_root=GENERIC_ROOTS_DIR, deployments_root=missing)
+
+    with pytest.raises(DefinitionError) as exc_info:
+        resolve("simple-role", client="client-a", roots=roots)
+
+    assert str(missing) in str(exc_info.value)
+
+
+def test_resolve_no_client_ignores_missing_deployments_root(
+    tmp_path: pathlib.Path,
+) -> None:
+    """consumer-root-configuration spec, scenario 'No client override
+    requested' — resolve(role) must not require a deployments_root at all."""
+    from agentsys.harness.loader import RootConfig, resolve
+
+    missing = tmp_path / "no-such-deployments"
+    roots = RootConfig(platform_root=GENERIC_ROOTS_DIR, deployments_root=missing)
+
+    definition = resolve("simple-role", roots=roots)
+
+    assert definition.deployment is None
+
+
+# ---------------------------------------------------------------------------
 # Path-segment validation — role_type / client must never traverse
 #
 # `_role_folder`/`_deployment_folder` build filesystem paths by joining
