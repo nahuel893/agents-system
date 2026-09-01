@@ -77,11 +77,18 @@ def test_get_settings_returns_singleton():
 
 
 def test_adapter_config_defaults():
-    """adapter_api_key, adapter_provider, and adapter_runtimes have correct defaults."""
+    """adapter_api_key, adapter_provider, and adapter_runtimes have correct defaults.
+
+    `adapter_runtimes` is empty because runtime ids are "{deployment}__{role}"
+    and the platform knows no deployment names. It also means the default
+    configuration exposes no runtime at all through `/v1/*`, which is the
+    safer end of the change: the fail-closed guard below still refuses the
+    moment a runtime IS configured without a key.
+    """
     settings = Settings(_env_file=None)
     assert settings.adapter_api_key == ""
     assert settings.adapter_provider == "ollama"
-    assert settings.adapter_runtimes == ["acme__sales-agent"]
+    assert settings.adapter_runtimes == []
 
 
 # ---------------------------------------------------------------------------
@@ -380,10 +387,12 @@ def test_allow_insecure_is_rejected_outside_development(environment: str) -> Non
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "SOURCE FIX REQUIRED: .env.example ships neither ADAPTER_API_KEY nor "
-        "ALLOW_INSECURE, and adapter_runtimes defaults to a non-empty list, so "
-        "the documented `cp .env.example .env` first-run path now dies with a "
-        "raw pydantic traceback at import — before setup_logging() runs."
+        "SOURCE FIX REQUIRED: .env.example ships neither META_WEBHOOK_SECRET "
+        "nor ALLOW_INSECURE, so the documented `cp .env.example .env` first-run "
+        "path still dies with a raw pydantic traceback at import — before "
+        "setup_logging() runs. The adapter half of this gap is gone: "
+        "adapter_runtimes now defaults to empty, so the shipped file no longer "
+        "exposes a runtime without a key."
     ),
 )
 def test_shipped_env_example_boots_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -401,3 +410,75 @@ def test_shipped_env_example_boots_the_app(monkeypatch: pytest.MonkeyPatch) -> N
 
     settings = Settings(_env_file=str(env_example))
     assert settings.adapter_api_key or settings.allow_insecure
+
+
+# ---------------------------------------------------------------------------
+# Platform surface vs consumer extension
+# ---------------------------------------------------------------------------
+
+
+def test_configured_runtimes_without_a_key_still_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Emptying the default must not weaken the adapter guard.
+
+    `adapter_runtimes` used to default to a deployment name, so the guard
+    fired for a bare `Settings()`. It now fires when a runtime is actually
+    configured, which is the case that matters: an exposed `/v1/*` runtime
+    carries the role's full write grants.
+    """
+    # conftest exports ALLOW_INSECURE=true for the whole suite, which is
+    # exactly what this test must not inherit.
+    monkeypatch.delenv("ALLOW_INSECURE", raising=False)
+
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            adapter_runtimes=["acme__sales-agent"],
+            meta_webhook_secret="not-the-point",
+        )
+
+    assert "adapter_api_key is required" in str(excinfo.value)
+
+
+def test_settings_carries_no_deployment_name() -> None:
+    """No platform default may name a deployment.
+
+    A default like `db_name="acme"` or `whatsapp_runtime_id="acme__sales-agent"`
+    ships one deployment's topology to every consumer of the library, and does
+    it silently — the value works, it is just someone else's.
+    """
+    settings = Settings(_env_file=None, allow_insecure=True)
+
+    assert "acme" not in settings.database_url
+    assert settings.db_name == "agentsys"
+    assert settings.whatsapp_runtime_id == ""
+    assert settings.adapter_runtimes == []
+
+
+def test_a_consumer_can_extend_settings_without_editing_the_library() -> None:
+    """The extension point: a subclass adds fields and its own validator.
+
+    This is what replaces the `medallion_*` block that used to sit in the
+    platform's own `Settings`. Both the subclass's validator and the
+    platform's still run.
+    """
+    from agentsys.services.medallion import MedallionSettings
+
+    settings = MedallionSettings(
+        _env_file=None,
+        allow_insecure=True,
+        db_user="app",
+        db_password="p@ss/word",
+        db_host="db.internal",
+        db_name="acme",
+        medallion_db_name="warehouse",
+    )
+
+    # The platform validator composed the main URL...
+    assert "db.internal" in settings.database_url
+    assert settings.database_url.endswith("/acme")
+    # ...and the subclass's composed its own, falling back to the shared host,
+    # with the password url-encoded rather than breaking the connection string.
+    assert settings.medallion_database_url.endswith("/warehouse")
+    assert "p%40ss%2Fword" in settings.medallion_database_url

@@ -1,4 +1,11 @@
-"""Application settings loaded from environment / .env file."""
+"""Platform settings loaded from environment / .env file.
+
+`Settings` is the platform surface: the connection, provider, retrieval and
+channel values every deployment needs. It carries no deployment's name and
+no deployment's topology -- a consumer that needs more fields subclasses it,
+and pydantic-settings reads the subclass's fields from the same environment.
+`services/medallion.py` is the worked example.
+"""
 
 from functools import lru_cache
 from typing import Literal
@@ -28,20 +35,11 @@ class Settings(BaseSettings):
     db_password: str | None = None
     db_host: str | None = None
     db_port: int = 5432
-    db_name: str = "acme"
+    db_name: str = "agentsys"
 
-    # Medallion (catalog warehouse) — overrides that fall back to the main DB
-    # connection when unset (same server, different database).
-    medallion_db_user: str | None = None
-    medallion_db_password: str | None = None
-    medallion_db_host: str | None = None
-    medallion_db_port: int | None = None
-    medallion_db_name: str = "medallion"
-
-    # Connection URLs — composed from the component vars above when those are
-    # set; otherwise these defaults (or a directly-passed value) are used.
-    database_url: str = "postgresql+asyncpg://localhost:5432/acme"
-    medallion_database_url: str = "postgresql+asyncpg://localhost:5432/medallion"
+    # Connection URL — composed from the component vars above when those are
+    # set; otherwise this default (or a directly-passed value) is used.
+    database_url: str = "postgresql+asyncpg://localhost:5432/agentsys"
 
     # D-023 — dedicated READ-ONLY connection for the BI report tool. Point this
     # at a login role with `default_transaction_read_only = on` and a
@@ -88,7 +86,11 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str = ""
 
     # WhatsApp runtime wiring (D-014)
-    whatsapp_runtime_id: str = "acme__sales-agent"
+    # Which cached runtime an inbound WhatsApp delivery is routed to, as
+    # "{deployment}__{role}". No platform default exists: the platform knows
+    # no deployment names. Unset means the route resolves no runtime and
+    # answers 200 without running a turn (see integration/webhook.py).
+    whatsapp_runtime_id: str = ""
     whatsapp_graph_api_url: str = "https://graph.facebook.com/v21.0"
     # D-014 S4 (design AD-7) - whatsapp_checkpointer_enabled=False is a
     # deliberate OPERATOR CHOICE for configured-stateless mode (no thread_id
@@ -107,7 +109,7 @@ class Settings(BaseSettings):
     ] = "ollama"
     # List of model ids to expose via /v1/models. Format: "{deployment}__{role}",
     # e.g. "acme__sales-agent". Generic (no deployment) → "_generic__{role}".
-    adapter_runtimes: list[str] = ["acme__sales-agent"]
+    adapter_runtimes: list[str] = []
 
     # Any OpenAI-compatible chat endpoint (MiniMax, vLLM, LM Studio, ...),
     # selected with adapter_provider="openai_compatible".
@@ -182,13 +184,13 @@ class Settings(BaseSettings):
         """Build connection URLs from component vars when they are provided.
 
         When ``db_user`` or ``db_host`` is set (the preferred path), both
-        ``database_url`` and ``medallion_database_url`` are composed from the
+        ``database_url`` is composed from the
         component vars via ``URL.create`` — which url-encodes the password, so
         special characters never break the connection string. When the vars are
         unset, a directly-passed ``database_url`` or the default is kept as-is.
 
-        The medallion (catalog warehouse) connection falls back to the main DB
-        credentials/host/port; override only the parts that differ.
+        A consumer that adds its own connections composes them in its own
+        validator; see `MedallionSettings` in `services/medallion.py`.
         """
         if self.db_user is None and self.db_host is None:
             return self
@@ -200,15 +202,6 @@ class Settings(BaseSettings):
             host=self.db_host,
             port=self.db_port,
             database=self.db_name,
-        ).render_as_string(hide_password=False)
-
-        self.medallion_database_url = URL.create(
-            "postgresql+asyncpg",
-            username=self.medallion_db_user or self.db_user,
-            password=self.medallion_db_password or self.db_password,
-            host=self.medallion_db_host or self.db_host,
-            port=self.medallion_db_port or self.db_port,
-            database=self.medallion_db_name,
         ).render_as_string(hide_password=False)
 
         return self
