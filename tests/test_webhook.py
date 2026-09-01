@@ -13,7 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
 from agentsys.config import Settings, get_settings
-from agentsys.main import create_app
+from conftest import create_test_app
 from agentsys.models.tables import Client
 from agentsys.services.clients import normalize_phone
 
@@ -97,7 +97,7 @@ def clear_settings_cache():
 @pytest.fixture
 def app():
     test_settings = make_settings()
-    application = create_app()
+    application = create_test_app()
     application.dependency_overrides[get_settings] = lambda: test_settings
     return application
 
@@ -843,7 +843,7 @@ async def test_post_passes_none_thread_id_when_checkpointer_disabled(
     """whatsapp_checkpointer_enabled=False — run_turn is called with
     thread_id=None (configured-stateless, design AD-7)."""
     test_settings = make_settings(whatsapp_checkpointer_enabled=False)
-    application = create_app()
+    application = create_test_app()
     application.dependency_overrides[get_settings] = lambda: test_settings
     mock_engine = MagicMock()
     mock_engine.dispose = MagicMock(return_value=None)
@@ -1180,7 +1180,12 @@ async def test_post_without_participant_directory_fails_closed(
     fake_whatsapp_client.send_text = AsyncMock()
     app.state.whatsapp_client = fake_whatsapp_client
 
-    # No participant_directory on app.state at all.
+    # Explicitly unset: the `app` fixture supplies one, and leaving it in
+    # place would make this test pass for the wrong reason — a real
+    # ClientDirectory fails against the mock engine and reaches the DB-error
+    # path, which also skips the turn.
+    app.state.participant_directory = None
+
     with patch(
         "agentsys.integration.webhook.get_redis_client", return_value=mock_redis
     ):

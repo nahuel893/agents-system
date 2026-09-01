@@ -26,7 +26,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 
 from agentsys.config import get_settings
-from agentsys.main import create_app
+from conftest import create_test_app
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ def _make_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
     """Create a TestClient with pre-populated runtimes and no real lifespan."""
-    app = create_app()
+    app = create_test_app()
     # Set state BEFORE any request — lifespan never fires (no context manager)
     app.state.runtimes = _fake_runtimes(runtime_ids)
     app.state.engine = MagicMock()
@@ -233,9 +233,8 @@ def test_chat_completion_stream_true_400(monkeypatch: pytest.MonkeyPatch):
 def test_system_message_dropped(monkeypatch: pytest.MonkeyPatch):
     """Client system message is dropped; only user/assistant turns reach run_turn."""
     # Build a fresh app with an inspectable fake runtime
-    import agentsys.main as main_mod
 
-    app_instance = main_mod.create_app()
+    app_instance = create_test_app()
     app_instance.state.runtimes = {"acme__sales-agent": MagicMock()}
     fake_rt = app_instance.state.runtimes["acme__sales-agent"]
     fake_rt.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
@@ -351,7 +350,7 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
 
     agent = AgentRuntime(equipped, model)
 
-    app_instance = create_app()
+    app_instance = create_test_app()
     app_instance.state.runtimes = {"acme__sales-agent": agent}
     app_instance.state.engine = MagicMock()
 
