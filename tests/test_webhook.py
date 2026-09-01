@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage
 from agentsys.config import Settings, get_settings
 from agentsys.main import create_app
 from agentsys.models.tables import Client
+from agentsys.services.clients import normalize_phone
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,6 +43,41 @@ def make_settings(**overrides: str) -> Settings:
     )
     defaults.update(overrides)
     return Settings(**defaults)
+
+
+
+# ---------------------------------------------------------------------------
+# Participant port test doubles
+# ---------------------------------------------------------------------------
+#
+# These used to be `patch("agentsys.integration.webhook.lookup_or_create_client")`.
+# The route no longer imports that function: it resolves identity through the
+# `ParticipantDirectory` the application wires onto `app.state`, so a test
+# supplies its own instead of rewriting the module under test.
+
+
+class FakeDirectory:
+    """A `ParticipantDirectory` over an injected resolve mock."""
+
+    def __init__(self, resolve_mock: object) -> None:
+        self.resolve_mock = resolve_mock
+
+    def normalize_address(self, raw: str) -> str:
+        # Real normalization: several tests assert on an unparseable address.
+        return normalize_phone(raw)
+
+    async def resolve(self, session: object, address: str) -> object:
+        return await self.resolve_mock(session, address)  # type: ignore[operator]
+
+
+class FakeRecorder:
+    """A `ConversationRecorder` over an injected record mock."""
+
+    def __init__(self, record_mock: object) -> None:
+        self.record_mock = record_mock
+
+    async def record_turn(self, session: object, **kwargs: object) -> None:
+        await self.record_mock(session, **kwargs)  # type: ignore[operator]
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +385,9 @@ async def test_post_unregistered_client(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
     ):
         response = await client.post(
             "/webhook",
@@ -367,7 +405,7 @@ async def test_post_unregistered_client(
     fake_whatsapp_client.send_text.assert_not_awaited()
 
 
-async def test_post_invalid_phone_returns_200(client: AsyncClient) -> None:
+async def test_post_invalid_phone_returns_200(app, client: AsyncClient) -> None:
     """POST /webhook with an unparseable `from` returns 200 and skips processing.
 
     The `from` field is Meta-controlled input: a value that fails phone
@@ -403,7 +441,9 @@ async def test_post_invalid_phone_returns_200(client: AsyncClient) -> None:
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
     ):
         response = await client.post(
             "/webhook",
@@ -444,7 +484,9 @@ async def test_post_unresolved_runtime_no_run_turn_no_send(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
     ):
         response = await client.post(
             "/webhook",
@@ -485,7 +527,9 @@ async def test_post_resolved_runtime_invokes_run_turn_and_send(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
     ):
         response = await client.post(
             "/webhook",
@@ -527,7 +571,9 @@ async def test_post_send_failure_still_returns_200(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
     ):
         response = await client.post(
             "/webhook",
@@ -567,7 +613,9 @@ async def test_post_run_turn_failure_still_returns_200(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
     ):
         response = await client.post(
             "/webhook",
@@ -665,7 +713,9 @@ async def test_post_write_tool_succeeds_with_default_permissions(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
     ):
         response = await client.post(
             "/webhook",
@@ -682,7 +732,7 @@ async def test_post_write_tool_succeeds_with_default_permissions(
     assert len(invoked) == 1
 
 
-async def test_post_registered_client(
+async def test_post_registered_client(app,
     client: AsyncClient, text_payload: bytes
 ) -> None:
     """POST /webhook with registered client processes normally."""
@@ -697,7 +747,9 @@ async def test_post_registered_client(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
     ):
         response = await client.post(
             "/webhook",
@@ -761,7 +813,9 @@ async def test_post_passes_thread_id_when_checkpointer_enabled(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
         patch(
             "agentsys.integration.webhook.get_session_factory",
             return_value=mock_session_factory,
@@ -819,7 +873,12 @@ async def test_post_passes_none_thread_id_when_checkpointer_disabled(
             patch(
                 "agentsys.integration.webhook.get_redis_client", return_value=mock_redis
             ),
-            patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+            patch.object(
+                application.state,
+                "participant_directory",
+                FakeDirectory(mock_lookup),
+                create=True,
+            ),
             patch(
                 "agentsys.integration.webhook.get_session_factory",
                 return_value=mock_session_factory,
@@ -864,19 +923,24 @@ async def test_post_writes_conversation_log_best_effort(
     app.state.whatsapp_client = fake_whatsapp_client
 
     mock_session_factory, mock_log_session = await _make_log_session_factory()
+    mock_log_conversation_turn = AsyncMock(return_value=None)
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
         patch(
             "agentsys.integration.webhook.get_session_factory",
             return_value=mock_session_factory,
         ),
-        patch(
-            "agentsys.integration.webhook.log_conversation_turn"
-        ) as mock_log_conversation_turn,
+        patch.object(
+            app.state,
+            "conversation_recorder",
+            FakeRecorder(mock_log_conversation_turn),
+            create=True,
+        ),
     ):
-        mock_log_conversation_turn.return_value = None
         response = await client.post(
             "/webhook",
             content=text_payload,
@@ -890,7 +954,7 @@ async def test_post_writes_conversation_log_best_effort(
     mock_log_conversation_turn.assert_awaited_once()
     call_kwargs = mock_log_conversation_turn.call_args.kwargs
     assert call_kwargs["thread_id"] == "+5491123456789"
-    assert call_kwargs["client_id"] == 22
+    assert call_kwargs["participant_id"] == 22
     assert call_kwargs["user_text"] == "dame dos cajones de la rubia"
     assert call_kwargs["assistant_text"] == "Como puedo ayudarte?"
     mock_log_session.commit.assert_awaited_once()
@@ -925,7 +989,9 @@ async def test_post_conversation_log_failure_still_returns_200(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
         patch(
             "agentsys.integration.webhook.get_session_factory",
             side_effect=[lookup_session_factory, Exception("DB down")],
@@ -971,7 +1037,9 @@ async def test_post_skips_send_when_assistant_text_empty(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
         patch(
             "agentsys.integration.webhook.get_session_factory",
             return_value=mock_session_factory,
@@ -1014,7 +1082,9 @@ async def test_post_db_failure_fails_closed_no_run_turn(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
     ):
         response = await client.post(
             "/webhook",
@@ -1059,7 +1129,9 @@ async def test_post_db_success_active_client_runs_turn(
 
     with (
         patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis),
-        patch("agentsys.integration.webhook.lookup_or_create_client", mock_lookup),
+        patch.object(
+            app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
+        ),
         patch(
             "agentsys.integration.webhook.get_session_factory",
             return_value=mock_session_factory,
@@ -1077,3 +1149,79 @@ async def test_post_db_success_active_client_runs_turn(
     assert response.status_code == 200
     fake_runtime.run_turn.assert_awaited_once()
     fake_whatsapp_client.send_text.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Participant port — boundary
+# ---------------------------------------------------------------------------
+
+
+async def test_post_without_participant_directory_fails_closed(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """An authentic delivery with no directory configured must not run a turn.
+
+    Failing OPEN here would serve any address that can reach the endpoint,
+    because without a directory there is nothing to separate a participant
+    this deployment serves from one it does not. Meta still gets a 200 (AD-2):
+    a deployment mistake is not something the sender can fix by retrying.
+    """
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
+
+    fake_runtime = MagicMock()
+    fake_runtime.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
+    app.state.runtimes = {"acme__sales-agent": fake_runtime}
+
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock()
+    app.state.whatsapp_client = fake_whatsapp_client
+
+    # No participant_directory on app.state at all.
+    with patch(
+        "agentsys.integration.webhook.get_redis_client", return_value=mock_redis
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    fake_runtime.run_turn.assert_not_awaited()
+    fake_whatsapp_client.send_text.assert_not_awaited()
+
+
+async def test_missing_directory_is_checked_after_signature_verification(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """A forged delivery is rejected on HMAC even when no directory is set.
+
+    FastAPI resolves dependencies before the handler, so a provider that
+    raised on a missing directory would answer 500 to an unsigned request —
+    telling a forger about a server misconfiguration instead of refusing them.
+    """
+    response = await client.post(
+        "/webhook",
+        content=text_payload,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": "sha256=deadbeef",
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_webhook_module_does_not_import_client_domain() -> None:
+    """The inbound route must not reach into any client-owned module."""
+    import agentsys.integration.webhook as webhook_module
+
+    source = Path(webhook_module.__file__).read_text(encoding="utf-8")
+
+    assert "services.clients" not in source
+    assert "services.conversation_log" not in source
