@@ -9,6 +9,8 @@ trail.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agentsys.models.tables import ConversationLog
@@ -50,3 +52,24 @@ async def log_conversation_turn(
             tokens_used=tokens_used,
         )
     )
+
+
+class ConversationLogRecorder:
+    """`participants.ConversationRecorder` over this deployment's table."""
+
+    async def record_turn(
+        self,
+        session: AsyncSession,
+        *,
+        thread_id: str,
+        participant_id: Any,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        await log_conversation_turn(
+            session,
+            thread_id=thread_id,
+            client_id=participant_id,
+            user_text=user_text,
+            assistant_text=assistant_text,
+        )

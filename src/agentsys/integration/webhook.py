@@ -13,9 +13,11 @@ from starlette.responses import PlainTextResponse
 from agentsys.config import Settings, get_settings
 from agentsys.integration.meta_signature import verify_signature
 from agentsys.models.base import get_session_factory
-from agentsys.services.clients import lookup_or_create_client, normalize_phone
-from agentsys.services.conversation_log import log_conversation_turn
 from agentsys.services.dedup import is_duplicate
+from agentsys.services.participants import (
+    ConversationRecorder,
+    ParticipantDirectory,
+)
 from agentsys.services.redis import get_redis_client
 
 webhook_router = APIRouter(prefix="/webhook", tags=["webhook"])
@@ -67,10 +69,44 @@ async def verify_webhook(
     raise HTTPException(status_code=403, detail="Verification token mismatch")
 
 
+
+def get_participant_directory(request: Request) -> ParticipantDirectory | None:
+    """Return the directory the application wired onto ``app.state``, if any.
+
+    Returns None rather than raising because FastAPI resolves dependencies
+    before the handler runs, and this route's contract is "raw bytes → HMAC
+    verify → json.loads". A dependency that raised on a missing directory
+    would answer 500 to a forged, unsigned request — reporting a server
+    misconfiguration to exactly the caller who should get a 403.
+
+    The handler fails closed at the point of use instead, once the delivery
+    has been proven authentic.
+    """
+    directory: ParticipantDirectory | None = getattr(
+        request.app.state, "participant_directory", None
+    )
+    return directory
+
+
+def get_conversation_recorder(request: Request) -> ConversationRecorder | None:
+    """Return the recorder, or None when the application configured none.
+
+    Optional where the directory is not: turn history is a best-effort audit
+    trail the caller already swallows failures for, so a deployment that
+    keeps none simply records nothing.
+    """
+    recorder: ConversationRecorder | None = getattr(
+        request.app.state, "conversation_recorder", None
+    )
+    return recorder
+
+
 @webhook_router.post("")
 async def receive_message(
     request: Request,
     settings: Settings = Depends(get_settings),
+    directory: ParticipantDirectory | None = Depends(get_participant_directory),
+    recorder: ConversationRecorder | None = Depends(get_conversation_recorder),
 ) -> dict[str, str]:
     """Receive and process incoming Meta webhook events.
 
@@ -109,8 +145,23 @@ async def receive_message(
     # Client lookup — normalize phone and find or create client. The `from`
     # field is Meta-controlled input: an unparseable value is dropped with a
     # 200 (AD-2), never a 5xx that would make Meta retry a poison message.
+    # Fail closed on a misconfigured deployment: with no directory there is
+    # no way to separate a participant this deployment serves from any
+    # address that can reach the endpoint, so the turn must not run. The
+    # check sits here, after HMAC verification, not in the dependency.
+    if directory is None:
+        logger.error(
+            "webhook.no_participant_directory",
+            message_id=message_id,
+            detail=(
+                "app.state.participant_directory is unset; the platform "
+                "ships no default because it owns no identity schema"
+            ),
+        )
+        return {"status": "ok"}
+
     try:
-        phone = normalize_phone(phone_number)
+        phone = directory.normalize_address(phone_number)
     except ValueError:
         logger.warning("webhook.invalid_phone", phone_number=phone_number)
         return {"status": "ok"}
@@ -118,12 +169,12 @@ async def receive_message(
     try:
         session_factory = get_session_factory(request.app.state.engine)
         async with session_factory() as session:
-            client_record = await lookup_or_create_client(session, phone)
+            client_record = await directory.resolve(session, phone)
     except Exception:
         # BLOCKER 2 — fail CLOSED on a swallowed DB lookup error. Return 200 to
         # Meta (design AD-2) but do NOT fall through to run_turn / outbound
-        # send: lookup_or_create_client never returns None on success, so a
-        # None client_record here is unambiguously the DB-error path — an
+        # send: `directory.resolve` returns None only for an address it
+        # does not know, and this path is a raised failure — an
         # unverified phone must not reach the agent or receive a reply.
         logger.warning("client_lookup.db_error", phone_number=phone)
         return {"status": "ok"}
@@ -183,23 +234,31 @@ async def receive_message(
 
     # Best-effort audit trail (design AD-6) — own session/transaction, never
     # blocks the reply. Order per spec: agent -> log -> send -> 200.
-    try:
-        log_session_factory = get_session_factory(request.app.state.engine)
-        async with log_session_factory() as log_session:
-            await log_conversation_turn(
-                log_session,
-                thread_id=phone,
-                client_id=client_record.id if client_record is not None else None,
-                user_text=text,
-                assistant_text=assistant_text,
+    #
+    # Guarded rather than left to the handler below: "no recorder configured"
+    # is a deployment choice, and letting it arrive as an AttributeError
+    # inside `except Exception` would log it every turn as a write error that
+    # nobody can fix.
+    if recorder is not None:
+        try:
+            log_session_factory = get_session_factory(request.app.state.engine)
+            async with log_session_factory() as log_session:
+                await recorder.record_turn(
+                    log_session,
+                    thread_id=phone,
+                    participant_id=(
+                        client_record.id if client_record is not None else None
+                    ),
+                    user_text=text,
+                    assistant_text=assistant_text,
+                )
+                await log_session.commit()
+        except Exception as exc:
+            logger.warning(
+                "conversation_log.write_error",
+                phone_number=phone,
+                error=str(exc),
             )
-            await log_session.commit()
-    except Exception as exc:
-        logger.warning(
-            "conversation_log.write_error",
-            phone_number=phone,
-            error=str(exc),
-        )
 
     # Best-effort outbound send — never let a Graph API failure crash the
     # webhook. Meta must always get a 200 (design AD-2). Skip entirely when
