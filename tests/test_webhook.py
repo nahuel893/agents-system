@@ -38,6 +38,8 @@ def make_settings(**overrides: str) -> Settings:
     defaults = dict(
         meta_webhook_secret=TEST_SECRET,
         whatsapp_verify_token=TEST_VERIFY_TOKEN,
+        # Explicit since the platform no longer defaults to a deployment name.
+        whatsapp_runtime_id="acme__sales-agent",
         database_url="postgresql+asyncpg://localhost:5432/agentsys_test",
         redis_url="redis://localhost:6379/0",
     )

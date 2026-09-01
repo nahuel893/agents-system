@@ -17,18 +17,20 @@ import sys
 import structlog
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from agentsys.config import get_settings
 from agentsys.models.base import get_engine
 from agentsys.observability import setup_logging
 from agentsys.services.embeddings import get_embedding_provider
-from agentsys.services.medallion import get_medallion_engine
+from agentsys.services.medallion import (
+    get_medallion_engine,
+    get_medallion_settings,
+)
 from agentsys.services.sync_articles import sync_articles
 
 
 async def main() -> int:
     setup_logging()
     logger = structlog.get_logger()
-    settings = get_settings()
+    settings = get_medallion_settings()
 
     logger.info("sync_articles.provider_selected", provider=settings.embedding_provider)
     embedder = get_embedding_provider(settings)
