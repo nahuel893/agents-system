@@ -12,7 +12,31 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentsys.config import Settings
-from agentsys.services import rag
+
+
+@dataclass
+class StubCatalogSource:
+    """A `rag.CatalogSource` wrapping loose fakes — no schema, no database."""
+
+    search_vector_fn: Any = None
+    search_keywords_fn: Any = None
+
+    async def search_vector(
+        self, session: Any, *, embedding: list[float], limit: int, ef_search: int
+    ) -> list[Any]:
+        if self.search_vector_fn is None:
+            return []
+        return await self.search_vector_fn(
+            session, embedding=embedding, limit=limit, ef_search=ef_search
+        )
+
+    async def search_keywords(
+        self, session: Any, *, query: str, limit: int
+    ) -> list[Any]:
+        if self.search_keywords_fn is None:
+            return []
+        return await self.search_keywords_fn(session, query=query, limit=limit)
+
 
 
 # ---------------------------------------------------------------------------
@@ -56,11 +80,12 @@ def _make_registry(embedder: Any = None, settings: Settings | None = None) -> An
 # ---------------------------------------------------------------------------
 
 def test_connector_is_async_coroutine_function() -> None:
+    source = StubCatalogSource()
     """The connector must be a true async def so D-009 dispatch routes it correctly."""
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     embedder = SpyEmbedder()
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     assert asyncio.iscoroutinefunction(connector)
 
 
@@ -68,10 +93,8 @@ def test_connector_is_async_coroutine_function() -> None:
 # Test 2: direct match maps to results + classification
 # ---------------------------------------------------------------------------
 
-async def test_direct_match_maps_to_results_and_classification(
-    monkeypatch: Any,
-) -> None:
-    from agentsys.services.catalog import VectorSearchCandidate
+async def test_direct_match_maps_to_results_and_classification() -> None:
+    from agentsys.services.rag import VectorSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     async def fake_search_vector(session: Any, *, embedding: Any, limit: int, ef_search: int) -> list[Any]:
@@ -79,10 +102,10 @@ async def test_direct_match_maps_to_results_and_classification(
             VectorSearchCandidate("SKU-A1", "Aceite de girasol 900ml", 0.04),  # similarity 0.96
         ]
 
-    monkeypatch.setattr(rag.catalog, "search_vector", fake_search_vector)
+    source = StubCatalogSource(search_vector_fn=fake_search_vector)
 
     embedder = SpyEmbedder()
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     result = await connector({"q": "aceite de girasol"}, session=object())
 
     assert result["classification"] == "direct"
@@ -96,8 +119,8 @@ async def test_direct_match_maps_to_results_and_classification(
 # Test 3: ambiguous match mapping
 # ---------------------------------------------------------------------------
 
-async def test_ambiguous_match_mapping(monkeypatch: Any) -> None:
-    from agentsys.services.catalog import VectorSearchCandidate
+async def test_ambiguous_match_mapping() -> None:
+    from agentsys.services.rag import VectorSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     async def fake_search_vector(session: Any, *, embedding: Any, limit: int, ef_search: int) -> list[Any]:
@@ -106,10 +129,10 @@ async def test_ambiguous_match_mapping(monkeypatch: Any) -> None:
             VectorSearchCandidate("SKU-B2", "Coca-Cola Zero 2.25L", 0.17),  # similarity 0.83
         ]
 
-    monkeypatch.setattr(rag.catalog, "search_vector", fake_search_vector)
+    source = StubCatalogSource(search_vector_fn=fake_search_vector)
 
     embedder = SpyEmbedder()
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     result = await connector({"q": "coca cola"}, session=object())
 
     assert result["classification"] == "ambiguous"
@@ -121,8 +144,8 @@ async def test_ambiguous_match_mapping(monkeypatch: Any) -> None:
 # Test 4: no match returns empty results
 # ---------------------------------------------------------------------------
 
-async def test_no_match_returns_empty_results(monkeypatch: Any) -> None:
-    from agentsys.services.catalog import VectorSearchCandidate
+async def test_no_match_returns_empty_results() -> None:
+    from agentsys.services.rag import VectorSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     async def fake_search_vector(session: Any, *, embedding: Any, limit: int, ef_search: int) -> list[Any]:
@@ -130,10 +153,10 @@ async def test_no_match_returns_empty_results(monkeypatch: Any) -> None:
             VectorSearchCandidate("SKU-C1", "Agua mineral", 0.25),  # similarity 0.75 — below threshold
         ]
 
-    monkeypatch.setattr(rag.catalog, "search_vector", fake_search_vector)
+    source = StubCatalogSource(search_vector_fn=fake_search_vector)
 
     embedder = SpyEmbedder()
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     result = await connector({"q": "xyzzy nonsense"}, session=object())
 
     assert result == {"results": [], "classification": "no_match"}
@@ -143,8 +166,8 @@ async def test_no_match_returns_empty_results(monkeypatch: Any) -> None:
 # Test 5: keyword fallback similarity is None (not coerced to 0.0)
 # ---------------------------------------------------------------------------
 
-async def test_keyword_fallback_similarity_is_null(monkeypatch: Any) -> None:
-    from agentsys.services.catalog import KeywordSearchCandidate
+async def test_keyword_fallback_similarity_is_null() -> None:
+    from agentsys.services.rag import KeywordSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     # Embedder returns empty vector → triggers keyword fallback
@@ -153,9 +176,9 @@ async def test_keyword_fallback_similarity_is_null(monkeypatch: Any) -> None:
     async def fake_search_keywords(session: Any, *, query: str, limit: int) -> list[Any]:
         return [KeywordSearchCandidate("SKU-K1", "BrandA 1L")]
 
-    monkeypatch.setattr(rag.catalog, "search_keywords", fake_search_keywords)
+    source = StubCatalogSource(search_keywords_fn=fake_search_keywords)
 
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     result = await connector({"q": "branda"}, session=object())
 
     assert len(result["results"]) == 1
@@ -167,7 +190,8 @@ async def test_keyword_fallback_similarity_is_null(monkeypatch: Any) -> None:
 # Test 6: empty query short-circuits without calling embedder
 # ---------------------------------------------------------------------------
 
-async def test_empty_q_short_circuits_without_embedding(monkeypatch: Any) -> None:
+async def test_empty_q_short_circuits_without_embedding() -> None:
+    source = StubCatalogSource()
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     spy = SpyEmbedder()
@@ -177,9 +201,9 @@ async def test_empty_q_short_circuits_without_embedding(monkeypatch: Any) -> Non
         search_vector_called.append(True)
         return []
 
-    monkeypatch.setattr(rag.catalog, "search_vector", fake_search_vector)
+    source = StubCatalogSource(search_vector_fn=fake_search_vector)
 
-    connector = build_catalog_rag_connector(spy, _settings())
+    connector = build_catalog_rag_connector(spy, _settings(), source)
 
     # Test empty string
     result = await connector({"q": ""}, session=object())

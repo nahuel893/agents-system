@@ -1,27 +1,22 @@
-"""Catalog retrieval query helpers for vector and keyword search."""
+"""ACME's catalog storage — the client-side half of `services.rag`.
+
+Implements `rag.CatalogSource` against this deployment's `catalog_embeddings`
+table. The retrieval strategy lives in the platform; only these two queries
+know the schema, which is why they are here and not there.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agentsys.models.tables import CatalogEmbedding
-
-
-@dataclass(frozen=True)
-class VectorSearchCandidate:
-    sku: str
-    description: str
-    distance: float
-
-
-@dataclass(frozen=True)
-class KeywordSearchCandidate:
-    sku: str
-    description: str
+from agentsys.services.rag import (
+    KeywordSearchCandidate,
+    VectorSearchCandidate,
+)
 
 
 async def search_vector(
@@ -87,3 +82,29 @@ def _to_vector_candidate(row: Any) -> VectorSearchCandidate:
         description=str(row["description"]),
         distance=float(row["distance"]),
     )
+
+
+class CatalogTables:
+    """`rag.CatalogSource` backed by this deployment's `catalog_embeddings`.
+
+    A thin object rather than the bare module functions because the protocol
+    is what `services.rag` depends on, and a module cannot be type-checked
+    against one. The queries themselves are unchanged.
+    """
+
+    async def search_vector(
+        self,
+        session: AsyncSession,
+        *,
+        embedding: list[float],
+        limit: int,
+        ef_search: int,
+    ) -> list[VectorSearchCandidate]:
+        return await search_vector(
+            session, embedding=embedding, limit=limit, ef_search=ef_search
+        )
+
+    async def search_keywords(
+        self, session: AsyncSession, *, query: str, limit: int
+    ) -> list[KeywordSearchCandidate]:
+        return await search_keywords(session, query=query, limit=limit)
