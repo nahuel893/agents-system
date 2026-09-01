@@ -3,16 +3,31 @@
 **Status:** Directive · **Scope:** any project, not just this one
 
 This is the complete working standard: how a change goes from an idea to
-running in production, and what has to be true at each step. It is written to
-be **copied into another repository unchanged**. Nothing in it names this
-project, and the only project-specific document is
-[`delivery-flow.md`](delivery-flow.md), which records how much of this
-standard this repository currently enforces.
+running in production, and what has to be true at each step. It is
+**self-contained and copied into a repository unchanged** — it names no
+project, links to no other file, and depends on nothing else being present.
 
 Read it in order. The sections build: work tracking defines what a task is,
 SDD defines what it means for a task to be understood, TDD defines what it
 means for it to be built, design discipline defines what makes it survive, and
 delivery defines how it reaches users.
+
+### The one thing to add per project
+
+This document states the standard. It cannot state how much of it *your*
+repository actually enforces, and that gap is the only thing that matters on
+any given day (§0).
+
+So keep a second, short document beside it — a **compliance record** — and put
+nothing in it but repository-specific truth:
+
+- A table of each control in §10, read back from the platform's API, with its
+  real value.
+- Every deviation, with the reason and what it is waiting on.
+- Nothing else. The moment it starts restating the standard, the two drift and
+  the reader has to guess which one is current.
+
+That document is the one that changes. This one should not.
 
 ---
 
