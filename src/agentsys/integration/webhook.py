@@ -162,8 +162,12 @@ async def receive_message(
 
     try:
         phone = directory.normalize_address(phone_number)
-    except ValueError:
-        logger.warning("webhook.invalid_phone", phone_number=phone_number)
+    except Exception:
+        # The port asks for ValueError, but a consumer's parser may raise
+        # anything. Catching only ValueError would turn one bad `from` field
+        # into an unhandled 500 and a poison message Meta retries forever —
+        # the exact outcome the always-200 contract (AD-2) exists to prevent.
+        logger.warning("webhook.invalid_address", phone_number=phone_number)
         return {"status": "ok"}
     client_record = None
     try:
@@ -171,15 +175,26 @@ async def receive_message(
         async with session_factory() as session:
             client_record = await directory.resolve(session, phone)
     except Exception:
-        # BLOCKER 2 — fail CLOSED on a swallowed DB lookup error. Return 200 to
+        # BLOCKER 2 — fail CLOSED on a swallowed lookup error. Return 200 to
         # Meta (design AD-2) but do NOT fall through to run_turn / outbound
-        # send: `directory.resolve` returns None only for an address it
-        # does not know, and this path is a raised failure — an
-        # unverified phone must not reach the agent or receive a reply.
+        # send: an unverified address must not reach the agent or receive a
+        # reply.
         logger.warning("client_lookup.db_error", phone_number=phone)
         return {"status": "ok"}
 
-    if client_record is not None and not client_record.active:
+    # Three outcomes, and only one of them may continue.
+    #
+    # None means the directory does not know this address. That used to be
+    # unreachable: the function this port replaced was `lookup_or_create`,
+    # which created the row and so never answered None on success — which is
+    # why the check below only handled "known but inactive". Under the port,
+    # None is a documented answer, and treating it as "keep going" is the
+    # same fail-open this route rejects one level up for a missing directory.
+    if client_record is None:
+        logger.info("webhook.unknown_participant", phone_number=phone)
+        return {"status": "ok"}
+
+    if not client_record.active:
         logger.info(
             "webhook.unregistered_client",
             phone_number=phone,
@@ -246,9 +261,7 @@ async def receive_message(
                 await recorder.record_turn(
                     log_session,
                     thread_id=phone,
-                    participant_id=(
-                        client_record.id if client_record is not None else None
-                    ),
+                    participant_id=client_record.id,
                     user_text=text,
                     assistant_text=assistant_text,
                 )
