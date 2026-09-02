@@ -403,13 +403,25 @@ def _fold_parent_into_child(
     parent_perms = (
         list(parent.permissions) if isinstance(parent.permissions, list) else []
     )
-    if isinstance(child.permissions, str):
-        # ``permissions: inherit`` — take the parent's set verbatim.
-        resolved_perms: list[str] = parent_perms
-    else:
-        resolved_perms = _union_preserving_order(
-            parent_perms, list(child.permissions)
+    if isinstance(child.permissions, list):
+        # A plain list ADDS here, unlike at the deployment edge where it
+        # replaces: role-to-role composition is additive for capability.
+        resolved_perms: list[str] = _union_preserving_order(
+            parent_perms, child.permissions
         )
+    else:
+        # Everything else — "inherit", {inherit: true, add/remove: [...]},
+        # {override: [...]} — goes through the shared resolver, which is the
+        # only place those shapes are implemented.
+        #
+        # `list(child.permissions)` used to run on ALL non-list shapes, so a
+        # dict yielded its KEYS: a child using the documented removal
+        # directive received the literal strings 'inherit' and 'remove' as
+        # permissions AND kept the one it asked to remove. Permissions gate
+        # sensitive tool calls, so that failed in the granting direction
+        # twice over. The fix that closed this at the deployment edge left it
+        # live one layer up.
+        resolved_perms = _resolve_list_directive(parent_perms, child.permissions)
 
     parent_limits = (
         dict(parent.execution_limits)
@@ -418,7 +430,15 @@ def _fold_parent_into_child(
     )
     child_limits = child.execution_limits
     if isinstance(child_limits, dict):
-        resolved_limits: dict[str, Any] | str | None = dict(child_limits)
+        # MERGED, for the same reason as at the deployment edge: substituting
+        # dropped every ceiling the parent set and the child did not restate,
+        # and `_effective_limits` then backfilled those from the looser
+        # PLATFORM defaults. A child tightening one limit quietly loosened the
+        # rest -- the identical defect, still live one layer up.
+        resolved_limits: dict[str, Any] | str | None = {
+            **(parent_limits or {}),
+            **child_limits,
+        }
     else:
         resolved_limits = parent_limits
 
@@ -802,9 +822,13 @@ def _validate_execution_limits(
     value, and the baseline.
     """
     for key, override_value in override_limits.items():
-        baseline_value = baseline.get(key)
+        # A role's `execution_limits` may name only some keys. Falling back to
+        # the PLATFORM default for the rest is what keeps a partial dict from
+        # becoming an unbounded one: without it, a deployment could raise any
+        # limit its role happened not to mention.
+        baseline_value = baseline.get(key, _PLATFORM_DEFAULT_LIMITS.get(key))
         if baseline_value is None:
-            # Key not in baseline — allow it (new limit not in platform defaults)
+            # Genuinely unknown to both — a new limit nobody has a ceiling for.
             continue
         if override_value > baseline_value:
             raise DefinitionError(
