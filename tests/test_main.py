@@ -1081,6 +1081,7 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
     import pathlib as _pathlib
     from unittest.mock import AsyncMock, MagicMock, patch
 
+    from agentsys.harness.registry import ToolRegistry
     from agentsys.main import create_app, lifespan
 
     seen: list[Any] = []
@@ -1102,7 +1103,9 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
         embedding_provider="openai",
         openai_api_key="test-key",
     )
-    application = create_app()
+    # `registry_factory` is required as of the app-factory change; this
+    # test is about the ROOTS, so it supplies the smallest one that works.
+    application = create_app(registry_factory=lambda *a, **k: ToolRegistry())
 
     with (
         patch("agentsys.main.get_settings", return_value=test_settings),
