@@ -123,6 +123,71 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
         "autonomy": "supervised",
         "context": {"org_context": False, "session": True, "user_identity": True},
     },
+    "operator-agent": {
+        "tools": ["session_state", "escalation_notifier", "use_term", "read_file"],
+        "permissions": [
+            "exec:command",
+            "read:files",
+            "read:session",
+            "send:escalation",
+        ],
+        "autonomy": "supervised",
+        "context": {"org_context": False, "session": True, "user_identity": True},
+    },
+    "support-agent": {
+        "tools": [
+            "session_state",
+            "escalation_notifier",
+            "knowledge_retrieval",
+            "conversation_summarizer",
+            "client_lookup",
+            "message_sender",
+        ],
+        "permissions": [
+            "read:client_registry",
+            "read:conversation_logs",
+            "read:knowledge_base",
+            "read:session",
+            "send:escalation",
+            "send:message",
+        ],
+        "autonomy": "supervised",
+        "context": {"org_context": True, "session": True, "user_identity": True},
+    },
+    "developer-agent": {
+        "tools": [
+            "session_state",
+            "escalation_notifier",
+            "use_term",
+            "read_file",
+            "knowledge_retrieval",
+        ],
+        "permissions": [
+            "exec:command",
+            "read:files",
+            "read:knowledge_base",
+            "read:session",
+            "send:escalation",
+        ],
+        "autonomy": "supervised",
+        "context": {"org_context": True, "session": True, "user_identity": True},
+    },
+    "accountant-agent": {
+        "tools": [
+            "session_state",
+            "escalation_notifier",
+            "run_report",
+            "knowledge_retrieval",
+        ],
+        "permissions": [
+            "read:knowledge_base",
+            "read:reports",
+            "read:session",
+            "send:escalation",
+        ],
+        "autonomy": "supervised",
+        "context": {"org_context": True, "session": True, "user_identity": True},
+    },
 }
 
 # --- Deployment overrides, which may only NARROW their platform role ------
@@ -186,9 +251,19 @@ def test_platform_role_resolves_to_its_pinned_definition(role_type: str) -> None
     assert sorted(definition.permissions) == expected["permissions"]
     assert definition.autonomy == expected["autonomy"]
     assert definition.context == expected["context"]
-    # No platform role declares execution_limits today. If one starts to, that
-    # is a real change and this line should be updated deliberately.
-    assert definition.execution_limits is None
+    # Only the operator branch tightens the platform ceiling, and it does so
+    # because every call it makes is a subprocess. A role gaining or losing
+    # limits is a safety change, so it is pinned per-role rather than assumed.
+    expected_limits = (
+        {
+            "tool_call_timeout_s": 10,
+            "total_execution_timeout_s": 30,
+            "max_tool_calls": 10,
+        }
+        if role_type in {"operator-agent", "developer-agent"}
+        else None
+    )
+    assert definition.execution_limits == expected_limits
 
 
 @pytest.mark.parametrize("role_type", sorted(PINNED_DEPLOYMENT))
@@ -206,12 +281,7 @@ def test_deployment_resolves_to_its_pinned_definition(role_type: str) -> None:
 
 
 def test_every_deployment_tool_is_allowed_by_its_platform_role() -> None:
-    """The subtractive invariant, stated independently of the pins above.
-
-    This is the property that must survive the inheritance work: whatever
-    `extends:` starts to mean for role-to-role composition, a deployment must
-    never end up with a tool its resolved platform role does not allow.
-    """
+    """Every shipped deployment stays inside its role's surface."""
     for role_type in sorted(PINNED_DEPLOYMENT):
         platform_tools = set(resolve(role_type).tools)
         deployment_tools = set(resolve(role_type, client="acme").tools)
@@ -220,6 +290,43 @@ def test_every_deployment_tool_is_allowed_by_its_platform_role() -> None:
             f"{role_type}/acme widened its tool surface: "
             f"{sorted(deployment_tools - platform_tools)}"
         )
+
+
+def test_a_deployment_that_tries_to_widen_is_refused(tmp_path) -> None:
+    """The ENFORCEMENT, which the test above cannot reach.
+
+    That one grades the manifests currently on disk — all of which are
+    correct — so deleting the subtractive validator leaves it green. It
+    proves the shipped deployments are well-formed, not that a malformed one
+    would be caught. This constructs the malformed one.
+    """
+    import pytest
+
+    from agentsys.harness.loader import DefinitionError, RootConfig
+
+    dep = tmp_path / "greedy" / "summary-agent"
+    dep.mkdir(parents=True)
+    (dep / "role.md").write_text("---\nname: summary-agent\n---\n\nbody\n")
+    (dep / "manifest.md").write_text(
+        "---\nrole: summary-agent\ndeployment: greedy\n"
+        # `use_term` belongs to the operator branch; summary-agent has no path
+        # to it, so asking for it is a deployment trying to widen.
+        "tools: [session_state, use_term]\n"
+        "skills: []\ncontext: {}\npermissions: inherit\n---\n\nm\n"
+    )
+    (dep / "policy.md").write_text(
+        "---\nrole: summary-agent\nautonomy: supervised\n"
+        "execution_limits: null\n---\n\np\n"
+    )
+
+    with pytest.raises(DefinitionError) as excinfo:
+        resolve(
+            "summary-agent",
+            client="greedy",
+            roots=RootConfig(deployments_root=tmp_path),
+        )
+
+    assert "use_term" in str(excinfo.value)
 
 
 def test_operator_agent_tightens_the_platform_execution_limits() -> None:

@@ -339,9 +339,33 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
         if parent:
             parents.add(_extends_target(parent))
 
+    # A CONCRETE descendant, not merely a child. "Something extends it" is
+    # satisfied by another abstract role, which would leave a whole abstract
+    # subtree that still cannot be built and still grants nothing — the exact
+    # dead-file case this exists to catch, one level down.
+    from agentsys.harness.loader import _extends_target, _load_role_files
+
+    def reaches_a_concrete_descendant(ancestor: str) -> bool:
+        for role in discover_platform_roles():
+            if is_abstract(role):
+                continue
+            seen: set[str] = set()
+            current: str | None = role
+            while current and current not in seen:
+                if current == ancestor and role != ancestor:
+                    return True
+                seen.add(current)
+                _, parent, _ = _load_role_files(current, roots)
+                current = _extends_target(parent) if parent else None
+        return False
+
     for role in discover_platform_roles():
         if is_abstract(role):
             assert role in parents, (
                 f"'{role}' is abstract and nothing extends it: it cannot be "
                 f"built and grants nothing, so it is a dead file"
+            )
+            assert reaches_a_concrete_descendant(role), (
+                f"'{role}' is extended only by other abstract roles, so the "
+                f"whole subtree is unbuildable and grants nothing"
             )

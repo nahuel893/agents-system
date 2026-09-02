@@ -559,6 +559,26 @@ def load_override(
     version = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
     deployment = str(manifest_fm.get("deployment", client))
 
+    # A deployment's parent is fixed by its directory -- `deployments/{client}/
+    # {role_type}/` overrides `platform/roles/{role_type}/`. So `extends:` here
+    # cannot CHOOSE anything, and for a long time nothing read it at all. That
+    # left the same key authoritative in a role manifest and silently inert in
+    # a deployment one, which is worse than uniformly ignored: a contradiction
+    # reads as a decision and does nothing.
+    #
+    # It is now checked. Declaring the truth is allowed; declaring a lie is not.
+    declared_parent = manifest_fm.get("extends")
+    if declared_parent is not None:
+        target = _extends_target(declared_parent)
+        if target != role_type:
+            raise DefinitionError(
+                f"Invariant violation — extends: deployment "
+                f"'{client}/{role_type}' declares 'extends: {declared_parent}', "
+                f"but a deployment override always extends the platform role "
+                f"its own folder names ('{role_type}'). A deployment cannot "
+                f"choose a different parent; remove the line or correct it."
+            )
+
     return RawDefinition(
         role_name=role_name,
         version=version,
@@ -875,11 +895,32 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
     # --- Skills come entirely from the override (platform level is always []) ---
     resolved_skills = list(override.skills)
 
+    # --- Resolve system_prompt ---
+    #
+    # COMPOSED, not replaced. `system_prompt=override.system_prompt` threw
+    # away everything the role chain had folded, so a deployed agent never
+    # saw its platform role's prose at all -- and after the taxonomy landed,
+    # never saw `base`'s or `agent`'s either. The standing instructions those
+    # files carry ("report what ran verbatim", "a confident zero is worse
+    # than an error") existed only for a role resolved WITHOUT a deployment,
+    # which is not how anything runs.
+    #
+    # `docs/platform/deployment.md` already described the intended shape:
+    # "the deployment role.md EXTENDS the generic role with client-specific
+    # context". Same separator the factory uses for skills, so the composed
+    # prompt reads as one document.
+    prompt_parts = [
+        part
+        for part in (generic.system_prompt, override.system_prompt)
+        if part.strip()
+    ]
+    resolved_prompt = _PROMPT_SEPARATOR.join(prompt_parts)
+
     return AgentDefinition(
         role_name=generic.role_name,
         version=generic.version,
         deployment=override.deployment,
-        system_prompt=override.system_prompt,
+        system_prompt=resolved_prompt,
         tools=tuple(resolved_tools),
         skills=tuple(resolved_skills),
         context=resolved_context,
