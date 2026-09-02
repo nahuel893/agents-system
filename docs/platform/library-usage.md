@@ -112,7 +112,9 @@ registry.register(
 #
 # Omit `deployments_root` and it defaults to the DEV CHECKOUT of whichever
 # clone of `agentsys` you're running from — almost never what you want in
-# a real application. See "Trap 1" below.
+# a real application. If that default doesn't exist and you request a
+# client override, `resolve()` now raises `DefinitionError` instead of
+# silently falling back to the generic role. See "Trap 1" below.
 
 roots = agentsys.RootConfig(
     deployments_root=MY_APP_ROOT / "deployments",
@@ -153,11 +155,29 @@ the `deployments/` directory of whatever git checkout of `agentsys` your
 Python environment happens to be running from — i.e. **this** repository's
 `deployments/acme/`, not yours. `platform_root` has a real installed-package
 default (see below); `deployments_root` deliberately does not, because a
-client's deployments are never shipped inside the package. Forgetting to
-pass your own `deployments_root` silently means you either get ACME's
-overrides (if this repo happens to be on the path) or a plain
-`FileNotFoundError`-shaped surprise. **Always pass `deployments_root`
-explicitly** when you have your own deployment overrides.
+client's deployments are never shipped inside the package.
+
+**As of D-024 slice 2, forgetting this no longer fails silently in the case
+that matters most**: if you request a client override (`resolve(role,
+client=...)` / `build_runtime(..., client=...)`) and the resolved
+`deployments_root` directory does not exist at all (e.g. `agentsys` installed
+as a dependency, with no co-located `deployments/`), the library raises an
+explicit `DefinitionError` naming the exact path it looked for, instead of
+quietly falling back to the generic role. A deployment override can only
+*narrow* the generic role, never broaden it — so a silent fallback would
+have widened tools/autonomy/permissions past what the requested (but
+unconfigured) override was meant to restrict; that is a security relaxation
+disguised as a safe default, which is why this is now a loud failure rather
+than a warning log.
+
+This does **not** make omitting `deployments_root` safe: the guessed default
+still only matches a co-located dev checkout of `agentsys` itself. If your
+application happens to run from a clone where that directory exists for an
+unrelated reason, you will silently get ACME's overrides instead of an
+error — the new guard only catches the *missing-directory* case, not
+*exists-but-is-the-wrong-one*. **Always pass `deployments_root` explicitly**
+when you have your own deployment overrides; do not rely on the guessed
+default succeeding just because it no longer fails silently when absent.
 
 `platform_root`, by contrast, resolves automatically: `RootConfig()` tries
 the packaged location (`platform/` next to the installed `agentsys` package)

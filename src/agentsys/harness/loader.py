@@ -97,6 +97,33 @@ def _require_platform_root(root: pathlib.Path) -> pathlib.Path:
     )
 
 
+def _require_deployments_root(root: pathlib.Path) -> pathlib.Path:
+    """Fail loudly, naming what was searched, before resolving a client override.
+
+    Mirrors ``_require_platform_root``. Without this, a missing
+    ``deployments/`` directory (e.g. agentsys installed as a dependency, with
+    no co-located ``deployments/``) surfaces as ``load_override``'s "not
+    found" warning, and ``resolve`` silently falls back to the generic role.
+    That fallback is not neutral: a deployment override may only NARROW the
+    generic role, never broaden it, so falling back to the unrestricted
+    generic role WIDENS tools/autonomy/permissions past what the requested
+    (but unconfigured) override would have restricted — a security
+    relaxation disguised as a safe default. Only called when a client
+    override is actually requested; ``resolve(role)`` with no ``client``
+    never needs a ``deployments_root`` at all.
+    """
+    if root.is_dir():
+        return root
+    raise DefinitionError(
+        "Could not locate the deployments/ directory required to resolve a "
+        f"client override. Looked in: {root}\n"
+        "agentsys does not derive `deployments_root` from its own package/"
+        "installation location — a consumer must pass its own "
+        "RootConfig(deployments_root=...) explicitly "
+        "(see docs/platform/library-usage.md)."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Autonomy rank — lower rank is more restrictive (safer)
 # ---------------------------------------------------------------------------
@@ -339,7 +366,9 @@ def load_override(
     if roots is None:
         roots = RootConfig()
 
-    folder = _deployment_folder(roots.deployments_root, client, role_type)
+    folder = _deployment_folder(
+        _require_deployments_root(roots.deployments_root), client, role_type
+    )
 
     if not folder.exists():
         # Not an error — a role may legitimately have no override. But it is
