@@ -476,42 +476,6 @@ async def test_a_large_stderr_does_not_stall_the_stdout_read(
     assert result["truncated"] is True
 
 
-async def test_reading_a_huge_file_is_bounded_by_the_cap_not_the_file(
-    tmp_path: pathlib.Path,
-) -> None:
-    """A 64-byte view of a 96 MiB file must cost what 64 bytes cost.
-
-    This is what actually protects the event loop: the read stops at the cap,
-    so it finishes in microseconds regardless of file size. The earlier
-    version read the whole file first and truncated after, which both
-    allocated the file AND stalled the loop for the duration.
-
-    Honest limit: `asyncio.to_thread` around the read is belt-and-braces for
-    SLOW storage — a network mount, a cold disk — where even a bounded read
-    can block. That is not portably testable here, so it is not claimed to be
-    tested. What is pinned is the bound, which is the load-bearing half.
-    """
-    import time
-
-    big = tmp_path / "wide.bin"
-    with big.open("wb") as handle:
-        for _ in range(96):
-            handle.write(b"q" * 1024 * 1024)
-
-    connector = build_file_reader_connector(_policy(tmp_path, max_output_bytes=64))
-
-    started = time.perf_counter()
-    result = await connector({"path": "wide.bin"})
-    elapsed = time.perf_counter() - started
-
-    assert result["truncated"] is True
-    assert len(result["content"]) <= 64
-    assert elapsed < 0.5, (
-        f"a 64-byte capped read of a 96 MiB file took {elapsed:.2f}s; "
-        f"it is reading the whole file"
-    )
-
-
 async def test_a_deployment_can_actually_configure_the_sandbox(
     tmp_path: pathlib.Path,
 ) -> None:

@@ -590,3 +590,61 @@ def test_a_deployment_may_not_raise_a_limit_its_role_never_named(
         )
 
     assert "max_tool_calls" in str(excinfo.value)
+
+
+def test_a_role_naming_a_limit_as_null_still_has_a_ceiling(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`max_tool_calls: null` must mean "platform default", not "no ceiling".
+
+    `dict.get(key, default)` returns the default only when the key is ABSENT
+    — never when its value is None. So the fallback added for a role's
+    PARTIAL limits dict closed the omitted-key half of that class and left
+    the null-valued half open.
+
+    That matters because `execution_limits: null` is already a shipped idiom
+    in six policy files meaning "no opinion, take the platform defaults".
+    Written per-key it reads identically to an author, and silently removed
+    the ceiling instead of applying it:
+
+        role       {tool_call_timeout_s: 5, max_tool_calls: null}
+        deployment {max_tool_calls: 9999}
+        -> accepted, and `_effective_limits` enforced 9999
+
+    `max_tool_calls` is what stops an operator agent looping on a failing
+    command, and every one of those is a subprocess.
+    """
+    from agentsys.harness.loader import RootConfig, resolve
+
+    roles = tmp_path / "roles"
+    d = roles / "p"
+    d.mkdir(parents=True)
+    (d / "role.md").write_text("---\nname: p\n---\n\nbody\n")
+    (d / "manifest.md").write_text(
+        "---\nrole: p\ntools: []\nskills: []\ncontext: {}\npermissions:\n  []\n---\n\nm\n"
+    )
+    (d / "policy.md").write_text(
+        "---\nrole: p\nautonomy: supervised\nexecution_limits:\n"
+        "  tool_call_timeout_s: 5\n  max_tool_calls: null\n---\n\np\n"
+    )
+
+    deployments = tmp_path / "deployments"
+    dep = deployments / "greedy" / "p"
+    dep.mkdir(parents=True)
+    (dep / "role.md").write_text("---\nname: p\n---\n\nbody\n")
+    (dep / "manifest.md").write_text(
+        "---\nrole: p\ndeployment: greedy\ntools: []\nskills: []\n"
+        "context: {}\npermissions: inherit\n---\n\nm\n"
+    )
+    (dep / "policy.md").write_text(
+        "---\nrole: p\nexecution_limits:\n  max_tool_calls: 9999\n---\n\np\n"
+    )
+
+    with pytest.raises(DefinitionError) as excinfo:
+        resolve(
+            "p",
+            client="greedy",
+            roots=RootConfig(platform_root=roles.parent, deployments_root=deployments),
+        )
+
+    assert "max_tool_calls" in str(excinfo.value)
