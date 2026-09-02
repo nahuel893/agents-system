@@ -1,5 +1,6 @@
 ---
 role: orchestrator
+extends: platform/roles/agent
 version: "1.0"
 tools: [client_lookup, session_state, escalation_notifier]
 skills: []

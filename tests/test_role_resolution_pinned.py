@@ -1,13 +1,26 @@
 """Regression guard: what every role and deployment resolves to today.
 
-Written BEFORE `extends:` became a real directive. Every deployment manifest
-in this repository already declares `extends: platform/roles/{its own
-role_type}` — the same parent the directory convention picks — so making the
-declaration real must change nothing at all.
+Written BEFORE `extends:` became a real directive, to prove that making the
+declaration real moved nothing: every deployment manifest already named the
+parent the directory convention picks.
 
-That is the whole point of this file. If a value below changes, the
-inheritance work introduced a behaviour change it did not intend, and that is
-a bug in the change rather than an improvement in the platform.
+It then did its second job. Introducing `base` and `agent` and re-parenting
+the four existing roles under them IS a deliberate behaviour change, and this
+file is where it had to be stated rather than discovered:
+
+**Platform roles** — `sales-agent`, `data-agent` and `summary-agent` each gain
+`escalation_notifier` and `send:escalation` by inheriting from `agent`. That
+is the point of a base: every agent can reach a human, and no descendant has
+to restate it. `orchestrator` gains nothing, having already declared both.
+
+**Deployments — unchanged, and that is the load-bearing part.** A deployment
+lists its own tools and may only narrow, so ACME's resolved sales-agent still
+has exactly its five and data-agent its four. Its `permissions: inherit` does
+pick up `send:escalation`, which is inert: the injector resolves tools, never
+permissions, and neither deployment declares `escalation_notifier`.
+
+If anything in the DEPLOYMENT section below changes, the taxonomy leaked into
+what actually runs, and that is a bug rather than an improvement.
 
 Expected values are literals, captured from the resolver and written out by
 hand. They are deliberately NOT derived from the object under test: a test
@@ -25,7 +38,11 @@ from agentsys.harness.loader import resolve
 
 PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     "orchestrator": {
-        "tools": ["client_lookup", "session_state", "escalation_notifier"],
+        # Order is parent-first: `agent` contributes session_state and
+        # escalation_notifier, then the role's own additions in declared
+        # order. orchestrator already named both, so it gains nothing —
+        # they are deduplicated, not repeated.
+        "tools": ["session_state", "escalation_notifier", "client_lookup"],
         "permissions": [
             "read:client_registry",
             "read:session",
@@ -40,16 +57,19 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     },
     "sales-agent": {
         "tools": [
+            "session_state",
+            "escalation_notifier",  # gained from `agent`
             "message_sender",
             "catalog_search",
             "order_writer",
-            "session_state",
             "client_lookup",
         ],
         "permissions": [
             "read:catalog",
             "read:client_registry",
             "read:price_lists",
+            "read:session",  # gained from `base`
+            "send:escalation",  # gained from `agent`
             "send:message",
             "write:order_items",
             "write:orders",
@@ -59,11 +79,12 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     },
     "data-agent": {
         "tools": [
+            "session_state",
+            "escalation_notifier",  # gained from `agent`
             "catalog_search",
             "client_lookup",
             "knowledge_retrieval",
             "run_report",
-            "session_state",
         ],
         "permissions": [
             "read:catalog",
@@ -71,19 +92,35 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
             "read:knowledge_base",
             "read:reports",
             "read:session",
+            "send:escalation",  # gained from `agent`
         ],
+        # `full` under a `supervised` parent, on purpose. Role-to-role
+        # composition lets a child declare its own autonomy; only a
+        # DEPLOYMENT is held to its role's ceiling.
         "autonomy": "full",
         "context": {"org_context": True, "session": True, "user_identity": True},
     },
     "summary-agent": {
-        "tools": ["conversation_summarizer", "knowledge_retrieval", "session_state"],
+        "tools": [
+            "session_state",
+            "escalation_notifier",  # gained from `agent`
+            "conversation_summarizer",
+            "knowledge_retrieval",
+        ],
         "permissions": [
             "read:conversation_logs",
             "read:knowledge_base",
             "read:session",
+            "send:escalation",  # gained from `agent`
             "write:summary_output",
         ],
         "autonomy": "full",
+        "context": {"org_context": False, "session": True, "user_identity": True},
+    },
+    "agent": {
+        "tools": ["session_state", "escalation_notifier"],
+        "permissions": ["read:session", "send:escalation"],
+        "autonomy": "supervised",
         "context": {"org_context": False, "session": True, "user_identity": True},
     },
 }
@@ -91,6 +128,16 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
 # --- Deployment overrides, which may only NARROW their platform role ------
 
 PINNED_DEPLOYMENT: dict[str, dict[str, Any]] = {
+    # TOOLS ARE UNCHANGED by the taxonomy, and that is the assertion that
+    # matters: a deployment lists its own and may only narrow, so what
+    # actually runs is exactly what ran before.
+    #
+    # PERMISSIONS did move, because both manifests say `permissions: inherit`
+    # and the resolved role now carries `read:session` and `send:escalation`.
+    # Both are inert here: the injector resolves the tool surface as
+    # `role.permissions ∩ granted`, so a permission with no declared tool
+    # grants nothing. The ACME data-agent manifest already documents this
+    # exact situation for `read:knowledge_base`.
     "sales-agent": {
         "tools": [
             "message_sender",
@@ -103,6 +150,8 @@ PINNED_DEPLOYMENT: dict[str, dict[str, Any]] = {
             "read:catalog",
             "read:client_registry",
             "read:price_lists",
+            "read:session",  # inherited, inert
+            "send:escalation",  # inherited, inert — no escalation_notifier here
             "send:message",
             "write:order_items",
             "write:orders",
@@ -118,6 +167,7 @@ PINNED_DEPLOYMENT: dict[str, dict[str, Any]] = {
             "read:knowledge_base",
             "read:reports",
             "read:session",
+            "send:escalation",  # inherited, inert
         ],
         "autonomy": "full",
         "context": {"org_context": True, "session": True, "user_identity": True},
