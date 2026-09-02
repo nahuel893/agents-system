@@ -371,13 +371,23 @@ def _fold_parent_into_child(
     so no trust boundary is crossed — unlike deployment-to-role, which stays
     subtractive and is enforced later by ``_merge_validated``.
 
-    Two fields resist the additive direction on purpose. ``autonomy`` and
-    ``execution_limits`` are safety ceilings, not capabilities: a child that
-    could raise its own timeout or elevate its own supervision level would
-    make the root's limits decorative. Both reuse the validators the
-    deployment path already uses.
+    ``autonomy`` and ``execution_limits`` are the child's to declare, in
+    either direction. An earlier version of this function enforced them as
+    ceilings here, reusing the deployment-path validators. That was wrong,
+    and building the taxonomy surfaced it immediately: ``data-agent`` runs
+    ``autonomy: full`` and could not descend from a ``supervised`` base.
+
+    The subtractive rule exists because a deployment is authored by someone
+    else. Applying it between two roles imports a trust boundary that is not
+    there -- the same person writes both files, so a child declaring ``full``
+    is a design decision, not an escalation, and blocking it buys no safety
+    while making the hierarchy unusable for any role that legitimately runs
+    unsupervised.
+
+    The ceiling that matters is unchanged: ``_merge_validated`` still refuses
+    a deployment that elevates either field, now measured against the fully
+    resolved chain.
     """
-    _validate_autonomy(parent, child)
 
     parent_perms = (
         list(parent.permissions) if isinstance(parent.permissions, list) else []
@@ -397,9 +407,6 @@ def _fold_parent_into_child(
     )
     child_limits = child.execution_limits
     if isinstance(child_limits, dict):
-        _validate_execution_limits(
-            parent_limits or _PLATFORM_DEFAULT_LIMITS, child_limits
-        )
         resolved_limits: dict[str, Any] | str | None = dict(child_limits)
     else:
         resolved_limits = parent_limits

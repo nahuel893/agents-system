@@ -186,14 +186,18 @@ def test_consumer_builds_own_registry_and_tool_comes_back_granted() -> None:
             connector=my_own_catalog_search,
         )
     )
-    # The manifest declares 5 tools; the injector raises on any declared tool
-    # absent from the registry, so the client must cover the full surface it
-    # intends to grant (it may leave some ungranted via permissions instead).
+    # The RESOLVED sales-agent declares 6 tools -- its own 5 plus
+    # `escalation_notifier`, inherited from `platform/roles/agent`. The
+    # injector raises on any declared tool absent from the registry, so a
+    # consumer must cover the whole inherited surface, not just the leaf
+    # manifest. That is the visible cost of a base role, and it is the right
+    # one: an agent with no escalation path fails silently.
     for name, perms in (
         ("message_sender", ("send:message",)),
         ("order_writer", ("write:orders", "write:order_items")),
         ("session_state", ()),
         ("client_lookup", ("read:client_registry",)),
+        ("escalation_notifier", ("send:escalation",)),
     ):
         registry.register(
             agentsys.ToolSpec(

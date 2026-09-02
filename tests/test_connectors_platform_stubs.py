@@ -29,7 +29,7 @@ import pytest
 from platform_role_contract import (
     EXPECTED_ROLE_TOOLS,
     PINNED_ROLES,
-    discover_platform_roles,
+    discover_concrete_platform_roles,
 )
 
 # run_report arrived with D-023. It is registered unbound when no BI
@@ -475,7 +475,7 @@ def test_platform_role_resolves_its_pinned_tool_surface(role_type: str) -> None:
     assert {t.name for t in result.granted} == EXPECTED_ROLE_TOOLS[role_type]
 
 
-@pytest.mark.parametrize("role_type", discover_platform_roles())
+@pytest.mark.parametrize("role_type", discover_concrete_platform_roles())
 @pytest.mark.parametrize("builder_name", sorted(REGISTRY_BUILDERS))
 def test_every_tool_declared_on_disk_exists_in_both_registries(
     builder_name: str, role_type: str

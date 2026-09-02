@@ -13,10 +13,17 @@ allows — and `_merge_validated` already enforces it. Because the chain is
 resolved inside `load_generic`, that existing validation now runs against the
 whole resolved chain for free. `test_role_resolution_pinned.py` guards it.
 
-Two things stay subtractive even in the additive direction: `execution_limits`
-and `autonomy`. Adding a tool is a capability decision the platform author
-owns. Raising a timeout or loosening supervision is a safety decision, and a
-child that could do it silently would make the root's limits decorative.
+`autonomy` and `execution_limits` are the child's to declare, in EITHER
+direction. An earlier version of this file asserted them as ceilings here,
+reusing the deployment-path validators. Building the taxonomy disproved it
+within minutes: `data-agent` runs `autonomy: full` and could not descend from
+a `supervised` base, so the rule made the hierarchy unusable for any role that
+legitimately runs unsupervised.
+
+The subtractive rule exists because a deployment is authored by someone else.
+Between two platform roles there is no second party, so a child declaring
+`full` is a design decision rather than an escalation, and refusing it bought
+no safety. The ceiling that matters is unchanged and asserted below.
 """
 from __future__ import annotations
 
@@ -171,23 +178,48 @@ def test_an_abstract_role_may_still_be_a_parent() -> None:
 # --- Safety invariants stay subtractive ------------------------------------
 
 
-def test_a_child_may_not_loosen_its_parents_execution_limits() -> None:
-    """Additive for capability, never for safety.
+def test_a_child_declares_its_own_execution_limits() -> None:
+    """Between two platform roles, the child's limits win.
 
-    `fx-strict` caps the turn at 10s and 3 tool calls. A child asking for 999
-    and 99 is asking to escape a ceiling its parent set, and the platform's
-    limits would mean nothing if that were allowed silently.
+    `fx-strict` caps the turn at 10s; `fx-loosens-limits` asks for 999. Both
+    files are written by the same author, so this is a design decision about
+    one role, not an escape from a ceiling somebody else set. The ceiling that
+    matters is at the deployment edge, asserted below.
     """
+    definition = resolve("fx-loosens-limits", roots=_roots())
+
+    assert definition.execution_limits is not None
+    assert definition.execution_limits["total_execution_timeout_s"] == 999
+
+
+def test_a_child_declares_its_own_autonomy() -> None:
+    """A platform role may run unsupervised even under a supervised parent.
+
+    Without this, an analytics role that legitimately needs `full` cannot
+    descend from a conversational base — which is exactly the case that
+    disproved the earlier, stricter rule.
+    """
+    definition = resolve("fx-loosens-autonomy", roots=_roots())
+
+    assert definition.autonomy == "full"
+
+
+def test_a_deployment_still_may_not_loosen_the_resolved_role() -> None:
+    """The subtractive rule, where it actually belongs.
+
+    Relaxing role-to-role composition must not relax this. A deployment is
+    authored by a different party, so it may only narrow — and now it is
+    measured against the FULLY RESOLVED chain rather than the leaf manifest,
+    which is strictly stronger than before.
+    """
+    fixtures = pathlib.Path(__file__).parent / "fixtures" / "agents"
+    roots = RootConfig(
+        platform_root=fixtures / "generic-role",
+        deployments_root=fixtures / "overrides" / "deployments",
+    )
+
     with pytest.raises(DefinitionError) as excinfo:
-        resolve("fx-loosens-limits", roots=_roots())
-
-    assert "total_execution_timeout_s" in str(excinfo.value)
-
-
-def test_a_child_may_not_loosen_its_parents_autonomy() -> None:
-    """`supervised` -> `full` is an escalation of trust, not an addition."""
-    with pytest.raises(DefinitionError) as excinfo:
-        resolve("fx-loosens-autonomy", roots=_roots())
+        resolve("simple-role", client="bad-autonomy", roots=roots)
 
     assert "autonomy" in str(excinfo.value).lower()
 
