@@ -628,6 +628,11 @@ def test_load_override_works_without_any_platform_directory(
     monkeypatch.setattr(
         loader_module, "_CHECKOUT_PLATFORM_ROOT", tmp_path / "no" / "checkout"
     )
+    # The root must EXIST — an absent one is a misconfigured consumer and
+    # now raises, because `load_override` returning None for it is exactly
+    # the path that lets `resolve` fall back to the generic role and widen
+    # the tool surface.
+    (tmp_path / "deployments").mkdir()
     monkeypatch.setattr(
         loader_module, "_DEFAULT_DEPLOYMENTS_ROOT", tmp_path / "deployments"
     )
@@ -664,10 +669,19 @@ def test_missing_platform_root_still_fails_loudly_naming_both_paths(
 # The behaviour is out of scope to change here; going silent is not.
 # ---------------------------------------------------------------------------
 def test_missing_deployment_emits_a_warning(tmp_path: pathlib.Path) -> None:
+    """Root present, client folder absent: warn and fall back.
+
+    This is the typo case, and it stays a warning rather than a raise — a
+    role legitimately may have no override. It is distinct from an ABSENT
+    ROOT, which is a misconfigured consumer and raises; the test below
+    covers that. Before they were separated, this one passed a nonexistent
+    root and so proved neither.
+    """
     import structlog
 
     from agentsys.harness.loader import RootConfig, load_override
 
+    (tmp_path / "deployments").mkdir()
     roots = RootConfig(
         platform_root=tmp_path / "platform",
         deployments_root=tmp_path / "deployments",
@@ -680,3 +694,28 @@ def test_missing_deployment_emits_a_warning(tmp_path: pathlib.Path) -> None:
     assert events, "a missing deployment override must be logged, not silent"
     assert events[0]["client"] == "typo-client"
     assert events[0]["role_type"] == "sales-agent"
+
+
+def test_load_override_raises_when_the_deployments_root_is_absent(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An absent root is a misconfigured consumer, not a missing override.
+
+    `load_override` used to answer None here, and `resolve` reads None as
+    "this role has no override" and returns the GENERIC role — whose tool
+    surface is the full platform allowance a deployment exists to narrow. So
+    a wrong or unset `deployments_root` granted more, silently. The guard now
+    sits at the point of use, mirroring `_require_platform_root` in
+    `load_generic`.
+    """
+    from agentsys.harness.loader import DefinitionError, RootConfig, load_override
+
+    roots = RootConfig(
+        platform_root=tmp_path / "platform",
+        deployments_root=tmp_path / "nope",
+    )
+
+    with pytest.raises(DefinitionError) as excinfo:
+        load_override("acme", "sales-agent", roots=roots)
+
+    assert "nope" in str(excinfo.value)

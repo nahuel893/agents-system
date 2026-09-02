@@ -305,11 +305,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         "lets Meta's webhook retry double-send the reply"
                     )
 
+                # The SAME explicit root as the `resolve` above. Passing it
+                # to only one of the two was the whole bug in a subtler form:
+                # the definition used for the permission grant came from the
+                # explicit path while the runtime actually installed -- its
+                # tool surface and its skill files -- resolved against the
+                # library's guessed default.
                 equipped = build_runtime(
                     role_type=role,
                     registry=registry,
                     granted_permissions=definition.permissions,
                     client=deployment,
+                    roots=RootConfig(deployments_root=_DEPLOYMENTS_ROOT),
                     session_provider=session_provider,
                 )
                 runtimes[model_id] = AgentRuntime(

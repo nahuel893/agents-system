@@ -366,7 +366,9 @@ def load_override(
     if roots is None:
         roots = RootConfig()
 
-    folder = _deployment_folder(roots.deployments_root, client, role_type)
+    folder = _deployment_folder(
+        _require_deployments_root(roots.deployments_root), client, role_type
+    )
 
     if not folder.exists():
         # Not an error — a role may legitimately have no override. But it is
@@ -748,7 +750,6 @@ def resolve(
     generic = load_generic(role_type, roots=roots)
 
     if client is not None:
-        _require_deployments_root(roots.deployments_root)
         override = load_override(client, role_type, roots=roots)
         if override is not None:
             return merge(generic, override)
