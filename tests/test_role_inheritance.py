@@ -404,8 +404,14 @@ def test_a_role_with_no_parent_and_no_declaration_gets_the_platform_floor() -> N
 
     Moved from load time to after the chain resolves, so it can no longer
     overwrite an inherited value.
+
+    The fixture must declare NOTHING. An earlier version used `fx-strict`,
+    which declares `autonomy: supervised` explicitly — so deleting the
+    default entirely left the assertion green, and the test could not fail
+    for the line it exists to pin. `fx-rootless` has no `extends` and no
+    `autonomy`, which is the only shape that reaches this code path.
     """
-    assert resolve("fx-strict", roots=_roots()).autonomy == "supervised"
+    assert resolve("fx-rootless", roots=_roots()).autonomy == "supervised"
 
 
 def test_a_deployment_that_removes_a_permission_actually_loses_it(
@@ -474,3 +480,113 @@ def test_a_deployment_that_declares_no_autonomy_keeps_the_roles(
 
     assert resolve("fx-confirm", roots=roots).autonomy == "confirm"
     assert resolve("fx-confirm", client="quiet", roots=roots).autonomy == "confirm"
+
+
+def _chain(tmp_path: pathlib.Path, **roles: dict) -> RootConfig:
+    """Write a throwaway role chain and return roots pointing at it."""
+    base = tmp_path / "roles"
+    for name, spec in roles.items():
+        d = base / name
+        d.mkdir(parents=True)
+        (d / "role.md").write_text(f"---\nname: {name}\n---\n\nbody\n")
+        ex = f"extends: {spec['extends']}\n" if spec.get("extends") else ""
+        (d / "manifest.md").write_text(
+            f"---\nrole: {name}\n{ex}tools: []\nskills: []\ncontext: {{}}\n"
+            f"permissions:\n{spec.get('permissions', '  []')}\n---\n\nm\n"
+        )
+        (d / "policy.md").write_text(
+            f"---\nrole: {name}\nautonomy: supervised\n"
+            f"execution_limits: {spec.get('limits', 'null')}\n---\n\np\n"
+        )
+    return RootConfig(platform_root=base.parent)
+
+
+def test_a_child_role_removing_a_permission_actually_loses_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The directive was not just ignored on the role fold — it corrupted the set.
+
+    `list(child.permissions)` ran on every non-list shape, so a dict yielded
+    its KEYS. A child using the documented `{inherit: true, remove: [...]}`
+    received the literal strings 'inherit' and 'remove' as permissions AND
+    kept the one it asked to remove:
+
+        parent : ['read:a', 'write:danger']
+        child  : ['inherit', 'read:a', 'remove', 'write:danger']
+
+    Permissions gate sensitive tool calls, so it failed in the granting
+    direction twice over. The fix that closed this at the DEPLOYMENT edge
+    left it live one layer up.
+    """
+    roots = _chain(
+        tmp_path,
+        p={"permissions": "  - read:a\n  - write:danger"},
+        c={
+            "extends": "p",
+            "permissions": "  inherit: true\n  remove: [write:danger]",
+        },
+    )
+
+    child = resolve("c", roots=roots)
+
+    assert set(child.permissions) == {"read:a"}, sorted(child.permissions)
+
+
+def test_a_child_role_tightening_one_limit_keeps_the_others(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The substitute-don't-merge defect, still live on the role fold.
+
+    Fixed at the deployment edge and not here, so a child role tightening one
+    ceiling silently dropped every other its parent set — and
+    `_effective_limits` backfills the missing ones from the looser PLATFORM
+    defaults. Measured: parent 5s/3 calls, child declaring only 2s, resolved
+    to 2s and NO call ceiling at all.
+    """
+    roots = _chain(
+        tmp_path,
+        p={"limits": "\n  tool_call_timeout_s: 5\n  max_tool_calls: 3"},
+        c={"extends": "p", "limits": "\n  tool_call_timeout_s: 2"},
+    )
+
+    child = resolve("c", roots=roots)
+
+    assert child.execution_limits == {
+        "tool_call_timeout_s": 2,
+        "max_tool_calls": 3,
+    }
+
+
+def test_a_deployment_may_not_raise_a_limit_its_role_never_named(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A partial role dict must not become an unbounded one.
+
+    `_validate_execution_limits` skipped any key absent from the baseline, so
+    a role naming only `tool_call_timeout_s` gave a deployment a free hand on
+    every other limit — including `max_tool_calls`, which is what stops an
+    operator agent looping on a failing command.
+    """
+    roots = _chain(tmp_path, p={"limits": "\n  tool_call_timeout_s: 5"})
+    deployments = tmp_path / "deployments"
+    dep = deployments / "greedy" / "p"
+    dep.mkdir(parents=True)
+    (dep / "role.md").write_text("---\nname: p\n---\n\nbody\n")
+    (dep / "manifest.md").write_text(
+        "---\nrole: p\ndeployment: greedy\ntools: []\nskills: []\n"
+        "context: {}\npermissions: inherit\n---\n\nm\n"
+    )
+    (dep / "policy.md").write_text(
+        "---\nrole: p\nexecution_limits:\n  max_tool_calls: 9999\n---\n\np\n"
+    )
+
+    with pytest.raises(DefinitionError) as excinfo:
+        resolve(
+            "p",
+            client="greedy",
+            roots=RootConfig(
+                platform_root=roots.platform_root, deployments_root=deployments
+            ),
+        )
+
+    assert "max_tool_calls" in str(excinfo.value)
