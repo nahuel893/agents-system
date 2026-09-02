@@ -220,3 +220,53 @@ def test_every_deployment_tool_is_allowed_by_its_platform_role() -> None:
             f"{role_type}/acme widened its tool surface: "
             f"{sorted(deployment_tools - platform_tools)}"
         )
+
+
+def test_operator_agent_tightens_the_platform_execution_limits() -> None:
+    """The role that can spawn processes gets half the default budget.
+
+    Platform defaults allow 60s and 20 tool calls. Every call this role makes
+    is a subprocess, and an agent looping on a failing command is a fork bomb
+    with good intentions — so the ceiling is a safety decision, not a
+    performance one, and it needs an assertion rather than a comment.
+
+    Written as literals: reading them off the resolved definition would grade
+    the manifest against itself.
+    """
+    definition = resolve("operator-agent")
+
+    assert definition.execution_limits == {
+        "tool_call_timeout_s": 10,
+        "total_execution_timeout_s": 30,
+        "max_tool_calls": 10,
+    }
+    # And it does not take `full` autonomy, unlike two of its cousins: it is
+    # the only role in the tree that can change the host.
+    assert definition.autonomy == "supervised"
+
+
+def test_no_role_outside_the_operator_branch_can_reach_the_host() -> None:
+    """The whole reason `operator-agent` is a sibling and not a base.
+
+    Role-to-role inheritance is additive with no removal directive, so a host
+    permission placed anywhere above the conversational roles could never be
+    taken back. Grepping the resolved surface — not the manifests — catches a
+    grant that arrives by inheritance rather than declaration.
+    """
+    from platform_role_contract import discover_concrete_platform_roles
+
+    host_permissions = {"exec:command", "read:files"}
+    host_tools = {"use_term", "read_file"}
+
+    for role in discover_concrete_platform_roles():
+        definition = resolve(role)
+        reaches_host = bool(host_permissions & set(definition.permissions)) or bool(
+            host_tools & set(definition.tools)
+        )
+        if role == "operator-agent":
+            assert reaches_host, "operator-agent must reach the host; that is its job"
+        else:
+            assert not reaches_host, (
+                f"'{role}' can reach the host. If that is intended it must "
+                f"descend from operator-agent deliberately, not inherit it."
+            )

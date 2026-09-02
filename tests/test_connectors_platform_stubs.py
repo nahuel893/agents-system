@@ -37,6 +37,12 @@ from platform_role_contract import (
 # tool a manifest names but the registry lacks makes the whole role
 # unbuildable through InjectionError.
 ALL_PLATFORM_TOOLS = {
+    # Registered inert by both shipped registries so `operator-agent` can
+    # boot. Inert means `use_term` refuses every command until a deployment
+    # supplies a TerminalPolicy — the tool being PRESENT is what the injector
+    # needs, and being USABLE is a separate, explicit decision.
+    "use_term",
+    "read_file",
     "catalog_search",
     "client_lookup",
     "order_writer",

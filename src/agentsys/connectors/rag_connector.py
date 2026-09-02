@@ -25,6 +25,7 @@ from agentsys.connectors.stubs import (
 )
 from agentsys.connectors.acme_reports import CATALOG as _BI_CATALOG
 from agentsys.connectors.report_connector import build_report_tool_spec
+from agentsys.connectors.operator import build_operator_tool_specs
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 from agentsys.services.embeddings import (
     EmbeddingProvider,
@@ -308,4 +309,14 @@ def build_acme_rag_registry(
             connector=escalation_notifier,
         )
     )
+    # The operator tools, registered INERT: `build_operator_tool_specs()` with
+    # no policy refuses every command and roots reads at the process cwd.
+    # `platform/roles/operator-agent` names both, and a tool a manifest names
+    # but the registry lacks makes the whole role unbuildable -- so the choice
+    # is between an inert tool and no operator role at all. An application
+    # that wants real terminal access builds its own `TerminalPolicy` and
+    # registers these specs itself.
+    for spec in build_operator_tool_specs():
+        registry.register(spec)
+
     return registry
