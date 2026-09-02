@@ -421,8 +421,112 @@ async def test_search_catalog_uses_the_injected_source_not_a_module_import() -> 
 
 
 def test_rag_module_does_not_import_client_domain() -> None:
-    """`services.rag` must not reach into any client-owned module."""
-    source = pathlib.Path(rag.__file__).read_text(encoding="utf-8")
+    """`services.rag` must not reach into any client-owned module.
 
-    assert "services.catalog" not in source
-    assert "services import catalog" not in source
+    A fresh-interpreter probe rather than a substring scan of the file. The
+    scan this replaces promised "any client-owned module" and checked two
+    literals naming one of them: adding `from agentsys.models.tables import
+    CatalogEmbedding` -- ACME's actual `catalog_embeddings` ORM table -- and
+    using it left the scan green, while a docstring reword turned it red. It
+    fired on prose and missed the worst real violation.
+
+    Run in a subprocess so no other test's imports leak into `sys.modules`
+    and make this vacuously pass. Same pattern, and same reason, as the
+    laziness probes in `test_public_api.py`.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "import agentsys.services.rag\n"
+            "client_owned = {\n"
+            "    'agentsys.services.catalog',\n"
+            "    'agentsys.services.clients',\n"
+            "    'agentsys.services.conversation_log',\n"
+            "    'agentsys.services.seed_data',\n"
+            "    'agentsys.services.sync_articles',\n"
+            "    'agentsys.services.sync_clients',\n"
+            "    'agentsys.services.medallion',\n"
+            "    'agentsys.models.tables',\n"
+            "    'agentsys.connectors.acme_reports',\n"
+            "    'agentsys.connectors.stubs',\n"
+            "}\n"
+            "leaked = sorted(client_owned & set(sys.modules))\n"
+            "assert not leaked, leaked\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=str(pathlib.Path(rag.__file__).resolve().parents[3]),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_rag_module_has_no_function_local_import_of_client_domain() -> None:
+    """The blind spot the runtime probe cannot see, kept from the old scan.
+
+    `catalog.py` now imports `rag.py`, so a module-level re-import of
+    `services.catalog` here would be a hard circular-import crash — which
+    makes a FUNCTION-LOCAL import the reflex fix a developer reaches for,
+    and the only way the backwards edge can realistically come back.
+
+    The subprocess probe above snapshots `sys.modules` after importing the
+    module, not after running `search_catalog`, so it never sees one. The
+    substring scan this pair replaced DID catch it. Replacing one check with
+    the other traded a blind spot for a different blind spot; keeping both
+    covers the class.
+
+    Parsed rather than grepped, so it cannot fire on prose the way the
+    substring scan did.
+    """
+    import ast
+
+    tree = ast.parse(pathlib.Path(rag.__file__).read_text(encoding="utf-8"))
+    client_owned = ("catalog", "clients", "conversation_log", "tables", "stubs")
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        module = getattr(node, "module", None) or ""
+        names = [module] + [a.name for a in node.names]
+        for name in names:
+            assert not any(part in name.split(".") for part in client_owned), (
+                f"services/rag.py imports client-owned '{name}'"
+            )
+
+
+def test_importing_rag_does_not_load_the_embeddings_stack() -> None:
+    """Pins the TYPE_CHECKING guard, which nothing checked.
+
+    `EmbeddingProvider` is annotation-only; a plain runtime import makes
+    anything touching this module load the embeddings stack and, through it,
+    the OpenAI SDK — including `services/catalog.py`, which needs neither.
+    The behaviour change was real and correct, and reverting the guard left
+    the whole suite green, so a future edit would have restored the
+    regression silently.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "import agentsys.services.rag\n"
+            "heavy = sorted({'openai', 'torch', 'sentence_transformers'} "
+            "& set(sys.modules))\n"
+            "assert not heavy, heavy\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=str(pathlib.Path(rag.__file__).resolve().parents[3]),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
