@@ -260,6 +260,11 @@ The platform exposes an **OpenAI-compatible adapter** at `/v1/*` — any OpenAI 
 curl http://localhost:8000/health
 
 # Via the adapter (OpenAI-compatible)
+#
+# `ADAPTER_RUNTIMES` is empty by default -- the platform knows no deployment
+# names -- so /v1 exposes nothing until you name one. Set it first:
+#   ADAPTER_RUNTIMES='["acme__sales-agent"]'
+#   ADAPTER_API_KEY=<something>      # required once a runtime is exposed
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
@@ -276,12 +281,13 @@ Environment variables (loaded from `.env`). Key settings:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+asyncpg://localhost:5432/acme` | PostgreSQL connection |
+| `DATABASE_URL` | `postgresql+asyncpg://localhost:5432/agentsys` | PostgreSQL connection. Composed from `DB_USER`/`DB_HOST`/`DB_NAME` when those are set |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
 | `ANTHROPIC_API_KEY` | — | Anthropic Claude API key |
 | `OPENAI_API_KEY` | — | OpenAI API key — **embeddings only** (see `OPENAI_COMPATIBLE_API_KEY` for chat) |
 | `ADAPTER_PROVIDER` | `ollama` | LLM provider: `ollama`, `groq`, `anthropic`, `openai_compatible` |
-| `ADAPTER_RUNTIMES` | `["acme__sales-agent"]` | Which runtimes to expose via `/v1` |
+| `ADAPTER_RUNTIMES` | `[]` | Which runtimes to expose via `/v1`. Empty exposes none; setting any requires `ADAPTER_API_KEY` |
+| `WHATSAPP_RUNTIME_ID` | — | Which runtime inbound WhatsApp routes to, as `{deployment}__{role}`. Unset means the route answers 200 and runs no turn |
 | `EMBEDDING_PROVIDER` | `local` | Embedding provider: `local` or `openai` |
 | `OPENAI_COMPATIBLE_BASE_URL` | — | **Required** for `openai_compatible`. Chat endpoint base URL |
 | `OPENAI_COMPATIBLE_MODEL` | — | **Required** for `openai_compatible`. Model id to request |
