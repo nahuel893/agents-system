@@ -253,20 +253,108 @@ def test_no_role_outside_the_operator_branch_can_reach_the_host() -> None:
     taken back. Grepping the resolved surface — not the manifests — catches a
     grant that arrives by inheritance rather than declaration.
     """
+    from agentsys.harness.loader import RootConfig, _extends_target, _load_role_files
     from platform_role_contract import discover_concrete_platform_roles
 
     host_permissions = {"exec:command", "read:files"}
     host_tools = {"use_term", "read_file"}
+    roots = RootConfig()
+
+    def descends_from_operator(role: str) -> bool:
+        """Walk `extends` upward. Computed, never a hardcoded allow-list.
+
+        A hardcoded list would have to be edited alongside every new role,
+        and the edit that adds a role to it is exactly the one nobody
+        questions. Deriving it from the chain means a role reaches the host
+        only by actually descending from `operator-agent`.
+        """
+        seen: set[str] = set()
+        current: str | None = role
+        while current and current not in seen:
+            if current == "operator-agent":
+                return True
+            seen.add(current)
+            _, parent, _ = _load_role_files(current, roots)
+            current = _extends_target(parent) if parent else None
+        return False
 
     for role in discover_concrete_platform_roles():
         definition = resolve(role)
         reaches_host = bool(host_permissions & set(definition.permissions)) or bool(
             host_tools & set(definition.tools)
         )
-        if role == "operator-agent":
-            assert reaches_host, "operator-agent must reach the host; that is its job"
+        if descends_from_operator(role):
+            assert reaches_host, (
+                f"'{role}' descends from operator-agent but reaches nothing; "
+                f"the branch exists to carry those tools"
+            )
         else:
             assert not reaches_host, (
-                f"'{role}' can reach the host. If that is intended it must "
-                f"descend from operator-agent deliberately, not inherit it."
+                f"'{role}' can reach the host without descending from "
+                f"operator-agent. A host capability must be a decision, not "
+                f"something inherited from a shared base."
             )
+
+
+#: Roles that may hold a mutating permission, and the one they may hold.
+#:
+#: Everything else in the tree is read-only by design, and several manifests
+#: SAY so in prose. Prose is not enforcement: `accountant-agent` could gain
+#: `write:orders` and the whole suite stayed green until this pin existed.
+#:
+#: Adding a role here, or widening one, is the edit a reviewer must actually
+#: look at. That is the entire purpose of stating it as a literal.
+MUTATING_GRANTS: dict[str, frozenset[str]] = {
+    "sales-agent": frozenset(
+        {"write:orders", "write:order_items", "send:message", "send:escalation"}
+    ),
+    "orchestrator": frozenset(
+        {
+            "write:session",
+            "send:escalation",
+            "spawn:sales-agent",
+            "spawn:data-agent",
+            "spawn:summary-agent",
+        }
+    ),
+    "summary-agent": frozenset({"write:summary_output", "send:escalation"}),
+    # Talks to customers directly, so it may reply — and nothing else.
+    "support-agent": frozenset({"send:message", "send:escalation"}),
+    # Every agent may reach a human. That is the only grant `agent` adds.
+    "agent": frozenset({"send:escalation"}),
+    "data-agent": frozenset({"send:escalation"}),
+    "operator-agent": frozenset({"send:escalation"}),
+    "developer-agent": frozenset({"send:escalation"}),
+    # Reads reports and nothing else. NO write of any kind: a wrong entry is
+    # found by an auditor rather than by a test.
+    "accountant-agent": frozenset({"send:escalation"}),
+}
+
+
+def test_no_role_holds_an_unpinned_mutating_permission() -> None:
+    """A `write:`, `send:` or `spawn:` grant must be a reviewed decision.
+
+    Permissions arrive by inheritance as well as declaration, so this reads
+    the RESOLVED surface: a mutating grant added to a shared base would show
+    up on every descendant here, which is exactly the blast radius worth
+    seeing before it ships.
+    """
+    from platform_role_contract import discover_concrete_platform_roles
+
+    prefixes = ("write:", "send:", "spawn:")
+
+    for role in discover_concrete_platform_roles():
+        actual = {
+            p for p in resolve(role).permissions if p.startswith(prefixes)
+        }
+        expected = MUTATING_GRANTS.get(role)
+
+        assert expected is not None, (
+            f"'{role}' is not pinned in MUTATING_GRANTS. A new role must "
+            f"state which mutating permissions it holds, even if that is none."
+        )
+        assert actual == expected, (
+            f"'{role}' mutating grants changed: "
+            f"added {sorted(actual - expected)}, "
+            f"removed {sorted(expected - actual)}"
+        )
