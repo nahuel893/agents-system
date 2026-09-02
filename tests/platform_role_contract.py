@@ -79,6 +79,38 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
     "operator-agent": frozenset(
         {"session_state", "escalation_notifier", "use_term", "read_file"}
     ),
+    # Reads only, and every absence is deliberate: no order_writer, no
+    # catalog_search. Selling is sales-agent's job.
+    "support-agent": frozenset(
+        {
+            "session_state",
+            "escalation_notifier",
+            "knowledge_retrieval",
+            "conversation_summarizer",
+            "client_lookup",
+            "message_sender",
+        }
+    ),
+    # The only role descending from operator-agent, so the only one that
+    # reaches the host. One tool declared, four inherited.
+    "developer-agent": frozenset(
+        {
+            "session_state",
+            "escalation_notifier",
+            "use_term",
+            "read_file",
+            "knowledge_retrieval",
+        }
+    ),
+    # Holds no write permission of any kind.
+    "accountant-agent": frozenset(
+        {
+            "session_state",
+            "escalation_notifier",
+            "run_report",
+            "knowledge_retrieval",
+        }
+    ),
     "data-agent": frozenset(
         {
             "escalation_notifier",
