@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import structlog.testing
 from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
@@ -227,13 +228,12 @@ async def test_post_text_message(
     rather than short-circuiting at the fail-closed branch.
     """
     sig = sign_payload(text_payload, TEST_SECRET)
-    app.state.participant_directory = FakeDirectory(
-        AsyncMock(
-            return_value=Client(
-                id=1, phone_number="+5491123456789", name="K", active=True
-            )
+    mock_lookup = AsyncMock(
+        return_value=Client(
+            id=1, phone_number="+5491123456789", name="K", active=True
         )
     )
+    app.state.participant_directory = FakeDirectory(mock_lookup)
     response = await client.post(
         "/webhook",
         content=text_payload,
@@ -244,6 +244,10 @@ async def test_post_text_message(
     )
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    # 200 alone distinguishes nothing here — every branch of this route
+    # returns it. Reaching the directory is the first observable step past
+    # signature verification and payload parsing.
+    mock_lookup.assert_awaited_once()
 
 
 async def test_post_status_update(
@@ -1195,7 +1199,6 @@ async def test_post_db_success_active_client_runs_turn(
 
     assert response.status_code == 200
     fake_runtime.run_turn.assert_awaited_once()
-    fake_whatsapp_client.send_text.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1387,6 +1390,7 @@ async def test_post_recorder_absent_still_replies(
         patch.object(
             app.state, "participant_directory", FakeDirectory(mock_lookup), create=True
         ),
+        structlog.testing.capture_logs() as logs,
     ):
         response = await client.post(
             "/webhook",
@@ -1400,6 +1404,16 @@ async def test_post_recorder_absent_still_replies(
     assert response.status_code == 200
     fake_runtime.run_turn.assert_awaited_once()
     fake_whatsapp_client.send_text.assert_awaited_once()
+    # The load-bearing assertion. Without it this test could not fail:
+    # deleting the `if recorder is not None:` guard makes the call raise
+    # AttributeError INTO the surrounding `except Exception`, which logs a
+    # write error and still returns 200 — indistinguishable from outside.
+    # "No recorder configured" is a deployment choice, not a write failure,
+    # and reporting it as one every single turn is noise nobody can act on.
+    errors = [e for e in logs if e["event"] == "conversation_log.write_error"]
+    assert errors == [], (
+        "an unconfigured recorder was reported as a write error"
+    )
 
 
 def test_the_wired_implementations_satisfy_the_ports() -> None:
@@ -1472,3 +1486,148 @@ def test_webhook_does_not_pull_in_client_orm_models_documented_gap() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+async def test_an_address_the_directory_cannot_parse_never_500s(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """The widened handler, which previously had no test at all.
+
+    `ParticipantDirectory.normalize_address` documents `ValueError` for an
+    unparseable address, and the handler caught only that. A consumer whose
+    parser raises anything else — a phonenumbers library error, a TypeError
+    on unexpected input — produced an unhandled 500, and Meta retries a 5xx
+    forever. The `from` field is attacker-controlled, so "the sender can
+    make us 500" is the whole problem.
+
+    Reverting the catch to `except ValueError` turns this red.
+    """
+
+    class ExplodingDirectory:
+        def normalize_address(self, raw: str) -> str:
+            raise RuntimeError("the consumer's parser blew up")
+
+        async def resolve(self, session: object, address: str) -> object:
+            raise AssertionError("must never be reached")
+
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
+
+    fake_runtime = MagicMock()
+    fake_runtime.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
+    app.state.runtimes = {"acme__sales-agent": fake_runtime}
+    app.state.participant_directory = ExplodingDirectory()
+
+    with patch(
+        "agentsys.integration.webhook.get_redis_client", return_value=mock_redis
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200, "a 5xx makes Meta retry a poison message"
+    fake_runtime.run_turn.assert_not_awaited()
+
+
+async def test_the_directory_owns_the_transaction_on_the_session_it_is_handed(
+    app, client: AsyncClient, text_payload: bytes
+) -> None:
+    """Pins the port's transaction contract against its real caller.
+
+    The docstring first said the implementation MUST NOT commit, copied from
+    the connector contract where the orchestrator owns a turn-scoped session.
+    Here the caller opens a session for this ONE call and closes it right
+    after, so an implementation that registers an unknown address and does
+    not commit loses the row. `ClientDirectory` commits, and had to.
+
+    Asserted rather than left to prose, because a docstring that contradicts
+    its only implementation is how the next person writes a broken one.
+    """
+    sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
+
+    committed: list[bool] = []
+
+    class CommittingDirectory:
+        def normalize_address(self, raw: str) -> str:
+            return normalize_phone(raw)
+
+        async def resolve(self, session: object, address: str) -> object:
+            # The caller must not have closed or poisoned the session before
+            # handing it over, and must tolerate a commit on it.
+            await session.commit()  # type: ignore[attr-defined]
+            committed.append(True)
+            return Client(
+                id=3, phone_number="+5491123456789", name="K", active=True
+            )
+
+    fake_runtime = MagicMock()
+    fake_runtime.run_turn = AsyncMock(return_value=[AIMessage(content="ok")])
+    app.state.runtimes = {"acme__sales-agent": fake_runtime}
+    fake_whatsapp_client = MagicMock()
+    fake_whatsapp_client.send_text = AsyncMock()
+    app.state.whatsapp_client = fake_whatsapp_client
+    app.state.participant_directory = CommittingDirectory()
+    app.state.conversation_recorder = None
+
+    with patch(
+        "agentsys.integration.webhook.get_redis_client", return_value=mock_redis
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert committed == [True], "the directory could not commit its own work"
+    fake_runtime.run_turn.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"entry": "not-a-list"}',
+        b'{"entry": [{"changes": 7}]}',
+        b'{"entry": [{"changes": [{"value": "not-a-dict"}]}]}',
+        b'{"entry": null}',
+    ],
+)
+async def test_a_malformed_payload_never_500s(
+    app, client: AsyncClient, body: bytes
+) -> None:
+    """The `from` field was hardened; the payload shape above it was not.
+
+    Both are attacker-controlled, and the parse caught only KeyError and
+    IndexError — so `entry` being a string, or `value` not being a dict,
+    raised TypeError or AttributeError straight out of the handler as a 500.
+    Meta retries a 5xx forever, which is exactly the poison-message loop the
+    always-200 contract exists to prevent.
+    """
+    sig = sign_payload(body, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
+
+    with patch(
+        "agentsys.integration.webhook.get_redis_client", return_value=mock_redis
+    ):
+        response = await client.post(
+            "/webhook",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200, response.text

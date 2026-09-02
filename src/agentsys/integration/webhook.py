@@ -119,12 +119,20 @@ async def receive_message(
     payload = json.loads(body)
 
     # Navigate to value: entry[0].changes[0].value
+    #
+    # TypeError belongs here with the other two. The payload is
+    # attacker-controlled JSON, so `entry` can be a string or a number and
+    # `payload["entry"][0]` then raises TypeError rather than KeyError or
+    # IndexError. Catching only the latter two turned a malformed body into
+    # an unhandled 500, and Meta retries a 5xx forever -- the same poison
+    # message loop the always-200 contract (AD-2) exists to prevent, twenty
+    # five lines above where it was already fixed for the address field.
     try:
         value = payload["entry"][0]["changes"][0]["value"]
-    except (KeyError, IndexError):
+        messages = value.get("messages")
+    except (KeyError, IndexError, TypeError, AttributeError):
         return {"status": "ok"}
 
-    messages = value.get("messages")
     if not messages:
         # Status update or other non-message event — silently discard
         return {"status": "ok"}
