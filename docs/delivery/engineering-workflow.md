@@ -57,8 +57,11 @@ passes proves nothing until you have seen it fail.
 
 **One tracker, and it is the issue tracker — never a file in the repository.**
 
-A shared status file is edited by every branch, so every integration conflicts
-on it. The tracker is also the only place where state survives a rebase.
+A shared status file is edited by every branch, so every integration
+conflicts on it — and a conflict in a status file is resolved by guessing,
+because there is no test that can tell you which side was right. The tracker
+also gives every task a stable identity that a branch, a commit and a pull
+request can all point at.
 
 Refer to a task by **number and title**: `#44 — order_writer does not persist
 orders`. The number links it; the title means a reader does not have to open
@@ -183,12 +186,20 @@ worthless, and only the mutation revealed it.
 
 ```python
 # The test is rewriting the module under test to make it testable.
-monkeypatch.setattr(rag.catalog, "search_vector", fake_search)
+monkeypatch.setattr(search_module.storage, "query", fake_query)
 ```
 
 That line is not a testing technique; it is a design report. The module
 imported its dependency instead of receiving it. After inverting the
-dependency, the same test passes a stub — and the test file gets *smaller*.
+dependency, the same test passes a stub object instead of reaching inside the
+module to replace one of its attributes.
+
+Be careful what you claim for that change. It does **not** reliably make the
+test file shorter — an explicit stub is usually more lines than a
+`monkeypatch` call, and in the change that produced this rule the two test
+files grew by 112 lines net. What it buys is that the test stops depending on
+the module's internal structure, so a rename or a moved import no longer
+silently turns the test into a no-op.
 
 Use this as a rule: **if making something testable requires reaching inside
 it, fix the code, not the test.**
@@ -216,14 +227,15 @@ cannot be removed.
 it: the caller supplies what the mechanism needs.
 
 ```python
-# Before: the retrieval strategy knows one deployment's tables.
-from myapp.services import catalog
-async def search(session, q, *, settings): ...
+# Before: the ranking strategy knows one deployment's tables.
+from myapp.storage import product_table
+async def rank(session, query, *, settings): ...
 
 # After: it receives them.
-class CatalogSource(Protocol):
-    async def search_vector(self, session, *, embedding, limit): ...
-async def search(session, q, *, settings, source: CatalogSource): ...
+class RecordSource(Protocol):
+    async def fetch(self, session, *, query, limit) -> list[Record]: ...
+
+async def rank(session, query, *, settings, source: RecordSource): ...
 ```
 
 Reuse the seam the codebase already has. If one module already defines a
@@ -299,6 +311,19 @@ different thing and is legitimate for a library that must patch old versions.
 Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`,
 `test:`). This is not cosmetic — the prefixes drive the version bump and the
 changelog, so a wrong prefix produces a wrong version number.
+
+A breaking change needs its own signal, or every incompatible release ships as
+a minor bump and the SemVer contract silently stops meaning anything. Mark it
+either way round:
+
+```
+feat!: drop the deprecated resolve() positional argument
+
+BREAKING CHANGE: callers must pass roots= explicitly.
+```
+
+The `!` is what the tooling reads; the `BREAKING CHANGE:` footer is what the
+changelog quotes. Write both.
 
 One commit does one thing. **The body explains why; the diff already shows
 what.** A body that restates the diff is wasted; a body that records the
@@ -481,10 +506,18 @@ configuration and remove entire classes of problem.
 2. **CI as a required check**, covering lint, types and tests. Confirm what it
    actually covers; a directory outside the type-check path is a blind spot.
 3. **A PR template** carrying the four questions from §5.
-4. **Conventional Commits**, enforced by a hook. This is the input to
-   versioning, so it has to be right from the first commit.
-5. **A code-owners file** routing review automatically.
-6. **SemVer, tags and a changelog**, generated from the commit prefixes.
+4. **Conventional Commits**, validated by a **required CI check** on the
+   pull request. A local hook is a convenience, not enforcement — it is
+   bypassable with `--no-verify` and absent on every machine that has not
+   installed it, which is exactly the "preference with good PR" §0 warns
+   about. Add the hook too, for the fast feedback; just do not count it.
+   Prefixes are the input to versioning, so they have to be right from the
+   first commit.
+5. **SemVer, tags and a changelog**, generated from the commit prefixes.
+6. **A code-owners file** routing review automatically. Listed after
+   versioning rather than before it because routing review buys nothing until
+   there is a second identity to route it to (step 7); until then it is
+   configuration that documents an intention.
 7. **Required approving reviews at `1`** — the moment a second reviewing
    identity exists.
 8. **Environments and a deploy pipeline**: staging on merge, production behind
