@@ -287,20 +287,41 @@ def _deployment_folder(
 # ---------------------------------------------------------------------------
 
 
-def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefinition:
-    """Read platform/roles/{role_type}/{role,manifest,policy}.md.
+#: How deep a role may sit below its root. A taxonomy that needs more than
+#: this has stopped being a taxonomy; the cap turns a runaway chain into a
+#: named error instead of a slow walk.
+_MAX_ROLE_CHAIN_DEPTH = 8
 
-    Parameters
-    ----------
-    role_type:
-        The role folder name (e.g. ``"sales-agent"``).
-    roots:
-        Injectable path config.  Defaults to the real repo roots.
+#: Prompt bodies are joined root-first with the same separator the factory
+#: uses for skills, so a child's prompt refines its parent's rather than
+#: replacing it.
+_PROMPT_SEPARATOR = "\n\n---\n\n"
+
+
+def _extends_target(raw: Any) -> str:
+    """Normalise an ``extends:`` value to a bare role name.
+
+    Every manifest already on disk writes the path form
+    (``extends: platform/roles/sales-agent``), so that form has to keep
+    meaning what it looks like it means. A bare role name works too.
     """
-    if roots is None:
-        roots = RootConfig()
+    return str(raw).strip().rstrip("/").rsplit("/", 1)[-1]
 
+
+def _load_role_files(
+    role_type: str, roots: RootConfig
+) -> tuple[RawDefinition, str | None, bool]:
+    """Read one role folder. Returns its definition, parent, and abstractness.
+
+    This is the old body of ``load_generic``, with the two directives the
+    frontmatter has always been allowed to carry now actually read.
+    """
     folder = _role_folder(_require_platform_root(roots.platform_root), role_type)
+
+    if not folder.is_dir():
+        raise DefinitionError(
+            f"Role '{role_type}' has no folder at {folder}."
+        )
 
     role_fm, role_body = _read_md(folder / "role.md")
     manifest_fm, _ = _read_md(folder / "manifest.md")
@@ -311,7 +332,11 @@ def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefin
     )
     version: str = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
 
-    return RawDefinition(
+    parent_raw = manifest_fm.get("extends")
+    parent = _extends_target(parent_raw) if parent_raw else None
+    is_abstract = bool(manifest_fm.get("abstract", False))
+
+    definition = RawDefinition(
         role_name=role_name,
         version=version,
         deployment=None,
@@ -327,6 +352,167 @@ def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefin
         audit_policy=dict(policy_fm.get("audit_policy") or {}),
         execution_limits=policy_fm.get("execution_limits"),
     )
+    return definition, parent, is_abstract
+
+
+def _union_preserving_order(parent: list[str], child: list[str]) -> list[str]:
+    merged = list(parent)
+    merged.extend(item for item in child if item not in merged)
+    return merged
+
+
+def _fold_parent_into_child(
+    parent: RawDefinition, child: RawDefinition
+) -> RawDefinition:
+    """Compose a parent role into its child. ADDITIVE for capability.
+
+    Role-to-role inheritance widens: a child adds tools and permissions to
+    what its parent already grants. Both sides are authored by the platform,
+    so no trust boundary is crossed — unlike deployment-to-role, which stays
+    subtractive and is enforced later by ``_merge_validated``.
+
+    Two fields resist the additive direction on purpose. ``autonomy`` and
+    ``execution_limits`` are safety ceilings, not capabilities: a child that
+    could raise its own timeout or elevate its own supervision level would
+    make the root's limits decorative. Both reuse the validators the
+    deployment path already uses.
+    """
+    _validate_autonomy(parent, child)
+
+    parent_perms = (
+        list(parent.permissions) if isinstance(parent.permissions, list) else []
+    )
+    if isinstance(child.permissions, str):
+        # ``permissions: inherit`` — take the parent's set verbatim.
+        resolved_perms: list[str] = parent_perms
+    else:
+        resolved_perms = _union_preserving_order(
+            parent_perms, list(child.permissions)
+        )
+
+    parent_limits = (
+        dict(parent.execution_limits)
+        if isinstance(parent.execution_limits, dict)
+        else None
+    )
+    child_limits = child.execution_limits
+    if isinstance(child_limits, dict):
+        _validate_execution_limits(
+            parent_limits or _PLATFORM_DEFAULT_LIMITS, child_limits
+        )
+        resolved_limits: dict[str, Any] | str | None = dict(child_limits)
+    else:
+        resolved_limits = parent_limits
+
+    def _merge_mapping(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(a)
+        merged.update(b)
+        return merged
+
+    prompts = [p for p in (parent.system_prompt, child.system_prompt) if p.strip()]
+
+    return RawDefinition(
+        # The leaf is the role being resolved, so it owns its identity.
+        role_name=child.role_name,
+        version=child.version,
+        deployment=None,
+        system_prompt=_PROMPT_SEPARATOR.join(prompts),
+        tools=_union_preserving_order(parent.tools, child.tools),
+        skills=_union_preserving_order(parent.skills, child.skills),
+        context=_merge_mapping(parent.context, child.context),
+        permissions=resolved_perms,
+        autonomy=child.autonomy,
+        escalation_rules=_merge_mapping(
+            parent.escalation_rules, child.escalation_rules
+        ),
+        delegation_policy=_merge_mapping(
+            parent.delegation_policy, child.delegation_policy
+        ),
+        memory_policy=_merge_mapping(parent.memory_policy, child.memory_policy),
+        audit_policy=_merge_mapping(parent.audit_policy, child.audit_policy),
+        execution_limits=resolved_limits,
+    )
+
+
+def _resolve_role_chain(
+    role_type: str, roots: RootConfig
+) -> tuple[RawDefinition, bool]:
+    """Walk ``extends:`` to the root and fold the chain back down.
+
+    Returns the fully composed definition and whether the LEAF is abstract.
+    Ancestors may be abstract — that is what abstract is for.
+    """
+    chain: list[RawDefinition] = []
+    seen: list[str] = []
+    leaf_is_abstract = False
+
+    current: str | None = role_type
+    while current is not None:
+        if current in seen:
+            cycle = " -> ".join([*seen, current])
+            raise DefinitionError(
+                f"Invariant violation — extends: role inheritance cycle: {cycle}"
+            )
+        seen.append(current)
+
+        if len(seen) > _MAX_ROLE_CHAIN_DEPTH:
+            raise DefinitionError(
+                f"Invariant violation — extends: role chain deeper than "
+                f"{_MAX_ROLE_CHAIN_DEPTH}: {' -> '.join(seen)}"
+            )
+
+        try:
+            definition, parent, is_abstract = _load_role_files(current, roots)
+        except DefinitionError:
+            if current == role_type:
+                raise
+            raise DefinitionError(
+                f"Invariant violation — extends: role '{seen[-2]}' extends "
+                f"'{current}', which does not exist."
+            ) from None
+
+        if current == role_type:
+            leaf_is_abstract = is_abstract
+        chain.append(definition)
+        current = parent
+
+    # chain is leaf-first; fold root-first so a child composes onto its parent.
+    resolved = chain[-1]
+    for child in reversed(chain[:-1]):
+        resolved = _fold_parent_into_child(resolved, child)
+
+    return resolved, leaf_is_abstract
+
+
+def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefinition:
+    """Resolve platform/roles/{role_type}/ and everything it extends.
+
+    Returns the FULLY COMPOSED role — the union of its whole ``extends:``
+    chain. That placement matters: ``resolve`` hands this straight to
+    ``merge``, whose ``_validate_tools`` enforces that a deployment may only
+    narrow. Because the chain is already folded here, that existing
+    subtractive check now runs against the entire inherited surface without
+    ``_merge_validated`` changing at all.
+
+    Parameters
+    ----------
+    role_type:
+        The role folder name (e.g. ``"sales-agent"``).
+    roots:
+        Injectable path config.  Defaults to the real repo roots.
+    """
+    if roots is None:
+        roots = RootConfig()
+
+    resolved, is_abstract = _resolve_role_chain(role_type, roots)
+
+    if is_abstract:
+        raise DefinitionError(
+            f"Role '{role_type}' is declared abstract and cannot be built "
+            f"directly. Extend it from a concrete role instead."
+        )
+
+    return resolved
 
 
 def load_override(
