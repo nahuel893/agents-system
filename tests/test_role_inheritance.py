@@ -381,3 +381,96 @@ def test_a_deployment_may_not_declare_a_parent_it_does_not_have(
     message = str(excinfo.value)
     assert "orchestrator" in message
     assert "sales-agent" in message
+
+
+def test_a_child_that_declares_no_autonomy_keeps_its_parents() -> None:
+    """Omission must inherit, not reset to the platform floor.
+
+    The default was applied at LOAD time, which erased the difference
+    between a role choosing `supervised` and a role saying nothing. So
+    `fx-silent`, which declares no autonomy under a `confirm` parent,
+    resolved to `supervised` — LOOSER than its parent, silently, while
+    `execution_limits` inherited on omission from the same policy file.
+
+    Two fields in one file with opposite rules is how a ceiling stops
+    meaning anything.
+    """
+    assert resolve("fx-confirm", roots=_roots()).autonomy == "confirm"
+    assert resolve("fx-silent", roots=_roots()).autonomy == "confirm"
+
+
+def test_a_role_with_no_parent_and_no_declaration_gets_the_platform_floor() -> None:
+    """The other half: `supervised` is still the default, applied once.
+
+    Moved from load time to after the chain resolves, so it can no longer
+    overwrite an inherited value.
+    """
+    assert resolve("fx-strict", roots=_roots()).autonomy == "supervised"
+
+
+def test_a_deployment_that_removes_a_permission_actually_loses_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`{inherit: true, remove: [...]}` is documented; it did nothing.
+
+    `_resolve_permissions` handled only the scalar `"inherit"` and a plain
+    list, and fell through to returning the parent's FULL set for every other
+    shape — including the removal directive this module's own docstring
+    advertises. So an author read their manifest, saw a permission removed,
+    and still had it. The failure went in the granting direction.
+    """
+    from agentsys.harness.loader import RootConfig, resolve
+
+    dep = tmp_path / "narrow" / "sales-agent"
+    dep.mkdir(parents=True)
+    (dep / "role.md").write_text("---\nname: sales-agent\n---\n\nbody\n")
+    (dep / "manifest.md").write_text(
+        "---\nrole: sales-agent\ndeployment: narrow\n"
+        "tools: [session_state]\nskills: []\ncontext: {}\n"
+        "permissions:\n  inherit: true\n  remove: [write:orders, write:order_items]\n"
+        "---\n\nm\n"
+    )
+    (dep / "policy.md").write_text(
+        "---\nrole: sales-agent\nexecution_limits: null\n---\n\np\n"
+    )
+
+    role = resolve("sales-agent")
+    deployed = resolve(
+        "sales-agent", client="narrow", roots=RootConfig(deployments_root=tmp_path)
+    )
+
+    assert "write:orders" in role.permissions, "the fixture assumes the role grants it"
+    assert "write:orders" not in deployed.permissions
+    assert "write:order_items" not in deployed.permissions
+    # Everything not named is still inherited.
+    assert "read:catalog" in deployed.permissions
+
+
+def test_a_deployment_that_declares_no_autonomy_keeps_the_roles(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The deployment half of the same asymmetry.
+
+    `load_override` also defaulted to `supervised` at load time, so a
+    deployment saying nothing under a `confirm` role resolved to
+    `supervised` — looser than the role, in the one direction that matters.
+    Caught by mutation: fixing only the role→role path left this green.
+    """
+    from agentsys.harness.loader import RootConfig, resolve
+
+    dep = tmp_path / "quiet" / "fx-confirm"
+    dep.mkdir(parents=True)
+    (dep / "role.md").write_text("---\nname: fx-confirm\n---\n\nbody\n")
+    (dep / "manifest.md").write_text(
+        "---\nrole: fx-confirm\ndeployment: quiet\ntools: []\nskills: []\n"
+        "context: {}\npermissions: inherit\n---\n\nm\n"
+    )
+    # No `autonomy:` line at all.
+    (dep / "policy.md").write_text(
+        "---\nrole: fx-confirm\nexecution_limits: null\n---\n\np\n"
+    )
+
+    roots = RootConfig(platform_root=_FIXTURES, deployments_root=tmp_path)
+
+    assert resolve("fx-confirm", roots=roots).autonomy == "confirm"
+    assert resolve("fx-confirm", client="quiet", roots=roots).autonomy == "confirm"
