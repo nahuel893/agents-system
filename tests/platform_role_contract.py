@@ -74,6 +74,11 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
     # when they were re-parented: a base exists to stop each descendant
     # restating what they all need.
     "agent": frozenset({"session_state", "escalation_notifier"}),
+    # The sibling branch: everything `agent` has, plus the two tools that
+    # reach the host. Deliberately not reachable from any other role.
+    "operator-agent": frozenset(
+        {"session_state", "escalation_notifier", "use_term", "read_file"}
+    ),
     "data-agent": frozenset(
         {
             "escalation_notifier",
