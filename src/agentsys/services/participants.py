@@ -58,8 +58,20 @@ class ParticipantDirectory(Protocol):
     async def resolve(self, session: Any, address: str) -> Participant | None:
         """Return the participant for *address*, or None if there is none.
 
-        Receives the caller's session and MUST NOT commit or roll it back —
-        the same transaction contract connectors follow (D-009).
+        The implementation OWNS the transaction on the session it is handed,
+        and may commit. That is the opposite of the connector contract
+        (D-009), where the orchestrator manages a turn-scoped session shared
+        by many tools — and the difference is not an oversight.
+
+        An earlier version of this docstring said "MUST NOT commit", copied
+        from that contract. It was wrong the moment it was written: the
+        caller opens a session exclusively for this one call and closes it
+        immediately after, so an implementation that auto-registers an
+        unknown address and does not commit has its work rolled back. The
+        only wired implementation commits, and had to.
+
+        A read-only implementation simply never commits, and nothing here
+        requires it to.
         """
         ...
 
