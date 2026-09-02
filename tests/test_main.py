@@ -792,3 +792,68 @@ async def test_bi_tool_is_unbound_when_no_url_is_configured() -> None:
         _bi_settings(bi_database_url=""), _fake_bi_engine("on")
     )
     assert bound is None
+
+
+# ---------------------------------------------------------------------------
+# The runtime cache serves every channel, not just the OpenAI adapter
+# ---------------------------------------------------------------------------
+
+
+async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None:
+    """An adapter setting must not decide whether WhatsApp has a runtime.
+
+    The cache used to be gated on `if settings.adapter_runtimes:` alone. Once
+    that default became empty, `app.state.runtimes` stayed `{}`, the inbound
+    route found nothing for `whatsapp_runtime_id`, and every message got a
+    200 with no turn — visible only as a `webhook.runtime_unresolved`
+    warning. Two unrelated features shared one switch.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agentsys.main import create_app, lifespan
+
+    built: list[str] = []
+
+    def _awaitable_engine() -> MagicMock:
+        engine = MagicMock()
+        engine.dispose = AsyncMock()
+        return engine
+
+    application = create_app()
+
+    test_settings = Settings(
+        _env_file=None,
+        allow_insecure=True,
+        adapter_runtimes=[],  # nothing exposed over /v1 ...
+        whatsapp_runtime_id="acme__sales-agent",  # ... but WhatsApp needs one
+        whatsapp_checkpointer_enabled=False,  # no Redis in this test
+        embedding_provider="openai",  # do not load the local BGE-M3 weights
+        openai_api_key="test-key",
+    )
+
+    def spy_build_runtime(*args, **kwargs):
+        role = kwargs.get("role_type") or (args[0] if args else None)
+        built.append(f"{kwargs.get('client')}__{role}")
+        raise RuntimeError("stop here — the call itself is what is asserted")
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
+        patch("agentsys.audit.sink.AuditSink") as sink_cls,
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agentsys.harness.factory.build_runtime", side_effect=spy_build_runtime),
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        try:
+            async with lifespan(application):
+                pass
+        except RuntimeError as exc:
+            # Only our own spy may stop the lifespan; anything else means the
+            # test never reached the code it is about and would otherwise
+            # pass or fail for an unrelated reason.
+            assert "stop here" in str(exc), exc
+
+    assert built == ["acme__sales-agent"], (
+        "the WhatsApp runtime was not built; adapter_runtimes gated it"
+    )
