@@ -345,7 +345,12 @@ def _load_role_files(
         skills=_as_str_list(manifest_fm.get("skills")),
         context=dict(manifest_fm.get("context") or {}),
         permissions=manifest_fm.get("permissions", []),
-        autonomy=str(policy_fm.get("autonomy", "supervised")),
+        # "" means NOT DECLARED, resolved by the fold below or defaulted at
+        # the root. Applying "supervised" here erased the difference between
+        # a role that chose it and one that said nothing -- so a silent
+        # child LOOSENED a `confirm` parent, while `execution_limits`
+        # inherited on omission. Same policy file, opposite behaviour.
+        autonomy=str(policy_fm.get("autonomy", "")),
         escalation_rules=dict(policy_fm.get("escalation_rules") or {}),
         delegation_policy=dict(policy_fm.get("delegation_policy") or {}),
         memory_policy=dict(policy_fm.get("memory_policy") or {}),
@@ -389,6 +394,12 @@ def _fold_parent_into_child(
     resolved chain.
     """
 
+    # An undeclared child keeps its parent's level. Defaulting at load time
+    # erased the difference between choosing `supervised` and saying
+    # nothing, so a silent child LOOSENED a `confirm` parent -- while
+    # `execution_limits` inherited on omission. Same file, opposite rule.
+    resolved_autonomy = child.autonomy or parent.autonomy
+
     parent_perms = (
         list(parent.permissions) if isinstance(parent.permissions, list) else []
     )
@@ -428,7 +439,7 @@ def _fold_parent_into_child(
         skills=_union_preserving_order(parent.skills, child.skills),
         context=_merge_mapping(parent.context, child.context),
         permissions=resolved_perms,
-        autonomy=child.autonomy,
+        autonomy=resolved_autonomy,
         escalation_rules=_merge_mapping(
             parent.escalation_rules, child.escalation_rules
         ),
@@ -513,6 +524,11 @@ def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefin
 
     resolved, is_abstract = _resolve_role_chain(role_type, roots)
 
+    if not resolved.autonomy:
+        # Nothing in the chain declared one. `supervised` is the platform
+        # floor, applied once here rather than at every load.
+        resolved = dataclasses.replace(resolved, autonomy="supervised")
+
     if is_abstract:
         raise DefinitionError(
             f"Role '{role_type}' is declared abstract and cannot be built "
@@ -588,7 +604,10 @@ def load_override(
         skills=_as_str_list(manifest_fm.get("skills")),
         context=dict(manifest_fm.get("context") or {}),
         permissions=manifest_fm.get("permissions", []),
-        autonomy=str(policy_fm.get("autonomy", "supervised")),
+        # "" means NOT DECLARED here too -- see `_load_role_files`. A
+        # deployment that says nothing must keep the role's level; resetting
+        # it to the platform floor LOOSENS a `confirm` role.
+        autonomy=str(policy_fm.get("autonomy", "")),
         escalation_rules=dict(policy_fm.get("escalation_rules") or {}),
         delegation_policy=dict(policy_fm.get("delegation_policy") or {}),
         memory_policy=dict(policy_fm.get("memory_policy") or {}),
@@ -606,13 +625,21 @@ def _resolve_permissions(
     parent_perms: list[str],
     override_perms: list[str] | str,
 ) -> list[str]:
-    """Resolve permissions, honouring the ``inherit`` keyword."""
-    if override_perms == "inherit":
-        return list(parent_perms)
-    if isinstance(override_perms, list):
-        return list(override_perms)
-    # fallback
-    return list(parent_perms)
+    """Resolve permissions, honouring every list directive the module documents.
+
+    This used to handle only the scalar ``"inherit"`` and a plain list, and
+    fall through to returning the PARENT'S FULL SET for every other shape --
+    including ``{inherit: true, remove: [...]}``, which this module's own
+    docstring advertises and which `_resolve_list_directive` right below has
+    implemented all along.
+
+    So a deployment that explicitly removed a permission kept it. Silently,
+    and in the direction that grants rather than denies: the author reads
+    their manifest, sees the removal, and is wrong. `escalation_rules` and
+    the other list fields already routed through the shared resolver; only
+    permissions -- the field where being wrong costs the most -- did not.
+    """
+    return _resolve_list_directive(list(parent_perms), override_perms)
 
 
 def _resolve_list_directive(
@@ -738,6 +765,10 @@ def _validate_permissions(
 
 
 def _validate_autonomy(parent: RawDefinition, override: RawDefinition) -> None:
+    if not override.autonomy:
+        # Not declared: the override inherits the parent's level, which
+        # cannot exceed itself. Nothing to check.
+        return
     parent_rank = _AUTONOMY_RANK.get(parent.autonomy)
     override_rank = _AUTONOMY_RANK.get(override.autonomy)
 
@@ -925,7 +956,7 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
         skills=tuple(resolved_skills),
         context=resolved_context,
         permissions=tuple(resolved_perms),
-        autonomy=override.autonomy,
+        autonomy=override.autonomy or generic.autonomy,
         escalation_rules=resolved_escalation,
         delegation_policy=resolved_delegation,
         memory_policy=resolved_memory,
