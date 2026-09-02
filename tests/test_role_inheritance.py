@@ -315,3 +315,69 @@ def test_a_deployment_declaring_one_limit_keeps_the_roles_others(
             f"'{key}' escaped the role ceiling: "
             f"{deployment.execution_limits[key]} vs {role.execution_limits[key]}"
         )
+
+
+def test_a_deployed_agent_still_sees_its_platform_roles_prose() -> None:
+    """The composed chain must survive the deployment merge.
+
+    `_merge_validated` set `system_prompt = override.system_prompt`, throwing
+    away everything the chain had folded — so a deployed agent never saw its
+    platform role's prose, and after the taxonomy landed, never saw `base`'s
+    or `agent`'s either. Measured before the fix: the resolved role's prompt
+    was 2698 characters and the deployment's 780.
+
+    That is not cosmetic. The standing instructions those files carry —
+    "report what ran verbatim", "a confident zero is worse than an error" —
+    existed only for a role resolved WITHOUT a deployment, which is not how
+    anything runs.
+    """
+    from agentsys.harness.loader import resolve as real_resolve
+
+    role = real_resolve("sales-agent")
+    deployed = real_resolve("sales-agent", client="acme")
+
+    # Every non-empty line of the role's prose survives into the deployment's.
+    missing = [
+        line
+        for line in role.system_prompt.splitlines()
+        if line.strip() and line not in deployed.system_prompt
+    ]
+    assert not missing, f"the deployment dropped {len(missing)} lines of role prose"
+
+    # And the deployment's own prose is still there, after it.
+    assert len(deployed.system_prompt) > len(role.system_prompt)
+
+
+def test_a_deployment_may_not_declare_a_parent_it_does_not_have(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`extends:` in a deployment manifest was authoritative nowhere.
+
+    A deployment's parent is fixed by its directory, so `extends:` here
+    cannot choose anything — and `load_override` never read it. The same key
+    was therefore authoritative in a role manifest and silently inert in a
+    deployment one, which is worse than uniformly ignored: a contradiction
+    reads as a decision and does nothing.
+
+    Declaring the truth stays legal. Declaring a lie now fails.
+    """
+    from agentsys.harness.loader import DefinitionError, RootConfig, load_override
+
+    dep = tmp_path / "acme" / "sales-agent"
+    dep.mkdir(parents=True)
+    (dep / "role.md").write_text("---\nname: sales-agent\n---\n\nbody\n")
+    (dep / "manifest.md").write_text(
+        "---\nrole: sales-agent\ndeployment: acme\n"
+        "extends: platform/roles/orchestrator\n"  # <- not its own role
+        "tools: []\nskills: []\ncontext: {}\npermissions: inherit\n---\n\nm\n"
+    )
+    (dep / "policy.md").write_text(
+        "---\nrole: sales-agent\nautonomy: supervised\nexecution_limits: null\n---\n\np\n"
+    )
+
+    with pytest.raises(DefinitionError) as excinfo:
+        load_override("acme", "sales-agent", roots=RootConfig(deployments_root=tmp_path))
+
+    message = str(excinfo.value)
+    assert "orchestrator" in message
+    assert "sales-agent" in message
