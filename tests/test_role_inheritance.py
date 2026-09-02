@@ -227,19 +227,91 @@ def test_a_deployment_still_may_not_loosen_the_resolved_role() -> None:
 # --- The declaration is no longer inert ------------------------------------
 
 
-def test_the_loader_actually_reads_extends() -> None:
-    """The regression this whole change exists to fix.
+def test_extends_names_a_parent_the_directory_convention_would_not_pick() -> None:
+    """The regression this whole change exists to fix, tested un-fakeably.
 
-    Before it, `extends:` appeared in every deployment manifest and was read
-    by nobody — `rg -n 'extends' src/` returned one unrelated docstring. The
-    parent was deduced from the directory name, so the declaration read as
-    authoritative to every human and every agent while doing nothing.
+    This asserted `"extends" in loader.__file__`'s source text. That could
+    not fail: the substring survives in a function name and three docstrings,
+    so it passed with the directive gutted — the exact regression it claimed
+    to catch.
 
-    This asserts on source rather than behaviour on purpose: behaviour alone
-    could be satisfied by a directory convention that happens to agree.
+    Behaviour alone is not enough either, because a directory convention that
+    happens to agree would satisfy it. So the fixture is built the one way
+    both are excluded: `fx-mid` lives in a folder named `fx-mid` and declares
+    `extends: platform/roles/fx-base`. Nothing about the path says `fx-base`.
+    If the directive is not read, `read:base` cannot arrive.
     """
-    from agentsys.harness import loader
+    definition = resolve("fx-mid", roots=_roots())
 
-    source = pathlib.Path(loader.__file__).read_text(encoding="utf-8")
+    assert "read:base" in definition.permissions, (
+        "fx-mid inherited nothing from fx-base, so `extends:` was not read"
+    )
 
-    assert "extends" in source
+
+def test_execution_limits_inherit_down_the_chain() -> None:
+    """A child that declares none must keep its parent's ceiling.
+
+    Untested until now, and the consequence was concrete: deleting the
+    inheritance line silently strips `developer-agent` — the only role that
+    can run host commands — of `operator-agent`'s 30s / 10-call ceiling, and
+    nothing goes red. It would then fall back to the platform defaults, which
+    are twice as loose.
+    """
+    strict = resolve("fx-strict", roots=_roots())
+    assert strict.execution_limits is not None
+
+    # fx-loosens-autonomy extends fx-strict and declares no limits of its own.
+    child = resolve("fx-loosens-autonomy", roots=_roots())
+
+    assert child.execution_limits == strict.execution_limits, (
+        "the child dropped its parent's ceiling by saying nothing"
+    )
+
+
+def test_a_deployment_declaring_one_limit_keeps_the_roles_others(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Declaring a STRICTER limit must not raise the ceiling on every other.
+
+    `_merge_validated` replaced the role's `execution_limits` dict with the
+    deployment's instead of merging over it, and `_effective_limits` backfills
+    missing keys from the PLATFORM defaults rather than the role. So a
+    deployment naming one tighter value silently doubled the rest:
+
+        operator-agent   tool_call 10  total 30  max_calls 10
+        deployment says  tool_call 1
+        effective        tool_call 1   total 60  max_calls 20
+
+    On the only role that can run host commands. The validator passed,
+    because every key the deployment DECLARED really was stricter — the
+    escape is in the keys it did not declare.
+    """
+    from agentsys.harness.loader import RootConfig, resolve
+
+    dep = tmp_path / "sneaky" / "operator-agent"
+    dep.mkdir(parents=True)
+    (dep / "role.md").write_text("---\nname: operator-agent\n---\n\nbody\n")
+    (dep / "manifest.md").write_text(
+        "---\nrole: operator-agent\ndeployment: sneaky\ntools: [use_term]\n"
+        "skills: []\ncontext: {}\npermissions: inherit\n---\n\nm\n"
+    )
+    (dep / "policy.md").write_text(
+        "---\nrole: operator-agent\nautonomy: supervised\n"
+        "execution_limits:\n  tool_call_timeout_s: 1\n---\n\np\n"
+    )
+
+    role = resolve("operator-agent")
+    deployment = resolve(
+        "operator-agent", client="sneaky", roots=RootConfig(deployments_root=tmp_path)
+    )
+
+    assert role.execution_limits is not None
+    assert deployment.execution_limits is not None
+    # The declared one narrowed...
+    assert deployment.execution_limits["tool_call_timeout_s"] == 1
+    # ...and every undeclared one kept the ROLE's value, not the platform's.
+    for key in ("total_execution_timeout_s", "max_tool_calls"):
+        assert deployment.execution_limits[key] == role.execution_limits[key], (
+            f"'{key}' escaped the role ceiling: "
+            f"{deployment.execution_limits[key]} vs {role.execution_limits[key]}"
+        )

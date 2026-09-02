@@ -852,7 +852,16 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
             else _PLATFORM_DEFAULT_LIMITS
         )
         _validate_execution_limits(baseline, ov_limits)
-        resolved_limits = dict(ov_limits)
+        # MERGED over the baseline, never substituted for it. Replacing the
+        # dict dropped every key the deployment did not name, and
+        # `_effective_limits` then backfilled those from the PLATFORM
+        # defaults rather than from the role -- so declaring ONE stricter
+        # limit raised the ceiling on all the others. On `operator-agent`
+        # that turned 30s/10 calls into 60s/20 calls for the only role that
+        # can run host commands. The validator passed the whole time,
+        # because every key actually declared really was stricter; the
+        # escape was in the keys left out.
+        resolved_limits = {**baseline, **ov_limits}
     else:
         resolved_limits = None
 

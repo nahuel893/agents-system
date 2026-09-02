@@ -31,7 +31,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import os
 import pathlib
+import signal
+import threading
 from typing import Any, Awaitable, Callable
 
 import structlog
@@ -81,6 +84,52 @@ def _truncate(raw: bytes, limit: int) -> tuple[str, bool]:
     return raw[:limit].decode("utf-8", errors="replace"), truncated
 
 
+def _reject_null_bytes(values: list[str]) -> ConnectorOutput | None:
+    """A null byte anywhere raises ValueError out of the OS layer.
+
+    `json.loads('{"argv": ["echo", "a\\u0000b"]}')` is legal JSON, so a model
+    tool call carries one through unchanged. `except OSError` does not catch
+    ValueError, the interceptor does not wrap the connector call, and the
+    graph catches only TimeoutError and PolicyViolation -- so the whole turn
+    dies and the audit event for the attempt is never emitted. Everything an
+    agent gets back must be a RESULT.
+    """
+    if any("\x00" in v for v in values):
+        return _refuse("invalid_input", "a null byte is not a valid argument.")
+    return None
+
+
+def _child_env(policy: TerminalPolicy) -> dict[str, str]:
+    """A minimal environment, because the parent's is full of credentials.
+
+    Passing no `env=` hands every allowlisted command the bot's own
+    ANTHROPIC_API_KEY, DATABASE_URL and META_ACCESS_TOKEN. It also lets the
+    inherited PATH decide which binary an allowlisted NAME resolves to, so
+    the allowlist would match a string while an environment variable chose
+    the program. A fixed PATH makes the name mean one thing.
+    """
+    return {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": str(policy.root),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
+
+
+async def _read_capped(stream: Any, limit: int) -> tuple[bytes, bool]:
+    """Read at most `limit` bytes plus one, so truncation is detectable.
+
+    `communicate()` buffers the whole payload before anything is truncated,
+    so a command writing fast can exhaust memory while the tool dutifully
+    reports `truncated: true`. Pipe throughput is gigabytes per second, so
+    the wall-clock timeout is no bound here.
+    """
+    if stream is None:
+        return b"", False
+    data = await stream.read(limit + 1)
+    return data[:limit], len(data) > limit
+
+
 def build_terminal_connector(policy: TerminalPolicy) -> AsyncConnector:
     """Build `use_term` over *policy*."""
 
@@ -99,6 +148,9 @@ def build_terminal_connector(policy: TerminalPolicy) -> AsyncConnector:
             )
         if not all(isinstance(part, str) for part in argv):
             return _refuse("invalid_argv", "every element of argv must be a string.")
+        rejected = _reject_null_bytes(argv)
+        if rejected is not None:
+            return rejected
 
         program = argv[0]
         if program not in policy.allowed_commands:
@@ -114,40 +166,66 @@ def build_terminal_connector(policy: TerminalPolicy) -> AsyncConnector:
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=str(policy.root),
+                env=_child_env(policy),
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Its own process group, so the timeout below can kill the
+                # whole tree rather than only the direct child.
+                start_new_session=True,
             )
-        except OSError as error:
+        except (OSError, ValueError) as error:
             return _refuse(
                 "spawn_failed",
                 f"could not start '{program}': {error}",
                 program=program,
             )
 
+        async def _drain() -> tuple[tuple[bytes, bool], tuple[bytes, bool]]:
+            out, err = await asyncio.gather(
+                _read_capped(process.stdout, policy.max_output_bytes),
+                _read_capped(process.stderr, policy.max_output_bytes),
+            )
+            await process.wait()
+            return out, err
+
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=policy.timeout_s
+            (stdout, out_cut), (stderr, err_cut) = await asyncio.wait_for(
+                _drain(), timeout=policy.timeout_s
             )
         except TimeoutError:
-            process.kill()
-            await process.wait()
+            _kill_group(process)
             return _refuse(
                 "timeout",
                 f"'{program}' exceeded {policy.timeout_s}s and was killed.",
                 program=program,
             )
 
-        out, out_cut = _truncate(stdout, policy.max_output_bytes)
-        err, err_cut = _truncate(stderr, policy.max_output_bytes)
-
         return {
             "exit_code": process.returncode,
-            "stdout": out,
-            "stderr": err,
+            "stdout": stdout.decode("utf-8", errors="replace"),
+            "stderr": stderr.decode("utf-8", errors="replace"),
             "truncated": out_cut or err_cut,
         }
 
     return use_term
+
+
+def _kill_group(process: Any) -> None:
+    """Kill the child's whole process group, not just the child.
+
+    `process.kill()` alone leaves grandchildren orphaned and running
+    indefinitely, so the agent gets a clean "was killed" refusal that is
+    false about the host. Each timed-out call could seed another survivor.
+    """
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        # Already gone, or we cannot signal the group; fall back to the child.
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
 
 
 def build_file_reader_connector(policy: TerminalPolicy) -> AsyncConnector:
@@ -155,17 +233,31 @@ def build_file_reader_connector(policy: TerminalPolicy) -> AsyncConnector:
 
     root = policy.root.resolve()
 
+    def _read_bounded(path: pathlib.Path, limit: int) -> tuple[bytes, bool]:
+        with path.open("rb") as handle:
+            data = handle.read(limit + 1)
+        return data[:limit], len(data) > limit
+
     async def read_file(
         inputs: dict[str, Any], *, session: Any = None
     ) -> ConnectorOutput:
         raw_path = inputs.get("path")
         if not isinstance(raw_path, str) or not raw_path:
             return _refuse("invalid_path", "path must be a non-empty string.")
+        rejected = _reject_null_bytes([raw_path])
+        if rejected is not None:
+            return rejected
 
         # Resolve BEFORE deciding. `sub/../../etc/passwd` has no leading `..`,
         # and a symlink under the root can point anywhere on the host; a string
         # check sees neither.
-        candidate = (root / raw_path).resolve()
+        try:
+            candidate = (root / raw_path).resolve()
+        except (OSError, ValueError) as error:
+            return _refuse(
+                "invalid_path", f"could not resolve '{raw_path}': {error}"
+            )
+
         if not candidate.is_relative_to(root):
             return _refuse(
                 "path_outside_root",
@@ -181,7 +273,14 @@ def build_file_reader_connector(policy: TerminalPolicy) -> AsyncConnector:
             )
 
         try:
-            data = candidate.read_bytes()
+            # Off the event loop AND bounded. Reading synchronously here gave
+            # the graph's per-tool `asyncio.timeout` no suspension point to
+            # cancel at, so one large read stalled every other session in the
+            # process; reading it whole let a model exhaust memory by naming
+            # a big file, while the tool still reported `truncated: true`.
+            data, truncated = await asyncio.to_thread(
+                _read_bounded, candidate, policy.max_output_bytes
+            )
         except OSError as error:
             return _refuse(
                 "read_failed",
@@ -189,30 +288,46 @@ def build_file_reader_connector(policy: TerminalPolicy) -> AsyncConnector:
                 requested=raw_path,
             )
 
-        content, truncated = _truncate(data, policy.max_output_bytes)
-        return {"content": content, "truncated": truncated}
+        return {
+            "content": data.decode("utf-8", errors="replace"),
+            "truncated": truncated,
+        }
 
     return read_file
 
 
-#: The policy a registry gets when the application configures none.
-#:
-#: Deliberately inert: no command is allowed, so `use_term` refuses every
-#: call and `read_file` can only reach files under the process's own working
-#: directory — and only if one is asked for by relative path. It exists so a
-#: role declaring these tools can BOOT without the deployment having decided
-#: its sandbox yet. A tool a manifest names but the registry lacks makes the
-#: whole role unbuildable, so the choice is between an inert tool and no role
-#: at all; an inert tool is the safe half of that pair.
-#:
-#: An application that actually wants terminal access builds its own
-#: `TerminalPolicy` and registers these specs itself.
-INERT_POLICY = TerminalPolicy(
-    root=pathlib.Path.cwd(),
-    allowed_commands=frozenset(),
-)
+def _unconfigured_connector(tool: str) -> AsyncConnector:
+    """A connector that refuses everything, for a tool with no policy.
 
-_INERT_SPECS: tuple[ToolSpec, ...] | None = None
+    This replaces an earlier `INERT_POLICY` that set `root=Path.cwd()` and an
+    empty allowlist. That made `use_term` inert -- it consults the allowlist
+    -- and made `read_file` maximally OPEN, because `read_file` never
+    consults the allowlist at all: its only boundary is the root, and the
+    root was wherever the process happened to start. Under systemd's default
+    `WorkingDirectory`, or a container entrypoint that does not chdir, that
+    root is `/` and the unconfigured reader serves the entire host
+    filesystem -- `/etc/passwd`, `/proc/self/environ`, every secret in the
+    bot's own environment -- with no traversal and no race.
+
+    "Fails closed" was true of the dataclass and false of the object that
+    shipped. A tool with no policy now has no working connector at all,
+    which is the only shape where that sentence is true of both.
+    """
+
+    async def refuse(inputs: dict[str, Any], *, session: Any = None) -> ConnectorOutput:
+        return _refuse(
+            "not_configured",
+            f"'{tool}' is registered but this deployment supplied no "
+            f"TerminalPolicy, so it has no root and no allowlist. It refuses "
+            f"every call until one is configured.",
+            tool=tool,
+        )
+
+    return refuse
+
+
+_UNCONFIGURED_SPECS: tuple[ToolSpec, ...] | None = None
+_UNCONFIGURED_LOCK = threading.Lock()
 
 _USE_TERM_DESCRIPTION = (
     "Run one command from a pre-approved allowlist inside this deployment's "
@@ -244,18 +359,41 @@ def build_operator_tool_specs(
     if policy is None:
         # Memoised so both shipped registries share ONE spec object per tool.
         # Every other platform connector is a module-level function, so a test
-        # can assert the two registries wire the same callable and catch them
-        # drifting apart. A closure rebuilt per call would defeat that, and
-        # the inert policy has no per-caller state to keep them apart.
-        global _INERT_SPECS
-        if _INERT_SPECS is None:
-            _INERT_SPECS = _build_specs(INERT_POLICY)
-        return _INERT_SPECS
+        # asserts the two registries wire the same callable and catches them
+        # drifting apart; a closure rebuilt per call would defeat that.
+        #
+        # Locked because the bare check-then-set is a race: two concurrent
+        # callers could each build a tuple and receive different objects,
+        # which is exactly the identity invariant the memo exists for.
+        global _UNCONFIGURED_SPECS
+        with _UNCONFIGURED_LOCK:
+            if _UNCONFIGURED_SPECS is None:
+                _UNCONFIGURED_SPECS = _refusing_specs()
+            return _UNCONFIGURED_SPECS
 
     return _build_specs(policy)
 
 
+def _refusing_specs() -> tuple[ToolSpec, ...]:
+    """The same two tools, wired to connectors that refuse everything.
+
+    Registered rather than omitted because a tool a manifest names but the
+    registry lacks makes the WHOLE role unbuildable through `InjectionError`
+    -- so `operator-agent` would not boot at all. The choice is between a
+    refusing tool and no operator role, and a refusing tool is the safe half.
+    """
+    return _specs(
+        _unconfigured_connector("use_term"), _unconfigured_connector("read_file")
+    )
+
+
 def _build_specs(resolved: TerminalPolicy) -> tuple[ToolSpec, ...]:
+    return _specs(
+        build_terminal_connector(resolved), build_file_reader_connector(resolved)
+    )
+
+
+def _specs(term: AsyncConnector, reader: AsyncConnector) -> tuple[ToolSpec, ...]:
     return (
         ToolSpec(
             name="use_term",
@@ -275,7 +413,7 @@ def _build_specs(resolved: TerminalPolicy) -> tuple[ToolSpec, ...]:
                 },
                 "required": ["argv"],
             },
-            connector=build_terminal_connector(resolved),
+            connector=term,
             always_revalidate=True,
         ),
         ToolSpec(
@@ -292,7 +430,7 @@ def _build_specs(resolved: TerminalPolicy) -> tuple[ToolSpec, ...]:
                 },
                 "required": ["path"],
             },
-            connector=build_file_reader_connector(resolved),
+            connector=reader,
             always_revalidate=True,
         ),
     )
