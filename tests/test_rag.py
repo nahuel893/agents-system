@@ -421,8 +421,41 @@ async def test_search_catalog_uses_the_injected_source_not_a_module_import() -> 
 
 
 def test_rag_module_does_not_import_client_domain() -> None:
-    """`services.rag` must not reach into any client-owned module."""
-    source = pathlib.Path(rag.__file__).read_text(encoding="utf-8")
+    """`services.rag` must not reach into any client-owned module.
 
-    assert "services.catalog" not in source
-    assert "services import catalog" not in source
+    A fresh-interpreter probe rather than a substring scan of the file. The
+    scan this replaces promised "any client-owned module" and checked two
+    literals naming one of them: adding `from agentsys.models.tables import
+    CatalogEmbedding` -- ACME's actual `catalog_embeddings` ORM table -- and
+    using it left the scan green, while a docstring reword turned it red. It
+    fired on prose and missed the worst real violation.
+
+    Run in a subprocess so no other test's imports leak into `sys.modules`
+    and make this vacuously pass. Same pattern, and same reason, as the
+    laziness probes in `test_public_api.py`.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "import agentsys.services.rag\n"
+            "client_owned = {\n"
+            "    'agentsys.services.catalog',\n"
+            "    'agentsys.services.clients',\n"
+            "    'agentsys.models.tables',\n"
+            "    'agentsys.connectors.acme_reports',\n"
+            "}\n"
+            "leaked = sorted(client_owned & set(sys.modules))\n"
+            "assert not leaked, leaked\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=str(pathlib.Path(rag.__file__).resolve().parents[3]),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr

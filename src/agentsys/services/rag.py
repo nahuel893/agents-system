@@ -13,12 +13,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agentsys.config import Settings
-from agentsys.services.embeddings import EmbeddingProvider
+
+if TYPE_CHECKING:
+    # Annotation-only. A runtime import would make anything that touches
+    # this module load the embeddings stack and, through it, the OpenAI
+    # SDK -- including `services/catalog.py`, which needs neither and
+    # paid for both once it started importing the candidate types here.
+    from agentsys.services.embeddings import EmbeddingProvider
 
 _logger = logging.getLogger(__name__)
 
@@ -90,7 +96,7 @@ async def search_catalog(
     query: str,
     *,
     settings: Settings,
-    embedder: EmbeddingProvider,
+    embedder: "EmbeddingProvider",
     source: CatalogSource,
 ) -> CatalogSearchResult:
     """Embed the query once and classify vector candidates by similarity."""
