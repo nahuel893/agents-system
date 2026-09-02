@@ -826,7 +826,16 @@ def _validate_execution_limits(
         # the PLATFORM default for the rest is what keeps a partial dict from
         # becoming an unbounded one: without it, a deployment could raise any
         # limit its role happened not to mention.
-        baseline_value = baseline.get(key, _PLATFORM_DEFAULT_LIMITS.get(key))
+        # `dict.get(key, default)` returns the default only when the key is
+        # ABSENT — never when its value is None. So the previous version
+        # closed the omitted-key half of this and left the null-valued half
+        # wide open, which matters because `execution_limits: null` is a
+        # shipped idiom in six policy files meaning "no opinion, take the
+        # platform defaults". Written per-key it reads identically to an
+        # author and silently REMOVED the ceiling instead of applying it.
+        baseline_value = baseline.get(key)
+        if baseline_value is None:
+            baseline_value = _PLATFORM_DEFAULT_LIMITS.get(key)
         if baseline_value is None:
             # Genuinely unknown to both — a new limit nobody has a ceiling for.
             continue
