@@ -120,7 +120,17 @@ async def test_lifespan_uses_data_driven_grants() -> None:
             assert app.state.runtimes
 
         # resolve() called for the sales-agent role with the acme deployment
-        mock_resolve.assert_any_call("sales-agent", client="acme")
+        # `roots=` is part of the call now: the lifespan passes an explicit
+        # deployments root rather than letting the library guess one (#62).
+        # Asserting the call WITHOUT it would pass while the seam was gone.
+        resolve_call = next(
+            c
+            for c in mock_resolve.call_args_list
+            if c.args == ("sales-agent",) and c.kwargs.get("client") == "acme"
+        )
+        assert resolve_call.kwargs.get("roots") is not None, (
+            "resolve() was called without an explicit roots="
+        )
 
         # build_runtime received the resolved definition's permissions —
         # NOT a hardcoded role -> permissions map.
@@ -1056,3 +1066,67 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
     assert built == ["acme__sales-agent"], (
         "the WhatsApp runtime was not built; adapter_runtimes gated it"
     )
+
+
+async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
+    """Both call sites in the loop must use the same explicit root.
+
+    `resolve` got `roots=` and `build_runtime` did not, so the definition
+    used for the permission grant came from the explicit path while the
+    runtime actually installed — its tool surface and its skill files —
+    resolved against the library's guessed default. Two different roots for
+    one runtime, and the one that decides what the agent can DO was the
+    guessed one.
+    """
+    import pathlib as _pathlib
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agentsys.main import create_app, lifespan
+
+    seen: list[Any] = []
+
+    def spy_build_runtime(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("roots"))
+        raise RuntimeError("stop here — the call itself is what is asserted")
+
+    def _awaitable_engine() -> MagicMock:
+        engine = MagicMock()
+        engine.dispose = AsyncMock()
+        return engine
+
+    test_settings = Settings(
+        _env_file=None,
+        allow_insecure=True,
+        adapter_runtimes=["acme__sales-agent"],
+        whatsapp_checkpointer_enabled=False,
+        embedding_provider="openai",
+        openai_api_key="test-key",
+    )
+    application = create_app()
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
+        patch("agentsys.audit.sink.AuditSink") as sink_cls,
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.factory.build_runtime", side_effect=spy_build_runtime),
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        try:
+            async with lifespan(application):
+                pass
+        except RuntimeError as exc:
+            assert "stop here" in str(exc), exc
+
+    assert seen, "build_runtime was never reached"
+    assert seen[0] is not None, "build_runtime got no explicit roots"
+    # Compared against a path this test computes itself. Asserting against
+    # `main._DEPLOYMENTS_ROOT` would grade main against its own constant.
+    expected = _pathlib.Path(__file__).resolve().parents[1] / "deployments"
+    assert seen[0].deployments_root == expected
+    assert expected.is_dir(), "the path must actually exist in this checkout"

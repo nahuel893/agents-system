@@ -280,3 +280,48 @@ def test_build_runtime_logs_skill_missing_before_raising() -> None:
 
     events = [e["event"] for e in logs]
     assert "factory.skill_missing" in events
+
+
+def test_loading_skills_with_an_absent_deployments_root_raises_clearly(
+    tmp_path,
+) -> None:
+    """An absent root must not be reported as missing skill files.
+
+    `_load_skills` joins `deployments_root` into a path and then checks each
+    skill file. With the root absent, every skill "does not exist", so the
+    failure surfaced as `FactoryError: skill 'x' has no file at ...` —
+    reading as a deployment authoring mistake when the real cause is a
+    consumer that never passed a root. The guard now fires first and names
+    what is actually wrong.
+    """
+    import pytest
+
+    from agentsys.harness.factory import _load_skills
+    from agentsys.harness.loader import AgentDefinition, DefinitionError, RootConfig
+
+    definition = AgentDefinition(
+        role_name="simple-role",
+        version="1.0",
+        deployment="client-a",
+        system_prompt="body",
+        tools=(),
+        skills=("some_skill",),
+        context={},
+        permissions=(),
+        autonomy="supervised",
+        escalation_rules={},
+        delegation_policy={},
+        memory_policy={},
+        audit_policy={},
+        execution_limits=None,
+    )
+
+    roots = RootConfig(
+        platform_root=tmp_path / "platform",
+        deployments_root=tmp_path / "absent",
+    )
+
+    with pytest.raises(DefinitionError) as excinfo:
+        _load_skills(definition, "client-a", roots)
+
+    assert "absent" in str(excinfo.value)

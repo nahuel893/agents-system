@@ -448,6 +448,74 @@ def test_root_config_deployments_root_default_untouched_by_resolution(
 
 
 # ---------------------------------------------------------------------------
+# D-024 slice 2 — deployments_root guard (mirrors _require_platform_root)
+#
+# Before this, `deployments_root` had no existence check at all, unlike
+# `platform_root`. A client override requested against a missing root (e.g.
+# agentsys installed as a dependency, with no co-located `deployments/`)
+# silently fell through `load_override`'s "not found" warning straight to the
+# generic role — WIDENING tools/autonomy/permissions past what the (absent)
+# override would have restricted, since a deployment may only NARROW the
+# generic role, never broaden it. See consumer-root-configuration spec,
+# "Loud failure instead of a silent wrong answer".
+# ---------------------------------------------------------------------------
+def test_require_deployments_root_raises_naming_the_path(
+    tmp_path: pathlib.Path,
+) -> None:
+    import agentsys.harness.loader as loader_module
+    from agentsys.harness.loader import DefinitionError
+
+    missing = tmp_path / "no-such-deployments"
+
+    with pytest.raises(DefinitionError) as exc_info:
+        loader_module._require_deployments_root(missing)
+
+    assert str(missing) in str(exc_info.value)
+
+
+def test_require_deployments_root_returns_existing_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    import agentsys.harness.loader as loader_module
+
+    existing = tmp_path / "deployments"
+    existing.mkdir()
+
+    assert loader_module._require_deployments_root(existing) == existing
+
+
+def test_resolve_with_client_and_missing_deployments_root_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    """consumer-root-configuration spec, scenario 'Installed as a dependency,
+    no co-located deployments/'."""
+    from agentsys.harness.loader import DefinitionError, RootConfig, resolve
+
+    missing = tmp_path / "no-such-deployments"
+    roots = RootConfig(platform_root=GENERIC_ROOTS_DIR, deployments_root=missing)
+
+    with pytest.raises(DefinitionError) as exc_info:
+        resolve("simple-role", client="client-a", roots=roots)
+
+    assert str(missing) in str(exc_info.value)
+
+
+def test_resolve_no_client_ignores_missing_deployments_root(
+    tmp_path: pathlib.Path,
+) -> None:
+    """consumer-root-configuration spec, scenario 'No client override
+    requested' — resolve(role) must not require a deployments_root at all."""
+    from agentsys.harness.loader import RootConfig, resolve
+
+    missing = tmp_path / "no-such-deployments"
+    roots = RootConfig(platform_root=GENERIC_ROOTS_DIR, deployments_root=missing)
+
+    definition = resolve("simple-role", roots=roots)
+
+    assert definition.deployment is None
+
+
+# ---------------------------------------------------------------------------
 # Path-segment validation — role_type / client must never traverse
 #
 # `_role_folder`/`_deployment_folder` build filesystem paths by joining
@@ -519,17 +587,33 @@ def test_load_generic_refuses_traversing_and_absolute_role_types(
 def test_load_override_refuses_traversing_client_and_role(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Both segments are caller-supplied; both must be validated."""
+    """Both segments are caller-supplied; both must be validated.
+
+    The root must EXIST and the message must be asserted, or this stops
+    testing traversal. Moving `_require_deployments_root` into
+    `load_override` made it the FIRST argument evaluated, so with an absent
+    root it raised before `_validate_segment` ever saw `../escape` — and a
+    bare `pytest.raises(DefinitionError)` cannot tell the two apart. The test
+    kept passing, on the wrong exception, and the commit that moved the guard
+    audited the two tests that went red and missed this one, which stayed
+    green.
+    """
     from agentsys.harness.loader import DefinitionError, RootConfig, load_override
 
+    (tmp_path / "deployments").mkdir()
     roots = RootConfig(
         platform_root=tmp_path / "platform",
         deployments_root=tmp_path / "deployments",
     )
-    with pytest.raises(DefinitionError):
-        load_override("../escape", "sales-agent", roots=roots)
-    with pytest.raises(DefinitionError):
-        load_override("acme", "../escape", roots=roots)
+    for client, role in (("../escape", "sales-agent"), ("acme", "../escape")):
+        with pytest.raises(DefinitionError) as excinfo:
+            load_override(client, role, roots=roots)
+        message = str(excinfo.value)
+        assert "escape" in message, message
+        assert "deployments_root" not in message, (
+            "raised on the missing root, not on the traversal: "
+            f"{message}"
+        )
 
 
 def test_real_role_and_client_names_still_load() -> None:
@@ -560,6 +644,11 @@ def test_load_override_works_without_any_platform_directory(
     monkeypatch.setattr(
         loader_module, "_CHECKOUT_PLATFORM_ROOT", tmp_path / "no" / "checkout"
     )
+    # The root must EXIST — an absent one is a misconfigured consumer and
+    # now raises, because `load_override` returning None for it is exactly
+    # the path that lets `resolve` fall back to the generic role and widen
+    # the tool surface.
+    (tmp_path / "deployments").mkdir()
     monkeypatch.setattr(
         loader_module, "_DEFAULT_DEPLOYMENTS_ROOT", tmp_path / "deployments"
     )
@@ -596,10 +685,19 @@ def test_missing_platform_root_still_fails_loudly_naming_both_paths(
 # The behaviour is out of scope to change here; going silent is not.
 # ---------------------------------------------------------------------------
 def test_missing_deployment_emits_a_warning(tmp_path: pathlib.Path) -> None:
+    """Root present, client folder absent: warn and fall back.
+
+    This is the typo case, and it stays a warning rather than a raise — a
+    role legitimately may have no override. It is distinct from an ABSENT
+    ROOT, which is a misconfigured consumer and raises; the test below
+    covers that. Before they were separated, this one passed a nonexistent
+    root and so proved neither.
+    """
     import structlog
 
     from agentsys.harness.loader import RootConfig, load_override
 
+    (tmp_path / "deployments").mkdir()
     roots = RootConfig(
         platform_root=tmp_path / "platform",
         deployments_root=tmp_path / "deployments",
@@ -612,3 +710,28 @@ def test_missing_deployment_emits_a_warning(tmp_path: pathlib.Path) -> None:
     assert events, "a missing deployment override must be logged, not silent"
     assert events[0]["client"] == "typo-client"
     assert events[0]["role_type"] == "sales-agent"
+
+
+def test_load_override_raises_when_the_deployments_root_is_absent(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An absent root is a misconfigured consumer, not a missing override.
+
+    `load_override` used to answer None here, and `resolve` reads None as
+    "this role has no override" and returns the GENERIC role — whose tool
+    surface is the full platform allowance a deployment exists to narrow. So
+    a wrong or unset `deployments_root` granted more, silently. The guard now
+    sits at the point of use, mirroring `_require_platform_root` in
+    `load_generic`.
+    """
+    from agentsys.harness.loader import DefinitionError, RootConfig, load_override
+
+    roots = RootConfig(
+        platform_root=tmp_path / "platform",
+        deployments_root=tmp_path / "nope",
+    )
+
+    with pytest.raises(DefinitionError) as excinfo:
+        load_override("acme", "sales-agent", roots=roots)
+
+    assert "nope" in str(excinfo.value)
