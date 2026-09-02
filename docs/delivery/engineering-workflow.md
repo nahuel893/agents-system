@@ -69,7 +69,7 @@ it. A bare number in a conversation is unreadable a week later.
 
 | Carried by | What it holds |
 |---|---|
-| Labels | Priority (`priority:high|medium|low`) and area (`security`, `reliability`, `infra`, `platform`, `process`) |
+| Labels | Priority (`priority:high` / `priority:medium` / `priority:low`) and area (`security`, `reliability`, `infra`, `platform`, `process`) |
 | Body | Dependencies, as `blocked by #49` — a live link |
 | PR body | `Closes #44`, so merging closes the issue and status lives in the platform |
 
@@ -198,8 +198,12 @@ Be careful what you claim for that change. It does **not** reliably make the
 test file shorter — an explicit stub is usually more lines than a
 `monkeypatch` call, and in the change that produced this rule the two test
 files grew by 112 lines net. What it buys is that the test stops depending on
-the module's internal structure, so a rename or a moved import no longer
-silently turns the test into a no-op.
+the module's internal structure. Be precise about which failures that
+prevents: a straight rename is already loud, because `monkeypatch.setattr`
+raises by default when the attribute is missing. What it silently survives
+is the import MOVING — patch the name where it was imported to and the
+module now reads it from somewhere else, so the patch applies to nothing
+and the test passes without exercising the code it names.
 
 Use this as a rule: **if making something testable requires reaching inside
 it, fix the code, not the test.**
@@ -322,8 +326,10 @@ feat!: drop the deprecated resolve() positional argument
 BREAKING CHANGE: callers must pass roots= explicitly.
 ```
 
-The `!` is what the tooling reads; the `BREAKING CHANGE:` footer is what the
-changelog quotes. Write both.
+Either signal alone is enough — the spec treats `!` and the
+`BREAKING CHANGE:` footer as equivalent triggers for a MAJOR bump, and the
+footer was the original one. Write both anyway: the `!` is visible in a
+one-line log, and the footer is the sentence the changelog quotes.
 
 One commit does one thing. **The body explains why; the diff already shows
 what.** A body that restates the diff is wasted; a body that records the

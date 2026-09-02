@@ -8,10 +8,12 @@
 > delivery, release and agent collaboration — written to be copied into any
 > repository unchanged.
 >
-> **This document is the compliance record for *this* repository**: which parts
-> of that standard are actually enforced here, which are not, and what each gap
-> is waiting on. Read the portable one for the rule; read this one for whether
-> the platform makes it true.
+> **This document holds the compliance record for *this* repository** — the
+> read-back enforcement table and the ordered gap list at the end. It also
+> still restates much of the standard itself, which is duplication the two
+> documents carry until it is trimmed. Where they disagree, the portable one
+> is authoritative on the rule and this one on what the platform actually
+> enforces here.
 
 This is the delivery process the repository follows from now on. It is the
 industry-standard flow, not a description of what we happened to be doing.
