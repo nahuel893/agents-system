@@ -18,7 +18,10 @@ from agentsys.connectors.platform_stubs import (
     escalation_notifier,
     knowledge_retrieval,
 )
-from agentsys.connectors.operator import build_operator_tool_specs
+from agentsys.connectors.operator import (
+    TerminalPolicy,
+    build_operator_tool_specs,
+)
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 
 _order_counter = itertools.count(1)
@@ -79,7 +82,9 @@ def session_state(inputs: dict[str, Any]) -> dict[str, Any]:
     return {"session_id": session_id, "data": inputs.get("data", {})}
 
 
-def build_acme_registry() -> ToolRegistry:
+def build_acme_registry(
+    terminal_policy: TerminalPolicy | None = None,
+) -> ToolRegistry:
     """Return a ToolRegistry wired with the five ACME sales-agent stubs plus
     the three platform-generic stubs (knowledge_retrieval,
     conversation_summarizer, escalation_notifier) declared by the generic
@@ -158,7 +163,7 @@ def build_acme_registry() -> ToolRegistry:
     # is between an inert tool and no operator role at all. An application
     # that wants real terminal access builds its own `TerminalPolicy` and
     # registers these specs itself.
-    for spec in build_operator_tool_specs():
+    for spec in build_operator_tool_specs(terminal_policy):
         registry.register(spec)
 
     return registry

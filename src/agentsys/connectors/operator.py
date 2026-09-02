@@ -116,18 +116,45 @@ def _child_env(policy: TerminalPolicy) -> dict[str, str]:
     }
 
 
-async def _read_capped(stream: Any, limit: int) -> tuple[bytes, bool]:
-    """Read at most `limit` bytes plus one, so truncation is detectable.
+_STREAM_CHUNK = 64 * 1024
 
-    `communicate()` buffers the whole payload before anything is truncated,
-    so a command writing fast can exhaust memory while the tool dutifully
-    reports `truncated: true`. Pipe throughput is gigabytes per second, so
-    the wall-clock timeout is no bound here.
+
+async def _read_capped(stream: Any, limit: int) -> tuple[bytes, bool]:
+    """Read to EOF, keeping at most `limit` bytes and discarding the rest.
+
+    Two things this must do at once, and an earlier version did neither.
+
+    **Read to EOF.** `StreamReader.read(n)` returns whatever is CURRENTLY
+    buffered -- not n bytes, and not up to EOF. A single call therefore
+    captured only the first flush: `find . -type f` came back with 245 of
+    2400 lines and `truncated: false`, which is the field this tool's own
+    description tells the model to trust.
+
+    **Keep draining past the cap.** A reader that stops once it has enough
+    leaves the pipe full, so the child blocks on write forever and
+    `process.wait()` never returns. The wall-clock timeout then fired and
+    SIGKILLed a command that was working: `cat` on a 1.2 MB log inside the
+    root took 3 s and returned a timeout instead of a truncated result.
+
+    Memory stays bounded because only `limit` bytes are KEPT; everything
+    past it is read and dropped one chunk at a time. `communicate()`
+    achieved both and buffered without bound; this achieves both without.
     """
     if stream is None:
         return b"", False
-    data = await stream.read(limit + 1)
-    return data[:limit], len(data) > limit
+
+    kept = bytearray()
+    truncated = False
+    while True:
+        chunk = await stream.read(_STREAM_CHUNK)
+        if not chunk:
+            break
+        room = limit - len(kept)
+        if room > 0:
+            kept += chunk[:room]
+        if len(chunk) > max(room, 0):
+            truncated = True
+    return bytes(kept), truncated
 
 
 def build_terminal_connector(policy: TerminalPolicy) -> AsyncConnector:
@@ -265,7 +292,22 @@ def build_file_reader_connector(policy: TerminalPolicy) -> AsyncConnector:
                 requested=raw_path,
             )
 
-        if not candidate.is_file():
+        try:
+            is_file = candidate.is_file()
+        except OSError as error:
+            # `Path.is_file()` swallows ENOENT/ENOTDIR/EBADF/ELOOP and lets
+            # everything else through: a 5000-character path raises
+            # ENAMETOOLONG, and an unreadable directory component inside the
+            # root raises EACCES. Both are trivially model-emittable, and
+            # both escaped the connector as exceptions -- the exact failure
+            # the null-byte guard above was added to prevent, one line down.
+            return _refuse(
+                "invalid_path",
+                f"could not stat '{raw_path}': {error}",
+                requested=raw_path,
+            )
+
+        if not is_file:
             return _refuse(
                 "not_found",
                 f"no file at '{raw_path}'.",
