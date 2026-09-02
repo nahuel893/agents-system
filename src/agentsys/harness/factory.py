@@ -35,7 +35,12 @@ from typing import TYPE_CHECKING, Iterable
 import structlog
 
 from agentsys.harness.injector import _emit, resolve_tool_surface
-from agentsys.harness.loader import AgentDefinition, RootConfig, resolve
+from agentsys.harness.loader import (
+    AgentDefinition,
+    RootConfig,
+    _require_deployments_root,
+    resolve,
+)
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 
 if TYPE_CHECKING:
@@ -98,8 +103,15 @@ def _load_skills(
             f"but no client deployment was given to load them from."
         )
 
+    # Guarded at the point of use, the same way the loader guards
+    # `platform_root`. A skills path built from an absent root silently
+    # produces "skill file missing" for every skill, which reads as a
+    # deployment authoring mistake rather than a misconfigured consumer.
     skills_dir = (
-        roots.deployments_root / client / definition.role_name / "skills"
+        _require_deployments_root(roots.deployments_root)
+        / client
+        / definition.role_name
+        / "skills"
     )
 
     loaded: list[LoadedSkill] = []

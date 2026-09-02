@@ -816,3 +816,59 @@ async def test_bi_tool_is_unbound_when_no_url_is_configured() -> None:
         _bi_settings(bi_database_url=""), _fake_bi_engine("on")
     )
     assert bound is None
+
+
+async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
+    """Both call sites in the loop must use the same explicit root.
+
+    `resolve` got `roots=` and `build_runtime` did not, so the definition
+    used for the permission grant came from the explicit path while the
+    runtime actually installed — its tool surface and its skill files —
+    resolved against the library's guessed default. Two different roots for
+    one runtime, and the one that decides what the agent can DO was the
+    guessed one.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agentsys.main import _DEPLOYMENTS_ROOT, create_app, lifespan
+
+    seen: list[Any] = []
+
+    def spy_build_runtime(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("roots"))
+        raise RuntimeError("stop here — the call itself is what is asserted")
+
+    def _awaitable_engine() -> MagicMock:
+        engine = MagicMock()
+        engine.dispose = AsyncMock()
+        return engine
+
+    test_settings = Settings(
+        _env_file=None,
+        allow_insecure=True,
+        adapter_runtimes=["acme__sales-agent"],
+        whatsapp_checkpointer_enabled=False,
+        embedding_provider="openai",
+        openai_api_key="test-key",
+    )
+
+    application = create_app()
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
+        patch("agentsys.audit.sink.AuditSink") as sink_cls,
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agentsys.harness.factory.build_runtime", side_effect=spy_build_runtime),
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        try:
+            async with lifespan(application):
+                pass
+        except RuntimeError as exc:
+            assert "stop here" in str(exc), exc
+
+    assert seen, "build_runtime was never reached"
+    assert seen[0] is not None, "build_runtime got no explicit roots"
+    assert seen[0].deployments_root == _DEPLOYMENTS_ROOT
