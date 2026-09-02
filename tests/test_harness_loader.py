@@ -587,17 +587,33 @@ def test_load_generic_refuses_traversing_and_absolute_role_types(
 def test_load_override_refuses_traversing_client_and_role(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Both segments are caller-supplied; both must be validated."""
+    """Both segments are caller-supplied; both must be validated.
+
+    The root must EXIST and the message must be asserted, or this stops
+    testing traversal. Moving `_require_deployments_root` into
+    `load_override` made it the FIRST argument evaluated, so with an absent
+    root it raised before `_validate_segment` ever saw `../escape` — and a
+    bare `pytest.raises(DefinitionError)` cannot tell the two apart. The test
+    kept passing, on the wrong exception, and the commit that moved the guard
+    audited the two tests that went red and missed this one, which stayed
+    green.
+    """
     from agentsys.harness.loader import DefinitionError, RootConfig, load_override
 
+    (tmp_path / "deployments").mkdir()
     roots = RootConfig(
         platform_root=tmp_path / "platform",
         deployments_root=tmp_path / "deployments",
     )
-    with pytest.raises(DefinitionError):
-        load_override("../escape", "sales-agent", roots=roots)
-    with pytest.raises(DefinitionError):
-        load_override("acme", "../escape", roots=roots)
+    for client, role in (("../escape", "sales-agent"), ("acme", "../escape")):
+        with pytest.raises(DefinitionError) as excinfo:
+            load_override(client, role, roots=roots)
+        message = str(excinfo.value)
+        assert "escape" in message, message
+        assert "deployments_root" not in message, (
+            "raised on the missing root, not on the traversal: "
+            f"{message}"
+        )
 
 
 def test_real_role_and_client_names_still_load() -> None:

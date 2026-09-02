@@ -104,9 +104,13 @@ def _load_skills(
         )
 
     # Guarded at the point of use, the same way the loader guards
-    # `platform_root`. A skills path built from an absent root silently
-    # produces "skill file missing" for every skill, which reads as a
-    # deployment authoring mistake rather than a misconfigured consumer.
+    # `platform_root`. Defence in depth, and honestly labelled as such: on
+    # the public path `build_runtime` calls `resolve` first, which already
+    # raises for an absent root whenever `client is not None`, so this guard
+    # fires only for a direct call to this private function. It stays because
+    # the alternative reading -- a skills path built from an absent root --
+    # reports "skill file missing" for every skill, which blames the
+    # deployment author for a consumer's misconfiguration.
     skills_dir = (
         _require_deployments_root(roots.deployments_root)
         / client

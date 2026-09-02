@@ -830,7 +830,9 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from agentsys.main import _DEPLOYMENTS_ROOT, create_app, lifespan
+    import pathlib
+
+    from agentsys.main import create_app, lifespan
 
     seen: list[Any] = []
 
@@ -871,4 +873,9 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
 
     assert seen, "build_runtime was never reached"
     assert seen[0] is not None, "build_runtime got no explicit roots"
-    assert seen[0].deployments_root == _DEPLOYMENTS_ROOT
+    # Compared against a path this test computes itself. Asserting against
+    # `main._DEPLOYMENTS_ROOT` would grade main against its own constant and
+    # could never catch it computing the wrong one.
+    expected = pathlib.Path(__file__).resolve().parents[1] / "deployments"
+    assert seen[0].deployments_root == expected
+    assert expected.is_dir(), "the path must actually exist in this checkout"
