@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Literal
@@ -22,6 +23,18 @@ from agentsys.models.base import get_engine
 from agentsys.observability import RequestIdMiddleware, setup_logging
 from agentsys.services.dedup import DEDUP_TTL_SECONDS
 from agentsys.services.redis import close_redis_pool, get_redis_client
+
+# consumer-root-configuration precondition fix (D-024 slice 1) — a consumer
+# must supply its own `deployments_root` explicitly rather than relying on
+# the library's own guessed default, which only ever matches a co-located
+# dev checkout (see harness/loader.py's `_require_deployments_root`, which
+# now raises loudly instead of silently falling back to the generic role
+# when a client override is requested against a missing root). This app is
+# currently co-located with `deployments/` in the same repo checkout, so it
+# computes its own explicit root here rather than depending on the
+# library's internal default resolution.
+_REPO_ROOT = pathlib.Path(__file__).parent.parent.parent
+_DEPLOYMENTS_ROOT = _REPO_ROOT / "deployments"
 
 # BLOCKER 3 — import-time backstop for the dedup-TTL invariant. A turn whose
 # budget can outlive the dedup key lets Meta's retry re-process the same
@@ -182,7 +195,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from agentsys.agent.graph import AgentRuntime, _effective_limits
             from agentsys.connectors.rag_connector import build_acme_rag_registry
             from agentsys.harness.factory import build_runtime
-            from agentsys.harness.loader import resolve
+            from agentsys.harness.loader import RootConfig, resolve
             from agentsys.services.embeddings import get_embedding_provider
 
             embedder = get_embedding_provider(settings)
@@ -286,7 +299,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # D-014 AD-5 — data-driven grants: resolve the definition FIRST so
                 # the role's own resolved permissions become granted_permissions.
                 # No hardcoded role -> permissions map (discovery #184).
-                definition = resolve(role, client=deployment)
+                # `roots=` is explicit (see module-level comment above) — never
+                # a bare resolve() relying on the library's own default
+                # deployments_root resolution.
+                definition = resolve(
+                    role,
+                    client=deployment,
+                    roots=RootConfig(deployments_root=_DEPLOYMENTS_ROOT),
+                )
 
                 # BLOCKER 3 — fail fast if this runtime's effective turn budget
                 # can outlive the dedup key (Meta retry → double processing +
@@ -302,11 +322,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         "lets Meta's webhook retry double-send the reply"
                     )
 
+                # The SAME explicit root as the `resolve` above. Passing it
+                # to only one of the two was the whole bug in a subtler form:
+                # the definition used for the permission grant came from the
+                # explicit path while the runtime actually installed -- its
+                # tool surface and its skill files -- resolved against the
+                # library's guessed default.
                 equipped = build_runtime(
                     role_type=role,
                     registry=registry,
                     granted_permissions=definition.permissions,
                     client=deployment,
+                    roots=RootConfig(deployments_root=_DEPLOYMENTS_ROOT),
                     session_provider=session_provider,
                 )
                 runtimes[model_id] = AgentRuntime(
