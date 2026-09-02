@@ -20,8 +20,7 @@ from agentsys.integration import openai_router, webhook_router
 from agentsys.integration.whatsapp_client import WhatsAppClient
 from agentsys.models.base import get_engine
 from agentsys.observability import RequestIdMiddleware, setup_logging
-from agentsys.connectors.rag_connector import build_acme_rag_registry
-from agentsys.harness.registry import RegistryFactory
+from agentsys.harness.registry import RegistryFactory, ToolRegistry
 from agentsys.services.clients import ClientDirectory
 from agentsys.services.conversation_log import ConversationLogRecorder
 from agentsys.services.participants import (
@@ -226,7 +225,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                             ),
                         )
                     bi_engine = candidate
-                    _logger.info("bi.tool_bound")
+                    _logger.info("bi.tool_bound", bi_url_configured=True)
             else:
                 _logger.warning(
                     "bi.disabled",
@@ -475,11 +474,27 @@ def create_app(
     return application
 
 
+def _acme_registry_factory(
+    settings: Settings, embedder: Any = None, bi_engine: Any = None
+) -> ToolRegistry:
+    """ACME's `RegistryFactory`, with its import deferred.
+
+    A module-level `from ... import build_acme_rag_registry` would make
+    `import agentsys.main` eagerly load the connector module and, through it,
+    the whole OpenAI SDK. The lifespan deliberately defers its heavy imports
+    for exactly that reason; passing the factory by reference at module scope
+    would have quietly undone it for this one.
+    """
+    from agentsys.connectors.rag_connector import build_acme_rag_registry
+
+    return build_acme_rag_registry(settings, embedder, bi_engine)
+
+
 # ACME's application. Everything above is the platform's; this call is the
 # deployment -- its connectors, its clients table, its conversation log. It
 # is the seam the client repository takes over.
 app = create_app(
-    registry_factory=build_acme_rag_registry,
+    registry_factory=_acme_registry_factory,
     participant_directory=ClientDirectory(),
     conversation_recorder=ConversationLogRecorder(),
     title="Acme",

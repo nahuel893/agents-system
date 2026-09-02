@@ -855,3 +855,79 @@ def test_create_app_requires_a_registry_factory() -> None:
 
     with pytest.raises(TypeError):
         create_app()  # type: ignore[call-arg]
+
+
+async def test_create_app_stores_the_ports_it_is_given() -> None:
+    """Supplied ports must actually reach `app.state`, not just default to None.
+
+    Found by adversarial review: the test above pinned only the DEFAULTS, so
+    `create_app` could drop both arguments on the floor and all 647 tests
+    stayed green. These two objects decide whether the inbound route runs a
+    turn at all -- silently discarding them is the failure this asserts
+    against.
+    """
+    from agentsys.harness.registry import ToolRegistry
+    from agentsys.main import create_app
+
+    directory = object()
+    recorder = object()
+
+    application = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        participant_directory=directory,  # type: ignore[arg-type]
+        conversation_recorder=recorder,  # type: ignore[arg-type]
+    )
+
+    assert application.state.participant_directory is directory
+    assert application.state.conversation_recorder is recorder
+
+
+async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None:
+    """The factory has to be the one the lifespan actually invokes.
+
+    Previously only covered incidentally, and that coverage was anchored to
+    `agentsys.connectors.rag_connector` -- the module #70 deletes next. This
+    drives the real lifespan and asserts the caller's factory was called with
+    the settings, embedder and BI engine it resolved.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agentsys.harness.registry import ToolRegistry
+    from agentsys.main import create_app, lifespan
+
+    calls: list[tuple[Any, ...]] = []
+
+    def consumer_registry(settings, embedder=None, bi_engine=None):
+        calls.append((settings, embedder, bi_engine))
+        return ToolRegistry()
+
+    application = create_app(registry_factory=consumer_registry)
+
+    # The runtime cache is gated on `adapter_runtimes` being non-empty, so it
+    # has to be set for the lifespan to reach any factory at all. That gate is
+    # itself questionable -- it makes an OpenAI-adapter setting decide whether
+    # the WhatsApp channel has runtimes -- but it is not this test's subject.
+    test_settings = Settings(
+        _env_file=None,
+        allow_insecure=True,
+        adapter_runtimes=["acme__sales-agent"],
+    )
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=MagicMock()),
+        patch("agentsys.audit.sink.AuditSink") as sink_cls,
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        try:
+            async with lifespan(application):
+                pass
+        except Exception:
+            # The lifespan builds a great deal more than the registry; this
+            # test only cares that the caller's factory was reached, and a
+            # later failure does not un-call it.
+            pass
+
+    assert calls, "the lifespan never called the caller-supplied factory"
