@@ -165,9 +165,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         if required_runtimes:
             _logger = structlog.get_logger()
-            if not settings.adapter_api_key:
+            if settings.adapter_runtimes and not settings.adapter_api_key:
                 # Reachable only under ALLOW_INSECURE=true — the Settings
                 # validator fails closed otherwise (D-014 S5, BLOCKER 1).
+                # Guarded on `adapter_runtimes`, not on the union: a runtime
+                # built for another channel is never published on /v1, so it
+                # is not what this warning is about.
                 _logger.warning(
                     "adapter.open_mode",
                     message=(
@@ -312,8 +315,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 _logger.info("adapter.runtime_cached", model_id=model_id)
 
             app.state.runtimes = runtimes
+            # What /v1 may publish, which is NOT the whole cache. The cache
+            # covers every channel; this is only what the operator named.
+            app.state.adapter_model_ids = frozenset(settings.adapter_runtimes)
         else:
             app.state.runtimes = {}
+            app.state.adapter_model_ids = frozenset()
 
         yield
 

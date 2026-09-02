@@ -286,7 +286,7 @@ Environment variables (loaded from `.env`). Key settings:
 | `ANTHROPIC_API_KEY` | — | Anthropic Claude API key |
 | `OPENAI_API_KEY` | — | OpenAI API key — **embeddings only** (see `OPENAI_COMPATIBLE_API_KEY` for chat) |
 | `ADAPTER_PROVIDER` | `ollama` | LLM provider: `ollama`, `groq`, `anthropic`, `openai_compatible` |
-| `ADAPTER_RUNTIMES` | `[]` | Which runtimes to expose via `/v1`. Empty exposes none; setting any requires `ADAPTER_API_KEY` |
+| `ADAPTER_RUNTIMES` | `[]` | Which runtimes `/v1` publishes. Empty publishes none — the runtime *cache* may hold more, for other channels, and those are never exposed here. Setting any requires `ADAPTER_API_KEY` |
 | `WHATSAPP_RUNTIME_ID` | — | Which runtime inbound WhatsApp routes to, as `{deployment}__{role}`. Unset means the route answers 200 and runs no turn |
 | `EMBEDDING_PROVIDER` | `local` | Embedding provider: `local` or `openai` |
 | `OPENAI_COMPATIBLE_BASE_URL` | — | **Required** for `openai_compatible`. Chat endpoint base URL |

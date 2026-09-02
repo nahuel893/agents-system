@@ -461,3 +461,45 @@ def test_a_consumer_can_extend_settings_without_editing_the_library() -> None:
     # with the password url-encoded rather than breaking the connection string.
     assert settings.medallion_database_url.endswith("/warehouse")
     assert "p%40ss%2Fword" in settings.medallion_database_url
+
+
+# ---------------------------------------------------------------------------
+# Restored: deleted by mistake while rewriting the env-example xfail
+# ---------------------------------------------------------------------------
+#
+# This is a strict-xfail security tripwire and it records a gap that is
+# STILL OPEN. It was removed in the same edit that converted the
+# neighbouring xfail into a passing test, with no mention in the commit
+# message -- the two were adjacent, and one rewrite took both. Deleting a
+# failing security test is the loudest possible way to close a security
+# gap without fixing it.
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "SOURCE FIX REQUIRED: allow_insecure has no production tripwire. "
+        "Settings.environment exists and is never cross-checked, so an operator "
+        "who copies a dev .env (ALLOW_INSECURE=true) into ENVIRONMENT=production "
+        "boots with /v1/* unauthenticated and webhook signatures forgeable."
+    ),
+)
+@pytest.mark.parametrize("environment", ["production", "staging"])
+def test_allow_insecure_is_rejected_outside_development(environment: str) -> None:
+    """The insecure opt-out must not be usable in a non-development environment.
+
+    BLOCKER 1 moved enforcement entirely to boot time but left both downstream
+    fail-open branches intact: ``openai_adapter.verify_bearer`` still returns
+    early on an empty key, and ``meta_signature.verify_signature`` still
+    computes HMAC with an empty secret. ``allow_insecure`` is therefore the only
+    thing standing between a mis-copied .env and a fully open production app.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            environment=environment,
+            allow_insecure=True,
+            adapter_runtimes=["acme__sales-agent"],
+            adapter_api_key="",
+            meta_webhook_secret="",
+        )
+    assert "allow_insecure" in str(excinfo.value)
