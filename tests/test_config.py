@@ -353,54 +353,25 @@ def test_settings_boots_when_meta_webhook_secret_set() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "SOURCE FIX REQUIRED: allow_insecure has no production tripwire. "
-        "Settings.environment exists and is never cross-checked, so an operator "
-        "who copies a dev .env (ALLOW_INSECURE=true) into ENVIRONMENT=production "
-        "boots with /v1/* unauthenticated and webhook signatures forgeable."
-    ),
-)
-@pytest.mark.parametrize("environment", ["production", "staging"])
-def test_allow_insecure_is_rejected_outside_development(environment: str) -> None:
-    """The insecure opt-out must not be usable in a non-development environment.
-
-    BLOCKER 1 moved enforcement entirely to boot time but left both downstream
-    fail-open branches intact: ``openai_adapter.verify_bearer`` still returns
-    early on an empty key, and ``meta_signature.verify_signature`` still
-    computes HMAC with an empty secret. ``allow_insecure`` is therefore the only
-    thing standing between a mis-copied .env and a fully open production app.
-    """
-    with pytest.raises(ValidationError) as excinfo:
-        Settings(
-            _env_file=None,
-            environment=environment,
-            allow_insecure=True,
-            adapter_runtimes=["acme__sales-agent"],
-            adapter_api_key="",
-            meta_webhook_secret="",
-        )
-    assert "allow_insecure" in str(excinfo.value)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "SOURCE FIX REQUIRED: .env.example ships neither META_WEBHOOK_SECRET "
-        "nor ALLOW_INSECURE, so the documented `cp .env.example .env` first-run "
-        "path still dies with a raw pydantic traceback at import — before "
-        "setup_logging() runs. The adapter half of this gap is gone: "
-        "adapter_runtimes now defaults to empty, so the shipped file no longer "
-        "exposes a runtime without a key."
-    ),
-)
 def test_shipped_env_example_boots_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
     """The onboarding path documented in the README must produce a bootable app.
 
+    This was an `xfail(strict=True)` recording a real bug: `cp .env.example
+    .env` died with a raw pydantic traceback at import, before
+    `setup_logging()` ran. Emptying the `adapter_runtimes` default fixed it —
+    with no runtime configured there is nothing to protect, so the
+    fail-closed guard no longer fires on a file that ships no
+    `ADAPTER_API_KEY`.
+
+    The xfail reason this replaces was wrong on both counts: it claimed
+    `.env.example` ships no `META_WEBHOOK_SECRET` (it does, with a value)
+    and that Settings still dies at import (it does not). Corrected rather
+    than left to rot, since a stale xfail reason is a lie that survives
+    every green run.
+
     Every other test is immunised from this by conftest forcing
-    ALLOW_INSECURE=true, so nothing else in the suite ever builds Settings from
-    the shipped env file with the shipped defaults.
+    ALLOW_INSECURE=true, so nothing else in the suite builds Settings from
+    the shipped file with the shipped defaults.
     """
     for var in ("ALLOW_INSECURE", "ADAPTER_API_KEY", "META_WEBHOOK_SECRET"):
         monkeypatch.delenv(var, raising=False)
@@ -409,7 +380,15 @@ def test_shipped_env_example_boots_the_app(monkeypatch: pytest.MonkeyPatch) -> N
     assert env_example.is_file(), "the repo must ship an .env.example to copy"
 
     settings = Settings(_env_file=str(env_example))
-    assert settings.adapter_api_key or settings.allow_insecure
+
+    # It boots...
+    assert settings.meta_webhook_secret, "the shipped file must carry a secret"
+    # ...and it boots SAFELY: no runtime is exposed, which is why no adapter
+    # key is needed. If a future edit adds one to the file, the fail-closed
+    # guard fires again and this assertion says so before a user hits it.
+    assert not settings.adapter_runtimes, (
+        "the shipped example must not configure a runtime without a key"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -482,3 +461,45 @@ def test_a_consumer_can_extend_settings_without_editing_the_library() -> None:
     # with the password url-encoded rather than breaking the connection string.
     assert settings.medallion_database_url.endswith("/warehouse")
     assert "p%40ss%2Fword" in settings.medallion_database_url
+
+
+# ---------------------------------------------------------------------------
+# Restored: deleted by mistake while rewriting the env-example xfail
+# ---------------------------------------------------------------------------
+#
+# This is a strict-xfail security tripwire and it records a gap that is
+# STILL OPEN. It was removed in the same edit that converted the
+# neighbouring xfail into a passing test, with no mention in the commit
+# message -- the two were adjacent, and one rewrite took both. Deleting a
+# failing security test is the loudest possible way to close a security
+# gap without fixing it.
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "SOURCE FIX REQUIRED: allow_insecure has no production tripwire. "
+        "Settings.environment exists and is never cross-checked, so an operator "
+        "who copies a dev .env (ALLOW_INSECURE=true) into ENVIRONMENT=production "
+        "boots with /v1/* unauthenticated and webhook signatures forgeable."
+    ),
+)
+@pytest.mark.parametrize("environment", ["production", "staging"])
+def test_allow_insecure_is_rejected_outside_development(environment: str) -> None:
+    """The insecure opt-out must not be usable in a non-development environment.
+
+    BLOCKER 1 moved enforcement entirely to boot time but left both downstream
+    fail-open branches intact: ``openai_adapter.verify_bearer`` still returns
+    early on an empty key, and ``meta_signature.verify_signature`` still
+    computes HMAC with an empty secret. ``allow_insecure`` is therefore the only
+    thing standing between a mis-copied .env and a fully open production app.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            environment=environment,
+            allow_insecure=True,
+            adapter_runtimes=["acme__sales-agent"],
+            adapter_api_key="",
+            meta_webhook_secret="",
+        )
+    assert "allow_insecure" in str(excinfo.value)
