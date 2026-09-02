@@ -918,16 +918,75 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
         patch("agentsys.main.get_engine", return_value=MagicMock()),
         patch("agentsys.audit.sink.AuditSink") as sink_cls,
         patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        # Without this the lifespan constructs a real LocalBGEEmbeddingProvider,
+        # whose __init__ downloads 4.3 GB from HuggingFace — making this the
+        # only test in the default suite that needs live network. pyproject
+        # defines an `integration` marker for exactly that and deselects it by
+        # default; a unit test must not quietly opt back in.
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
     ):
         sink_cls.return_value.start = AsyncMock()
         sink_cls.return_value.stop = AsyncMock()
         try:
             async with lifespan(application):
                 pass
-        except Exception:
-            # The lifespan builds a great deal more than the registry; this
-            # test only cares that the caller's factory was reached, and a
-            # later failure does not un-call it.
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Narrow enough to stay useful: the lifespan builds far more than
+            # the registry, and a later failure does not un-call the factory —
+            # but a swallowed cause that leaves `calls` empty would otherwise
+            # be reported as "the seam is broken", pointing a reader at
+            # main.py when the real cause was upstream.
+            lifespan_error = exc
+        else:
+            lifespan_error = None
 
-    assert calls, "the lifespan never called the caller-supplied factory"
+    assert calls, (
+        "the lifespan never called the caller-supplied factory"
+        + (f" (it died first: {lifespan_error!r})" if lifespan_error else "")
+    )
+    # The docstring claims the factory receives what the lifespan resolved,
+    # so assert it rather than only that the list is non-empty.
+    settings_seen, _embedder_seen, _bi_seen = calls[0]
+    assert settings_seen is test_settings
+
+
+def test_the_acme_registry_factory_satisfies_the_protocol_it_is_passed_as() -> None:
+    """The fix's own new production function had zero coverage.
+
+    `_acme_registry_factory` is the entire mechanism the deferred-import
+    change rests on, and nothing in the suite called it: `create_test_app`
+    bypasses it by importing `build_acme_rag_registry` directly, and the
+    only other reference is the module-scope `app = create_app(...)` that no
+    test drives. Because `embedder` and `bi_engine` are both annotated `Any`,
+    mypy strict cannot catch an argument swap in the forwarding call either —
+    so `build_acme_rag_registry(settings, bi_engine, embedder)` would
+    typecheck, pass every test, and break production boot.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from agentsys.harness.registry import ToolRegistry
+    from agentsys.main import _acme_registry_factory
+
+    seen: dict[str, Any] = {}
+
+    def spy(settings: Any, embedder: Any = None, bi_engine: Any = None) -> ToolRegistry:
+        seen.update(settings=settings, embedder=embedder, bi_engine=bi_engine)
+        return ToolRegistry()
+
+    settings = Settings(_env_file=None, allow_insecure=True)
+    embedder = MagicMock(name="embedder")
+    bi_engine = MagicMock(name="bi_engine")
+
+    with patch(
+        "agentsys.connectors.rag_connector.build_acme_rag_registry", side_effect=spy
+    ):
+        result = _acme_registry_factory(settings, embedder, bi_engine)
+
+    assert isinstance(result, ToolRegistry)
+    # Distinct objects on purpose: equal ones would let a swap pass.
+    assert seen["settings"] is settings
+    assert seen["embedder"] is embedder
+    assert seen["bi_engine"] is bi_engine

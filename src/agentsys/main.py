@@ -225,7 +225,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                             ),
                         )
                     bi_engine = candidate
-                    _logger.info("bi.tool_bound", bi_url_configured=True)
+                    _logger.info("bi.tool_bound", read_only_verified=True)
             else:
                 _logger.warning(
                     "bi.disabled",
