@@ -35,7 +35,12 @@ from typing import TYPE_CHECKING, Iterable
 import structlog
 
 from agentsys.harness.injector import _emit, resolve_tool_surface
-from agentsys.harness.loader import AgentDefinition, RootConfig, resolve
+from agentsys.harness.loader import (
+    AgentDefinition,
+    RootConfig,
+    _require_deployments_root,
+    resolve,
+)
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 
 if TYPE_CHECKING:
@@ -98,8 +103,19 @@ def _load_skills(
             f"but no client deployment was given to load them from."
         )
 
+    # Guarded at the point of use, the same way the loader guards
+    # `platform_root`. Defence in depth, and honestly labelled as such: on
+    # the public path `build_runtime` calls `resolve` first, which already
+    # raises for an absent root whenever `client is not None`, so this guard
+    # fires only for a direct call to this private function. It stays because
+    # the alternative reading -- a skills path built from an absent root --
+    # reports "skill file missing" for every skill, which blames the
+    # deployment author for a consumer's misconfiguration.
     skills_dir = (
-        roots.deployments_root / client / definition.role_name / "skills"
+        _require_deployments_root(roots.deployments_root)
+        / client
+        / definition.role_name
+        / "skills"
     )
 
     loaded: list[LoadedSkill] = []
