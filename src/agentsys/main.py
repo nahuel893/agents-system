@@ -21,6 +21,8 @@ from agentsys.integration import openai_router, webhook_router
 from agentsys.integration.whatsapp_client import WhatsAppClient
 from agentsys.models.base import get_engine
 from agentsys.observability import RequestIdMiddleware, setup_logging
+from agentsys.services.clients import ClientDirectory
+from agentsys.services.conversation_log import ConversationLogRecorder
 from agentsys.services.dedup import DEDUP_TTL_SECONDS
 from agentsys.services.redis import close_redis_pool, get_redis_client
 
@@ -156,6 +158,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             base_url=settings.whatsapp_graph_api_url,
         )
         resource_stack.push_async_callback(app.state.whatsapp_client.aclose)
+
+        # The inbound route resolves identity and records turns through these
+        # two ports. The platform ships no default for either: it owns no
+        # clients table and no conversation history, so an application that
+        # sets neither gets a route that fails closed rather than one that
+        # serves every address that can reach it.
+        app.state.participant_directory = ClientDirectory()
+        app.state.conversation_recorder = ConversationLogRecorder()
 
         resource_stack.push_async_callback(close_redis_pool)
 
