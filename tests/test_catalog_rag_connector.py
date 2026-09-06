@@ -12,7 +12,31 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentsys.config import Settings
-from agentsys.services import rag
+
+
+@dataclass
+class StubCatalogSource:
+    """A `rag.CatalogSource` wrapping loose fakes — no schema, no database."""
+
+    search_vector_fn: Any = None
+    search_keywords_fn: Any = None
+
+    async def search_vector(
+        self, session: Any, *, embedding: list[float], limit: int, ef_search: int
+    ) -> list[Any]:
+        if self.search_vector_fn is None:
+            return []
+        return await self.search_vector_fn(
+            session, embedding=embedding, limit=limit, ef_search=ef_search
+        )
+
+    async def search_keywords(
+        self, session: Any, *, query: str, limit: int
+    ) -> list[Any]:
+        if self.search_keywords_fn is None:
+            return []
+        return await self.search_keywords_fn(session, query=query, limit=limit)
+
 
 
 # ---------------------------------------------------------------------------
@@ -57,10 +81,11 @@ def _make_registry(embedder: Any = None, settings: Settings | None = None) -> An
 
 def test_connector_is_async_coroutine_function() -> None:
     """The connector must be a true async def so D-009 dispatch routes it correctly."""
+    source = StubCatalogSource()
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     embedder = SpyEmbedder()
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     assert asyncio.iscoroutinefunction(connector)
 
 
@@ -68,10 +93,8 @@ def test_connector_is_async_coroutine_function() -> None:
 # Test 2: direct match maps to results + classification
 # ---------------------------------------------------------------------------
 
-async def test_direct_match_maps_to_results_and_classification(
-    monkeypatch: Any,
-) -> None:
-    from agentsys.services.catalog import VectorSearchCandidate
+async def test_direct_match_maps_to_results_and_classification() -> None:
+    from agentsys.services.rag import VectorSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     async def fake_search_vector(session: Any, *, embedding: Any, limit: int, ef_search: int) -> list[Any]:
@@ -79,10 +102,10 @@ async def test_direct_match_maps_to_results_and_classification(
             VectorSearchCandidate("SKU-A1", "Aceite de girasol 900ml", 0.04),  # similarity 0.96
         ]
 
-    monkeypatch.setattr(rag.catalog, "search_vector", fake_search_vector)
+    source = StubCatalogSource(search_vector_fn=fake_search_vector)
 
     embedder = SpyEmbedder()
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     result = await connector({"q": "aceite de girasol"}, session=object())
 
     assert result["classification"] == "direct"
@@ -96,8 +119,8 @@ async def test_direct_match_maps_to_results_and_classification(
 # Test 3: ambiguous match mapping
 # ---------------------------------------------------------------------------
 
-async def test_ambiguous_match_mapping(monkeypatch: Any) -> None:
-    from agentsys.services.catalog import VectorSearchCandidate
+async def test_ambiguous_match_mapping() -> None:
+    from agentsys.services.rag import VectorSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     async def fake_search_vector(session: Any, *, embedding: Any, limit: int, ef_search: int) -> list[Any]:
@@ -106,10 +129,10 @@ async def test_ambiguous_match_mapping(monkeypatch: Any) -> None:
             VectorSearchCandidate("SKU-B2", "Coca-Cola Zero 2.25L", 0.17),  # similarity 0.83
         ]
 
-    monkeypatch.setattr(rag.catalog, "search_vector", fake_search_vector)
+    source = StubCatalogSource(search_vector_fn=fake_search_vector)
 
     embedder = SpyEmbedder()
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     result = await connector({"q": "coca cola"}, session=object())
 
     assert result["classification"] == "ambiguous"
@@ -121,30 +144,53 @@ async def test_ambiguous_match_mapping(monkeypatch: Any) -> None:
 # Test 4: no match returns empty results
 # ---------------------------------------------------------------------------
 
-async def test_no_match_returns_empty_results(monkeypatch: Any) -> None:
-    from agentsys.services.catalog import VectorSearchCandidate
+async def test_no_match_returns_empty_results() -> None:
+    """A vector-path no_match, distinguished from a fallback-path one.
+
+    The migration cost this test its discriminating power and the assertion
+    text hid it. Under monkeypatch only `search_vector` was faked, so the
+    real `search_keywords` stayed in place and raised on the `object()`
+    session — an accidental fall-through to the keyword path was caught by
+    that crash. `StubCatalogSource.search_keywords` returns [] silently,
+    which produces exactly the asserted result, so the two paths became
+    indistinguishable. Asserting the fallback was never consulted restores
+    the distinction the section header claims to cover.
+    """
+    from agentsys.services.rag import VectorSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
+
+    keyword_calls: list[str] = []
+
+    async def fake_search_keywords(session: Any, *, query: str, limit: int) -> list[Any]:
+        keyword_calls.append(query)
+        return []
 
     async def fake_search_vector(session: Any, *, embedding: Any, limit: int, ef_search: int) -> list[Any]:
         return [
             VectorSearchCandidate("SKU-C1", "Agua mineral", 0.25),  # similarity 0.75 — below threshold
         ]
 
-    monkeypatch.setattr(rag.catalog, "search_vector", fake_search_vector)
+    source = StubCatalogSource(
+        search_vector_fn=fake_search_vector, search_keywords_fn=fake_search_keywords
+    )
 
     embedder = SpyEmbedder()
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     result = await connector({"q": "xyzzy nonsense"}, session=object())
 
     assert result == {"results": [], "classification": "no_match"}
+    assert keyword_calls == [], (
+        "the vector path answered no_match; the keyword fallback must not "
+        "have been consulted at all"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Test 5: keyword fallback similarity is None (not coerced to 0.0)
 # ---------------------------------------------------------------------------
 
-async def test_keyword_fallback_similarity_is_null(monkeypatch: Any) -> None:
-    from agentsys.services.catalog import KeywordSearchCandidate
+async def test_keyword_fallback_similarity_is_null() -> None:
+    from agentsys.services.rag import KeywordSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     # Embedder returns empty vector → triggers keyword fallback
@@ -153,9 +199,9 @@ async def test_keyword_fallback_similarity_is_null(monkeypatch: Any) -> None:
     async def fake_search_keywords(session: Any, *, query: str, limit: int) -> list[Any]:
         return [KeywordSearchCandidate("SKU-K1", "BrandA 1L")]
 
-    monkeypatch.setattr(rag.catalog, "search_keywords", fake_search_keywords)
+    source = StubCatalogSource(search_keywords_fn=fake_search_keywords)
 
-    connector = build_catalog_rag_connector(embedder, _settings())
+    connector = build_catalog_rag_connector(embedder, _settings(), source)
     result = await connector({"q": "branda"}, session=object())
 
     assert len(result["results"]) == 1
@@ -167,7 +213,7 @@ async def test_keyword_fallback_similarity_is_null(monkeypatch: Any) -> None:
 # Test 6: empty query short-circuits without calling embedder
 # ---------------------------------------------------------------------------
 
-async def test_empty_q_short_circuits_without_embedding(monkeypatch: Any) -> None:
+async def test_empty_q_short_circuits_without_embedding() -> None:
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
     spy = SpyEmbedder()
@@ -177,9 +223,9 @@ async def test_empty_q_short_circuits_without_embedding(monkeypatch: Any) -> Non
         search_vector_called.append(True)
         return []
 
-    monkeypatch.setattr(rag.catalog, "search_vector", fake_search_vector)
+    source = StubCatalogSource(search_vector_fn=fake_search_vector)
 
-    connector = build_catalog_rag_connector(spy, _settings())
+    connector = build_catalog_rag_connector(spy, _settings(), source)
 
     # Test empty string
     result = await connector({"q": ""}, session=object())
@@ -315,3 +361,76 @@ def test_build_runtime_wires_session_provider() -> None:
         client="acme",
     )
     assert runtime2.session_provider is None
+
+
+# ---------------------------------------------------------------------------
+# CatalogTables — the only production CatalogSource
+# ---------------------------------------------------------------------------
+
+
+async def test_catalog_tables_forwards_each_argument_to_the_right_parameter(
+    monkeypatch: Any,
+) -> None:
+    """The delegation layer this refactor introduced had zero coverage.
+
+    Before the inversion the wiring was a direct module call, which cannot be
+    mis-delegated. Replacing it with a hand-written adapter created a place
+    where `limit` and `ef_search` can be swapped — and because both are
+    `int`, that swap passes mypy strict, ruff and the whole suite while
+    sending `LIMIT 40` with `hnsw.ef_search=3` to Postgres. `search_catalog`
+    then truncates with `[: rag_top_k]`, so the result even looks right.
+
+    Monkeypatching is the correct tool here and only here: this object exists
+    to delegate to those two module functions, so the delegation IS the
+    behaviour under test.
+    """
+    from agentsys.services import catalog as catalog_module
+
+    seen: dict[str, Any] = {}
+
+    async def fake_search_vector(session, *, embedding, limit, ef_search):
+        seen["vector"] = {"embedding": embedding, "limit": limit, "ef_search": ef_search}
+        return []
+
+    async def fake_search_keywords(session, *, query, limit):
+        seen["keywords"] = {"query": query, "limit": limit}
+        return []
+
+    monkeypatch.setattr(catalog_module, "search_vector", fake_search_vector)
+    monkeypatch.setattr(catalog_module, "search_keywords", fake_search_keywords)
+
+    tables = catalog_module.CatalogTables()
+
+    await tables.search_vector(object(), embedding=[0.5], limit=3, ef_search=40)
+    await tables.search_keywords(object(), query="yerba", limit=7)
+
+    # Distinct values on purpose: equal ones would let a swap pass.
+    assert seen["vector"] == {"embedding": [0.5], "limit": 3, "ef_search": 40}
+    assert seen["keywords"] == {"query": "yerba", "limit": 7}
+
+
+def test_catalog_tables_satisfies_the_catalog_source_protocol() -> None:
+    """`build_acme_rag_registry` wires this in by name; nothing checked it.
+
+    A Protocol is structural, so a renamed or missing method is invisible at
+    the wiring site and to every test that passes a stub instead.
+    """
+    import inspect
+
+    from agentsys.services.catalog import CatalogTables
+
+    tables = CatalogTables()
+
+    assert inspect.iscoroutinefunction(tables.search_vector)
+    assert inspect.iscoroutinefunction(tables.search_keywords)
+    assert set(inspect.signature(tables.search_vector).parameters) == {
+        "session",
+        "embedding",
+        "limit",
+        "ef_search",
+    }
+    assert set(inspect.signature(tables.search_keywords).parameters) == {
+        "session",
+        "query",
+        "limit",
+    }

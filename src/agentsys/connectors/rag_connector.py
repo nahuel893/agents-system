@@ -26,11 +26,16 @@ from agentsys.connectors.stubs import (
 from agentsys.connectors.acme_reports import CATALOG as _BI_CATALOG
 from agentsys.connectors.report_connector import build_report_tool_spec
 from agentsys.harness.registry import ToolRegistry, ToolSpec
+from agentsys.services.catalog import CatalogTables
 from agentsys.services.embeddings import (
     EmbeddingProvider,
     get_embedding_provider,
 )
-from agentsys.services.rag import CatalogSearchResult, search_catalog
+from agentsys.services.rag import (
+    CatalogSearchResult,
+    CatalogSource,
+    search_catalog,
+)
 
 ConnectorOutput = dict[str, Any]
 AsyncConnector = Callable[..., Awaitable[ConnectorOutput]]
@@ -75,9 +80,14 @@ def _map_result(result: CatalogSearchResult) -> ConnectorOutput:
 
 
 def build_catalog_rag_connector(
-    embedder: EmbeddingProvider, settings: Settings
+    embedder: EmbeddingProvider, settings: Settings, source: CatalogSource
 ) -> AsyncConnector:
-    """Build an async connector closure capturing the embedder and settings."""
+    """Build an async connector closure over the embedder, settings and source.
+
+    *source* is the consumer's catalog storage. It is captured here rather
+    than imported by `services.rag` so the retrieval strategy stays free of
+    any one deployment's schema.
+    """
 
     async def catalog_search_rag(
         inputs: dict[str, Any], *, session: Any = None
@@ -86,7 +96,7 @@ def build_catalog_rag_connector(
         if not q:
             return {"results": [], "classification": "no_match"}
         result = await search_catalog(
-            session, q, settings=settings, embedder=embedder
+            session, q, settings=settings, embedder=embedder, source=source
         )
         return _map_result(result)
 
@@ -118,7 +128,9 @@ def build_acme_rag_registry(
             description=_CATALOG_RAG_DESCRIPTION,
             required_permissions=("read:catalog",),
             input_schema=_CATALOG_RAG_INPUT_SCHEMA,
-            connector=build_catalog_rag_connector(embedder, settings),
+            connector=build_catalog_rag_connector(
+                embedder, settings, CatalogTables()
+            ),
         )
     )
     registry.register(
