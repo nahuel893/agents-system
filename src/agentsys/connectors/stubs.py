@@ -12,6 +12,7 @@ import itertools
 from typing import Any
 
 from agentsys.connectors.acme_reports import CATALOG as _BI_CATALOG
+from agentsys.connectors.order_connector import build_order_writer_tool_spec
 from agentsys.connectors.report_connector import build_report_tool_spec
 from agentsys.connectors.platform_stubs import (
     conversation_summarizer,
@@ -59,14 +60,10 @@ def client_lookup(inputs: dict[str, Any]) -> dict[str, Any]:
     return {"client_id": None, "name": None, "phone": phone}
 
 
-def order_writer(inputs: dict[str, Any]) -> dict[str, Any]:
-    items: list[dict[str, Any]] = inputs.get("items", [])
-    total = sum(
-        _PRICE_BY_PRODUCT.get(item.get("product_id", ""), 0.0) * item.get("qty", 1)
-        for item in items
-    )
-    order_id = f"ord-{next(_order_counter):04d}"
-    return {"order_id": order_id, "status": "created", "total": float(total)}
+# `order_writer` is deliberately NOT defined here (issue #39). It used to
+# mint `ord-NNNN` from a process counter and price it off `_CATALOG`, which
+# told a customer their order existed while nothing was written. The tool now
+# comes from `connectors.order_connector`, unbound, and says so.
 
 
 def message_sender(inputs: dict[str, Any]) -> dict[str, Any]:
@@ -108,13 +105,12 @@ def build_acme_registry(
         input_schema={"type": "object", "properties": {"phone": {"type": "string", "description": "Client phone number in international format, e.g. 5491112345678"}}, "required": ["phone"]},
         connector=client_lookup,
     ))
-    registry.register(ToolSpec(
-        name="order_writer",
-        description="Create a new order for a client. Requires client_id (from client_lookup) and a list of items with product_id and qty.",
-        required_permissions=("write:orders", "write:order_items"),
-        input_schema={"type": "object", "properties": {"client_id": {"type": "string", "description": "Client ID obtained from client_lookup"}, "items": {"type": "array", "items": {"type": "object", "properties": {"product_id": {"type": "string"}, "qty": {"type": "integer"}}, "required": ["product_id", "qty"]}, "description": "List of products to order"}}, "required": ["client_id", "items"]},
-        connector=order_writer,
-    ))
+    # Unbound: it answers that the order was not created rather than being
+    # absent. platform/roles/sales-agent names order_writer, and a tool a
+    # manifest names but the registry lacks makes the whole role unbuildable
+    # via InjectionError. A deployment with an order system binds a real
+    # `OrderWriter` in its own registry.
+    registry.register(build_order_writer_tool_spec(None))
     registry.register(ToolSpec(
         name="message_sender",
         description="Send a WhatsApp message to a phone number.",

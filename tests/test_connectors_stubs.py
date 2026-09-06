@@ -70,31 +70,23 @@ def test_client_lookup_unknown_phone_returns_none() -> None:
 # order_writer
 # ---------------------------------------------------------------------------
 
-def test_order_writer_returns_order_id_and_status() -> None:
-    from agentsys.connectors.stubs import order_writer
+def test_this_module_offers_no_order_writer_at_all() -> None:
+    """The two tests that stood here asserted the bug (issue #39).
 
-    result = order_writer({
-        "client_id": "cl-001",
-        "items": [{"product_id": "prod-001", "qty": 2}],
-    })
+    They required `order_writer` to return `status: "created"` and a positive
+    `total` — for an order that was never written anywhere. Deleting them
+    without replacement would let the function come back unnoticed, so the
+    absence is pinned instead.
 
-    assert "order_id" in result
-    assert result["status"] == "created"
-    assert isinstance(result["total"], float)
+    Orders are the consuming business's rules, not the platform's. The tool
+    now comes from `connectors.order_connector`, bound to a deployment's
+    `OrderWriter` or refusing outright.
+    """
+    from agentsys.connectors import stubs
 
-
-def test_order_writer_total_reflects_items() -> None:
-    from agentsys.connectors.stubs import order_writer
-
-    result = order_writer({
-        "client_id": "cl-001",
-        "items": [
-            {"product_id": "prod-001", "qty": 2},
-            {"product_id": "prod-002", "qty": 1},
-        ],
-    })
-
-    assert result["total"] > 0.0
+    assert not hasattr(stubs, "order_writer"), (
+        "a fabricating order_writer is back in stubs.py — see issue #39"
+    )
 
 
 # ---------------------------------------------------------------------------
