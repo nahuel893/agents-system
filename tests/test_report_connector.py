@@ -293,6 +293,7 @@ async def test_adapter_logs_and_reports_a_failed_turn(monkeypatch: Any) -> None:
 
     request = MagicMock()
     request.app.state.runtimes = {"acme__sales-agent": _BoomRuntime()}
+    request.app.state.adapter_model_ids = frozenset({"acme__sales-agent"})
     request.json = AsyncMock(
         return_value={
             "model": "acme__sales-agent",

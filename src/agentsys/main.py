@@ -172,11 +172,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # D-012 — build runtime cache once at startup.
         # Imports are deferred to avoid loading heavy dependencies (torch, sentence-
         # transformers) when they are not needed (e.g. during testing with mocked state).
-        if settings.adapter_runtimes:
+        #
+        # Which runtimes to build is the union of every channel that needs
+        # one, NOT `adapter_runtimes` alone. That list is the OpenAI adapter's
+        # `/v1/models` surface; gating the whole cache on it made an adapter
+        # setting silently decide whether the WhatsApp route had anything to
+        # serve. With `adapter_runtimes` defaulting to empty, that meant
+        # inbound WhatsApp answered 200 and ran no turn, with only a
+        # `webhook.runtime_unresolved` warning to say why.
+        required_runtimes = list(settings.adapter_runtimes)
+        if settings.whatsapp_runtime_id and (
+            settings.whatsapp_runtime_id not in required_runtimes
+        ):
+            required_runtimes.append(settings.whatsapp_runtime_id)
+
+        if required_runtimes:
             _logger = structlog.get_logger()
-            if not settings.adapter_api_key:
+            if settings.adapter_runtimes and not settings.adapter_api_key:
                 # Reachable only under ALLOW_INSECURE=true — the Settings
                 # validator fails closed otherwise (D-014 S5, BLOCKER 1).
+                # Guarded on `adapter_runtimes`, not on the union: a runtime
+                # built for another channel is never published on /v1, so it
+                # is not what this warning is about.
                 _logger.warning(
                     "adapter.open_mode",
                     message=(
@@ -279,7 +296,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
 
             runtimes: dict[str, AgentRuntime] = {}
-            for model_id in settings.adapter_runtimes:
+            for model_id in required_runtimes:
                 if "__" not in model_id:
                     _logger.error(
                         "adapter.invalid_runtime_id",
@@ -335,8 +352,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 _logger.info("adapter.runtime_cached", model_id=model_id)
 
             app.state.runtimes = runtimes
+            # What /v1 may publish, which is NOT the whole cache. The cache
+            # covers every channel; this is only what the operator named.
+            app.state.adapter_model_ids = frozenset(settings.adapter_runtimes)
         else:
             app.state.runtimes = {}
+            app.state.adapter_model_ids = frozenset()
 
         yield
 

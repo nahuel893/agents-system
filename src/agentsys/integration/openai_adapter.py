@@ -8,6 +8,17 @@ Auth:
   If Settings.adapter_api_key is set, every /v1/* request must carry
   ``Authorization: Bearer <key>`` (constant-time comparison). If unset, the
   app logs a startup WARNING and the endpoint is open (dev-friendly default).
+
+Surface:
+  These endpoints serve ``app.state.adapter_model_ids``, NOT the whole
+  ``app.state.runtimes`` cache. The two differ: the cache holds a runtime for
+  every channel that needs one, and only the ids the operator named in
+  ``adapter_runtimes`` belong on an HTTP surface whose authentication is
+  optional. Serving the cache verbatim published a WhatsApp runtime on an
+  unauthenticated /v1 the moment the cache started covering other channels.
+
+  Absent means EMPTY, deliberately: an application that never declared an
+  adapter surface exposes nothing rather than everything it happens to hold.
 """
 from __future__ import annotations
 
@@ -92,6 +103,22 @@ async def verify_bearer(
         raise HTTPException(status_code=401, detail="Invalid bearer token.")
 
 
+
+def _exposed_runtimes(request: Request) -> dict[str, Any]:
+    """The runtimes this HTTP surface may serve.
+
+    `app.state.runtimes` is the cache every channel draws from; this is the
+    subset the operator asked to publish. Defaulting to an empty set when
+    `adapter_model_ids` is unset is what keeps the invariant "a model on /v1
+    implies the operator named it" true by construction.
+    """
+    cached: dict[str, Any] = getattr(request.app.state, "runtimes", {})
+    exposed: frozenset[str] = getattr(
+        request.app.state, "adapter_model_ids", frozenset()
+    )
+    return {name: rt for name, rt in cached.items() if name in exposed}
+
+
 # ---------------------------------------------------------------------------
 # GET /v1/models
 # ---------------------------------------------------------------------------
@@ -100,7 +127,7 @@ async def verify_bearer(
 @openai_router.get("/models", dependencies=[Depends(verify_bearer)])
 async def list_models(request: Request) -> dict[str, Any]:
     """Return the list of available agent runtimes in OpenAI models-list shape."""
-    runtimes: dict[str, Any] = getattr(request.app.state, "runtimes", {})
+    runtimes = _exposed_runtimes(request)
     now = int(time.time())
     data = [
         {
@@ -193,7 +220,7 @@ async def chat_completions(request: Request) -> dict[str, Any]:
         )
 
     model_id: str = body.get("model", "")
-    runtimes: dict[str, Any] = getattr(request.app.state, "runtimes", {})
+    runtimes = _exposed_runtimes(request)
 
     # Resolve model id → cached runtime (404 if unknown)
     runtime = runtimes.get(model_id)
