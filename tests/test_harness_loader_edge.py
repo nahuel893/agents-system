@@ -219,11 +219,28 @@ def test_merge_permissions_not_in_parent_raises() -> None:
 # merge — execution_limits key absent from baseline is allowed (new limit)
 # ---------------------------------------------------------------------------
 def test_merge_exec_limits_new_key_allowed() -> None:
+    """A new key is accepted, and the baseline's keys SURVIVE alongside it.
+
+    This previously asserted the resolved limits were exactly
+    `{"custom_budget": 5}` — the override REPLACING the baseline. That was
+    the bug: every key the deployment did not name vanished, and
+    `_effective_limits` then backfilled it from the platform defaults rather
+    than the role, so naming one stricter limit raised the ceiling on all
+    the others.
+    """
+    from agentsys.harness.loader import _PLATFORM_DEFAULT_LIMITS
+
     out = merge(
         _raw(execution_limits=None),  # baseline = platform defaults
         _raw(deployment="d", execution_limits={"custom_budget": 5}),
     )
-    assert out.execution_limits == {"custom_budget": 5}
+
+    assert out.execution_limits is not None
+    assert out.execution_limits["custom_budget"] == 5
+    for key, value in _PLATFORM_DEFAULT_LIMITS.items():
+        assert out.execution_limits[key] == value, (
+            f"'{key}' was dropped by an override that never mentioned it"
+        )
 
 
 # ---------------------------------------------------------------------------

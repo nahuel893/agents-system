@@ -53,7 +53,14 @@ def _spec(name: str, perms: list[str]) -> Any:
 
 
 def _sales_registry() -> Any:
-    """Registry holding the five ACME sales-agent tools with required perms."""
+    """Registry holding the RESOLVED sales-agent surface.
+
+    Six tools, not five: `escalation_notifier` is inherited from
+    `platform/roles/agent`. The injector raises `InjectionError: Unknown tool`
+    for any declared tool the registry lacks, and it grades against the
+    resolved chain, so a registry built from the leaf manifest alone no longer
+    boots the role.
+    """
     from agentsys.harness.registry import ToolRegistry
 
     reg = ToolRegistry()
@@ -62,6 +69,7 @@ def _sales_registry() -> Any:
     reg.register(_spec("order_writer", ["write:orders", "write:order_items"]))
     reg.register(_spec("session_state", []))
     reg.register(_spec("client_lookup", ["read:client_registry"]))
+    reg.register(_spec("escalation_notifier", ["send:escalation"]))
     return reg
 
 

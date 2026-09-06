@@ -29,7 +29,7 @@ import pytest
 from platform_role_contract import (
     EXPECTED_ROLE_TOOLS,
     PINNED_ROLES,
-    discover_platform_roles,
+    discover_concrete_platform_roles,
 )
 
 # run_report arrived with D-023. It is registered unbound when no BI
@@ -37,6 +37,12 @@ from platform_role_contract import (
 # tool a manifest names but the registry lacks makes the whole role
 # unbuildable through InjectionError.
 ALL_PLATFORM_TOOLS = {
+    # Registered inert by both shipped registries so `operator-agent` can
+    # boot. Inert means `use_term` refuses every command until a deployment
+    # supplies a TerminalPolicy — the tool being PRESENT is what the injector
+    # needs, and being USABLE is a separate, explicit decision.
+    "use_term",
+    "read_file",
     "catalog_search",
     "client_lookup",
     "order_writer",
@@ -475,7 +481,7 @@ def test_platform_role_resolves_its_pinned_tool_surface(role_type: str) -> None:
     assert {t.name for t in result.granted} == EXPECTED_ROLE_TOOLS[role_type]
 
 
-@pytest.mark.parametrize("role_type", discover_platform_roles())
+@pytest.mark.parametrize("role_type", discover_concrete_platform_roles())
 @pytest.mark.parametrize("builder_name", sorted(REGISTRY_BUILDERS))
 def test_every_tool_declared_on_disk_exists_in_both_registries(
     builder_name: str, role_type: str

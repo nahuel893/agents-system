@@ -44,11 +44,76 @@ def discover_platform_roles() -> tuple[str, ...]:
     )
 
 
+def is_abstract(role: str) -> bool:
+    """Whether ``role``'s manifest declares ``abstract: true``."""
+    from agentsys.harness.loader import _read_md
+
+    manifest_fm, _ = _read_md(platform_roles_dir() / role / "manifest.md")
+    return bool(manifest_fm.get("abstract", False))
+
+
+def discover_concrete_platform_roles() -> tuple[str, ...]:
+    """The roles a boot guard can actually build.
+
+    An abstract role is not a broken one, and the two must not be conflated:
+    `resolve` refuses it BY DESIGN, so feeding it to a boot guard would report
+    a working feature as a failure. The filter is on the declaration, not on
+    a name convention, so it cannot drift from what the loader enforces.
+
+    Every abstract role still has to earn its place — see
+    `test_every_abstract_role_has_a_concrete_descendant`.
+    """
+    return tuple(r for r in discover_platform_roles() if not is_abstract(r))
+
+
 #: Independent expectation of each role's tool surface. Update deliberately —
 #: a change here is a change to what a platform role is allowed to do.
 EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
+    # The taxonomy root that can be built. Everything below it inherits
+    # these two, which is why three roles gained `escalation_notifier`
+    # when they were re-parented: a base exists to stop each descendant
+    # restating what they all need.
+    "agent": frozenset({"session_state", "escalation_notifier"}),
+    # The sibling branch: everything `agent` has, plus the two tools that
+    # reach the host. Deliberately not reachable from any other role.
+    "operator-agent": frozenset(
+        {"session_state", "escalation_notifier", "use_term", "read_file"}
+    ),
+    # Reads only, and every absence is deliberate: no order_writer, no
+    # catalog_search. Selling is sales-agent's job.
+    "support-agent": frozenset(
+        {
+            "session_state",
+            "escalation_notifier",
+            "knowledge_retrieval",
+            "conversation_summarizer",
+            "client_lookup",
+            "message_sender",
+        }
+    ),
+    # The only role descending from operator-agent, so the only one that
+    # reaches the host. One tool declared, four inherited.
+    "developer-agent": frozenset(
+        {
+            "session_state",
+            "escalation_notifier",
+            "use_term",
+            "read_file",
+            "knowledge_retrieval",
+        }
+    ),
+    # Holds no write permission of any kind.
+    "accountant-agent": frozenset(
+        {
+            "session_state",
+            "escalation_notifier",
+            "run_report",
+            "knowledge_retrieval",
+        }
+    ),
     "data-agent": frozenset(
         {
+            "escalation_notifier",
             "catalog_search",
             "client_lookup",
             "knowledge_retrieval",
@@ -61,6 +126,7 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
     ),
     "sales-agent": frozenset(
         {
+            "escalation_notifier",
             "catalog_search",
             "client_lookup",
             "message_sender",
@@ -69,7 +135,8 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
         }
     ),
     "summary-agent": frozenset(
-        {"conversation_summarizer", "knowledge_retrieval", "session_state"}
+        {
+            "escalation_notifier","conversation_summarizer", "knowledge_retrieval", "session_state"}
     ),
 }
 

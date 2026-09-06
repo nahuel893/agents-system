@@ -299,6 +299,11 @@ def test_registry_has_the_expected_tools_with_async_catalog() -> None:
         "knowledge_retrieval",
         "conversation_summarizer",
         "escalation_notifier",
+        # Registered INERT so `platform/roles/operator-agent` can boot. They
+        # refuse every command and read nothing outside the process cwd until
+        # a deployment supplies a TerminalPolicy.
+        "use_term",
+        "read_file",
     }
 
     catalog_spec = registry.get("catalog_search")

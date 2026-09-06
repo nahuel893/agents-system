@@ -239,7 +239,12 @@ def test_real_acme_sales_agent_merge() -> None:
         "confirm_flow",
     }
 
-    # Permissions: override says `inherit` — must match parent exactly
+    # Permissions: override says `inherit` — must match the RESOLVED parent
+    # exactly, which now includes what sales-agent inherits from
+    # `platform/roles/agent` and `platform/roles/base`. Both additions are
+    # inert for this deployment: the injector resolves tools, never
+    # permissions, and this manifest declares neither `session_state`'s nor
+    # `escalation_notifier`'s counterpart beyond what it already lists.
     expected_permissions = {
         "read:catalog",
         "read:client_registry",
@@ -247,6 +252,8 @@ def test_real_acme_sales_agent_merge() -> None:
         "write:order_items",
         "read:price_lists",
         "send:message",
+        "read:session",  # from base
+        "send:escalation",  # from agent
     }
     assert set(definition.permissions) == expected_permissions
 
