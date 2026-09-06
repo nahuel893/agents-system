@@ -98,3 +98,18 @@ async def lookup_or_create_client(
     await session.commit()
     await session.refresh(client)
     return client
+
+
+class ClientDirectory:
+    """`participants.ParticipantDirectory` over this deployment's `clients`.
+
+    A thin object rather than the bare module functions because the protocol
+    is what `integration/webhook.py` depends on, and a module cannot be
+    type-checked against one. The lookup itself is unchanged.
+    """
+
+    def normalize_address(self, raw: str) -> str:
+        return normalize_phone(raw)
+
+    async def resolve(self, session: AsyncSession, address: str) -> Client | None:
+        return await lookup_or_create_client(session, address)
