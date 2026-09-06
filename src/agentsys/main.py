@@ -21,8 +21,13 @@ from agentsys.integration import openai_router, webhook_router
 from agentsys.integration.whatsapp_client import WhatsAppClient
 from agentsys.models.base import get_engine
 from agentsys.observability import RequestIdMiddleware, setup_logging
+from agentsys.harness.registry import RegistryFactory, ToolRegistry
 from agentsys.services.clients import ClientDirectory
 from agentsys.services.conversation_log import ConversationLogRecorder
+from agentsys.services.participants import (
+    ConversationRecorder,
+    ParticipantDirectory,
+)
 from agentsys.services.dedup import DEDUP_TTL_SECONDS
 from agentsys.services.redis import close_redis_pool, get_redis_client
 
@@ -82,13 +87,6 @@ def _build_checkpointer_cm(settings: Settings) -> Any:  # noqa: ANN401
         settings.redis_url,
         ttl=_checkpointer_ttl_config(settings.checkpointer_ttl_s),
     )
-
-
-def BI_CATALOG_NAMES() -> list[str]:
-    """Report names, imported lazily to keep module import light."""
-    from agentsys.connectors.acme_reports import CATALOG
-
-    return sorted(CATALOG)
 
 
 async def _bi_role_is_read_only(engine: Any) -> bool | None:  # noqa: ANN401
@@ -159,14 +157,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         resource_stack.push_async_callback(app.state.whatsapp_client.aclose)
 
-        # The inbound route resolves identity and records turns through these
-        # two ports. The platform ships no default for either: it owns no
-        # clients table and no conversation history, so an application that
-        # sets neither gets a route that fails closed rather than one that
-        # serves every address that can reach it.
-        app.state.participant_directory = ClientDirectory()
-        app.state.conversation_recorder = ConversationLogRecorder()
-
         resource_stack.push_async_callback(close_redis_pool)
 
         # D-012 — build runtime cache once at startup.
@@ -203,7 +193,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
 
             from agentsys.agent.graph import AgentRuntime, _effective_limits
-            from agentsys.connectors.rag_connector import build_acme_rag_registry
             from agentsys.harness.factory import build_runtime
             from agentsys.harness.loader import RootConfig, resolve
             from agentsys.services.embeddings import get_embedding_provider
@@ -266,7 +255,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                             ),
                         )
                     bi_engine = candidate
-                    _logger.info("bi.tool_bound", reports=sorted(BI_CATALOG_NAMES()))
+                    _logger.info("bi.tool_bound", read_only_verified=True)
             else:
                 _logger.warning(
                     "bi.disabled",
@@ -276,7 +265,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     ),
                 )
 
-            registry = build_acme_rag_registry(settings, embedder, bi_engine)
+            # The tool registry is the caller's: it is one deployment's
+            # wiring of connectors to its own data, and the platform has
+            # none. `create_app` stashed the factory on app.state.
+            registry = app.state.registry_factory(settings, embedder, bi_engine)
 
             session_provider = async_sessionmaker(
                 app.state.engine, expire_on_commit=False
@@ -434,17 +426,53 @@ def _build_chat_model(provider: str) -> Any:  # noqa: ANN401
     return ChatOllama(model="qwen2.5:3b", temperature=0)
 
 
-def create_app() -> FastAPI:
-    """Application factory. Returns configured FastAPI instance."""
+def create_app(
+    *,
+    registry_factory: RegistryFactory,
+    participant_directory: ParticipantDirectory | None = None,
+    conversation_recorder: ConversationRecorder | None = None,
+    title: str = "agentsys",
+) -> FastAPI:
+    """Application factory. Returns a configured FastAPI instance.
+
+    Everything this function knows how to build -- the middleware, the two
+    routers, `/health`, and the lifespan's engine, audit sink, Redis pool,
+    runtime cache and checkpointer -- is the same for every deployment. The
+    three arguments are the parts that are not, and the platform has no
+    default for any of them because it owns no connectors, no identity
+    schema and no conversation history.
+
+    They are stashed on `app.state` rather than closed over, because the
+    lifespan receives the app and not this scope -- the same mechanism
+    `app.state.engine` already uses.
+
+    Parameters
+    ----------
+    registry_factory:
+        Called by the lifespan as ``(settings, embedder, bi_engine)`` once
+        those are resolved, and must return the ``ToolRegistry`` the role
+        manifests are injected against.
+    participant_directory:
+        Resolves an inbound channel address to an identity. Absent means the
+        inbound route fails closed and runs no turn.
+    conversation_recorder:
+        Records completed turns. Absent means none are recorded.
+    title:
+        OpenAPI title.
+    """
     setup_logging()
 
     settings = get_settings()
     application = FastAPI(
-        title="Acme",
+        title=title,
         version="0.1.0",
         debug=settings.debug,
         lifespan=lifespan,
     )
+
+    application.state.registry_factory = registry_factory
+    application.state.participant_directory = participant_directory
+    application.state.conversation_recorder = conversation_recorder
 
     application.add_middleware(RequestIdMiddleware)
     application.include_router(webhook_router)
@@ -494,4 +522,28 @@ def create_app() -> FastAPI:
     return application
 
 
-app = create_app()
+def _acme_registry_factory(
+    settings: Settings, embedder: Any = None, bi_engine: Any = None
+) -> ToolRegistry:
+    """ACME's `RegistryFactory`, with its import deferred.
+
+    A module-level `from ... import build_acme_rag_registry` would make
+    `import agentsys.main` eagerly load the connector module and, through it,
+    the whole OpenAI SDK. The lifespan deliberately defers its heavy imports
+    for exactly that reason; passing the factory by reference at module scope
+    would have quietly undone it for this one.
+    """
+    from agentsys.connectors.rag_connector import build_acme_rag_registry
+
+    return build_acme_rag_registry(settings, embedder, bi_engine)
+
+
+# ACME's application. Everything above is the platform's; this call is the
+# deployment -- its connectors, its clients table, its conversation log. It
+# is the seam the client repository takes over.
+app = create_app(
+    registry_factory=_acme_registry_factory,
+    participant_directory=ClientDirectory(),
+    conversation_recorder=ConversationLogRecorder(),
+    title="Acme",
+)
