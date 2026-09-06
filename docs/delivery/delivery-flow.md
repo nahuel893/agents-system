@@ -2,6 +2,19 @@
 
 **Status:** Directive · **Date:** 2026-08-29 · Supersedes ad-hoc practice.
 
+> **The portable standard now lives in
+> [`engineering-workflow.md`](engineering-workflow.md).** That document is the
+> complete workflow — spec-driven development, strict TDD, design discipline,
+> delivery, release and agent collaboration — written to be copied into any
+> repository unchanged.
+>
+> **This document holds the compliance record for *this* repository** — the
+> read-back enforcement table and the ordered gap list at the end. It also
+> still restates much of the standard itself, which is duplication the two
+> documents carry until it is trimmed. Where they disagree, the portable one
+> is authoritative on the rule and this one on what the platform actually
+> enforces here.
+
 This is the delivery process the repository follows from now on. It is the
 industry-standard flow, not a description of what we happened to be doing.
 Where the two differ, this document wins and the gap is a task.
