@@ -1,5 +1,6 @@
 ---
 role: sales-agent
+extends: platform/roles/agent
 version: "1.0"
 tools: [message_sender, catalog_search, order_writer, session_state, client_lookup]
 skills: []

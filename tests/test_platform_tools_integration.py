@@ -25,7 +25,7 @@ import pytest
 from platform_role_contract import (
     EXPECTED_ROLE_TOOLS,
     PINNED_ROLES,
-    discover_platform_roles,
+    discover_concrete_platform_roles,
 )
 
 _ESCALATION_INPUT = {"reason": "customer_angry", "details": "Asked for a manager"}
@@ -82,7 +82,7 @@ def test_platform_roles_on_disk_match_the_pinned_contract() -> None:
     Without this, adding ``platform/roles/billing-agent/`` leaves the suite
     green while ``main.py`` fails to boot the role in its lifespan loop.
     """
-    assert set(discover_platform_roles()) == set(EXPECTED_ROLE_TOOLS), (
+    assert set(discover_concrete_platform_roles()) == set(EXPECTED_ROLE_TOOLS), (
         "platform/roles/ and EXPECTED_ROLE_TOOLS disagree — pin the new role's "
         "expected tool surface in tests/platform_role_contract.py"
     )
@@ -92,7 +92,7 @@ def test_platform_roles_on_disk_match_the_pinned_contract() -> None:
 # Scenario 1 — every role on disk boots end-to-end, against BOTH registries
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("role_type", discover_platform_roles())
+@pytest.mark.parametrize("role_type", discover_concrete_platform_roles())
 def test_every_platform_role_boots_end_to_end(role_type: str) -> None:
     from agentsys.harness import loader
     from agentsys.harness.factory import build_runtime
@@ -112,7 +112,7 @@ def test_every_platform_role_boots_end_to_end(role_type: str) -> None:
     assert len(runtime.tools) == len(definition.tools)
 
 
-@pytest.mark.parametrize("role_type", discover_platform_roles())
+@pytest.mark.parametrize("role_type", discover_concrete_platform_roles())
 def test_every_platform_role_boots_against_the_production_registry(
     role_type: str,
 ) -> None:
@@ -286,7 +286,86 @@ def test_data_agent_boots_with_knowledge_retrieval_denied() -> None:
         # read:knowledge_base denies knowledge_retrieval only; run_report
         # needs read:reports, which this role still grants.
         "run_report",
+        # Inherited from `platform/roles/agent`, and deliberately still
+        # granted here: narrowing one permission must not silently remove an
+        # agent's escalation path.
+        "escalation_notifier",
     }
     denied = dict(runtime.denied_tools)
     assert set(denied) == {"knowledge_retrieval"}
     assert "read:knowledge_base" in denied["knowledge_retrieval"]
+
+
+# ---------------------------------------------------------------------------
+# The taxonomy: abstract roles are excluded from boot guards, and must earn it
+# ---------------------------------------------------------------------------
+
+
+def test_every_abstract_role_refuses_to_be_built() -> None:
+    """Abstract is why the boot guards skip them — assert it, do not assume it.
+
+    `discover_concrete_platform_roles` filters on the manifest declaration. If
+    a role were skipped for any OTHER reason — a broken folder, a typo in the
+    name — that filter would be hiding a failure instead of describing a
+    design. This is what makes the exclusion legitimate.
+    """
+    from agentsys.harness.loader import DefinitionError, resolve
+    from platform_role_contract import discover_platform_roles, is_abstract
+
+    abstract = [r for r in discover_platform_roles() if is_abstract(r)]
+    assert abstract, "the taxonomy has a root; if that changed, say so here"
+
+    for role in abstract:
+        with pytest.raises(DefinitionError) as excinfo:
+            resolve(role)
+        assert "abstract" in str(excinfo.value).lower()
+
+
+def test_every_abstract_role_has_a_concrete_descendant() -> None:
+    """An abstract role nothing extends is a dead file.
+
+    It cannot be built and nothing inherits it, so it documents an intention
+    with no effect — the same class of problem as `extends:` being inert. This
+    catches it the moment it appears rather than years later.
+    """
+    from agentsys.harness.loader import _extends_target, _load_role_files
+    from agentsys.harness.loader import RootConfig
+    from platform_role_contract import discover_platform_roles, is_abstract
+
+    roots = RootConfig()
+    parents: set[str] = set()
+    for role in discover_platform_roles():
+        _, parent, _ = _load_role_files(role, roots)
+        if parent:
+            parents.add(_extends_target(parent))
+
+    # A CONCRETE descendant, not merely a child. "Something extends it" is
+    # satisfied by another abstract role, which would leave a whole abstract
+    # subtree that still cannot be built and still grants nothing — the exact
+    # dead-file case this exists to catch, one level down.
+    from agentsys.harness.loader import _extends_target, _load_role_files
+
+    def reaches_a_concrete_descendant(ancestor: str) -> bool:
+        for role in discover_platform_roles():
+            if is_abstract(role):
+                continue
+            seen: set[str] = set()
+            current: str | None = role
+            while current and current not in seen:
+                if current == ancestor and role != ancestor:
+                    return True
+                seen.add(current)
+                _, parent, _ = _load_role_files(current, roots)
+                current = _extends_target(parent) if parent else None
+        return False
+
+    for role in discover_platform_roles():
+        if is_abstract(role):
+            assert role in parents, (
+                f"'{role}' is abstract and nothing extends it: it cannot be "
+                f"built and grants nothing, so it is a dead file"
+            )
+            assert reaches_a_concrete_descendant(role), (
+                f"'{role}' is extended only by other abstract roles, so the "
+                f"whole subtree is unbuildable and grants nothing"
+            )

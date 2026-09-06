@@ -314,8 +314,250 @@ def _deployment_folder(
 # ---------------------------------------------------------------------------
 
 
+#: How deep a role may sit below its root. A taxonomy that needs more than
+#: this has stopped being a taxonomy; the cap turns a runaway chain into a
+#: named error instead of a slow walk.
+_MAX_ROLE_CHAIN_DEPTH = 8
+
+#: Prompt bodies are joined root-first with the same separator the factory
+#: uses for skills, so a child's prompt refines its parent's rather than
+#: replacing it.
+_PROMPT_SEPARATOR = "\n\n---\n\n"
+
+
+def _extends_target(raw: Any) -> str:
+    """Normalise an ``extends:`` value to a bare role name.
+
+    Every manifest already on disk writes the path form
+    (``extends: platform/roles/sales-agent``), so that form has to keep
+    meaning what it looks like it means. A bare role name works too.
+    """
+    return str(raw).strip().rstrip("/").rsplit("/", 1)[-1]
+
+
+def _load_role_files(
+    role_type: str, roots: RootConfig
+) -> tuple[RawDefinition, str | None, bool]:
+    """Read one role folder. Returns its definition, parent, and abstractness.
+
+    This is the old body of ``load_generic``, with the two directives the
+    frontmatter has always been allowed to carry now actually read.
+    """
+    folder = _role_folder(_require_platform_root(roots.platform_root), role_type)
+
+    if not folder.is_dir():
+        raise DefinitionError(
+            f"Role '{role_type}' has no folder at {folder}."
+        )
+
+    role_fm, role_body = _read_md(folder / "role.md")
+    manifest_fm, _ = _read_md(folder / "manifest.md")
+    policy_fm, _ = _read_md(folder / "policy.md")
+
+    role_name: str = str(
+        role_fm.get("name", manifest_fm.get("role", role_type))
+    )
+    version: str = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
+
+    parent_raw = manifest_fm.get("extends")
+    parent = _extends_target(parent_raw) if parent_raw else None
+    is_abstract = bool(manifest_fm.get("abstract", False))
+
+    definition = RawDefinition(
+        role_name=role_name,
+        version=version,
+        deployment=None,
+        system_prompt=role_body,
+        tools=_as_str_list(manifest_fm.get("tools")),
+        skills=_as_str_list(manifest_fm.get("skills")),
+        context=dict(manifest_fm.get("context") or {}),
+        permissions=manifest_fm.get("permissions", []),
+        # "" means NOT DECLARED, resolved by the fold below or defaulted at
+        # the root. Applying "supervised" here erased the difference between
+        # a role that chose it and one that said nothing -- so a silent
+        # child LOOSENED a `confirm` parent, while `execution_limits`
+        # inherited on omission. Same policy file, opposite behaviour.
+        autonomy=str(policy_fm.get("autonomy", "")),
+        escalation_rules=dict(policy_fm.get("escalation_rules") or {}),
+        delegation_policy=dict(policy_fm.get("delegation_policy") or {}),
+        memory_policy=dict(policy_fm.get("memory_policy") or {}),
+        audit_policy=dict(policy_fm.get("audit_policy") or {}),
+        execution_limits=policy_fm.get("execution_limits"),
+    )
+    return definition, parent, is_abstract
+
+
+def _union_preserving_order(parent: list[str], child: list[str]) -> list[str]:
+    merged = list(parent)
+    merged.extend(item for item in child if item not in merged)
+    return merged
+
+
+def _fold_parent_into_child(
+    parent: RawDefinition, child: RawDefinition
+) -> RawDefinition:
+    """Compose a parent role into its child. ADDITIVE for capability.
+
+    Role-to-role inheritance widens: a child adds tools and permissions to
+    what its parent already grants. Both sides are authored by the platform,
+    so no trust boundary is crossed — unlike deployment-to-role, which stays
+    subtractive and is enforced later by ``_merge_validated``.
+
+    ``autonomy`` and ``execution_limits`` are the child's to declare, in
+    either direction. An earlier version of this function enforced them as
+    ceilings here, reusing the deployment-path validators. That was wrong,
+    and building the taxonomy surfaced it immediately: ``data-agent`` runs
+    ``autonomy: full`` and could not descend from a ``supervised`` base.
+
+    The subtractive rule exists because a deployment is authored by someone
+    else. Applying it between two roles imports a trust boundary that is not
+    there -- the same person writes both files, so a child declaring ``full``
+    is a design decision, not an escalation, and blocking it buys no safety
+    while making the hierarchy unusable for any role that legitimately runs
+    unsupervised.
+
+    The ceiling that matters is unchanged: ``_merge_validated`` still refuses
+    a deployment that elevates either field, now measured against the fully
+    resolved chain.
+    """
+
+    # An undeclared child keeps its parent's level. Defaulting at load time
+    # erased the difference between choosing `supervised` and saying
+    # nothing, so a silent child LOOSENED a `confirm` parent -- while
+    # `execution_limits` inherited on omission. Same file, opposite rule.
+    resolved_autonomy = child.autonomy or parent.autonomy
+
+    parent_perms = (
+        list(parent.permissions) if isinstance(parent.permissions, list) else []
+    )
+    if isinstance(child.permissions, list):
+        # A plain list ADDS here, unlike at the deployment edge where it
+        # replaces: role-to-role composition is additive for capability.
+        resolved_perms: list[str] = _union_preserving_order(
+            parent_perms, child.permissions
+        )
+    else:
+        # Everything else — "inherit", {inherit: true, add/remove: [...]},
+        # {override: [...]} — goes through the shared resolver, which is the
+        # only place those shapes are implemented.
+        #
+        # `list(child.permissions)` used to run on ALL non-list shapes, so a
+        # dict yielded its KEYS: a child using the documented removal
+        # directive received the literal strings 'inherit' and 'remove' as
+        # permissions AND kept the one it asked to remove. Permissions gate
+        # sensitive tool calls, so that failed in the granting direction
+        # twice over. The fix that closed this at the deployment edge left it
+        # live one layer up.
+        resolved_perms = _resolve_list_directive(parent_perms, child.permissions)
+
+    parent_limits = (
+        dict(parent.execution_limits)
+        if isinstance(parent.execution_limits, dict)
+        else None
+    )
+    child_limits = child.execution_limits
+    if isinstance(child_limits, dict):
+        # MERGED, for the same reason as at the deployment edge: substituting
+        # dropped every ceiling the parent set and the child did not restate,
+        # and `_effective_limits` then backfilled those from the looser
+        # PLATFORM defaults. A child tightening one limit quietly loosened the
+        # rest -- the identical defect, still live one layer up.
+        resolved_limits: dict[str, Any] | str | None = {
+            **(parent_limits or {}),
+            **child_limits,
+        }
+    else:
+        resolved_limits = parent_limits
+
+    def _merge_mapping(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(a)
+        merged.update(b)
+        return merged
+
+    prompts = [p for p in (parent.system_prompt, child.system_prompt) if p.strip()]
+
+    return RawDefinition(
+        # The leaf is the role being resolved, so it owns its identity.
+        role_name=child.role_name,
+        version=child.version,
+        deployment=None,
+        system_prompt=_PROMPT_SEPARATOR.join(prompts),
+        tools=_union_preserving_order(parent.tools, child.tools),
+        skills=_union_preserving_order(parent.skills, child.skills),
+        context=_merge_mapping(parent.context, child.context),
+        permissions=resolved_perms,
+        autonomy=resolved_autonomy,
+        escalation_rules=_merge_mapping(
+            parent.escalation_rules, child.escalation_rules
+        ),
+        delegation_policy=_merge_mapping(
+            parent.delegation_policy, child.delegation_policy
+        ),
+        memory_policy=_merge_mapping(parent.memory_policy, child.memory_policy),
+        audit_policy=_merge_mapping(parent.audit_policy, child.audit_policy),
+        execution_limits=resolved_limits,
+    )
+
+
+def _resolve_role_chain(
+    role_type: str, roots: RootConfig
+) -> tuple[RawDefinition, bool]:
+    """Walk ``extends:`` to the root and fold the chain back down.
+
+    Returns the fully composed definition and whether the LEAF is abstract.
+    Ancestors may be abstract — that is what abstract is for.
+    """
+    chain: list[RawDefinition] = []
+    seen: list[str] = []
+    leaf_is_abstract = False
+
+    current: str | None = role_type
+    while current is not None:
+        if current in seen:
+            cycle = " -> ".join([*seen, current])
+            raise DefinitionError(
+                f"Invariant violation — extends: role inheritance cycle: {cycle}"
+            )
+        seen.append(current)
+
+        if len(seen) > _MAX_ROLE_CHAIN_DEPTH:
+            raise DefinitionError(
+                f"Invariant violation — extends: role chain deeper than "
+                f"{_MAX_ROLE_CHAIN_DEPTH}: {' -> '.join(seen)}"
+            )
+
+        try:
+            definition, parent, is_abstract = _load_role_files(current, roots)
+        except DefinitionError:
+            if current == role_type:
+                raise
+            raise DefinitionError(
+                f"Invariant violation — extends: role '{seen[-2]}' extends "
+                f"'{current}', which does not exist."
+            ) from None
+
+        if current == role_type:
+            leaf_is_abstract = is_abstract
+        chain.append(definition)
+        current = parent
+
+    # chain is leaf-first; fold root-first so a child composes onto its parent.
+    resolved = chain[-1]
+    for child in reversed(chain[:-1]):
+        resolved = _fold_parent_into_child(resolved, child)
+
+    return resolved, leaf_is_abstract
+
+
 def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefinition:
-    """Read platform/roles/{role_type}/{role,manifest,policy}.md.
+    """Resolve platform/roles/{role_type}/ and everything it extends.
+
+    Returns the FULLY COMPOSED role — the union of its whole ``extends:``
+    chain. That placement matters: ``resolve`` hands this straight to
+    ``merge``, whose ``_validate_tools`` enforces that a deployment may only
+    narrow. Because the chain is already folded here, that existing
+    subtractive check now runs against the entire inherited surface without
+    ``_merge_validated`` changing at all.
 
     Parameters
     ----------
@@ -327,33 +569,20 @@ def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefin
     if roots is None:
         roots = RootConfig()
 
-    folder = _role_folder(_require_platform_root(roots.platform_root), role_type)
+    resolved, is_abstract = _resolve_role_chain(role_type, roots)
 
-    role_fm, role_body = _read_md(folder / "role.md")
-    manifest_fm, _ = _read_md(folder / "manifest.md")
-    policy_fm, _ = _read_md(folder / "policy.md")
+    if not resolved.autonomy:
+        # Nothing in the chain declared one. `supervised` is the platform
+        # floor, applied once here rather than at every load.
+        resolved = dataclasses.replace(resolved, autonomy="supervised")
 
-    role_name: str = str(
-        role_fm.get("name", manifest_fm.get("role", role_type))
-    )
-    version: str = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
+    if is_abstract:
+        raise DefinitionError(
+            f"Role '{role_type}' is declared abstract and cannot be built "
+            f"directly. Extend it from a concrete role instead."
+        )
 
-    return RawDefinition(
-        role_name=role_name,
-        version=version,
-        deployment=None,
-        system_prompt=role_body,
-        tools=_as_str_list(manifest_fm.get("tools")),
-        skills=_as_str_list(manifest_fm.get("skills")),
-        context=dict(manifest_fm.get("context") or {}),
-        permissions=manifest_fm.get("permissions", []),
-        autonomy=str(policy_fm.get("autonomy", "supervised")),
-        escalation_rules=dict(policy_fm.get("escalation_rules") or {}),
-        delegation_policy=dict(policy_fm.get("delegation_policy") or {}),
-        memory_policy=dict(policy_fm.get("memory_policy") or {}),
-        audit_policy=dict(policy_fm.get("audit_policy") or {}),
-        execution_limits=policy_fm.get("execution_limits"),
-    )
+    return resolved
 
 
 def load_override(
@@ -395,6 +624,26 @@ def load_override(
     version = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
     deployment = str(manifest_fm.get("deployment", client))
 
+    # A deployment's parent is fixed by its directory -- `deployments/{client}/
+    # {role_type}/` overrides `platform/roles/{role_type}/`. So `extends:` here
+    # cannot CHOOSE anything, and for a long time nothing read it at all. That
+    # left the same key authoritative in a role manifest and silently inert in
+    # a deployment one, which is worse than uniformly ignored: a contradiction
+    # reads as a decision and does nothing.
+    #
+    # It is now checked. Declaring the truth is allowed; declaring a lie is not.
+    declared_parent = manifest_fm.get("extends")
+    if declared_parent is not None:
+        target = _extends_target(declared_parent)
+        if target != role_type:
+            raise DefinitionError(
+                f"Invariant violation — extends: deployment "
+                f"'{client}/{role_type}' declares 'extends: {declared_parent}', "
+                f"but a deployment override always extends the platform role "
+                f"its own folder names ('{role_type}'). A deployment cannot "
+                f"choose a different parent; remove the line or correct it."
+            )
+
     return RawDefinition(
         role_name=role_name,
         version=version,
@@ -404,7 +653,10 @@ def load_override(
         skills=_as_str_list(manifest_fm.get("skills")),
         context=dict(manifest_fm.get("context") or {}),
         permissions=manifest_fm.get("permissions", []),
-        autonomy=str(policy_fm.get("autonomy", "supervised")),
+        # "" means NOT DECLARED here too -- see `_load_role_files`. A
+        # deployment that says nothing must keep the role's level; resetting
+        # it to the platform floor LOOSENS a `confirm` role.
+        autonomy=str(policy_fm.get("autonomy", "")),
         escalation_rules=dict(policy_fm.get("escalation_rules") or {}),
         delegation_policy=dict(policy_fm.get("delegation_policy") or {}),
         memory_policy=dict(policy_fm.get("memory_policy") or {}),
@@ -422,13 +674,21 @@ def _resolve_permissions(
     parent_perms: list[str],
     override_perms: list[str] | str,
 ) -> list[str]:
-    """Resolve permissions, honouring the ``inherit`` keyword."""
-    if override_perms == "inherit":
-        return list(parent_perms)
-    if isinstance(override_perms, list):
-        return list(override_perms)
-    # fallback
-    return list(parent_perms)
+    """Resolve permissions, honouring every list directive the module documents.
+
+    This used to handle only the scalar ``"inherit"`` and a plain list, and
+    fall through to returning the PARENT'S FULL SET for every other shape --
+    including ``{inherit: true, remove: [...]}``, which this module's own
+    docstring advertises and which `_resolve_list_directive` right below has
+    implemented all along.
+
+    So a deployment that explicitly removed a permission kept it. Silently,
+    and in the direction that grants rather than denies: the author reads
+    their manifest, sees the removal, and is wrong. `escalation_rules` and
+    the other list fields already routed through the shared resolver; only
+    permissions -- the field where being wrong costs the most -- did not.
+    """
+    return _resolve_list_directive(list(parent_perms), override_perms)
 
 
 def _resolve_list_directive(
@@ -554,6 +814,10 @@ def _validate_permissions(
 
 
 def _validate_autonomy(parent: RawDefinition, override: RawDefinition) -> None:
+    if not override.autonomy:
+        # Not declared: the override inherits the parent's level, which
+        # cannot exceed itself. Nothing to check.
+        return
     parent_rank = _AUTONOMY_RANK.get(parent.autonomy)
     override_rank = _AUTONOMY_RANK.get(override.autonomy)
 
@@ -587,9 +851,22 @@ def _validate_execution_limits(
     value, and the baseline.
     """
     for key, override_value in override_limits.items():
+        # A role's `execution_limits` may name only some keys. Falling back to
+        # the PLATFORM default for the rest is what keeps a partial dict from
+        # becoming an unbounded one: without it, a deployment could raise any
+        # limit its role happened not to mention.
+        # `dict.get(key, default)` returns the default only when the key is
+        # ABSENT — never when its value is None. So the previous version
+        # closed the omitted-key half of this and left the null-valued half
+        # wide open, which matters because `execution_limits: null` is a
+        # shipped idiom in six policy files meaning "no opinion, take the
+        # platform defaults". Written per-key it reads identically to an
+        # author and silently REMOVED the ceiling instead of applying it.
         baseline_value = baseline.get(key)
         if baseline_value is None:
-            # Key not in baseline — allow it (new limit not in platform defaults)
+            baseline_value = _PLATFORM_DEFAULT_LIMITS.get(key)
+        if baseline_value is None:
+            # Genuinely unknown to both — a new limit nobody has a ceiling for.
             continue
         if override_value > baseline_value:
             raise DefinitionError(
@@ -688,7 +965,16 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
             else _PLATFORM_DEFAULT_LIMITS
         )
         _validate_execution_limits(baseline, ov_limits)
-        resolved_limits = dict(ov_limits)
+        # MERGED over the baseline, never substituted for it. Replacing the
+        # dict dropped every key the deployment did not name, and
+        # `_effective_limits` then backfilled those from the PLATFORM
+        # defaults rather than from the role -- so declaring ONE stricter
+        # limit raised the ceiling on all the others. On `operator-agent`
+        # that turned 30s/10 calls into 60s/20 calls for the only role that
+        # can run host commands. The validator passed the whole time,
+        # because every key actually declared really was stricter; the
+        # escape was in the keys left out.
+        resolved_limits = {**baseline, **ov_limits}
     else:
         resolved_limits = None
 
@@ -702,16 +988,37 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
     # --- Skills come entirely from the override (platform level is always []) ---
     resolved_skills = list(override.skills)
 
+    # --- Resolve system_prompt ---
+    #
+    # COMPOSED, not replaced. `system_prompt=override.system_prompt` threw
+    # away everything the role chain had folded, so a deployed agent never
+    # saw its platform role's prose at all -- and after the taxonomy landed,
+    # never saw `base`'s or `agent`'s either. The standing instructions those
+    # files carry ("report what ran verbatim", "a confident zero is worse
+    # than an error") existed only for a role resolved WITHOUT a deployment,
+    # which is not how anything runs.
+    #
+    # `docs/platform/deployment.md` already described the intended shape:
+    # "the deployment role.md EXTENDS the generic role with client-specific
+    # context". Same separator the factory uses for skills, so the composed
+    # prompt reads as one document.
+    prompt_parts = [
+        part
+        for part in (generic.system_prompt, override.system_prompt)
+        if part.strip()
+    ]
+    resolved_prompt = _PROMPT_SEPARATOR.join(prompt_parts)
+
     return AgentDefinition(
         role_name=generic.role_name,
         version=generic.version,
         deployment=override.deployment,
-        system_prompt=override.system_prompt,
+        system_prompt=resolved_prompt,
         tools=tuple(resolved_tools),
         skills=tuple(resolved_skills),
         context=resolved_context,
         permissions=tuple(resolved_perms),
-        autonomy=override.autonomy,
+        autonomy=override.autonomy or generic.autonomy,
         escalation_rules=resolved_escalation,
         delegation_policy=resolved_delegation,
         memory_policy=resolved_memory,
