@@ -77,11 +77,18 @@ def test_get_settings_returns_singleton():
 
 
 def test_adapter_config_defaults():
-    """adapter_api_key, adapter_provider, and adapter_runtimes have correct defaults."""
+    """adapter_api_key, adapter_provider, and adapter_runtimes have correct defaults.
+
+    `adapter_runtimes` is empty because runtime ids are "{deployment}__{role}"
+    and the platform knows no deployment names. It also means the default
+    configuration exposes no runtime at all through `/v1/*`, which is the
+    safer end of the change: the fail-closed guard below still refuses the
+    moment a runtime IS configured without a key.
+    """
     settings = Settings(_env_file=None)
     assert settings.adapter_api_key == ""
     assert settings.adapter_provider == "ollama"
-    assert settings.adapter_runtimes == ["acme__sales-agent"]
+    assert settings.adapter_runtimes == []
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +353,127 @@ def test_settings_boots_when_meta_webhook_secret_set() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_shipped_env_example_boots_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The onboarding path documented in the README must produce a bootable app.
+
+    This was an `xfail(strict=True)` recording a real bug: `cp .env.example
+    .env` died with a raw pydantic traceback at import, before
+    `setup_logging()` ran. Emptying the `adapter_runtimes` default fixed it —
+    with no runtime configured there is nothing to protect, so the
+    fail-closed guard no longer fires on a file that ships no
+    `ADAPTER_API_KEY`.
+
+    The xfail reason this replaces was wrong on both counts: it claimed
+    `.env.example` ships no `META_WEBHOOK_SECRET` (it does, with a value)
+    and that Settings still dies at import (it does not). Corrected rather
+    than left to rot, since a stale xfail reason is a lie that survives
+    every green run.
+
+    Every other test is immunised from this by conftest forcing
+    ALLOW_INSECURE=true, so nothing else in the suite builds Settings from
+    the shipped file with the shipped defaults.
+    """
+    for var in ("ALLOW_INSECURE", "ADAPTER_API_KEY", "META_WEBHOOK_SECRET"):
+        monkeypatch.delenv(var, raising=False)
+
+    env_example = Path(__file__).resolve().parents[1] / ".env.example"
+    assert env_example.is_file(), "the repo must ship an .env.example to copy"
+
+    settings = Settings(_env_file=str(env_example))
+
+    # It boots...
+    assert settings.meta_webhook_secret, "the shipped file must carry a secret"
+    # ...and it boots SAFELY: no runtime is exposed, which is why no adapter
+    # key is needed. If a future edit adds one to the file, the fail-closed
+    # guard fires again and this assertion says so before a user hits it.
+    assert not settings.adapter_runtimes, (
+        "the shipped example must not configure a runtime without a key"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Platform surface vs consumer extension
+# ---------------------------------------------------------------------------
+
+
+def test_configured_runtimes_without_a_key_still_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Emptying the default must not weaken the adapter guard.
+
+    `adapter_runtimes` used to default to a deployment name, so the guard
+    fired for a bare `Settings()`. It now fires when a runtime is actually
+    configured, which is the case that matters: an exposed `/v1/*` runtime
+    carries the role's full write grants.
+    """
+    # conftest exports ALLOW_INSECURE=true for the whole suite, which is
+    # exactly what this test must not inherit.
+    monkeypatch.delenv("ALLOW_INSECURE", raising=False)
+
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            adapter_runtimes=["acme__sales-agent"],
+            meta_webhook_secret="not-the-point",
+        )
+
+    assert "adapter_api_key is required" in str(excinfo.value)
+
+
+def test_settings_carries_no_deployment_name() -> None:
+    """No platform default may name a deployment.
+
+    A default like `db_name="acme"` or `whatsapp_runtime_id="acme__sales-agent"`
+    ships one deployment's topology to every consumer of the library, and does
+    it silently — the value works, it is just someone else's.
+    """
+    settings = Settings(_env_file=None, allow_insecure=True)
+
+    assert "acme" not in settings.database_url
+    assert settings.db_name == "agentsys"
+    assert settings.whatsapp_runtime_id == ""
+    assert settings.adapter_runtimes == []
+
+
+def test_a_consumer_can_extend_settings_without_editing_the_library() -> None:
+    """The extension point: a subclass adds fields and its own validator.
+
+    This is what replaces the `medallion_*` block that used to sit in the
+    platform's own `Settings`. Both the subclass's validator and the
+    platform's still run.
+    """
+    from agentsys.services.medallion import MedallionSettings
+
+    settings = MedallionSettings(
+        _env_file=None,
+        allow_insecure=True,
+        db_user="app",
+        db_password="p@ss/word",
+        db_host="db.internal",
+        db_name="acme",
+        medallion_db_name="warehouse",
+    )
+
+    # The platform validator composed the main URL...
+    assert "db.internal" in settings.database_url
+    assert settings.database_url.endswith("/acme")
+    # ...and the subclass's composed its own, falling back to the shared host,
+    # with the password url-encoded rather than breaking the connection string.
+    assert settings.medallion_database_url.endswith("/warehouse")
+    assert "p%40ss%2Fword" in settings.medallion_database_url
+
+
+# ---------------------------------------------------------------------------
+# Restored: deleted by mistake while rewriting the env-example xfail
+# ---------------------------------------------------------------------------
+#
+# This is a strict-xfail security tripwire and it records a gap that is
+# STILL OPEN. It was removed in the same edit that converted the
+# neighbouring xfail into a passing test, with no mention in the commit
+# message -- the two were adjacent, and one rewrite took both. Deleting a
+# failing security test is the loudest possible way to close a security
+# gap without fixing it.
+
 @pytest.mark.xfail(
     strict=True,
     reason=(
@@ -375,29 +503,3 @@ def test_allow_insecure_is_rejected_outside_development(environment: str) -> Non
             meta_webhook_secret="",
         )
     assert "allow_insecure" in str(excinfo.value)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "SOURCE FIX REQUIRED: .env.example ships neither ADAPTER_API_KEY nor "
-        "ALLOW_INSECURE, and adapter_runtimes defaults to a non-empty list, so "
-        "the documented `cp .env.example .env` first-run path now dies with a "
-        "raw pydantic traceback at import — before setup_logging() runs."
-    ),
-)
-def test_shipped_env_example_boots_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The onboarding path documented in the README must produce a bootable app.
-
-    Every other test is immunised from this by conftest forcing
-    ALLOW_INSECURE=true, so nothing else in the suite ever builds Settings from
-    the shipped env file with the shipped defaults.
-    """
-    for var in ("ALLOW_INSECURE", "ADAPTER_API_KEY", "META_WEBHOOK_SECRET"):
-        monkeypatch.delenv(var, raising=False)
-
-    env_example = Path(__file__).resolve().parents[1] / ".env.example"
-    assert env_example.is_file(), "the repo must ship an .env.example to copy"
-
-    settings = Settings(_env_file=str(env_example))
-    assert settings.adapter_api_key or settings.allow_insecure
