@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 
 @dataclass(frozen=True)
@@ -68,3 +68,26 @@ class ToolRegistry:
 
     def names(self) -> tuple[str, ...]:
         return tuple(self._specs)
+
+
+class RegistryFactory(Protocol):
+    """Builds the tool registry an application boots with.
+
+    The platform assembles roles against a registry but populates none: a
+    connector binds a tool name to one deployment's data, so the mapping is
+    the caller's. `main.create_app` takes one of these and the lifespan calls
+    it once the settings, embedder and BI engine are resolved.
+
+    `bi_engine` is None when no read-only reporting connection is
+    configured; a factory that registers `run_report` must still register it
+    unbound, because a tool a manifest names but the registry lacks makes
+    the whole role unbuildable rather than partially usable.
+    """
+
+    def __call__(
+        self,
+        settings: Any,
+        embedder: Any = None,
+        bi_engine: Any = None,
+    ) -> ToolRegistry:
+        ...

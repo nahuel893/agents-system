@@ -10,7 +10,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agentsys.config import get_settings
-from agentsys.main import create_app
+from conftest import create_test_app
 
 
 @pytest.fixture(autouse=True)
@@ -22,7 +22,7 @@ def clear_settings_cache():
 
 @pytest.fixture
 def app():
-    return create_app()
+    return create_test_app()
 
 
 @pytest.fixture

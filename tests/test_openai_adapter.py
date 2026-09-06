@@ -22,12 +22,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
 from agentsys.config import Settings, get_settings
-from agentsys.main import create_app
+from conftest import create_test_app
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +52,7 @@ def _make_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
     """Create a TestClient with pre-populated runtimes and no real lifespan."""
-    app = create_app()
+    app = create_test_app()
     # Set state BEFORE any request — lifespan never fires (no context manager)
     app.state.runtimes = _fake_runtimes(runtime_ids)
     # What /v1 may publish. Separate from the cache on purpose: the cache
@@ -238,9 +237,8 @@ def test_chat_completion_stream_true_400(monkeypatch: pytest.MonkeyPatch):
 def test_system_message_dropped(monkeypatch: pytest.MonkeyPatch):
     """Client system message is dropped; only user/assistant turns reach run_turn."""
     # Build a fresh app with an inspectable fake runtime
-    import agentsys.main as main_mod
 
-    app_instance = main_mod.create_app()
+    app_instance = create_test_app()
     app_instance.state.runtimes = {"acme__sales-agent": MagicMock()}
     app_instance.state.adapter_model_ids = frozenset({"acme__sales-agent"})
     fake_rt = app_instance.state.runtimes["acme__sales-agent"]
@@ -357,7 +355,7 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
 
     agent = AgentRuntime(equipped, model)
 
-    app_instance = create_app()
+    app_instance = create_test_app()
     app_instance.state.runtimes = {"acme__sales-agent": agent}
     app_instance.state.adapter_model_ids = frozenset({"acme__sales-agent"})
     app_instance.state.engine = MagicMock()
@@ -439,29 +437,29 @@ def test_map_messages_role_types():
 async def test_v1_exposes_only_adapter_runtimes_never_the_whole_cache() -> None:
     """A runtime built for another channel must not appear on /v1.
 
-    This is a real regression I introduced, not a hypothetical. Building the
-    cache from the union of every channel that needs a runtime fixed WhatsApp
-    being silently muted — and, because /v1 served `app.state.runtimes`
-    verbatim, it also published the WhatsApp runtime there.
+    A real regression, not a hypothetical. Building the cache from the union
+    of every channel that needs a runtime fixed WhatsApp being silently muted
+    — and, because /v1 served `app.state.runtimes` verbatim, it also
+    published the WhatsApp runtime there.
 
-    The security consequence is the part that matters. `verify_bearer`
-    returns early when `adapter_api_key` is empty, and the Settings validator
-    only demands a key when `adapter_runtimes` is non-empty. So a production
-    config with ADAPTER_RUNTIMES=[], WHATSAPP_RUNTIME_ID set and no
-    ADAPTER_API_KEY exposed that runtime over an UNAUTHENTICATED
-    /v1/chat/completions. Before the union, "a runtime in the cache implies a
-    key" held by construction.
+    `verify_bearer` returns early when `adapter_api_key` is empty, and the
+    Settings validator only demands a key when `adapter_runtimes` is
+    non-empty. So a production config with ADAPTER_RUNTIMES=[],
+    WHATSAPP_RUNTIME_ID set and no ADAPTER_API_KEY exposed that runtime over
+    an UNAUTHENTICATED /v1/chat/completions.
 
     Which runtimes to BUILD and which to EXPOSE are two different questions.
     """
+    from httpx import ASGITransport, AsyncClient
+
     test_settings = Settings(
         _env_file=None,
         allow_insecure=True,
-        adapter_runtimes=[],  # nothing meant for /v1 ...
-        whatsapp_runtime_id="acme__sales-agent",  # ... but WhatsApp needs one
+        adapter_runtimes=[],
+        whatsapp_runtime_id="acme__sales-agent",
     )
 
-    app_instance = create_app()
+    app_instance = create_test_app()
     app_instance.dependency_overrides[get_settings] = lambda: test_settings
     # The cache holds it, because the channel needs it.
     app_instance.state.runtimes = {"acme__sales-agent": MagicMock()}
