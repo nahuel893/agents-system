@@ -1,0 +1,243 @@
+"""The portable catalog, run against a company that is shaped differently.
+
+`tests/test_sales_reports_contract.py` proves the SQL only names contract
+views. That is a static check, and a static check cannot tell you the views
+carry the right data — a status mapping that drops a value, or a computed line
+total that disagrees with the invoice header, both pass it and both produce
+confidently wrong numbers.
+
+So these run the real reports against the real demo database, and assert
+figures derived independently from `demo/company/03_seed.sql`:
+
+  360 invoices, one every 36 hours.
+  Every 10th is 'anulada'                     -> 36 cancelled
+  Every 5th that is not already anulada       -> 36 pending
+  The rest                                    -> 288 confirmed
+
+None of those numbers is read back from the module under test.
+
+Marked `integration` because it needs a live Postgres. It is run by the
+`demo-reports` CI job, which loads the demo company first — a marker on its
+own is not coverage.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from agentsys.connectors.sales_reports import CATALOG
+from agentsys.services.reports import run_report
+
+pytestmark = pytest.mark.integration
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agentsys_demo"
+
+#: Straight from `03_seed.sql`, recomputed here rather than imported.
+SEEDED_SALES = 360
+SEEDED_CANCELLED = 36
+SEEDED_PENDING = 36
+SEEDED_CONFIRMED = 288
+SEEDED_CUSTOMERS = 12
+SEEDED_ZONES = 4
+SEEDED_SEGMENTS = 3
+SEEDED_ARTICLES = 20
+
+#: 360 invoices * 36h = 540 days of history, so 24 months (720 days) covers
+#: every one of them. Anything shorter would make these totals clock-dependent.
+WHOLE_HISTORY = 24
+
+
+def _demo_url() -> str:
+    return os.getenv("DEMO_DATABASE_URL", _DEFAULT_URL)
+
+
+@pytest.fixture(scope="module")
+def demo_database() -> str:
+    """Load the demo company, or skip if no database is reachable.
+
+    Loading here rather than assuming a pre-loaded database keeps the test
+    self-contained: the seed is deterministic, so a reload is idempotent as
+    far as every assertion below is concerned.
+    """
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, str(_REPO_ROOT / "demo" / "load_demo_company.py")],
+        capture_output=True,
+        text=True,
+        cwd=_REPO_ROOT,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"demo company unavailable: {result.stderr.strip()[:300]}")
+    return _demo_url()
+
+
+@pytest.fixture
+async def engine(demo_database: str) -> Any:
+    engine = create_async_engine(demo_database)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+
+async def _report(engine: Any, name: str, **params: Any) -> dict[str, Any]:
+    return await run_report(engine, CATALOG[name], params)
+
+
+# --- The status mapping, which is the easiest thing to get silently wrong ---
+
+
+async def test_status_summary_recovers_the_seeded_status_mix(engine: Any) -> None:
+    """The company stores facturada/pendiente/anulada; the view maps them.
+
+    A mapping that dropped a value would not error — the rows would simply be
+    absent from every filtered report. This is where that shows up.
+    """
+    result = await _report(engine, "status_summary", months_back=WHOLE_HISTORY, limit=10)
+
+    counts = {row["status"]: row["sale_count"] for row in result["rows"]}
+
+    assert counts == {
+        "confirmed": SEEDED_CONFIRMED,
+        "pending": SEEDED_PENDING,
+        "cancelled": SEEDED_CANCELLED,
+    }
+    assert sum(counts.values()) == SEEDED_SALES
+
+
+async def test_no_sale_falls_outside_the_canonical_vocabulary(engine: Any) -> None:
+    """Every row must land on one of the three canonical statuses.
+
+    An unmapped company status would surface here as a fourth key.
+    """
+    result = await _report(engine, "status_summary", months_back=WHOLE_HISTORY, limit=50)
+
+    assert {row["status"] for row in result["rows"]} <= {
+        "confirmed",
+        "pending",
+        "cancelled",
+    }
+
+
+async def test_the_default_status_filter_excludes_cancelled_sales(
+    engine: Any,
+) -> None:
+    """`default` must mean confirmed + pending, and the result must say so."""
+    result = await _report(engine, "sales_by_zone", months_back=WHOLE_HISTORY, limit=50)
+
+    counted = sum(row["sale_count"] for row in result["rows"])
+
+    assert counted == SEEDED_CONFIRMED + SEEDED_PENDING
+    assert result["meta"]["cancelled_included"] is False
+    assert result["meta"]["statuses_included"] == ["confirmed", "pending"]
+
+
+# --- The computed line total, the other thing a view can get wrong ----------
+
+
+async def test_line_revenue_reconciles_with_invoice_header_revenue(
+    engine: Any,
+) -> None:
+    """`agentsys_sale_items.amount` is computed; `agentsys_sales.amount` is not.
+
+    The demo's invoice headers are derived from their lines, so the two must
+    agree exactly. If the view's arithmetic were wrong — a missing quantity
+    multiplier, say — every product report would disagree with every revenue
+    report, and the agent would report both without noticing.
+    """
+    by_month = await _report(
+        engine, "sales_by_month", months_back=WHOLE_HISTORY, limit=100
+    )
+    by_product = await _report(
+        engine, "top_products", months_back=WHOLE_HISTORY, limit=500
+    )
+
+    header_revenue = sum(Decimalish(row["revenue"]) for row in by_month["rows"])
+    line_revenue = sum(Decimalish(row["revenue"]) for row in by_product["rows"])
+
+    assert header_revenue == line_revenue
+
+
+def Decimalish(value: Any) -> Any:
+    """`json_safe` turns NUMERIC into `str` on purpose (money must not become
+    a float). Parse it back for arithmetic, still without floats."""
+    from decimal import Decimal
+
+    return Decimal(str(value))
+
+
+# --- Grouping reports see the whole company --------------------------------
+
+
+async def test_every_seeded_zone_and_segment_appears(engine: Any) -> None:
+    by_zone = await _report(engine, "sales_by_zone", months_back=WHOLE_HISTORY, limit=50)
+    by_segment = await _report(
+        engine, "sales_by_segment", months_back=WHOLE_HISTORY, limit=50
+    )
+
+    assert len(by_zone["rows"]) == SEEDED_ZONES
+    assert len(by_segment["rows"]) == SEEDED_SEGMENTS
+
+
+async def test_top_customers_ranks_by_revenue_and_covers_the_padron(
+    engine: Any,
+) -> None:
+    result = await _report(
+        engine, "top_customers", months_back=WHOLE_HISTORY, limit=100
+    )
+
+    revenues = [Decimalish(row["revenue"]) for row in result["rows"]]
+
+    assert len(result["rows"]) == SEEDED_CUSTOMERS
+    assert revenues == sorted(revenues, reverse=True)
+
+
+# --- Stock -----------------------------------------------------------------
+
+
+async def test_low_stock_returns_only_products_at_or_under_the_reorder_point(
+    engine: Any,
+) -> None:
+    result = await _report(engine, "low_stock", limit=100)
+
+    assert result["rows"], "the seed puts several articles under the reorder point"
+    for row in result["rows"]:
+        assert row["on_hand"] <= row["reorder_point"]
+        assert row["shortfall"] == row["reorder_point"] - row["on_hand"]
+
+
+async def test_a_wider_threshold_returns_at_least_as_many_products(
+    engine: Any,
+) -> None:
+    """`threshold_ratio` widens what counts as low; it must never narrow it."""
+    tight = await _report(engine, "low_stock", threshold_ratio=1, limit=100)
+    wide = await _report(engine, "low_stock", threshold_ratio=3, limit=100)
+
+    assert wide["row_count"] >= tight["row_count"]
+    assert wide["row_count"] <= SEEDED_ARTICLES
+
+
+# --- Every report runs at all ----------------------------------------------
+
+
+@pytest.mark.parametrize("report_name", sorted(CATALOG))
+async def test_every_report_in_the_catalog_executes_against_the_demo(
+    engine: Any, report_name: str
+) -> None:
+    """A report nobody runs is a report nobody knows is broken.
+
+    Defaults only — this is the smoke check that the SQL is valid against a
+    real contract-conforming database, separate from the figure assertions.
+    """
+    result = await run_report(engine, CATALOG[report_name], {})
+
+    assert result["report"] == report_name
+    assert isinstance(result["rows"], list)
+    assert result["row_count"] == len(result["rows"])

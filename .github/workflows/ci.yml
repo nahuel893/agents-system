@@ -158,3 +158,58 @@ jobs:
       # so anything created here would just be state they did not expect.
       - name: Verify the partitioned audit schema
         run: uv run pytest -m integration tests/test_audit_migration_integration.py -v
+
+  # The portable sales reports are the platform's claim that one report
+  # catalog serves every client. That claim is only worth what proves it: a
+  # company whose tables are called `facturas` / `padron_clientes`, whose
+  # statuses are `facturada` / `anulada`, and whose lines carry no total —
+  # with the reports running against it unchanged.
+  #
+  # `tests/test_sales_reports_contract.py` runs in the main job and is static
+  # (the SQL names only contract views). It cannot see a status mapping that
+  # drops a value or a computed line total that disagrees with the invoice
+  # header: both produce confidently wrong numbers and no error. This job is
+  # where those die, so the integration marker is not left as coverage nobody
+  # runs.
+  demo-reports:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agentsys_demo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agentsys_demo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DEMO_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/agentsys_demo
+      ALLOW_INSECURE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      # The test module loads the demo company itself, so this step exists
+      # only to fail loudly and early if the loader or the view contract is
+      # broken — otherwise that surfaces as a pytest skip, which reads as
+      # "passed".
+      - name: Load the demo company and verify the view contract
+        run: uv run python demo/load_demo_company.py
+
+      - name: Run the portable reports against it
+        run: uv run pytest -m integration tests/test_sales_reports_integration.py -v
