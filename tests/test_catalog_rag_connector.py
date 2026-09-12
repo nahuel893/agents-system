@@ -306,12 +306,17 @@ def test_registry_has_the_expected_tools_with_async_catalog() -> None:
         "read_file",
     }
 
-    catalog_spec = registry.get("catalog_search")
-    assert asyncio.iscoroutinefunction(catalog_spec.connector)
+    # `order_writer` joined `catalog_search` on the async side with issue #39:
+    # it now delegates to the deployment's OrderWriter (or refuses) instead of
+    # computing a fake order from a module-level price dict.
+    for name in ("catalog_search", "order_writer"):
+        spec = registry.get(name)
+        assert asyncio.iscoroutinefunction(spec.connector), (
+            f"{name} should be async but iscoroutinefunction returned False"
+        )
 
     for name in (
         "client_lookup",
-        "order_writer",
         "message_sender",
         "session_state",
         "knowledge_retrieval",
