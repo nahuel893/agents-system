@@ -10,14 +10,18 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
-from agentsys.connectors.order_connector import build_order_writer_tool_spec
+from agentsys.connectors.order_connector import (
+    _WRITE_FAILED_MESSAGE,
+    build_order_writer_tool_spec,
+)
 
 
 class _RecordingWriter:
     """A minimal `OrderWriter` that records what it was asked to persist."""
 
-    def __init__(self, result: dict[str, Any]) -> None:
+    def __init__(self, result: Any) -> None:
         self.result = result
         self.calls: list[dict[str, Any]] = []
 
@@ -27,7 +31,7 @@ class _RecordingWriter:
         *,
         client_id: str,
         items: list[dict[str, Any]],
-    ) -> dict[str, Any]:
+    ) -> Any:
         self.calls.append({"client_id": client_id, "items": items})
         return self.result
 
@@ -112,6 +116,68 @@ async def test_a_write_failure_never_leaks_the_exception_text_to_the_model() -> 
     assert "hunter2" not in rendered
     assert "db.internal" not in rendered
     assert "connection refused" not in rendered
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param({"status": "created", "total": 1700.0}, id="no-order-id"),
+        pytest.param({"order_id": "", "status": "created"}, id="empty-order-id"),
+        pytest.param({"order_id": "   ", "status": "created"}, id="blank-order-id"),
+        pytest.param({"order_id": None, "status": "created"}, id="null-order-id"),
+        pytest.param("created", id="not-a-dict"),
+    ],
+)
+async def test_a_writer_result_without_an_order_id_is_not_reported_as_created(
+    result: Any,
+) -> None:
+    """A success shape the platform cannot verify must not be passed upward.
+
+    The connector's own description promises the model that "an order exists
+    only if this tool returns an order_id". A deployment writer that returns
+    `{"status": "created"}` with no id — or a blank one — would make that promise
+    false and reinstate exactly the fabrication this issue removed, one boundary
+    further out. The platform cannot verify the write, so it must not relay a
+    claim about it.
+    """
+    spec = build_order_writer_tool_spec(_RecordingWriter(result))
+
+    output = await spec.connector(_AN_ORDER)
+
+    assert output["error_kind"] == "order_write_unconfirmed"
+    assert "order_id" not in output
+    assert output.get("status") != "created"
+
+
+async def test_an_unconfirmed_write_does_not_tell_the_customer_it_failed() -> None:
+    """Unconfirmed is not the same as failed, and conflating them costs money.
+
+    `create_order` returning normally asserts, per the protocol, that the order
+    WAS persisted — the connector just cannot name it. Reusing the write-failed
+    text would tell the customer to place the order again, and the retry would
+    write a second real order. The honest answer is that it could not be
+    confirmed and a human must check.
+    """
+    spec = build_order_writer_tool_spec(_RecordingWriter({"status": "created"}))
+
+    output = await spec.connector(_AN_ORDER)
+
+    assert output["error"] != _WRITE_FAILED_MESSAGE
+    assert "not placed" not in output["error"]
+
+
+async def test_an_unconfirmed_write_is_logged_for_the_operator() -> None:
+    """The model gets a safe sentence; the operator gets the broken contract.
+
+    Without this the deployment's writer stays silently non-compliant: every
+    order looks unconfirmed to the customer and nothing anywhere says why.
+    """
+    spec = build_order_writer_tool_spec(_RecordingWriter({"status": "created"}))
+
+    with capture_logs() as logs:
+        await spec.connector(_AN_ORDER)
+
+    assert any(entry["event"] == "order.write_unconfirmed" for entry in logs)
 
 
 @pytest.mark.parametrize(
