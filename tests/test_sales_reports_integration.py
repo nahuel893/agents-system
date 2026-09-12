@@ -30,9 +30,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from agentsys.connectors.sales_reports import CATALOG
+from agentsys.connectors.sales_reports import CATALOG, UNMAPPED_STATUS
 from agentsys.services.reports import run_report
 
 pytestmark = pytest.mark.integration
@@ -124,6 +125,115 @@ async def test_no_sale_falls_outside_the_canonical_vocabulary(engine: Any) -> No
         "pending",
         "cancelled",
     }
+
+
+@pytest.fixture
+async def sale_with_an_unmapped_status(engine: Any) -> Any:
+    """Insert one invoice whose `estado` the view's CASE does not recognise.
+
+    The demo seed only ever writes the three words the view maps, so the
+    unmapped path is unreachable from the seed alone — which is exactly why it
+    stayed broken: `ELSE 'cancelled'` had no test that could see it. This
+    fixture supplies the missing row, then removes it, so the surrounding
+    tests' exact counts stay exact.
+    """
+    sale_id = 999_001
+    amount = "12345.00"
+    async with engine.begin() as conn:
+        customer = await conn.execute(
+            text("SELECT MIN(nro_cliente) FROM padron_clientes")
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO facturas "
+                "(nro_factura, nro_cliente, fecha_emision, estado, importe_total) "
+                "VALUES (:id, :cliente, now(), 'en_proceso', :amount)"
+            ),
+            {"id": sale_id, "cliente": customer.scalar_one(), "amount": amount},
+        )
+    try:
+        yield {"sale_id": sale_id, "amount": amount}
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("DELETE FROM facturas WHERE nro_factura = :id"),
+                {"id": sale_id},
+            )
+
+
+async def test_an_unmapped_source_status_is_not_reported_as_a_cancellation(
+    engine: Any, sale_with_an_unmapped_status: dict[str, Any]
+) -> None:
+    """THE regression. 'en_proceso' must not be counted as a cancelled sale.
+
+    The view used to end `ELSE 'cancelled'`, on the reasoning that keeping an
+    unrecognized status out of revenue is conservative. It is — for revenue. But
+    `status_summary` does not filter by status, so this row came back as a
+    CANCELLATION that no invoice in the company ever recorded, and the agent
+    would report that figure with full confidence.
+    """
+    result = await _report(engine, "status_summary", months_back=WHOLE_HISTORY, limit=50)
+
+    counts = {row["status"]: row["sale_count"] for row in result["rows"]}
+
+    assert counts.get(UNMAPPED_STATUS) == 1
+    assert counts["cancelled"] == SEEDED_CANCELLED
+
+
+async def test_an_unmapped_status_is_excluded_from_every_revenue_figure(
+    engine: Any, sale_with_an_unmapped_status: dict[str, Any]
+) -> None:
+    """Outside the vocabulary means outside every status-filtered report.
+
+    This is the half the old mapping got right, and it has to survive the fix:
+    an unmapped row must not reach revenue just because it is no longer called
+    cancelled.
+    """
+    result = await _report(engine, "sales_by_zone", months_back=WHOLE_HISTORY, limit=50)
+
+    counted = sum(row["sale_count"] for row in result["rows"])
+
+    assert counted == SEEDED_CONFIRMED + SEEDED_PENDING
+    assert Decimalish(sale_with_an_unmapped_status["amount"]) not in [
+        Decimalish(row["revenue"]) for row in result["rows"]
+    ]
+
+
+async def test_the_loader_refuses_to_certify_a_database_with_unmapped_statuses(
+    engine: Any, sale_with_an_unmapped_status: dict[str, Any]
+) -> None:
+    """Visible in a report is good; caught at load time is better.
+
+    A deployment that adds a status word should learn about it from the loader,
+    naming the word and the file to edit, rather than from a revenue number that
+    quietly stopped adding up.
+    """
+    problems = await _loader_contract_problems(engine)
+
+    assert any("en_proceso" in problem for problem in problems)
+
+
+async def test_the_loader_certifies_the_untouched_demo_database(engine: Any) -> None:
+    """The check must be silent when the mapping is complete.
+
+    Without this, a check that always reported a problem would pass the test
+    above and make the loader useless.
+    """
+    assert await _loader_contract_problems(engine) == []
+
+
+async def _loader_contract_problems(engine: Any) -> list[str]:
+    """Run the real loader's contract verification against *engine*."""
+    import importlib.util
+
+    path = _REPO_ROOT / "demo" / "load_demo_company.py"
+    spec = importlib.util.spec_from_file_location("demo_loader_for_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    async with engine.connect() as conn:
+        problems: list[str] = await module._verify_contract(conn)
+    return problems
 
 
 async def test_the_default_status_filter_excludes_cancelled_sales(

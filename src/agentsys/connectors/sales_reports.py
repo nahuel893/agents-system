@@ -68,6 +68,22 @@ CONTRACT_VIEWS: dict[str, tuple[str, ...]] = {
 ALL_STATUSES: tuple[str, ...] = ("confirmed", "pending", "cancelled")
 NON_CANCELLED_STATUSES: tuple[str, ...] = ("confirmed", "pending")
 
+#: What a view MUST emit for a source status it cannot map onto the vocabulary
+#: above. Reserved, and deliberately not one of the three.
+#:
+#: The tempting answer is to fold unrecognized values into 'cancelled', since
+#: that keeps them out of revenue. It is the wrong answer, because it is only
+#: half a decision: `status_summary` does not filter by status, so those rows
+#: come back counted as CANCELLATIONS the source never recorded. The agent then
+#: reports a cancellation figure no row supports — a confident wrong number,
+#: which is the failure this whole contract exists to make impossible.
+#:
+#: Outside the vocabulary, both halves stay honest: every status-filtered report
+#: excludes these rows because they match none of the three, and
+#: `status_summary` shows them under their own name, so the gap is visible to
+#: whoever can fix the view.
+UNMAPPED_STATUS: str = "unknown"
+
 _STATUS_ALLOWED: tuple[str, ...] = ("default", "all", *ALL_STATUSES)
 
 _DAYS_PER_MONTH = 30
@@ -122,7 +138,11 @@ def _window_metadata(
     if months_back is None or since is None:
         return {}
     return {
-        "window_days": _DAYS_PER_MONTH * int(months_back),
+        # No `int()` cast: `validate_params` already rejected any
+        # `months_back` that is not an int (and rejects bool explicitly),
+        # and the None case returned above. The cast could only ever be a
+        # no-op, while reading as though this value were untrusted here.
+        "window_days": _DAYS_PER_MONTH * months_back,
         "window_start": since.isoformat(),
         "window_is_calendar_months": False,
     }
