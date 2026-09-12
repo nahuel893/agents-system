@@ -55,6 +55,21 @@ password. It would land in the agent's message history, get summarized, and
 be echoed to a customer. The real exception goes to the log.
 """
 
+_UNCONFIRMED_MESSAGE = (
+    "The order system did not return an order number, so this order could NOT "
+    "be confirmed. Do NOT tell the customer the order was placed, and do NOT "
+    "give them an order number. Do NOT place it again — it may already exist. "
+    "Tell them it needs to be checked by a person and hand them to a human."
+)
+"""Deliberately not the write-failed text.
+
+`create_order` returning normally asserts, per the protocol, that the order WAS
+persisted; the platform simply cannot name it. Saying "not placed" here would
+be a lie in the opposite direction, and the customer's natural response — order
+again — would write a second real order. Unconfirmed is its own outcome and the
+only safe instruction is to stop and escalate.
+"""
+
 _ORDER_WRITER_DESCRIPTION = (
     "Create a new order for a client. Requires client_id (from the client "
     "lookup tool) and a list of items with product_id and qty. An order "
@@ -123,7 +138,7 @@ def build_order_writer_connector(writer: OrderWriter | None) -> AsyncConnector:
             }
 
         try:
-            return await writer.create_order(
+            result = await writer.create_order(
                 session, client_id=client_id, items=items
             )
         except Exception:
@@ -140,6 +155,36 @@ def build_order_writer_connector(writer: OrderWriter | None) -> AsyncConnector:
                 "error": _WRITE_FAILED_MESSAGE,
                 "error_kind": "order_write_failed",
             }
+
+        # The writer belongs to the deployment, so its result is untrusted
+        # input, not an internal value. This tool's own description promises
+        # the model that "an order exists only if this tool returns an
+        # order_id" — relaying `{"status": "created"}` with no id would make
+        # that promise false and reinstate the exact fabrication this issue
+        # removed, one boundary further out. The platform cannot verify the
+        # write, so it does not repeat a claim about it.
+        order_id = (
+            str(result.get("order_id") or "").strip()
+            if isinstance(result, dict)
+            else ""
+        )
+        if not order_id:
+            # The operator needs the broken contract; the model gets only the
+            # safe sentence. Without this the writer stays silently
+            # non-compliant and every order looks unconfirmed with no reason
+            # recorded anywhere.
+            _logger.error(
+                "order.write_unconfirmed",
+                client_id=client_id,
+                result_type=type(result).__name__,
+                result_keys=sorted(result) if isinstance(result, dict) else None,
+            )
+            return {
+                "error": _UNCONFIRMED_MESSAGE,
+                "error_kind": "order_write_unconfirmed",
+            }
+
+        return result
 
     return order_writer_connector
 
