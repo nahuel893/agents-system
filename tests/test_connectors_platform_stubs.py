@@ -93,12 +93,18 @@ EXPECTED_SUMMARY = (
 #:   run_report     — closed over the BI engine, which is exactly the point:
 #:                    the RAG registry can be handed a real read-only engine
 #:                    while the stub registry stays unbound.
+#:   order_writer   — closed over the deployment's OrderWriter, for the same
+#:                    reason (issue #39): the platform has no order system of
+#:                    its own, so the stub registry stays unbound while a
+#:                    consuming application binds a real one.
 #:
-#: Drift is guarded structurally instead: both registries build run_report
-#: through the one `build_report_tool_spec` factory, so there are no
-#: hand-duplicated specs to diverge — which is the failure mode this test
-#: exists to catch for the others.
-SHARED_TOOLS = tuple(sorted(ALL_PLATFORM_TOOLS - {"catalog_search", "run_report"}))
+#: Drift is guarded structurally instead: both registries build these through
+#: one factory each (`build_report_tool_spec`, `build_order_writer_tool_spec`),
+#: so there are no hand-duplicated specs to diverge — which is the failure
+#: mode this test exists to catch for the others.
+SHARED_TOOLS = tuple(
+    sorted(ALL_PLATFORM_TOOLS - {"catalog_search", "run_report", "order_writer"})
+)
 
 
 @dataclass
@@ -502,3 +508,55 @@ def test_every_tool_declared_on_disk_exists_in_both_registries(
         f"role '{role_type}' declares {missing}, absent from the "
         f"{builder_name} registry — the role cannot boot"
     )
+
+
+# --- No registered connector may fabricate a result (issue #39) -------------
+
+
+@pytest.mark.parametrize("builder_name", sorted(REGISTRY_BUILDERS))
+async def test_order_writer_in_every_registry_refuses_instead_of_fabricating(
+    builder_name: str,
+) -> None:
+    """Neither registry may hand back a created order it did not create.
+
+    The stub this replaces minted ``ord-NNNN`` from a process counter and
+    priced it off a five-product dict, so a customer was told their order
+    existed while nothing was written. The platform ships no order system, so
+    the only honest answer here is a refusal.
+
+    Asserting the error alone would pass on a connector that returned an error
+    AND an ``order_id``; the model reads the whole dict, so the absence of a
+    success shape is the requirement.
+    """
+    import inspect
+
+    spec = REGISTRY_BUILDERS[builder_name]().get("order_writer")
+
+    result = spec.connector(
+        {"client_id": "cl-001", "items": [{"product_id": "prod-001", "qty": 2}]}
+    )
+    if inspect.isawaitable(result):
+        result = await result
+
+    assert "order_id" not in result, (
+        f"the {builder_name} registry's order_writer returned an order_id for "
+        f"an order nothing persisted: {result!r}"
+    )
+    assert result.get("status") != "created"
+    assert result["error_kind"] == "order_writing_not_configured"
+
+
+def test_both_registries_build_order_writer_from_the_same_factory() -> None:
+    """`order_writer` leaves SHARED_TOOLS, so its drift guard lives here.
+
+    The identity check the shared test uses cannot work on a factory-built
+    tool — each call closes over its own writer and yields a distinct
+    function. What must not drift is the contract the model sees, so compare
+    that instead. If someone hand-writes a ToolSpec here again, this fails.
+    """
+    stub_spec = _stub_registry().get("order_writer")
+    rag_spec = _rag_registry().get("order_writer")
+
+    assert stub_spec.required_permissions == rag_spec.required_permissions
+    assert stub_spec.input_schema == rag_spec.input_schema
+    assert stub_spec.description == rag_spec.description

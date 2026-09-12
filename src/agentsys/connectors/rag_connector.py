@@ -20,10 +20,10 @@ from agentsys.connectors.platform_stubs import (
 from agentsys.connectors.stubs import (
     client_lookup,
     message_sender,
-    order_writer,
     session_state,
 )
 from agentsys.connectors.acme_reports import CATALOG as _BI_CATALOG
+from agentsys.connectors.order_connector import build_order_writer_tool_spec
 from agentsys.connectors.report_connector import build_report_tool_spec
 from agentsys.connectors.operator import (
     TerminalPolicy,
@@ -31,6 +31,7 @@ from agentsys.connectors.operator import (
 )
 from agentsys.harness.registry import ToolRegistry, ToolSpec
 from agentsys.services.catalog import CatalogTables
+from agentsys.services.orders import OrderWriter
 from agentsys.services.embeddings import (
     EmbeddingProvider,
     get_embedding_provider,
@@ -112,6 +113,7 @@ def build_acme_rag_registry(
     embedder: EmbeddingProvider | None = None,
     bi_engine: AsyncEngine | None = None,
     terminal_policy: TerminalPolicy | None = None,
+    order_writer: OrderWriter | None = None,
 ) -> ToolRegistry:
     """Return a ToolRegistry with the async RAG catalog connector and 7 sync stubs.
 
@@ -162,39 +164,13 @@ def build_acme_rag_registry(
             connector=client_lookup,
         )
     )
-    registry.register(
-        ToolSpec(
-            name="order_writer",
-            description=(
-                "Create a new order for a client. Requires client_id "
-                "(from client_lookup) and a list of items with product_id and qty."
-            ),
-            required_permissions=("write:orders", "write:order_items"),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "client_id": {
-                        "type": "string",
-                        "description": "Client ID obtained from client_lookup",
-                    },
-                    "items": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "product_id": {"type": "string"},
-                                "qty": {"type": "integer"},
-                            },
-                            "required": ["product_id", "qty"],
-                        },
-                        "description": "List of products to order",
-                    },
-                },
-                "required": ["client_id", "items"],
-            },
-            connector=order_writer,
-        )
-    )
+    # Always present, bound only when the deployment supplies an order system.
+    # platform/roles/sales-agent names order_writer, and a tool a manifest
+    # names but the registry lacks makes the whole role unbuildable via
+    # InjectionError. Unbound, it answers that the order was not created —
+    # never the `ord-NNNN` the stub used to mint for an order that existed
+    # nowhere (issue #39).
+    registry.register(build_order_writer_tool_spec(order_writer))
     registry.register(
         ToolSpec(
             name="message_sender",
