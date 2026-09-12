@@ -14,6 +14,28 @@
 --
 -- `02_views.sql` absorbs all three. Nothing in the platform's SQL changes.
 
+-- The loader's signature, and the FIRST thing created.
+--
+-- `demo/load_demo_company.py` refuses to touch a database that holds objects
+-- but not this table. Identifying the target by marker rather than by the table
+-- names below is deliberate: those names imitate a real Argentine distributor's
+-- ERP, so "the tables look like the demo's" is exactly the evidence a real
+-- company's database would also produce, moments before this file dropped it.
+--
+-- Created before the DROPs so that an interrupted first load still leaves the
+-- database marked as the loader's own, and the retry is allowed through.
+CREATE TABLE IF NOT EXISTS agentsys_demo_marker (
+    note       text        NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Cleared first: the loader is meant to be re-run, and an INSERT alone would
+-- stack one row per load, making the marker a growing log instead of a fact.
+DELETE FROM agentsys_demo_marker;
+
+INSERT INTO agentsys_demo_marker (note)
+VALUES ('Created by demo/load_demo_company.py. This database is disposable.');
+
 DROP VIEW IF EXISTS agentsys_stock;
 DROP VIEW IF EXISTS agentsys_sale_items;
 DROP VIEW IF EXISTS agentsys_sales;

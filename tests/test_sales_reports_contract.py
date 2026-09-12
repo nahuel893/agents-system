@@ -12,10 +12,20 @@ a real table name, it stops being portable, and the failure has to be loud.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
-from agentsys.connectors.sales_reports import CATALOG, CONTRACT_VIEWS
+from agentsys.connectors.sales_reports import (
+    ALL_STATUSES,
+    CATALOG,
+    CONTRACT_VIEWS,
+    UNMAPPED_STATUS,
+)
+
+_DEMO_VIEWS_SQL = (
+    Path(__file__).resolve().parents[1] / "demo" / "company" / "02_views.sql"
+)
 
 #: Written out independently of the module under test. Deriving it from
 #: CONTRACT_VIEWS would make the test compare the module to itself, which
@@ -48,6 +58,41 @@ def _relations(sql_text: str) -> set[str]:
 
 def test_the_contract_names_exactly_the_four_expected_views() -> None:
     assert set(CONTRACT_VIEWS) == EXPECTED_VIEWS
+
+
+# --- The status vocabulary, and what a deployment does with a word it lacks ---
+
+
+def test_the_reserved_unmapped_status_is_not_one_of_the_canonical_three() -> None:
+    """The whole point is that it cannot be mistaken for a real status.
+
+    If `UNMAPPED_STATUS` were 'cancelled', every filtered report would exclude
+    unmapped rows (correct) while `status_summary` reported them as
+    cancellations (invented). A value outside the vocabulary cannot do that.
+    """
+    assert UNMAPPED_STATUS not in ALL_STATUSES
+
+
+def test_the_demo_maps_unrecognized_source_statuses_to_the_reserved_word() -> None:
+    """The demo is the worked example deployments copy, so its CASE matters.
+
+    It used to end `ELSE 'cancelled'`, reasoning that excluding unknown rows
+    from revenue is the conservative choice. It is conservative for revenue and
+    a fabrication for `status_summary`, which does not filter by status and
+    would therefore report a cancellation count that no row in the source
+    supports. Both halves have to be honest, so the ELSE must land outside the
+    vocabulary.
+    """
+    sql = _DEMO_VIEWS_SQL.read_text()
+
+    else_targets = {
+        match.group(1).lower()
+        for match in re.finditer(r"\bELSE\s+'([a-z_]+)'", sql, re.IGNORECASE)
+    }
+
+    assert else_targets, "no CASE ... ELSE found; this test would pass vacuously"
+    assert else_targets == {UNMAPPED_STATUS}
+    assert not else_targets & set(ALL_STATUSES)
 
 
 def test_the_catalog_offers_exactly_the_expected_reports() -> None:

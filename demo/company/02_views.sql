@@ -23,11 +23,23 @@ FROM padron_clientes;
 --
 -- The status mapping is the part that is easy to get wrong and impossible to
 -- notice: every report's status filter and every `statuses_included`
--- disclosure is downstream of it. An unmapped value would silently fall out
--- of every filtered report — the rows would not error, they would just be
--- absent — so anything unrecognized is mapped to 'cancelled', the
--- conservative choice: excluded from revenue by default and visible in
--- `status_summary`, rather than quietly inflating sales.
+-- disclosure is downstream of it.
+--
+-- The ELSE is the interesting line. It used to say 'cancelled', on the
+-- reasoning that excluding an unrecognized status from revenue is the
+-- conservative choice. That is only half a decision, and the other half is a
+-- fabrication: `status_summary` does NOT filter by status, so a new source word
+-- like 'en_proceso' came back counted as a CANCELLATION that no invoice ever
+-- recorded. The agent would then report a cancellation figure with total
+-- confidence and no row behind it.
+--
+-- So unrecognized values map to 'unknown' — `sales_reports.UNMAPPED_STATUS`,
+-- reserved and outside the canonical vocabulary. Both halves stay honest: every
+-- status-filtered report still excludes these rows (they match none of the
+-- three), and `status_summary` shows them under their own name, so whoever can
+-- fix this view can see that it needs fixing. `demo/load_demo_company.py`
+-- additionally fails the load when any row lands here, so a new status word is
+-- caught at load time rather than in a report months later.
 CREATE VIEW agentsys_sales AS
 SELECT
     nro_factura   AS sale_id,
@@ -37,7 +49,7 @@ SELECT
         WHEN 'facturada' THEN 'confirmed'
         WHEN 'pendiente' THEN 'pending'
         WHEN 'anulada'   THEN 'cancelled'
-        ELSE 'cancelled'
+        ELSE 'unknown'
     END           AS status,
     importe_total AS amount
 FROM facturas;
