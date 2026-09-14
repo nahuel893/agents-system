@@ -14,10 +14,10 @@ from typing import Any
 from agentsys.connectors.acme_reports import CATALOG as _BI_CATALOG
 from agentsys.connectors.order_connector import build_order_writer_tool_spec
 from agentsys.connectors.report_connector import build_report_tool_spec
-from agentsys.connectors.platform_stubs import (
-    conversation_summarizer,
-    escalation_notifier,
-    knowledge_retrieval,
+from agentsys.connectors.platform_connectors import (
+    build_conversation_summarizer_tool_spec,
+    build_escalation_notifier_tool_spec,
+    build_knowledge_retrieval_tool_spec,
 )
 from agentsys.connectors.operator import (
     TerminalPolicy,
@@ -82,10 +82,10 @@ def session_state(inputs: dict[str, Any]) -> dict[str, Any]:
 def build_acme_registry(
     terminal_policy: TerminalPolicy | None = None,
 ) -> ToolRegistry:
-    """Return a ToolRegistry wired with the five ACME sales-agent stubs plus
-    the three platform-generic stubs (knowledge_retrieval,
+    """Return a ToolRegistry wired with the ACME sales-agent stubs plus the
+    three platform-generic tools (knowledge_retrieval,
     conversation_summarizer, escalation_notifier) declared by the generic
-    roles under ``platform/roles/``.
+    roles under ``platform/roles/``, all three registered unbound.
 
     Extra entries are inert for ACME: the injector only iterates over
     ``definition.tools``, so the sales-agent surface is unchanged.
@@ -131,27 +131,14 @@ def build_acme_registry(
     # role unbuildable via InjectionError — not partially usable. main.py
     # supplies the real read-only engine at startup.
     registry.register(build_report_tool_spec(None, _BI_CATALOG))
-    registry.register(ToolSpec(
-        name="knowledge_retrieval",
-        description="Search the organizational knowledge base. Returns a list of matching knowledge hits with id, title, and snippet.",
-        required_permissions=("read:knowledge_base",),
-        input_schema={"type": "object", "properties": {"q": {"type": "string", "description": "Natural-language knowledge query, e.g. 'return policy' or 'delivery zones'"}}, "required": ["q"]},
-        connector=knowledge_retrieval,
-    ))
-    registry.register(ToolSpec(
-        name="conversation_summarizer",
-        description="Summarize a conversation session. Returns the session_id, a summary text, and message_count. Use max_messages to bound how many recent messages are considered.",
-        required_permissions=("read:conversation_logs",),
-        input_schema={"type": "object", "properties": {"session_id": {"type": "string", "description": "Conversation session identifier"}, "max_messages": {"type": "integer", "description": "Optional cap on the number of most recent messages to summarize"}}, "required": ["session_id"]},
-        connector=conversation_summarizer,
-    ))
-    registry.register(ToolSpec(
-        name="escalation_notifier",
-        description="Notify a human operator that the conversation needs escalation. Requires a reason and supporting details. Returns the notification status and escalation_id.",
-        required_permissions=("send:escalation",),
-        input_schema={"type": "object", "properties": {"reason": {"type": "string", "description": "Short reason for the escalation, e.g. 'customer_angry'"}, "details": {"type": "string", "description": "Supporting context for the human operator"}}, "required": ["reason", "details"]},
-        connector=escalation_notifier,
-    ))
+    # Unbound, like order_writer and run_report above: the platform owns no
+    # knowledge base, no conversation store and no escalation channel, so each
+    # tool reports that rather than answering (issue #39). The stubs these
+    # replace returned three hardcoded knowledge hits, one fixed summary
+    # sentence, and `esc-NNNN` for an escalation no human ever received.
+    registry.register(build_knowledge_retrieval_tool_spec(None))
+    registry.register(build_conversation_summarizer_tool_spec(None))
+    registry.register(build_escalation_notifier_tool_spec(None))
     # The operator tools, registered INERT: `build_operator_tool_specs()` with
     # no policy refuses every command and roots reads at the process cwd.
     # `platform/roles/operator-agent` names both, and a tool a manifest names

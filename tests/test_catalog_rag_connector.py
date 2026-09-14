@@ -309,19 +309,33 @@ def test_registry_has_the_expected_tools_with_async_catalog() -> None:
     # `order_writer` joined `catalog_search` on the async side with issue #39:
     # it now delegates to the deployment's OrderWriter (or refuses) instead of
     # computing a fake order from a module-level price dict.
-    for name in ("catalog_search", "order_writer"):
+    #
+    # The three platform-generic tools followed, for the same reason and in the
+    # same issue: each delegates to a port the deployment supplies
+    # (KnowledgeBase, ConversationSummarizer, EscalationChannel), and those are
+    # async because a real knowledge base, transcript store or escalation
+    # channel is I/O. Sync was only ever possible while the answers came from
+    # module-level fixtures.
+    for name in (
+        "catalog_search",
+        "order_writer",
+        "knowledge_retrieval",
+        "conversation_summarizer",
+        "escalation_notifier",
+    ):
         spec = registry.get(name)
         assert asyncio.iscoroutinefunction(spec.connector), (
             f"{name} should be async but iscoroutinefunction returned False"
         )
 
+    # Still sync, and still fabricating — issue #39 is not closed by this
+    # branch. These three are the remaining work: `client_lookup` matches a
+    # two-phone dict, `message_sender` reports `sent` with no network call, and
+    # `session_state` echoes its input without persisting anything.
     for name in (
         "client_lookup",
         "message_sender",
         "session_state",
-        "knowledge_retrieval",
-        "conversation_summarizer",
-        "escalation_notifier",
     ):
         spec = registry.get(name)
         assert not asyncio.iscoroutinefunction(spec.connector), (
