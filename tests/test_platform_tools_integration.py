@@ -158,7 +158,12 @@ async def test_knowledge_retrieval_executes_on_data_agent() -> None:
     result = await intercept("knowledge_retrieval", {"q": "pricing"}, runtime)
 
     assert result.revalidated is False  # read tool — no call-time revalidation
-    assert [hit["id"] for hit in result.output["results"]] == ["kb-001"]
+    # What this test proves is that the tool RESOLVES and EXECUTES on this
+    # role through the interceptor. What it comes back with is the platform's
+    # refusal, because no deployment knowledge base is bound here (issue #39);
+    # it used to be three canned hits about wholesale discounts.
+    assert result.output["error_kind"] == "knowledge_not_configured"
+    assert "results" not in result.output
 
 
 async def test_conversation_summarizer_executes_on_summary_agent() -> None:
@@ -171,9 +176,11 @@ async def test_conversation_summarizer_executes_on_summary_agent() -> None:
     )
 
     assert result.revalidated is False
-    assert result.output["session_id"] == "s-001"
-    assert result.output["message_count"] == 3
-    assert "purchase" in result.output["summary"]
+    assert result.output["error_kind"] == "summarization_not_configured"
+    # It used to answer with one fixed sentence for every session id it was
+    # ever handed — an account of a conversation it never read.
+    assert "summary" not in result.output
+    assert "message_count" not in result.output
 
 
 async def test_escalation_notifier_executes_on_orchestrator() -> None:
@@ -189,8 +196,13 @@ async def test_escalation_notifier_executes_on_orchestrator() -> None:
     )
 
     assert result.revalidated is True
-    assert result.output["status"] == "notified"
-    assert isinstance(result.output["escalation_id"], str)
+    # The permission gate passed and the tool ran; the platform has no
+    # escalation channel, so it says nobody was notified instead of minting
+    # `esc-NNNN` for a human who was never told (issue #39). Revalidation and
+    # delivery are separate facts, and this test pins both.
+    assert result.output["error_kind"] == "escalation_not_configured"
+    assert result.output.get("status") != "notified"
+    assert "escalation_id" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +234,8 @@ async def test_escalation_notifier_revalidated_with_send_escalation() -> None:
     )
 
     assert result.revalidated is True
-    assert result.output["status"] == "notified"
+    assert result.output["error_kind"] == "escalation_not_configured"
+    assert result.output.get("status") != "notified"
 
 
 async def test_escalation_notifier_blocked_when_permission_revoked() -> None:

@@ -12,10 +12,10 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agentsys.config import Settings
-from agentsys.connectors.platform_stubs import (
-    conversation_summarizer,
-    escalation_notifier,
-    knowledge_retrieval,
+from agentsys.connectors.platform_connectors import (
+    build_conversation_summarizer_tool_spec,
+    build_escalation_notifier_tool_spec,
+    build_knowledge_retrieval_tool_spec,
 )
 from agentsys.connectors.stubs import (
     client_lookup,
@@ -36,11 +36,14 @@ from agentsys.services.embeddings import (
     EmbeddingProvider,
     get_embedding_provider,
 )
+from agentsys.services.escalation import EscalationChannel
+from agentsys.services.knowledge import KnowledgeBase
 from agentsys.services.rag import (
     CatalogSearchResult,
     CatalogSource,
     search_catalog,
 )
+from agentsys.services.summaries import ConversationSummarizer
 
 ConnectorOutput = dict[str, Any]
 AsyncConnector = Callable[..., Awaitable[ConnectorOutput]]
@@ -114,13 +117,17 @@ def build_acme_rag_registry(
     bi_engine: AsyncEngine | None = None,
     terminal_policy: TerminalPolicy | None = None,
     order_writer: OrderWriter | None = None,
+    knowledge_base: KnowledgeBase | None = None,
+    summarizer: ConversationSummarizer | None = None,
+    escalation_channel: EscalationChannel | None = None,
 ) -> ToolRegistry:
-    """Return a ToolRegistry with the async RAG catalog connector and 7 sync stubs.
+    """Return a ToolRegistry with the async RAG catalog connector and the rest.
 
-    The sync stubs are the 4 ACME sales-agent connectors plus the 3
-    platform-generic connectors (knowledge_retrieval, conversation_summarizer,
-    escalation_notifier) declared by the generic roles under
-    ``platform/roles/``.
+    The three platform-generic tools declared by the generic roles under
+    ``platform/roles/`` are always registered and bound only when the
+    deployment supplies the corresponding port. Unbound, each one says it is
+    not configured — the platform owns no knowledge base, no conversation
+    store and no escalation channel (issue #39).
 
     The embedder is resolved once at build time and captured in the connector
     closure (BGE-M3 is heavy — load once per registry, not per call).
@@ -219,88 +226,15 @@ def build_acme_rag_registry(
     # InjectionError. Unbound, it answers that reporting is unavailable.
     registry.register(build_report_tool_spec(bi_engine, _BI_CATALOG))
 
-    registry.register(
-        ToolSpec(
-            name="knowledge_retrieval",
-            description=(
-                "Search the organizational knowledge base. Returns a list of "
-                "matching knowledge hits with id, title, and snippet."
-            ),
-            required_permissions=("read:knowledge_base",),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "q": {
-                        "type": "string",
-                        "description": (
-                            "Natural-language knowledge query, e.g. "
-                            "'return policy' or 'delivery zones'."
-                        ),
-                    }
-                },
-                "required": ["q"],
-            },
-            connector=knowledge_retrieval,
-        )
-    )
-    registry.register(
-        ToolSpec(
-            name="conversation_summarizer",
-            description=(
-                "Summarize a conversation session. Returns the session_id, a "
-                "summary text, and message_count. Use max_messages to bound "
-                "how many recent messages are considered."
-            ),
-            required_permissions=("read:conversation_logs",),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "session_id": {
-                        "type": "string",
-                        "description": "Conversation session identifier",
-                    },
-                    "max_messages": {
-                        "type": "integer",
-                        "description": (
-                            "Optional cap on the number of most recent "
-                            "messages to summarize"
-                        ),
-                    },
-                },
-                "required": ["session_id"],
-            },
-            connector=conversation_summarizer,
-        )
-    )
-    registry.register(
-        ToolSpec(
-            name="escalation_notifier",
-            description=(
-                "Notify a human operator that the conversation needs "
-                "escalation. Requires a reason and supporting details. "
-                "Returns the notification status and escalation_id."
-            ),
-            required_permissions=("send:escalation",),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "reason": {
-                        "type": "string",
-                        "description": (
-                            "Short reason for the escalation, "
-                            "e.g. 'customer_angry'"
-                        ),
-                    },
-                    "details": {
-                        "type": "string",
-                        "description": "Supporting context for the human operator",
-                    },
-                },
-                "required": ["reason", "details"],
-            },
-            connector=escalation_notifier,
-        )
-    )
+    # Always present, bound only when the deployment supplies the system.
+    # The generic role manifests name all three, and a tool a manifest names
+    # but the registry lacks makes the whole role unbuildable via
+    # InjectionError. Unbound, each says so rather than answering: the stubs
+    # these replace returned three hardcoded knowledge hits, one fixed summary
+    # sentence, and `esc-NNNN` for an escalation no human ever received.
+    registry.register(build_knowledge_retrieval_tool_spec(knowledge_base))
+    registry.register(build_conversation_summarizer_tool_spec(summarizer))
+    registry.register(build_escalation_notifier_tool_spec(escalation_channel))
     # The operator tools, registered INERT: `build_operator_tool_specs()` with
     # no policy refuses every command and roots reads at the process cwd.
     # `platform/roles/operator-agent` names both, and a tool a manifest names

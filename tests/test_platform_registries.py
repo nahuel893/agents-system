@@ -98,12 +98,29 @@ EXPECTED_SUMMARY = (
 #:                    its own, so the stub registry stays unbound while a
 #:                    consuming application binds a real one.
 #:
+#:   knowledge_retrieval / conversation_summarizer / escalation_notifier —
+#:                    joined that list when they stopped being module-level
+#:                    stub functions (issue #39). Each is now closed over a
+#:                    port the platform does not implement, so the two
+#:                    registries can bind them differently on purpose.
+#:
 #: Drift is guarded structurally instead: both registries build these through
-#: one factory each (`build_report_tool_spec`, `build_order_writer_tool_spec`),
-#: so there are no hand-duplicated specs to diverge — which is the failure
-#: mode this test exists to catch for the others.
+#: one factory each, so there are no hand-duplicated specs to diverge — which
+#: is the failure mode this test exists to catch for the others. The contract
+#: the model sees is compared in `FACTORY_BUILT_TOOLS` below.
+FACTORY_BUILT_TOOLS = (
+    "order_writer",
+    "knowledge_retrieval",
+    "conversation_summarizer",
+    "escalation_notifier",
+)
+
 SHARED_TOOLS = tuple(
-    sorted(ALL_PLATFORM_TOOLS - {"catalog_search", "run_report", "order_writer"})
+    sorted(
+        ALL_PLATFORM_TOOLS
+        - {"catalog_search", "run_report"}
+        - set(FACTORY_BUILT_TOOLS)
+    )
 )
 
 
@@ -160,249 +177,6 @@ def _without_descriptions(node: Any) -> Any:
     if isinstance(node, list):
         return [_without_descriptions(value) for value in node]
     return node
-
-
-# ---------------------------------------------------------------------------
-# knowledge_retrieval
-# ---------------------------------------------------------------------------
-
-def test_knowledge_retrieval_returns_results_list() -> None:
-    from agentsys.connectors.platform_stubs import knowledge_retrieval
-
-    result = knowledge_retrieval({"q": "pricing"})
-
-    assert "results" in result
-    assert isinstance(result["results"], list)
-    assert len(result["results"]) >= 1
-
-
-def test_knowledge_retrieval_hit_shape() -> None:
-    from agentsys.connectors.platform_stubs import knowledge_retrieval
-
-    hit = knowledge_retrieval({"q": "pricing"})["results"][0]
-
-    assert set(hit) == {"id", "title", "snippet"}
-
-
-def test_knowledge_retrieval_empty_query_returns_every_canonical_hit() -> None:
-    from agentsys.connectors.platform_stubs import knowledge_retrieval
-
-    result = knowledge_retrieval({"q": ""})
-
-    assert result["results"] == CANONICAL_HITS
-
-
-def test_knowledge_retrieval_missing_query_returns_every_canonical_hit() -> None:
-    from agentsys.connectors.platform_stubs import knowledge_retrieval
-
-    result = knowledge_retrieval({})
-
-    assert result["results"] == CANONICAL_HITS
-
-
-def test_knowledge_retrieval_matches_title_and_snippet() -> None:
-    """'delivery' hits kb-002 by title AND kb-003 by snippet — both, in order."""
-    from agentsys.connectors.platform_stubs import knowledge_retrieval
-
-    result = knowledge_retrieval({"q": "delivery"})
-
-    assert result["results"] == [CANONICAL_HITS[1], CANONICAL_HITS[2]]
-
-
-def test_knowledge_retrieval_no_match_returns_first_two_hits() -> None:
-    from agentsys.connectors.platform_stubs import knowledge_retrieval
-
-    result = knowledge_retrieval({"q": "zzz-no-such-topic"})
-
-    assert result["results"] == CANONICAL_HITS[:2]
-
-
-def test_knowledge_retrieval_query_is_case_insensitive() -> None:
-    from agentsys.connectors.platform_stubs import knowledge_retrieval
-
-    upper = knowledge_retrieval({"q": "PRICING"})
-
-    assert upper["results"] == [CANONICAL_HITS[0]]
-
-
-def test_knowledge_retrieval_results_alias_the_shared_fixture_documented_gap() -> None:
-    """knowledge_retrieval hands back the module-level list BY REFERENCE.
-
-    Latent today (``_execute_tools`` only json.dumps the output), but any
-    post-processing added between connector and ToolMessage — redaction,
-    scoring, annotation — would rewrite the knowledge base for the whole
-    process lifetime. Closing this needs a defensive copy in production code;
-    this test pins the hazard and goes red the moment that copy lands.
-    """
-    from agentsys.connectors import platform_stubs
-
-    results = platform_stubs.knowledge_retrieval({"q": ""})["results"]
-
-    assert results is platform_stubs._KNOWLEDGE_HITS
-
-    original = results[0]["snippet"]
-    try:
-        results[0]["snippet"] = "MUTATED"
-        assert (
-            platform_stubs.knowledge_retrieval({})["results"][0]["snippet"]
-            == "MUTATED"
-        )
-    finally:
-        results[0]["snippet"] = original
-
-    assert platform_stubs.knowledge_retrieval({})["results"] == CANONICAL_HITS
-
-
-# ---------------------------------------------------------------------------
-# conversation_summarizer
-# ---------------------------------------------------------------------------
-
-def test_conversation_summarizer_returns_pinned_summary_dict() -> None:
-    from agentsys.connectors.platform_stubs import conversation_summarizer
-
-    result = conversation_summarizer({"session_id": "s-001"})
-
-    assert result == {
-        "session_id": "s-001",
-        "summary": EXPECTED_SUMMARY,
-        "message_count": 3,
-    }
-
-
-@pytest.mark.parametrize("session_id", ["s-001", "s-002"])
-def test_conversation_summarizer_echoes_the_requested_session_id(
-    session_id: str,
-) -> None:
-    """The echo is what makes a summary attributable to a conversation."""
-    from agentsys.connectors.platform_stubs import conversation_summarizer
-
-    result = conversation_summarizer({"session_id": session_id})
-
-    assert result["session_id"] == session_id
-
-
-def test_conversation_summarizer_max_messages_caps_count() -> None:
-    from agentsys.connectors.platform_stubs import conversation_summarizer
-
-    capped = conversation_summarizer({"session_id": "s-001", "max_messages": 1})
-
-    assert capped == {
-        "session_id": "s-001",
-        "summary": EXPECTED_SUMMARY,
-        "message_count": 1,
-    }
-
-
-@pytest.mark.parametrize("bad_max", ["2", 2.5, None, []])
-def test_conversation_summarizer_non_int_max_messages_ignored(bad_max: Any) -> None:
-    from agentsys.connectors.platform_stubs import conversation_summarizer
-
-    result = conversation_summarizer({"session_id": "s-001", "max_messages": bad_max})
-
-    assert result["message_count"] == 3
-
-
-@pytest.mark.parametrize(
-    ("max_messages", "message_count"),
-    [(True, 1), (False, 0), (0, 0), (-1, 2)],
-)
-def test_conversation_summarizer_accepts_bool_zero_and_negative_documented_gap(
-    max_messages: Any, message_count: int
-) -> None:
-    """``isinstance(True, int)`` is True, and slicing accepts 0 and -1.
-
-    So ``max_messages: true`` — a legal JSON value a model can emit — caps the
-    transcript at 1 instead of being ignored like ``"2"`` and ``2.5``;
-    ``max_messages: -1``, a common "no limit" idiom, silently drops the last
-    message; ``max_messages: 0`` reports message_count 0 while ``summary``
-    still asserts a completed two-unit purchase. Rejecting these needs a
-    production guard; this pins what happens today so the fix is visible.
-    """
-    from agentsys.connectors.platform_stubs import conversation_summarizer
-
-    result = conversation_summarizer(
-        {"session_id": "s-001", "max_messages": max_messages}
-    )
-
-    assert result["message_count"] == message_count
-
-
-def test_conversation_summarizer_missing_session_id_uses_default() -> None:
-    from agentsys.connectors.platform_stubs import conversation_summarizer
-
-    result = conversation_summarizer({})
-
-    assert result == {
-        "session_id": "s-unknown",
-        "summary": EXPECTED_SUMMARY,
-        "message_count": 3,
-    }
-
-
-# ---------------------------------------------------------------------------
-# escalation_notifier
-# ---------------------------------------------------------------------------
-
-def test_escalation_notifier_returns_notified_status() -> None:
-    from agentsys.connectors.platform_stubs import escalation_notifier
-
-    result = escalation_notifier(
-        {"reason": "customer_angry", "details": "Asked for a manager"}
-    )
-
-    assert set(result) == {"status", "escalation_id", "reason"}
-    assert result["reason"] == "customer_angry"
-    assert result["status"] == "notified"
-    assert _escalation_number(result["escalation_id"]) >= 1
-
-
-def test_escalation_notifier_ids_are_unique_and_increase_by_one() -> None:
-    """Zero-padded to at LEAST 4 digits — not exactly 4.
-
-    ``f"esc-{n:04d}"`` over a process-global counter emits ``esc-10000`` on the
-    10000th call, which an ``esc-\\d{4}`` matcher rejects. Pinning exactly four
-    digits only passes because the test process never gets there.
-    """
-    from agentsys.connectors.platform_stubs import escalation_notifier
-
-    ids = [
-        escalation_notifier({"reason": "r", "details": "d"})["escalation_id"]
-        for _ in range(5)
-    ]
-    numbers = [_escalation_number(value) for value in ids]
-
-    assert len(set(ids)) == 5
-    assert numbers == list(range(numbers[0], numbers[0] + 5))
-
-
-def test_escalation_notifier_echoes_the_reason_it_was_given() -> None:
-    """The ToolSpec declares ``required: [reason, details]``, so the body must
-    read at least one of them.
-
-    Every other stub echoes an identifying input (message_sender->to,
-    client_lookup->phone, session_state->session_id,
-    conversation_summarizer->session_id). Without that, an operator queue
-    built on this output cannot tell one escalation from another, and a later
-    real implementation that dropped the reason on the floor would still pass.
-
-    The `empty` leg is the point: a missing reason must surface as None rather
-    than vanish, so the key is always present and an absent reason is visible
-    instead of indistinguishable from a stub that never looked.
-    """
-    from agentsys.connectors.platform_stubs import escalation_notifier
-
-    populated = escalation_notifier(
-        {"reason": "customer_angry", "details": "Asked for a manager"}
-    )
-    empty = escalation_notifier({})
-
-    assert set(populated) == set(empty) == {"status", "escalation_id", "reason"}
-    assert populated["reason"] == "customer_angry"
-    assert empty["reason"] is None
-    assert populated["status"] == empty["status"]
-    assert _escalation_number(empty["escalation_id"]) == (
-        _escalation_number(populated["escalation_id"]) + 1
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +287,59 @@ def test_every_tool_declared_on_disk_exists_in_both_registries(
 # --- No registered connector may fabricate a result (issue #39) -------------
 
 
+#: tool -> (inputs, the error_kind an unbound registry must answer with).
+#: Every one of these used to return a confident success from a hardcoded
+#: fixture: three canned knowledge hits, one fixed summary sentence, and
+#: `esc-NNNN` for an escalation no human ever received.
+_UNBOUND_EXPECTATIONS = {
+    "knowledge_retrieval": ({"q": "return policy"}, "knowledge_not_configured"),
+    "conversation_summarizer": (
+        {"session_id": "s-1"},
+        "summarization_not_configured",
+    ),
+    "escalation_notifier": (
+        {"reason": "customer_angry", "details": "third failed delivery"},
+        "escalation_not_configured",
+    ),
+}
+
+#: Keys that mean the tool answered. Absence of these is the real assertion:
+#: the model reads the whole dict, so an error alongside a success shape is
+#: still read as success.
+_FABRICATED_KEYS = ("results", "summary", "message_count", "escalation_id")
+
+
+@pytest.mark.parametrize("builder_name", sorted(REGISTRY_BUILDERS))
+@pytest.mark.parametrize("tool_name", sorted(_UNBOUND_EXPECTATIONS))
+async def test_platform_tools_in_every_registry_refuse_instead_of_fabricating(
+    builder_name: str, tool_name: str
+) -> None:
+    """Neither shipped registry may answer one of these on its own authority.
+
+    `escalation_notifier` is the one that matters most: it is a `send:` tool
+    whose whole purpose is to put a human in the loop, every role in the
+    taxonomy inherits it, and it used to report "notified" with no channel
+    behind it — so the single path a stuck customer had was the one that lied
+    about working.
+    """
+    import inspect
+
+    inputs, expected_kind = _UNBOUND_EXPECTATIONS[tool_name]
+    spec = REGISTRY_BUILDERS[builder_name]().get(tool_name)
+
+    result = spec.connector(inputs)
+    if inspect.isawaitable(result):
+        result = await result
+
+    assert result["error_kind"] == expected_kind
+    assert result.get("status") != "notified"
+    fabricated = [key for key in _FABRICATED_KEYS if key in result]
+    assert fabricated == [], (
+        f"the {builder_name} registry's {tool_name} returned {fabricated} "
+        f"without a system behind it: {result!r}"
+    )
+
+
 @pytest.mark.parametrize("builder_name", sorted(REGISTRY_BUILDERS))
 async def test_order_writer_in_every_registry_refuses_instead_of_fabricating(
     builder_name: str,
@@ -546,16 +373,20 @@ async def test_order_writer_in_every_registry_refuses_instead_of_fabricating(
     assert result["error_kind"] == "order_writing_not_configured"
 
 
-def test_both_registries_build_order_writer_from_the_same_factory() -> None:
-    """`order_writer` leaves SHARED_TOOLS, so its drift guard lives here.
+@pytest.mark.parametrize("tool_name", FACTORY_BUILT_TOOLS)
+def test_both_registries_build_factory_tools_from_the_same_factory(
+    tool_name: str,
+) -> None:
+    """Factory-built tools leave SHARED_TOOLS, so their drift guard lives here.
 
     The identity check the shared test uses cannot work on a factory-built
-    tool — each call closes over its own writer and yields a distinct
-    function. What must not drift is the contract the model sees, so compare
-    that instead. If someone hand-writes a ToolSpec here again, this fails.
+    tool — each call closes over its own port and yields a distinct function.
+    What must not drift is the contract the model sees, so compare that
+    instead. If someone hand-writes a ToolSpec for one of these again, this
+    fails.
     """
-    stub_spec = _stub_registry().get("order_writer")
-    rag_spec = _rag_registry().get("order_writer")
+    stub_spec = _stub_registry().get(tool_name)
+    rag_spec = _rag_registry().get(tool_name)
 
     assert stub_spec.required_permissions == rag_spec.required_permissions
     assert stub_spec.input_schema == rag_spec.input_schema
