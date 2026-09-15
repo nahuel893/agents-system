@@ -22,6 +22,7 @@ refuse, and bound must delegate rather than answer on its own.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -125,14 +126,119 @@ async def test_an_unbound_escalation_tells_the_agent_to_escalate_by_other_means(
     model can silently drop it, which is indistinguishable from the fabricated
     "notified" this replaces. The text has to state that no human was told and
     name what to do instead.
+
+    Asserting `"not" in error` would be a trap: "not" is a substring of
+    "notified", so that assertion also passes against the write-failed text and
+    proves nothing about THIS message. The claims are checked as whole words.
     """
     result = await build_escalation_notifier_tool_spec(None).connector(
         {"reason": "customer_angry", "details": "third failed delivery"}
     )
 
-    error = result["error"].lower()
-    assert "not" in error
-    assert "human" in error
+    words = set(re.findall(r"[a-z]+", result["error"].lower()))
+    assert "no" in words, "must state that nobody was notified"
+    assert "human" in words, "must name the alternative route to a person"
+    assert result["error_kind"] == "escalation_not_configured"
+
+
+# --- The summarizer's own guards, which nothing else covers ----------------
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [
+        pytest.param({}, id="no-session-id"),
+        pytest.param({"session_id": ""}, id="empty-session-id"),
+        pytest.param({"session_id": "   "}, id="blank-session-id"),
+        pytest.param({"session_id": None}, id="null-session-id"),
+    ],
+)
+async def test_an_unidentified_conversation_is_never_summarized(
+    inputs: dict[str, Any],
+) -> None:
+    """The stub defaulted a missing id to "s-unknown" and summarized anyway.
+
+    That produced a confident account of a conversation that was never even
+    identified, which is the worst shape available: the caller cannot tell it
+    apart from a summary of the session they meant.
+    """
+    port = _RecordingPort({"summary": "should-not-happen"})
+
+    result = await build_conversation_summarizer_tool_spec(port).connector(inputs)
+
+    assert result["error_kind"] == "invalid_summary_request"
+    assert "summary" not in result
+    assert port.calls == []
+
+
+@pytest.mark.parametrize(
+    "given, expected",
+    [
+        pytest.param(5, 5, id="int-passes-through"),
+        pytest.param(None, None, id="absent-means-no-cap"),
+        pytest.param("3", None, id="string-is-not-a-cap"),
+        pytest.param(2.5, None, id="float-is-not-a-cap"),
+        pytest.param(True, None, id="bool-is-not-a-cap"),
+        pytest.param(False, None, id="false-is-not-a-cap"),
+    ],
+)
+async def test_only_a_real_int_reaches_the_port_as_a_message_cap(
+    given: Any, expected: int | None
+) -> None:
+    """`bool` is the one that matters, and it is why `isinstance` is not enough.
+
+    `isinstance(True, int)` is True in Python, so without the explicit bool
+    exclusion a model emitting `max_messages: true` would cap the summary at
+    ONE message and the caller would get a one-line account of a long
+    conversation with nothing signalling why.
+
+    Anything that is not a real int is passed as `None` — "no cap" — rather
+    than coerced, because only the implementation knows what a message is in
+    its store.
+    """
+    port = _RecordingPort({"summary": "real"})
+    inputs: dict[str, Any] = {"session_id": "s-1"}
+    if given is not None:
+        inputs["max_messages"] = given
+
+    await build_conversation_summarizer_tool_spec(port).connector(inputs)
+
+    assert port.calls == [{"session_id": "s-1", "max_messages": expected}]
+
+
+# --- A port that answers with garbage is a broken port, not an empty one ----
+
+
+@pytest.mark.parametrize("builder, inputs, error_kind", _TOOLS)
+@pytest.mark.parametrize(
+    "returned",
+    [
+        pytest.param(None, id="none"),
+        pytest.param("results", id="str"),
+        pytest.param([], id="list"),
+        pytest.param(0, id="int"),
+    ],
+)
+async def test_a_port_returning_a_non_dict_never_reaches_the_model(
+    builder: Any, inputs: dict[str, Any], error_kind: str, returned: Any
+) -> None:
+    """`None` was the hole: it is not an empty answer, it is a broken contract.
+
+    `agent/graph.py` renders a non-dict tool output with `str(output)`, so a
+    port returning `None` reached the model as the literal string "None" — no
+    `error_kind`, no exception, and nothing the model could tell apart from a
+    real answer.
+
+    This is NOT the emptiness check the two read tools deliberately go without:
+    an empty `results` list from a real knowledge base stays a legitimate
+    answer. A non-dict is the port failing to honour its protocol.
+    """
+    result = await builder(_RecordingPort(returned)).connector(inputs)
+
+    assert result["error_kind"].endswith("_failed") or result[
+        "error_kind"
+    ] == "escalation_unconfirmed"
+    assert "error" in result
 
 
 @pytest.mark.parametrize("builder, inputs, error_kind", _TOOLS)

@@ -1,26 +1,23 @@
-"""Tests for platform-generic connector stubs.
+"""The two shipped registries, and the role surfaces they have to satisfy.
 
-The three platform tools (knowledge_retrieval, conversation_summarizer,
-escalation_notifier) are declared by the generic roles under platform/roles/
-(data-agent, summary-agent, orchestrator). These deterministic stubs let all
-generic roles boot without real external systems (knowledge base, conversation
-store, escalation channel).
+This file was `test_connectors_platform_stubs.py` until issue #39 deleted the
+module it was named for. What remains is the part that was never about the
+stubs: that both registry builders hold every tool the role manifests name,
+wire them identically, and that each platform role resolves to a pinned tool
+surface. A manifest naming a tool no registry holds makes the role unbootable
+through `InjectionError`, so this is the guard on that.
+
+Per-connector behaviour lives with its connector — see
+`test_platform_connectors.py` for the three platform-generic tools and
+`test_order_writer_connector.py` for `order_writer`.
 
 Assertion policy in this file: expected values are written out as literals, not
 derived from the object under test. A test that compares a pure function to
 itself ("call it twice, assert equal") cannot fail for any implementation and
 is not written here.
-
-Tests whose name ends in ``_documented_gap`` pin behaviour that is currently
-wrong or hazardous and cannot be corrected without changing production code.
-They exist so the behaviour is visible and so a later fix is a deliberate,
-reviewed deletion rather than a silent drift.
-
-Strict TDD: tests written before platform_stubs.py exists.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,35 +51,7 @@ ALL_PLATFORM_TOOLS = {
     "run_report",
 }
 
-#: The knowledge base fixture, written out independently of the module under
-#: test. Also the corruption canary: knowledge_retrieval hands back the shared
-#: module-level list by reference, so any caller that mutates a result would
-#: rewrite the fixture for the whole process — this literal notices.
-CANONICAL_HITS = [
-    {
-        "id": "kb-001",
-        "title": "Wholesale pricing policy",
-        "snippet": "Volume discounts apply from 10 units per SKU.",
-    },
-    {
-        "id": "kb-002",
-        "title": "Delivery coverage zones",
-        "snippet": "Deliveries cover the metropolitan area on business days.",
-    },
-    {
-        "id": "kb-003",
-        "title": "Returns and claims procedure",
-        "snippet": (
-            "Claims are accepted within 48 hours of delivery with the "
-            "original invoice."
-        ),
-    },
-]
 
-EXPECTED_SUMMARY = (
-    "Customer asked about product availability and confirmed a purchase of "
-    "two units."
-)
 
 #: Tools both registry builders must wire identically. Two exclusions, both
 #: because the connector is a closure over something the builder is given
@@ -139,7 +108,13 @@ class SpyEmbedder:
 def _settings() -> Any:
     from agentsys.config import Settings
 
-    return Settings(_env_file=None)
+    # `_env_file=None` builds Settings without reading the developer's .env, so
+    # this suite does not depend on local machine state. It is a real parameter
+    # of `BaseSettings.__init__`, but pydantic synthesizes a model `__init__`
+    # from the FIELDS, which shadows the inherited signature — so every type
+    # checker reports it as unknown. Runtime is correct; the annotation is the
+    # thing that is wrong.
+    return Settings(_env_file=None)  # type: ignore[call-arg]
 
 
 def _stub_registry() -> Any:
@@ -160,10 +135,6 @@ def _rag_registry() -> Any:
 REGISTRY_BUILDERS = {"stub": _stub_registry, "rag": _rag_registry}
 
 
-def _escalation_number(escalation_id: str) -> int:
-    match = re.fullmatch(r"esc-(\d{4,})", escalation_id)
-    assert match is not None, f"unexpected escalation_id format: {escalation_id!r}"
-    return int(match.group(1))
 
 
 def _without_descriptions(node: Any) -> Any:
