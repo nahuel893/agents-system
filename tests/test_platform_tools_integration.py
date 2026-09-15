@@ -55,7 +55,12 @@ def _rag_registry() -> Any:
     from agentsys.config import Settings
     from agentsys.connectors.rag_connector import build_acme_rag_registry
 
-    return build_acme_rag_registry(Settings(_env_file=None), embedder=SpyEmbedder())
+    # `_env_file=None` keeps this suite off the developer's .env. It is a real
+    # `BaseSettings.__init__` parameter, but pydantic synthesizes a model
+    # `__init__` from the FIELDS, shadowing the inherited signature, so type
+    # checkers report it as unknown. Runtime is correct.
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    return build_acme_rag_registry(settings, embedder=SpyEmbedder())
 
 
 def _build_runtime(role_type: str, granted_permissions: Any = None) -> Any:

@@ -119,6 +119,27 @@ def _failed(kind: str) -> ConnectorOutput:
     return {"error": _FAILED_MESSAGES[kind], "error_kind": kind}
 
 
+def _malformed(result: Any, *, event: str, kind: str) -> ConnectorOutput | None:
+    """Return the failure result when *result* is not a dict, else ``None``.
+
+    A port belongs to the deployment, so what it hands back is untrusted input.
+    `None` is the case that motivated this: `agent/graph.py` renders a non-dict
+    tool output with `str(output)`, so a port returning `None` reached the
+    model as the literal string "None" — no `error_kind`, no exception, and
+    nothing the model could tell apart from a real answer.
+
+    This is NOT the emptiness check the two read tools deliberately go without.
+    An empty `results` list from a real knowledge base is a legitimate answer
+    and is relayed as one. A non-dict is the port failing to honour its
+    protocol, which is a different fact and the only honest report of it is
+    that the tool did not produce an answer.
+    """
+    if isinstance(result, dict):
+        return None
+    _logger.error(event, result_type=type(result).__name__)
+    return _failed(kind)
+
+
 # ---------------------------------------------------------------------------
 # knowledge_retrieval
 # ---------------------------------------------------------------------------
@@ -173,10 +194,19 @@ def build_knowledge_retrieval_connector(
             }
 
         try:
-            return await knowledge_base.search(session, query=query)
+            result = await knowledge_base.search(session, query=query)
         except Exception:
             _logger.exception("knowledge.search_failed")
             return _failed("knowledge_search_failed")
+
+        return (
+            _malformed(
+                result,
+                event="knowledge.malformed_result",
+                kind="knowledge_search_failed",
+            )
+            or result
+        )
 
     return knowledge_retrieval
 
@@ -255,12 +285,21 @@ def build_conversation_summarizer_connector(
             max_messages = None
 
         try:
-            return await summarizer.summarize(
+            result = await summarizer.summarize(
                 session, session_id=session_id, max_messages=max_messages
             )
         except Exception:
             _logger.exception("summary.failed", session_id=session_id)
             return _failed("summarization_failed")
+
+        return (
+            _malformed(
+                result,
+                event="summary.malformed_result",
+                kind="summarization_failed",
+            )
+            or result
+        )
 
     return conversation_summarizer
 
