@@ -55,7 +55,12 @@ def _rag_registry() -> Any:
     from agentsys.config import Settings
     from agentsys.connectors.rag_connector import build_acme_rag_registry
 
-    return build_acme_rag_registry(Settings(_env_file=None), embedder=SpyEmbedder())
+    # `_env_file=None` keeps this suite off the developer's .env. It is a real
+    # `BaseSettings.__init__` parameter, but pydantic synthesizes a model
+    # `__init__` from the FIELDS, shadowing the inherited signature, so type
+    # checkers report it as unknown. Runtime is correct.
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    return build_acme_rag_registry(settings, embedder=SpyEmbedder())
 
 
 def _build_runtime(role_type: str, granted_permissions: Any = None) -> Any:
@@ -158,7 +163,12 @@ async def test_knowledge_retrieval_executes_on_data_agent() -> None:
     result = await intercept("knowledge_retrieval", {"q": "pricing"}, runtime)
 
     assert result.revalidated is False  # read tool — no call-time revalidation
-    assert [hit["id"] for hit in result.output["results"]] == ["kb-001"]
+    # What this test proves is that the tool RESOLVES and EXECUTES on this
+    # role through the interceptor. What it comes back with is the platform's
+    # refusal, because no deployment knowledge base is bound here (issue #39);
+    # it used to be three canned hits about wholesale discounts.
+    assert result.output["error_kind"] == "knowledge_not_configured"
+    assert "results" not in result.output
 
 
 async def test_conversation_summarizer_executes_on_summary_agent() -> None:
@@ -171,9 +181,11 @@ async def test_conversation_summarizer_executes_on_summary_agent() -> None:
     )
 
     assert result.revalidated is False
-    assert result.output["session_id"] == "s-001"
-    assert result.output["message_count"] == 3
-    assert "purchase" in result.output["summary"]
+    assert result.output["error_kind"] == "summarization_not_configured"
+    # It used to answer with one fixed sentence for every session id it was
+    # ever handed — an account of a conversation it never read.
+    assert "summary" not in result.output
+    assert "message_count" not in result.output
 
 
 async def test_escalation_notifier_executes_on_orchestrator() -> None:
@@ -189,8 +201,13 @@ async def test_escalation_notifier_executes_on_orchestrator() -> None:
     )
 
     assert result.revalidated is True
-    assert result.output["status"] == "notified"
-    assert isinstance(result.output["escalation_id"], str)
+    # The permission gate passed and the tool ran; the platform has no
+    # escalation channel, so it says nobody was notified instead of minting
+    # `esc-NNNN` for a human who was never told (issue #39). Revalidation and
+    # delivery are separate facts, and this test pins both.
+    assert result.output["error_kind"] == "escalation_not_configured"
+    assert result.output.get("status") != "notified"
+    assert "escalation_id" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +239,8 @@ async def test_escalation_notifier_revalidated_with_send_escalation() -> None:
     )
 
     assert result.revalidated is True
-    assert result.output["status"] == "notified"
+    assert result.output["error_kind"] == "escalation_not_configured"
+    assert result.output.get("status") != "notified"
 
 
 async def test_escalation_notifier_blocked_when_permission_revoked() -> None:
