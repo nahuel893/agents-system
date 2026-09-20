@@ -8,10 +8,25 @@ asyncio_mode = "auto" (set in pyproject.toml) — async tests need NO marker.
 from __future__ import annotations
 
 import asyncio
+import pathlib
 from dataclasses import dataclass, field
 from typing import Any
 
 from agentsys.config import Settings
+
+_REPO_ROOT = pathlib.Path(__file__).parent.parent
+_CLIENT_A_DEPLOYMENTS = (
+    _REPO_ROOT / "tests" / "fixtures" / "agents" / "overrides" / "deployments"
+)
+
+
+def _client_a_roots() -> Any:
+    from agentsys.harness.loader import RootConfig
+
+    return RootConfig(
+        platform_root=_REPO_ROOT / "platform",
+        deployments_root=_CLIENT_A_DEPLOYMENTS,
+    )
 
 
 @dataclass
@@ -348,7 +363,7 @@ def test_registry_has_the_expected_tools_with_async_catalog() -> None:
 # ---------------------------------------------------------------------------
 
 def _full_sales_registry() -> Any:
-    """Registry with all 5 ACME sales-agent tools (required by sales-agent manifest)."""
+    """Registry with all five generic deployment sales-agent tools."""
     from agentsys.harness.registry import ToolRegistry, ToolSpec
 
     reg = ToolRegistry()
@@ -372,7 +387,8 @@ def test_build_runtime_wires_session_provider() -> None:
         "sales-agent",
         reg,
         ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "send:message"],
-        client="acme",
+        client="client-a",
+        roots=_client_a_roots(),
         session_provider=sentinel,
     )
     assert runtime.session_provider is sentinel
@@ -382,7 +398,8 @@ def test_build_runtime_wires_session_provider() -> None:
         "sales-agent",
         reg,
         ["read:catalog"],
-        client="acme",
+        client="client-a",
+        roots=_client_a_roots(),
     )
     assert runtime2.session_provider is None
 

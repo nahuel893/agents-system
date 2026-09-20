@@ -14,8 +14,8 @@ is the point of a base: every agent can reach a human, and no descendant has
 to restate it. `orchestrator` gains nothing, having already declared both.
 
 **Deployments — unchanged, and that is the load-bearing part.** A deployment
-lists its own tools and may only narrow, so ACME's resolved sales-agent still
-has exactly its five and data-agent its four. Its `permissions: inherit` does
+lists its own tools and may only narrow, so the generic client's resolved
+sales-agent still has exactly its five and data-agent its four. Its `permissions: inherit` does
 pick up `send:escalation`, which is inert: the injector resolves tools, never
 permissions, and neither deployment declares `escalation_notifier`.
 
@@ -26,13 +26,28 @@ Expected values are literals, captured from the resolver and written out by
 hand. They are deliberately NOT derived from the object under test: a test
 that compares the resolver to itself cannot fail.
 """
+
 from __future__ import annotations
 
+import pathlib
 from typing import Any
 
 import pytest
 
-from agentsys.harness.loader import resolve
+from agentsys.harness.loader import RootConfig, resolve
+
+_REPO_ROOT = pathlib.Path(__file__).parent.parent
+_CLIENT_A_DEPLOYMENTS = (
+    _REPO_ROOT / "tests" / "fixtures" / "agents" / "overrides" / "deployments"
+)
+
+
+def _client_a_roots() -> RootConfig:
+    return RootConfig(
+        platform_root=_REPO_ROOT / "platform",
+        deployments_root=_CLIENT_A_DEPLOYMENTS,
+    )
+
 
 # --- Platform roles, resolved with no deployment --------------------------
 
@@ -201,8 +216,8 @@ PINNED_DEPLOYMENT: dict[str, dict[str, Any]] = {
     # and the resolved role now carries `read:session` and `send:escalation`.
     # Both are inert here: the injector resolves the tool surface as
     # `role.permissions ∩ granted`, so a permission with no declared tool
-    # grants nothing. The ACME data-agent manifest already documents this
-    # exact situation for `read:knowledge_base`.
+    # grants nothing. The generic data-agent fixture pins this inert
+    # `read:knowledge_base` permission.
     "sales-agent": {
         "tools": [
             "message_sender",
@@ -269,10 +284,10 @@ def test_platform_role_resolves_to_its_pinned_definition(role_type: str) -> None
 @pytest.mark.parametrize("role_type", sorted(PINNED_DEPLOYMENT))
 def test_deployment_resolves_to_its_pinned_definition(role_type: str) -> None:
     expected = PINNED_DEPLOYMENT[role_type]
-    definition = resolve(role_type, client="acme")
+    definition = resolve(role_type, client="client-a", roots=_client_a_roots())
 
     assert definition.role_name == role_type
-    assert definition.deployment == "acme"
+    assert definition.deployment == "client-a"
     assert list(definition.tools) == expected["tools"]
     assert sorted(definition.permissions) == expected["permissions"]
     assert definition.autonomy == expected["autonomy"]
@@ -284,15 +299,17 @@ def test_every_deployment_tool_is_allowed_by_its_platform_role() -> None:
     """Every shipped deployment stays inside its role's surface."""
     for role_type in sorted(PINNED_DEPLOYMENT):
         platform_tools = set(resolve(role_type).tools)
-        deployment_tools = set(resolve(role_type, client="acme").tools)
+        deployment_tools = set(
+            resolve(role_type, client="client-a", roots=_client_a_roots()).tools
+        )
 
         assert deployment_tools <= platform_tools, (
-            f"{role_type}/acme widened its tool surface: "
+            f"{role_type}/client-a widened its tool surface: "
             f"{sorted(deployment_tools - platform_tools)}"
         )
 
 
-def test_a_deployment_that_tries_to_widen_is_refused(tmp_path) -> None:
+def test_a_deployment_that_tries_to_widen_is_refused(tmp_path: pathlib.Path) -> None:
     """The ENFORCEMENT, which the test above cannot reach.
 
     That one grades the manifests currently on disk — all of which are
@@ -451,9 +468,7 @@ def test_no_role_holds_an_unpinned_mutating_permission() -> None:
     prefixes = ("write:", "send:", "spawn:")
 
     for role in discover_concrete_platform_roles():
-        actual = {
-            p for p in resolve(role).permissions if p.startswith(prefixes)
-        }
+        actual = {p for p in resolve(role).permissions if p.startswith(prefixes)}
         expected = MUTATING_GRANTS.get(role)
 
         assert expected is not None, (

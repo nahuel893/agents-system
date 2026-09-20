@@ -11,6 +11,7 @@ LLM or bind tools to a model.
 
 Strict TDD: these tests are written before factory.py exists.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -25,7 +26,7 @@ GENERIC_ROOTS_DIR = FIXTURE_BASE / "generic-role"
 OVERRIDE_ROOTS_DIR = FIXTURE_BASE / "overrides"
 
 # The six permissions the platform sales-agent declares (see
-# platform/roles/sales-agent/manifest.md). The ACME deployment inherits them.
+# platform/roles/sales-agent/manifest.md). The generic deployment inherits them.
 SALES_PERMISSIONS = [
     "read:catalog",
     "read:client_registry",
@@ -37,7 +38,7 @@ SALES_PERMISSIONS = [
 
 
 def _fixture_roots() -> Any:
-    """RootConfig pointing at the test fixtures (isolated from the real repo)."""
+    """RootConfig pointing at the simple-role fixtures."""
     from agentsys.harness.loader import RootConfig
 
     return RootConfig(
@@ -46,10 +47,22 @@ def _fixture_roots() -> Any:
     )
 
 
+def _client_a_roots() -> Any:
+    """RootConfig for platform roles and generic client deployment fixtures."""
+    from agentsys.harness.loader import RootConfig
+
+    return RootConfig(
+        platform_root=REPO_ROOT / "platform",
+        deployments_root=OVERRIDE_ROOTS_DIR / "deployments",
+    )
+
+
 def _spec(name: str, perms: list[str]) -> Any:
     from agentsys.harness.registry import ToolSpec
 
-    return ToolSpec(name=name, required_permissions=tuple(perms), connector=lambda: None)
+    return ToolSpec(
+        name=name, required_permissions=tuple(perms), connector=lambda: None
+    )
 
 
 def _sales_registry() -> Any:
@@ -74,7 +87,7 @@ def _sales_registry() -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Happy path — real ACME deployment (the MVP target)
+# Happy path — generic client deployment
 # ---------------------------------------------------------------------------
 def test_build_runtime_attaches_resolved_definition() -> None:
     from agentsys.harness.factory import build_runtime
@@ -83,11 +96,12 @@ def test_build_runtime_attaches_resolved_definition() -> None:
         "sales-agent",
         _sales_registry(),
         SALES_PERMISSIONS,
-        client="acme",
+        client="client-a",
+        roots=_client_a_roots(),
     )
 
     assert runtime.definition.role_name == "sales-agent"
-    assert runtime.definition.deployment == "acme"
+    assert runtime.definition.deployment == "client-a"
 
 
 def test_build_runtime_grants_all_tools_when_permitted() -> None:
@@ -97,7 +111,8 @@ def test_build_runtime_grants_all_tools_when_permitted() -> None:
         "sales-agent",
         _sales_registry(),
         SALES_PERMISSIONS,
-        client="acme",
+        client="client-a",
+        roots=_client_a_roots(),
     )
 
     granted_names = {t.name for t in runtime.tools}
@@ -120,7 +135,8 @@ def test_build_runtime_denies_tools_missing_permissions() -> None:
         "sales-agent",
         _sales_registry(),
         ["read:catalog"],
-        client="acme",
+        client="client-a",
+        roots=_client_a_roots(),
     )
 
     granted_names = {t.name for t in runtime.tools}
@@ -137,14 +153,18 @@ def test_build_runtime_loads_declared_skills_in_order() -> None:
         "sales-agent",
         _sales_registry(),
         SALES_PERMISSIONS,
-        client="acme",
+        client="client-a",
+        roots=_client_a_roots(),
     )
 
     skill_names = [s.name for s in runtime.skills]
-    assert skill_names == ["order_extraction", "colloquial_matching", "confirm_flow"]
-    # Skill content is the real file body, not a placeholder.
-    order_skill = next(s for s in runtime.skills if s.name == "order_extraction")
-    assert "Extraction rules" in order_skill.content
+    assert skill_names == [
+        "request_structuring",
+        "query_normalization",
+        "confirmation_workflow",
+    ]
+    request_skill = next(s for s in runtime.skills if s.name == "request_structuring")
+    assert "Structured request fields" in request_skill.content
 
 
 def test_build_runtime_composes_prompt_from_role_body_and_skills() -> None:
@@ -154,16 +174,18 @@ def test_build_runtime_composes_prompt_from_role_body_and_skills() -> None:
         "sales-agent",
         _sales_registry(),
         SALES_PERMISSIONS,
-        client="acme",
+        client="client-a",
+        roots=_client_a_roots(),
     )
 
     prompt = runtime.system_prompt
-    # Role body content (deployments/acme/sales-agent/role.md).
-    assert "punto de venta" in prompt
+    assert "Generic Client A request assistant" in prompt
     # Each skill body is concatenated into the composed prompt.
-    assert "Extraction rules" in prompt
+    assert "Structured request fields" in prompt
     # Skills appear AFTER the role body.
-    assert prompt.index("punto de venta") < prompt.index("Extraction rules")
+    assert prompt.index("Generic Client A request assistant") < prompt.index(
+        "Structured request fields"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +264,8 @@ def test_build_runtime_logs_built_event() -> None:
             "sales-agent",
             _sales_registry(),
             SALES_PERMISSIONS,
-            client="acme",
+            client="client-a",
+            roots=_client_a_roots(),
         )
 
     events = [e["event"] for e in logs]
@@ -257,14 +280,15 @@ def test_build_runtime_logs_each_skill_loaded() -> None:
             "sales-agent",
             _sales_registry(),
             SALES_PERMISSIONS,
-            client="acme",
+            client="client-a",
+            roots=_client_a_roots(),
         )
 
     loaded = [e for e in logs if e["event"] == "factory.skill_loaded"]
     assert {e["skill"] for e in loaded} == {
-        "order_extraction",
-        "colloquial_matching",
-        "confirm_flow",
+        "request_structuring",
+        "query_normalization",
+        "confirmation_workflow",
     }
 
 
@@ -291,7 +315,7 @@ def test_build_runtime_logs_skill_missing_before_raising() -> None:
 
 
 def test_loading_skills_with_an_absent_deployments_root_raises_clearly(
-    tmp_path,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An absent root must not be reported as missing skill files.
 
