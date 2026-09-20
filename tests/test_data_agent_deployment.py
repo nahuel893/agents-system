@@ -1,21 +1,34 @@
-"""The ACME data-agent deployment must actually resolve (D-023).
+"""A generic data-agent deployment must actually resolve (D-023).
 
 These manifests are data, not code, so nothing type-checks them and nothing
 imports them — a typo in a tool name or a permission that widens the parent
 surface fails at runtime, inside `resolve_tool_surface`, when the app boots.
-
-The role has already been unbuildable once for exactly this reason:
-`knowledge_retrieval` was declared through v1.0 with no connector behind it,
-so `resolve_tool_surface` raised `InjectionError: Unknown tool` and the whole
-role could not be built. Not partially — at all.
 """
+
 from __future__ import annotations
+
+import pathlib
+from typing import Any
 
 from agentsys.harness.loader import load_generic, resolve
 
+_REPO_ROOT = pathlib.Path(__file__).parent.parent
+_CLIENT_A_DEPLOYMENTS = (
+    _REPO_ROOT / "tests" / "fixtures" / "agents" / "overrides" / "deployments"
+)
 
-def test_acme_data_agent_deployment_resolves() -> None:
-    definition = resolve("data-agent", client="acme")
+
+def _client_a_roots() -> Any:
+    from agentsys.harness.loader import RootConfig
+
+    return RootConfig(
+        platform_root=_REPO_ROOT / "platform",
+        deployments_root=_CLIENT_A_DEPLOYMENTS,
+    )
+
+
+def test_client_a_data_agent_deployment_resolves() -> None:
+    definition = resolve("data-agent", client="client-a", roots=_client_a_roots())
 
     assert definition.tools, "resolved definition has no tools"
     assert definition.permissions, "resolved definition has no permissions"
@@ -29,7 +42,7 @@ def test_deployment_tools_are_a_subset_of_the_platform_role() -> None:
     grant has escaped the platform's own ceiling.
     """
     platform = load_generic("data-agent")
-    deployment = resolve("data-agent", client="acme")
+    deployment = resolve("data-agent", client="client-a", roots=_client_a_roots())
 
     extra = set(deployment.tools) - set(platform.tools)
     assert not extra, f"deployment widens the platform tool surface with {extra}"
@@ -37,7 +50,7 @@ def test_deployment_tools_are_a_subset_of_the_platform_role() -> None:
 
 def test_deployment_permissions_are_a_subset_of_the_platform_role() -> None:
     platform = load_generic("data-agent")
-    deployment = resolve("data-agent", client="acme")
+    deployment = resolve("data-agent", client="client-a", roots=_client_a_roots())
 
     extra = set(deployment.permissions) - set(platform.permissions)
     assert not extra, f"deployment widens the platform permissions with {extra}"
@@ -51,7 +64,7 @@ def test_every_deployment_tool_has_the_permission_it_needs_declared() -> None:
     as "the model chose not to use the report tool" rather than as a
     misconfiguration.
     """
-    definition = resolve("data-agent", client="acme")
+    definition = resolve("data-agent", client="client-a", roots=_client_a_roots())
 
     assert "run_report" in definition.tools
     assert "read:reports" in definition.permissions
