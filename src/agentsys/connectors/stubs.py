@@ -6,12 +6,13 @@ dependencies (WhatsApp API, Postgres, Redis).
 
 Each connector follows the same signature: dict[str, Any] -> dict[str, Any].
 """
+
 from __future__ import annotations
 
 import itertools
 from typing import Any
 
-from agentsys.connectors.acme_reports import CATALOG as _BI_CATALOG
+from agentsys.connectors.sales_reports import CATALOG as _SALES_REPORT_CATALOG
 from agentsys.connectors.order_connector import build_order_writer_tool_spec
 from agentsys.connectors.report_connector import build_report_tool_spec
 from agentsys.connectors.platform_connectors import (
@@ -37,8 +38,16 @@ _CATALOG: list[dict[str, Any]] = [
 ]
 
 _CLIENTS: dict[str, dict[str, Any]] = {
-    "5491112345678": {"client_id": "cl-001", "name": "Almacén Don Pedro", "phone": "5491112345678"},
-    "5491187654321": {"client_id": "cl-002", "name": "Kiosco La Esquina", "phone": "5491187654321"},
+    "5491112345678": {
+        "client_id": "cl-001",
+        "name": "Almacén Don Pedro",
+        "phone": "5491112345678",
+    },
+    "5491187654321": {
+        "client_id": "cl-002",
+        "name": "Kiosco La Esquina",
+        "phone": "5491187654321",
+    },
 }
 
 _PRICE_BY_PRODUCT: dict[str, float] = {p["id"]: p["price"] for p in _CATALOG}
@@ -91,46 +100,87 @@ def build_acme_registry(
     ``definition.tools``, so the sales-agent surface is unchanged.
     """
     registry = ToolRegistry()
-    registry.register(ToolSpec(
-        name="catalog_search",
-        description="Search the product catalog. Returns a list of matching products with id, name, price, and stock.",
-        required_permissions=("read:catalog",),
-        input_schema={"type": "object", "properties": {"q": {"type": "string", "description": "Search query (product name or keyword). Leave empty to return all products."}}, "required": []},
-        connector=catalog_search,
-    ))
-    registry.register(ToolSpec(
-        name="client_lookup",
-        description="Look up a client by phone number. Returns client_id, name, and phone. Use this before creating an order.",
-        required_permissions=("read:client_registry",),
-        input_schema={"type": "object", "properties": {"phone": {"type": "string", "description": "Client phone number in international format, e.g. 5491112345678"}}, "required": ["phone"]},
-        connector=client_lookup,
-    ))
+    registry.register(
+        ToolSpec(
+            name="catalog_search",
+            description="Search the product catalog. Returns a list of matching products with id, name, price, and stock.",
+            required_permissions=("read:catalog",),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "q": {
+                        "type": "string",
+                        "description": "Search query (product name or keyword). Leave empty to return all products.",
+                    }
+                },
+                "required": [],
+            },
+            connector=catalog_search,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="client_lookup",
+            description="Look up a client by phone number. Returns client_id, name, and phone. Use this before creating an order.",
+            required_permissions=("read:client_registry",),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "phone": {
+                        "type": "string",
+                        "description": "Client phone number in international format, e.g. 5491112345678",
+                    }
+                },
+                "required": ["phone"],
+            },
+            connector=client_lookup,
+        )
+    )
     # Unbound: it answers that the order was not created rather than being
     # absent. platform/roles/sales-agent names order_writer, and a tool a
     # manifest names but the registry lacks makes the whole role unbuildable
     # via InjectionError. A deployment with an order system binds a real
     # `OrderWriter` in its own registry.
     registry.register(build_order_writer_tool_spec(None))
-    registry.register(ToolSpec(
-        name="message_sender",
-        description="Send a WhatsApp message to a phone number.",
-        required_permissions=("send:message",),
-        input_schema={"type": "object", "properties": {"to": {"type": "string", "description": "Recipient phone number"}, "text": {"type": "string", "description": "Message text to send"}}, "required": ["to", "text"]},
-        connector=message_sender,
-    ))
-    registry.register(ToolSpec(
-        name="session_state",
-        description="Get or set session state data for the current conversation.",
-        required_permissions=(),
-        input_schema={"type": "object", "properties": {"action": {"type": "string", "enum": ["get", "set"]}, "session_id": {"type": "string"}, "data": {"type": "object"}}, "required": ["action", "session_id"]},
-        connector=session_state,
-    ))
+    registry.register(
+        ToolSpec(
+            name="message_sender",
+            description="Send a WhatsApp message to a phone number.",
+            required_permissions=("send:message",),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Recipient phone number"},
+                    "text": {"type": "string", "description": "Message text to send"},
+                },
+                "required": ["to", "text"],
+            },
+            connector=message_sender,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="session_state",
+            description="Get or set session state data for the current conversation.",
+            required_permissions=(),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["get", "set"]},
+                    "session_id": {"type": "string"},
+                    "data": {"type": "object"},
+                },
+                "required": ["action", "session_id"],
+            },
+            connector=session_state,
+        )
+    )
     # Unbound (engine=None): it answers "reporting is not configured"
     # rather than being absent. platform/roles/data-agent names run_report,
     # and a tool a manifest names but the registry lacks makes the whole
     # role unbuildable via InjectionError — not partially usable. main.py
     # supplies the real read-only engine at startup.
-    registry.register(build_report_tool_spec(None, _BI_CATALOG))
+    registry.register(build_report_tool_spec(None, _SALES_REPORT_CATALOG))
     # Unbound, like order_writer and run_report above: the platform owns no
     # knowledge base, no conversation store and no escalation channel, so each
     # tool reports that rather than answering (issue #39). The stubs these

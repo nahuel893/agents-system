@@ -5,6 +5,7 @@ D-009 async contract: ``async def connector(inputs, *, session) -> dict``.
 The connector is READ-ONLY and never commits — the orchestrator owns the
 turn-scoped session and its transaction (per D-009).
 """
+
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
@@ -22,7 +23,7 @@ from agentsys.connectors.stubs import (
     message_sender,
     session_state,
 )
-from agentsys.connectors.acme_reports import CATALOG as _BI_CATALOG
+from agentsys.connectors.sales_reports import CATALOG as _SALES_REPORT_CATALOG
 from agentsys.connectors.order_connector import build_order_writer_tool_spec
 from agentsys.connectors.report_connector import build_report_tool_spec
 from agentsys.connectors.operator import (
@@ -142,9 +143,7 @@ def build_acme_rag_registry(
             description=_CATALOG_RAG_DESCRIPTION,
             required_permissions=("read:catalog",),
             input_schema=_CATALOG_RAG_INPUT_SCHEMA,
-            connector=build_catalog_rag_connector(
-                embedder, settings, CatalogTables()
-            ),
+            connector=build_catalog_rag_connector(embedder, settings, CatalogTables()),
         )
     )
     registry.register(
@@ -224,7 +223,7 @@ def build_acme_rag_registry(
     # platform/roles/data-agent names run_report, and a tool a manifest
     # names but the registry lacks makes the whole role unbuildable via
     # InjectionError. Unbound, it answers that reporting is unavailable.
-    registry.register(build_report_tool_spec(bi_engine, _BI_CATALOG))
+    registry.register(build_report_tool_spec(bi_engine, _SALES_REPORT_CATALOG))
 
     # Always present, bound only when the deployment supplies the system.
     # The generic role manifests name all three, and a tool a manifest names
