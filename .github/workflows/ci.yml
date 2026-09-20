@@ -36,16 +36,11 @@ jobs:
   # created the role at all, so the guarantee was prose plus a manual step.
   # This job provisions the role for real and then tries to write through it.
   #
-  # test_bi_readonly_engine_refuses_writes and
-  # test_audit_event_report_spec_returns_expected_shape target `audit_event`
-  # (platform-owned, migrated by "Apply migrations" below) instead of `clients`
-  # (ACME-owned, scheduled to leave this repository - extract-acme-client-repo,
-  # platform-repo-boundary spec). They seed their own single row via pytest's
-  # `admin_engine` fixture, using this job's own `DATABASE_URL` - no CI script
-  # change was needed for that. `scripts/seed_demo_data.py` below still runs
-  # because the *other* report tests in this same file still query ACME's
-  # `clients`/`orders`/`order_items` tables; that data migrates out of this job
-  # only once those tests move with the rest of ACME's client-shaped code.
+  # Every report test in this job targets platform-owned `audit_event`, migrated
+  # by "Apply migrations" below. Its pytest fixture seeds isolated rows through
+  # `admin_engine`; the assertions execute only through `bi_readonly`, including
+  # a direct-write refusal check. Portable sales-report behavior is covered by
+  # the separate `demo-reports` job against its contract-conforming database.
   bi-readonly:
     runs-on: ubuntu-latest
 
@@ -90,9 +85,6 @@ jobs:
 
       - name: Apply migrations (Alembic-owned schema)
         run: uv run alembic upgrade head
-
-      - name: Seed demo data
-        run: uv run python scripts/seed_demo_data.py
 
       # Provisioned AFTER the tables exist: the GRANT SELECT ON ALL TABLES is
       # a snapshot of what exists when it runs, and ALTER DEFAULT PRIVILEGES

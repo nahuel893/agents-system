@@ -1,10 +1,11 @@
 """Portable sales report catalog, over a fixed view contract.
 
-`connectors/acme_reports.py` is the same six reports written against one
-company's tables — `orders`, `order_items`, `clients`. It works, and it is
-unusable anywhere else, because the next company's sales table is similar but
-not identical: different table names, different column names, and a different
-status vocabulary (`facturada` where this one says `confirmed`).
+This replaces a catalog written directly against one company's own tables —
+`orders`, `order_items`, `clients`. That version worked and was unusable
+anywhere else, because the next company's sales table is similar but not
+identical: different table names, different column names, and a different
+status vocabulary (`facturada` where this one says `confirmed`). It was
+deleted with the rest of that client's domain (issue #70).
 
 Rewriting the SQL per client does not scale, and generating it from a
 table/column mapping means splicing identifiers into SQL text — which is the
@@ -36,8 +37,8 @@ report in this module runs against it unchanged, which is the proof that the
 contract carries the difference.
 
 A deployment that cannot create views is not stuck: `run_report` takes any
-`ReportSpec` catalog, so it supplies its own — that is exactly what
-`acme_reports.py` does today.
+`ReportSpec` catalog, so it supplies its own. That is the escape hatch the
+deleted client-specific catalog used, and it remains open to any consumer.
 """
 
 from __future__ import annotations

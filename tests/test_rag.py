@@ -169,9 +169,7 @@ async def test_search_catalog_fallback_respects_keyword_top_k_cap() -> None:
     async def fake_search_keywords(
         session: Any, *, query: str, limit: int
     ) -> list[KeywordSearchCandidate]:
-        return [
-            KeywordSearchCandidate(f"SKU-{i}", f"desc-{i}") for i in range(5)
-        ]
+        return [KeywordSearchCandidate(f"SKU-{i}", f"desc-{i}") for i in range(5)]
 
     source = FuncCatalogSource(search_keywords_fn=fake_search_keywords)
 
@@ -189,7 +187,7 @@ async def test_search_catalog_fallback_respects_keyword_top_k_cap() -> None:
 
 
 async def test_search_catalog_fallback_logs_once_on_embed_failure(
-    caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     settings = Settings(
         _env_file=None,
@@ -330,7 +328,9 @@ async def test_search_catalog_returns_ambiguous_for_mid_band_similarity() -> Non
     assert result.candidates[0].similarity == 0.85
 
 
-async def test_search_catalog_returns_no_match_and_no_candidates_below_threshold() -> None:
+async def test_search_catalog_returns_no_match_and_no_candidates_below_threshold() -> (
+    None
+):
     settings = Settings(
         _env_file=None,
         rag_threshold_direct=0.92,
@@ -452,7 +452,6 @@ def test_rag_module_does_not_import_client_domain() -> None:
             "    'agentsys.services.sync_clients',\n"
             "    'agentsys.services.medallion',\n"
             "    'agentsys.models.tables',\n"
-            "    'agentsys.connectors.acme_reports',\n"
             "    'agentsys.connectors.stubs',\n"
             "}\n"
             "leaked = sorted(client_owned & set(sys.modules))\n"
