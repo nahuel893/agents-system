@@ -6,6 +6,7 @@ dispatch, error shaping, ToolSpec registration, and that `session` is never
 forwarded to the report engine (AD-3: this tool uses its OWN dedicated
 read-only engine, not the turn-scoped session).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agentsys.connectors import acme_reports
+from agentsys.connectors.sales_reports import CATALOG
 from agentsys.connectors.report_connector import (
     build_report_connector,
     build_report_registry,
@@ -23,7 +24,7 @@ from agentsys.connectors.report_connector import (
 
 
 def _catalog() -> dict[str, Any]:
-    return acme_reports.CATALOG
+    return CATALOG
 
 
 def test_connector_is_async_coroutine_function() -> None:
@@ -50,7 +51,9 @@ async def test_missing_report_key_returns_error_dict() -> None:
 async def test_validation_error_from_bad_param_returns_error_dict() -> None:
     connector = build_report_connector(object(), _catalog())
     # months_back is bounded 1-24 on every report in the catalog.
-    result = await connector({"report": "ventas_por_mes", "params": {"months_back": 999}})
+    result = await connector(
+        {"report": "sales_by_month", "params": {"months_back": 999}}
+    )
 
     assert "error" in result
     assert "months_back" in result["error"]
@@ -61,7 +64,9 @@ async def test_session_kwarg_is_never_forwarded_to_run_report(monkeypatch: Any) 
 
     captured: dict[str, Any] = {}
 
-    async def fake_run_report(engine: Any, spec: Any, raw_params: Any) -> dict[str, Any]:
+    async def fake_run_report(
+        engine: Any, spec: Any, raw_params: Any
+    ) -> dict[str, Any]:
         captured["engine"] = engine
         captured["spec"] = spec
         captured["raw_params"] = raw_params
@@ -74,11 +79,11 @@ async def test_session_kwarg_is_never_forwarded_to_run_report(monkeypatch: Any) 
     session_sentinel = object()
 
     result = await connector(
-        {"report": "resumen_estados", "params": {}}, session=session_sentinel
+        {"report": "status_summary", "params": {}}, session=session_sentinel
     )
 
     assert captured["engine"] is engine_sentinel
-    assert result["report"] == "resumen_estados"
+    assert result["report"] == "status_summary"
     assert "session" not in captured
     assert session_sentinel not in captured.values()
 
@@ -87,19 +92,21 @@ async def test_happy_path_returns_run_report_output_verbatim(monkeypatch: Any) -
     from agentsys.connectors import report_connector
 
     canned = {
-        "report": "top_clientes",
+        "report": "top_customers",
         "rows": [{"client_name": "x"}],
         "row_count": 1,
         "meta": {},
     }
 
-    async def fake_run_report(engine: Any, spec: Any, raw_params: Any) -> dict[str, Any]:
+    async def fake_run_report(
+        engine: Any, spec: Any, raw_params: Any
+    ) -> dict[str, Any]:
         return canned
 
     monkeypatch.setattr(report_connector, "run_report", fake_run_report)
 
     connector = build_report_connector(object(), _catalog())
-    result = await connector({"report": "top_clientes", "params": {}})
+    result = await connector({"report": "top_customers", "params": {}})
 
     assert result == canned
 
@@ -111,13 +118,29 @@ def test_input_schema_report_enum_matches_catalog_keys() -> None:
     assert enum_values == set(_catalog().keys())
 
 
-def test_registry_registers_run_report_with_expected_permissions_and_revalidation() -> None:
+def test_registry_registers_run_report_with_expected_permissions_and_revalidation() -> (
+    None
+):
     registry = build_report_registry(object(), _catalog())
     spec = registry.get("run_report")
 
     assert spec.required_permissions == ("read:reports",)
     assert spec.always_revalidate is True
     assert asyncio.iscoroutinefunction(spec.connector)
+
+
+def test_platform_registries_offer_the_portable_sales_report_names() -> None:
+    """Both registry builders must expose the portable catalog, not legacy IDs."""
+    from agentsys.config import Settings
+    from agentsys.connectors.rag_connector import build_acme_rag_registry
+    from agentsys.connectors.stubs import build_acme_registry
+
+    rag_registry = build_acme_rag_registry(Settings(_env_file=None), embedder=object())
+    stub_registry = build_acme_registry()
+
+    for registry in (rag_registry, stub_registry):
+        report_schema = registry.get("run_report").input_schema
+        assert set(report_schema["properties"]["report"]["enum"]) == set(CATALOG)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +202,7 @@ async def test_connector_returns_a_structured_error_when_the_database_fails(
     monkeypatch.setattr(rc, "run_report", exploding_run_report)
 
     connector = rc.build_report_connector(object(), _catalog())
-    result = await connector({"report": "ventas_por_zona", "params": {}})
+    result = await connector({"report": "sales_by_zone", "params": {}})
 
     assert "error" in result
     assert result["error_kind"] == "database_unavailable"
@@ -215,7 +238,7 @@ async def test_connector_database_error_never_leaks_the_connection_string(
     monkeypatch.setattr(rc, "run_report", exploding_run_report)
 
     connector = rc.build_report_connector(object(), _catalog())
-    result = await connector({"report": "ventas_por_zona", "params": {}})
+    result = await connector({"report": "sales_by_zone", "params": {}})
 
     serialized = json.dumps(result)
     assert secret not in serialized
@@ -236,12 +259,12 @@ async def test_connector_marks_an_empty_result_as_a_successful_no_match(
     from agentsys.connectors import report_connector as rc
 
     async def empty_run_report(*_: Any, **__: Any) -> dict[str, Any]:
-        return {"report": "ventas_por_zona", "rows": [], "row_count": 0, "meta": {}}
+        return {"report": "sales_by_zone", "rows": [], "row_count": 0, "meta": {}}
 
     monkeypatch.setattr(rc, "run_report", empty_run_report)
 
     connector = rc.build_report_connector(object(), _catalog())
-    result = await connector({"report": "ventas_por_zona", "params": {}})
+    result = await connector({"report": "sales_by_zone", "params": {}})
 
     assert result["row_count"] == 0
     assert result["empty_result"] is True
@@ -255,12 +278,17 @@ async def test_connector_does_not_mark_a_non_empty_result_as_empty(
     from agentsys.connectors import report_connector as rc
 
     async def one_row(*_: Any, **__: Any) -> dict[str, Any]:
-        return {"report": "ventas_por_zona", "rows": [{"a": 1}], "row_count": 1, "meta": {}}
+        return {
+            "report": "sales_by_zone",
+            "rows": [{"a": 1}],
+            "row_count": 1,
+            "meta": {},
+        }
 
     monkeypatch.setattr(rc, "run_report", one_row)
 
     connector = rc.build_report_connector(object(), _catalog())
-    result = await connector({"report": "ventas_por_zona", "params": {}})
+    result = await connector({"report": "sales_by_zone", "params": {}})
 
     assert result.get("empty_result") is False
 
@@ -344,7 +372,7 @@ async def test_unconfigured_report_tool_reports_it_instead_of_crashing() -> None
     from agentsys.connectors import report_connector as rc
 
     connector = rc.build_report_connector(None, _catalog())
-    result = await connector({"report": "ventas_por_zona", "params": {}})
+    result = await connector({"report": "sales_by_zone", "params": {}})
 
     assert result["error_kind"] == "bi_not_configured"
     # Operator configuration detail does not belong in text the model will
