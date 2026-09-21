@@ -1,4 +1,4 @@
-"""Smoke test — ACME sales agent with a real LLM through the full harness.
+"""Smoke test — generic sales-agent fixture with a real LLM through the full harness.
 
 Runs a simulated sales conversation end-to-end:
 
@@ -13,16 +13,19 @@ Usage:
     uv run python scripts/smoke.py groq         # hosted Groq (needs GROQ_API_KEY)
     uv run python scripts/smoke.py ollama        # local Ollama
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
 import sys
 import textwrap
+from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AnyMessage, HumanMessage
+from pydantic import SecretStr
 
 load_dotenv()
 
@@ -32,6 +35,7 @@ sys.path.insert(0, str(__file__ + "/../../src"))
 from agentsys.agent.graph import AgentRuntime  # noqa: E402
 from agentsys.connectors.stubs import build_acme_registry  # noqa: E402
 from agentsys.harness.factory import build_runtime  # noqa: E402
+from agentsys.harness.loader import RootConfig  # noqa: E402
 
 # Provider config: (model name, builder fn)
 GROQ_MODEL = "llama-3.3-70b-versatile"
@@ -45,10 +49,18 @@ GRANTED_PERMISSIONS = [
     "send:message",
 ]
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_CLIENT_A_ROOTS = RootConfig(
+    platform_root=_REPO_ROOT / "platform",
+    deployments_root=(
+        _REPO_ROOT / "tests" / "fixtures" / "agents" / "overrides" / "deployments"
+    ),
+)
+
 TURNS = [
-    "Hola! Qué productos tienen disponibles?",
-    "Me interesa el azúcar. Cuánto cuesta y hay stock?",
-    "Perfecto, quiero hacer un pedido: 3 unidades de azúcar La Colmena 1kg. Mi número es 5491112345678.",
+    "What requests can you help with?",
+    "Please look up the available options.",
+    "Prepare a request with quantity 3 and ask me to confirm it.",
 ]
 
 
@@ -61,7 +73,9 @@ def _build_model(provider: str) -> tuple[BaseChatModel, str]:
         if not api_key:
             print("ERROR: GROQ_API_KEY not set. Add it to your .env file.")
             sys.exit(1)
-        return ChatGroq(model=GROQ_MODEL, api_key=api_key), f"Groq ({GROQ_MODEL})"
+        return ChatGroq(
+            model=GROQ_MODEL, api_key=SecretStr(api_key)
+        ), f"Groq ({GROQ_MODEL})"
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -73,9 +87,9 @@ def _build_model(provider: str) -> tuple[BaseChatModel, str]:
 
 
 def _print_messages(messages: list[AnyMessage], turn: int) -> None:
-    print(f"\n{'─'*60}")
+    print(f"\n{'─' * 60}")
     print(f"  TURN {turn}")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
     for msg in messages:
         role = type(msg).__name__.replace("Message", "").upper()
         content = getattr(msg, "content", "")
@@ -95,13 +109,14 @@ def _print_messages(messages: list[AnyMessage], turn: int) -> None:
 async def main() -> None:
     provider = sys.argv[1] if len(sys.argv) > 1 else "ollama"
 
-    print("Building ACME EquippedRuntime...")
+    print("Building generic client EquippedRuntime...")
     registry = build_acme_registry()
     equipped = build_runtime(
         role_type="sales-agent",
         registry=registry,
         granted_permissions=GRANTED_PERMISSIONS,
-        client="acme",
+        client="client-a",
+        roots=_CLIENT_A_ROOTS,
     )
     print(f"  Role: {equipped.definition.role_name}")
     print(f"  Tools granted: {[t.name for t in equipped.tools]}")
@@ -119,28 +134,18 @@ async def main() -> None:
         print(f"\n>>> USER: {user_text}")
         history.append(HumanMessage(content=user_text))
 
-        try:
-            result = await runtime.run_turn(
-                messages=history,
-                session_id="smoke-session-001",
-                permissions=tuple(GRANTED_PERMISSIONS),
-            )
-        except Exception as exc:
-            if "rate_limit" in str(exc).lower() or "429" in str(exc):
-                import re
+        result = await runtime.run_turn(
+            messages=history,
+            session_id="smoke-session-001",
+            permissions=tuple(GRANTED_PERMISSIONS),
+        )
 
-                wait = re.search(r"try again in (.+?)\.", str(exc))
-                hint = f" — retry in {wait.group(1)}" if wait else ""
-                print(f"\n[RATE LIMIT]{hint}")
-                sys.exit(1)
-            raise
-
-        _print_messages(result[len(history):], turn=i)
+        _print_messages(result[len(history) :], turn=i)
         history = result
 
-    print(f"\n{'═'*60}")
+    print(f"\n{'═' * 60}")
     print("  Smoke test complete.")
-    print(f"{'═'*60}\n")
+    print(f"{'═' * 60}\n")
 
 
 if __name__ == "__main__":

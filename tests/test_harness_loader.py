@@ -7,13 +7,14 @@ Fixture roots
 -------------
 - GENERIC_ROOTS  → points to tests/fixtures/agents/generic-role/
 - OVERRIDE_ROOTS → points to tests/fixtures/agents/overrides/
-- REAL_ROOTS     → points to the actual repo platform/ and deployments/ folders
+- REAL_ROOTS     → points to actual platform roles and generic client fixture deployments
 
 The `roots` parameter accepted by all loader functions is a RootConfig object
 with two fields:
     platform_root  — path that contains a `roles/` subdirectory
     deployments_root — path that contains `{client}/{role_type}/` subdirectories
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -52,12 +53,12 @@ def _override_roots() -> Any:
 
 
 def _real_roots() -> Any:
-    """RootConfig pointing at the actual repo files."""
+    """RootConfig for platform roles and generic client deployment fixtures."""
     from agentsys.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=REPO_ROOT / "platform",
-        deployments_root=REPO_ROOT / "deployments",
+        deployments_root=OVERRIDE_ROOTS_DIR / "deployments",
     )
 
 
@@ -222,21 +223,21 @@ def test_resolve_absent_override_folder_returns_generic() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 10 — Real ACME sales-agent merge (happy-path integration test)
+# Test 10 — Generic client sales-agent merge (happy-path integration test)
 # ---------------------------------------------------------------------------
-def test_real_acme_sales_agent_merge() -> None:
+def test_client_a_sales_agent_merge() -> None:
     from agentsys.harness.loader import resolve
 
-    definition = resolve("sales-agent", client="acme", roots=_real_roots())
+    definition = resolve("sales-agent", client="client-a", roots=_real_roots())
 
     assert definition.role_name == "sales-agent"
-    assert definition.deployment == "acme"
+    assert definition.deployment == "client-a"
 
-    # Skills must come from the ACME override
+    # Skills must come from the generic client override.
     assert set(definition.skills) == {
-        "order_extraction",
-        "colloquial_matching",
-        "confirm_flow",
+        "request_structuring",
+        "query_normalization",
+        "confirmation_workflow",
     }
 
     # Permissions: override says `inherit` — must match the RESOLVED parent
@@ -257,10 +258,10 @@ def test_real_acme_sales_agent_merge() -> None:
     }
     assert set(definition.permissions) == expected_permissions
 
-    # Escalation: parent conditions + ACME addition
+    # Escalation: parent conditions + generic client addition.
     conditions = definition.escalation_rules["conditions"]
     assert "customer_not_registered" in conditions
-    assert "three_failed_clarification_attempts" in conditions
+    assert "unresolved_request_after_retries" in conditions
 
     # Autonomy must not exceed the platform ceiling of supervised
     assert definition.autonomy == "supervised"
@@ -273,13 +274,12 @@ def test_real_acme_sales_agent_merge() -> None:
 # Test 11 — system_prompt is the role.md body from the deployment override
 # (when a deployment role.md exists, it is the effective system prompt)
 # ---------------------------------------------------------------------------
-def test_real_acme_system_prompt_is_override_role_body() -> None:
+def test_client_a_system_prompt_is_override_role_body() -> None:
     from agentsys.harness.loader import resolve
 
-    definition = resolve("sales-agent", client="acme", roots=_real_roots())
+    definition = resolve("sales-agent", client="client-a", roots=_real_roots())
 
-    # The ACME role.md body mentions ACME-specific vocabulary/purpose
-    assert "ACME" in definition.system_prompt or "acme" in definition.system_prompt.lower()
+    assert "Generic Client A request assistant" in definition.system_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +351,7 @@ def test_platform_default_limits_public_alias() -> None:
 # exists, so `resolve()` raised a confusing per-file DefinitionError instead
 # of naming the actual problem. These tests drive both resolution branches
 # via monkeypatch + tmp_path — they must NOT assert on this machine's real
-# repo layout (that is covered separately by test_real_acme_sales_agent_merge
+# repo layout (that is covered separately by test_client_a_sales_agent_merge
 # using REAL_ROOTS).
 # ---------------------------------------------------------------------------
 def test_default_platform_root_prefers_packaged_location(
@@ -545,9 +545,7 @@ def _evil_role_tree(tmp_path: pathlib.Path) -> pathlib.Path:
         'permissions: ["admin:*", "write:*"]\n---\n',
         encoding="utf-8",
     )
-    (evil / "policy.md").write_text(
-        "---\nautonomy: full\n---\n", encoding="utf-8"
-    )
+    (evil / "policy.md").write_text("---\nautonomy: full\n---\n", encoding="utf-8")
     return evil
 
 
@@ -612,14 +610,13 @@ def test_load_override_refuses_traversing_client_and_role(
         platform_root=tmp_path / "platform",
         deployments_root=tmp_path / "deployments",
     )
-    for client, role in (("../escape", "sales-agent"), ("acme", "../escape")):
+    for client, role in (("../escape", "sales-agent"), ("client-a", "../escape")):
         with pytest.raises(DefinitionError) as excinfo:
             load_override(client, role, roots=roots)
         message = str(excinfo.value)
         assert "escape" in message, message
         assert "deployments_root" not in message, (
-            "raised on the missing root, not on the traversal: "
-            f"{message}"
+            f"raised on the missing root, not on the traversal: {message}"
         )
 
 
@@ -627,9 +624,9 @@ def test_real_role_and_client_names_still_load() -> None:
     """Regression guard: the validator must not reject legitimate names."""
     from agentsys.harness.loader import resolve
 
-    definition = resolve("sales-agent", client="acme", roots=_real_roots())
+    definition = resolve("sales-agent", client="client-a", roots=_real_roots())
     assert definition.role_name == "sales-agent"
-    assert definition.deployment == "acme"
+    assert definition.deployment == "client-a"
 
 
 # ---------------------------------------------------------------------------
@@ -661,7 +658,7 @@ def test_load_override_works_without_any_platform_directory(
     )
 
     # Must not raise: this call never reads platform_root.
-    assert loader_module.load_override("acme", "sales-agent") is None
+    assert loader_module.load_override("client-a", "sales-agent") is None
 
 
 def test_missing_platform_root_still_fails_loudly_naming_both_paths(
@@ -739,6 +736,6 @@ def test_load_override_raises_when_the_deployments_root_is_absent(
     )
 
     with pytest.raises(DefinitionError) as excinfo:
-        load_override("acme", "sales-agent", roots=roots)
+        load_override("client-a", "sales-agent", roots=roots)
 
     assert "nope" in str(excinfo.value)

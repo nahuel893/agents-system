@@ -1,11 +1,11 @@
-"""Interactive chat MVP — ACME sales agent over the REAL catalog (D-011).
+"""Interactive chat — generic sales-agent fixture over the configured catalog (D-011).
 
 Wires the whole stack end-to-end::
 
     stdin → AgentRuntime (Ollama) → Layer-2 interceptor → RAG connector → pgvector
 
-Unlike ``scripts/smoke.py`` (hardcoded stub connectors), this builds the REAL
-RAG registry (``build_acme_rag_registry``) and a turn-scoped ``AsyncSession``
+Unlike ``scripts/smoke.py`` (hardcoded stub connectors), this builds the RAG
+registry (``build_acme_rag_registry``) and a turn-scoped ``AsyncSession``
 provider over ``database_url``, so asking for a product runs a live semantic
 search over ``catalog_embeddings``.
 
@@ -27,16 +27,19 @@ import asyncio
 import os
 import sys
 import textwrap
+from pathlib import Path
 from collections.abc import Iterator
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agentsys.agent.graph import AgentRuntime
 from agentsys.config import get_settings
 from agentsys.connectors.rag_connector import build_acme_rag_registry
 from agentsys.harness.factory import build_runtime
+from agentsys.harness.loader import RootConfig
 from agentsys.models.base import get_engine
 from agentsys.observability import setup_logging
 from agentsys.services.embeddings import get_embedding_provider
@@ -44,8 +47,8 @@ from agentsys.services.embeddings import get_embedding_provider
 GROQ_MODEL = "llama-3.3-70b-versatile"
 OLLAMA_MODEL = "qwen2.5:3b"
 
-# The full ACME sales surface. read:catalog unlocks the RAG catalog_search;
-# the rest cover the stub connectors (client lookup, order writing, messaging).
+# The generic deployment's sales surface. read:catalog unlocks RAG catalog
+# search; the rest cover client lookup, order writing, and messaging.
 GRANTED_PERMISSIONS = [
     "read:catalog",
     "read:client_registry",
@@ -55,6 +58,13 @@ GRANTED_PERMISSIONS = [
 ]
 
 _EXIT_WORDS = {"exit", "quit", "salir", "chau", "q"}
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_CLIENT_A_ROOTS = RootConfig(
+    platform_root=_REPO_ROOT / "platform",
+    deployments_root=(
+        _REPO_ROOT / "tests" / "fixtures" / "agents" / "overrides" / "deployments"
+    ),
+)
 
 
 def _build_model(provider: str) -> tuple[BaseChatModel, str]:
@@ -66,7 +76,9 @@ def _build_model(provider: str) -> tuple[BaseChatModel, str]:
         if not api_key:
             print("ERROR: GROQ_API_KEY not set. Add it to your .env file.")
             sys.exit(1)
-        return ChatGroq(model=GROQ_MODEL, api_key=api_key), f"Groq ({GROQ_MODEL})"
+        return ChatGroq(
+            model=GROQ_MODEL, api_key=SecretStr(api_key)
+        ), f"Groq ({GROQ_MODEL})"
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -132,7 +144,8 @@ async def main() -> int:
         role_type="sales-agent",
         registry=registry,
         granted_permissions=GRANTED_PERMISSIONS,
-        client="acme",
+        client="client-a",
+        roots=_CLIENT_A_ROOTS,
         session_provider=session_provider,
     )
 
