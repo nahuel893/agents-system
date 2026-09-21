@@ -15,6 +15,7 @@ so the boot assertion stops grading a manifest against itself.
 
 asyncio_mode = "auto" (set in pyproject.toml) — async tests need NO marker.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -44,10 +45,10 @@ class SpyEmbedder:
 
 
 def _registry() -> Any:
-    """Pure-stub registry — fast, no embedder, all 8 tools."""
-    from agentsys.connectors.stubs import build_acme_registry
+    """Generic test registry — fast, no embedder, all platform tools."""
+    from conftest import build_test_registry
 
-    return build_acme_registry()
+    return build_test_registry()
 
 
 def _rag_registry() -> Any:
@@ -73,13 +74,16 @@ def _build_runtime(role_type: str, granted_permissions: Any = None) -> Any:
     from agentsys.harness.factory import build_runtime
 
     definition = loader.resolve(role_type, client=None)
-    grants = definition.permissions if granted_permissions is None else granted_permissions
+    grants = (
+        definition.permissions if granted_permissions is None else granted_permissions
+    )
     return build_runtime(role_type, _registry(), grants, client=None)
 
 
 # ---------------------------------------------------------------------------
 # Scenario 0 — the role list under test tracks the roles that exist on disk
 # ---------------------------------------------------------------------------
+
 
 def test_platform_roles_on_disk_match_the_pinned_contract() -> None:
     """A new role folder must be pinned before it is considered covered.
@@ -96,6 +100,7 @@ def test_platform_roles_on_disk_match_the_pinned_contract() -> None:
 # ---------------------------------------------------------------------------
 # Scenario 1 — every role on disk boots end-to-end, against BOTH registries
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("role_type", discover_concrete_platform_roles())
 def test_every_platform_role_boots_end_to_end(role_type: str) -> None:
@@ -154,6 +159,7 @@ def test_booted_runtime_carries_the_pinned_tool_surface(role_type: str) -> None:
 # ---------------------------------------------------------------------------
 # Scenario 2 — each new platform tool executes through the real interceptor
 # ---------------------------------------------------------------------------
+
 
 async def test_knowledge_retrieval_executes_on_data_agent() -> None:
     from agentsys.harness.interceptor import intercept
@@ -214,6 +220,7 @@ async def test_escalation_notifier_executes_on_orchestrator() -> None:
 # Scenario 3 — Layer-2 sensitivity proof for escalation_notifier (send: prefix)
 # ---------------------------------------------------------------------------
 
+
 async def test_escalation_notifier_blocked_without_current_permissions() -> None:
     from agentsys.harness.interceptor import PolicyViolation, intercept
 
@@ -264,6 +271,7 @@ async def test_escalation_notifier_blocked_when_permission_revoked() -> None:
 # Scenario 4 — negative surface: registry-known tool absent from the role surface
 # ---------------------------------------------------------------------------
 
+
 async def test_order_writer_blocked_on_data_agent_runtime() -> None:
     from agentsys.harness.interceptor import PolicyViolation, intercept
 
@@ -287,6 +295,7 @@ async def test_order_writer_blocked_on_data_agent_runtime() -> None:
 # ---------------------------------------------------------------------------
 # Scenario 5 — Layer-1 RBAC narrowing: boot succeeds with a partial surface
 # ---------------------------------------------------------------------------
+
 
 def test_data_agent_boots_with_knowledge_retrieval_denied() -> None:
     from agentsys.harness import loader

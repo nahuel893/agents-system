@@ -723,18 +723,14 @@ def _run_lifespan_capturing_bi_engine(settings: Settings, bi_engine: Any) -> Any
 
     async def _run() -> Any:
         with _stack(_bi_lifespan_patches(settings, bi_engine)):
-            with patch(
-                "agentsys.connectors.rag_connector.build_acme_rag_registry",
-                side_effect=fake_build_registry,
-            ):
-                app = create_test_app()
-                async with lifespan(app):
-                    pass
+            app = create_test_app(registry_factory=fake_build_registry)
+            async with lifespan(app):
+                pass
         # NOT captured.get(): a builder that was never called would return
         # None, which is indistinguishable from the fail-closed result the
         # "role can write" test asserts. Missing means the patch target is
         # wrong, and that must be a failure, not a pass.
-        assert "bi_engine" in captured, "build_acme_rag_registry was never called"
+        assert "bi_engine" in captured, "registry_factory was never called"
         return captured["bi_engine"]
 
     return _run()
