@@ -1,9 +1,9 @@
+# pyright: reportMissingImports=false, reportCallIssue=false
 """FastAPI application factory."""
 
 from __future__ import annotations
 
 import asyncio
-import pathlib
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Literal
@@ -16,32 +16,18 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agentsys.config import Settings, get_settings
-from agentsys.harness.loader import PLATFORM_DEFAULT_LIMITS
+from agentsys.harness.loader import DefinitionError, PLATFORM_DEFAULT_LIMITS, RootConfig
 from agentsys.integration import openai_router, webhook_router
 from agentsys.integration.whatsapp_client import WhatsAppClient
 from agentsys.models.base import get_engine
 from agentsys.observability import RequestIdMiddleware, setup_logging
-from agentsys.harness.registry import RegistryFactory, ToolRegistry
-from agentsys.services.clients import ClientDirectory
-from agentsys.services.conversation_log import ConversationLogRecorder
+from agentsys.harness.registry import RegistryFactory
 from agentsys.services.participants import (
     ConversationRecorder,
     ParticipantDirectory,
 )
 from agentsys.services.dedup import DEDUP_TTL_SECONDS
 from agentsys.services.redis import close_redis_pool, get_redis_client
-
-# consumer-root-configuration precondition fix (D-024 slice 1) — a consumer
-# must supply its own `deployments_root` explicitly rather than relying on
-# the library's own guessed default, which only ever matches a co-located
-# dev checkout (see harness/loader.py's `_require_deployments_root`, which
-# now raises loudly instead of silently falling back to the generic role
-# when a client override is requested against a missing root). This app is
-# currently co-located with `deployments/` in the same repo checkout, so it
-# computes its own explicit root here rather than depending on the
-# library's internal default resolution.
-_REPO_ROOT = pathlib.Path(__file__).parent.parent.parent
-_DEPLOYMENTS_ROOT = _REPO_ROOT / "deployments"
 
 # BLOCKER 3 — import-time backstop for the dedup-TTL invariant. A turn whose
 # budget can outlive the dedup key lets Meta's retry re-process the same
@@ -194,7 +180,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             from agentsys.agent.graph import AgentRuntime, _effective_limits
             from agentsys.harness.factory import build_runtime
-            from agentsys.harness.loader import RootConfig, resolve
+            from agentsys.harness.loader import resolve
             from agentsys.services.embeddings import get_embedding_provider
 
             embedder = get_embedding_provider(settings)
@@ -223,7 +209,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 resource_stack.push_async_callback(candidate.dispose)
 
                 read_only = await _bi_role_is_read_only(candidate)
-                if read_only is False:
+                if read_only is not None and not read_only:
                     # Fail CLOSED. The read-only role is the guardrail that is
                     # supposed to hold even if validation and the interceptor
                     # both have bugs; nothing verified it, the URL was simply
@@ -287,6 +273,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     _build_checkpointer_cm(settings)
                 )
 
+            roots: RootConfig | None = getattr(app.state, "roots", None)
+
             runtimes: dict[str, AgentRuntime] = {}
             for model_id in required_runtimes:
                 if "__" not in model_id:
@@ -298,16 +286,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     continue
                 prefix, role = model_id.split("__", 1)
                 deployment: str | None = None if prefix == "_generic" else prefix
+                if deployment is not None and roots is None:
+                    raise DefinitionError(
+                        f"Runtime {model_id!r} specifies client override {deployment!r}, "
+                        "which requires an explicit RootConfig(deployments_root=...) passed to create_app(). "
+                        "agentsys does not derive a default deployments_root for client overrides."
+                    )
                 # D-014 AD-5 — data-driven grants: resolve the definition FIRST so
                 # the role's own resolved permissions become granted_permissions.
                 # No hardcoded role -> permissions map (discovery #184).
-                # `roots=` is explicit (see module-level comment above) — never
-                # a bare resolve() relying on the library's own default
-                # deployments_root resolution.
+                # `roots` is the exact caller-supplied RootConfig object passed to
+                # create_app (or None for generic roles).
                 definition = resolve(
                     role,
                     client=deployment,
-                    roots=RootConfig(deployments_root=_DEPLOYMENTS_ROOT),
+                    roots=roots,
                 )
 
                 # BLOCKER 3 — fail fast if this runtime's effective turn budget
@@ -335,7 +328,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     registry=registry,
                     granted_permissions=definition.permissions,
                     client=deployment,
-                    roots=RootConfig(deployments_root=_DEPLOYMENTS_ROOT),
+                    roots=roots,
                     session_provider=session_provider,
                 )
                 runtimes[model_id] = AgentRuntime(
@@ -431,6 +424,7 @@ def create_app(
     registry_factory: RegistryFactory,
     participant_directory: ParticipantDirectory | None = None,
     conversation_recorder: ConversationRecorder | None = None,
+    roots: RootConfig | None = None,
     title: str = "agentsys",
 ) -> FastAPI:
     """Application factory. Returns a configured FastAPI instance.
@@ -438,7 +432,7 @@ def create_app(
     Everything this function knows how to build -- the middleware, the two
     routers, `/health`, and the lifespan's engine, audit sink, Redis pool,
     runtime cache and checkpointer -- is the same for every deployment. The
-    three arguments are the parts that are not, and the platform has no
+    four arguments are the parts that are not, and the platform has no
     default for any of them because it owns no connectors, no identity
     schema and no conversation history.
 
@@ -457,6 +451,10 @@ def create_app(
         inbound route fails closed and runs no turn.
     conversation_recorder:
         Records completed turns. Absent means none are recorded.
+    roots:
+        Consumer-owned path configuration for platform and deployment roles.
+        Client overrides (<client>__<role>) require an explicit RootConfig
+        specifying deployments_root.
     title:
         OpenAPI title.
     """
@@ -473,6 +471,7 @@ def create_app(
     application.state.registry_factory = registry_factory
     application.state.participant_directory = participant_directory
     application.state.conversation_recorder = conversation_recorder
+    application.state.roots = roots
 
     application.add_middleware(RequestIdMiddleware)
     application.include_router(webhook_router)
@@ -520,30 +519,3 @@ def create_app(
         }
 
     return application
-
-
-def _acme_registry_factory(
-    settings: Settings, embedder: Any = None, bi_engine: Any = None
-) -> ToolRegistry:
-    """ACME's `RegistryFactory`, with its import deferred.
-
-    A module-level `from ... import build_acme_rag_registry` would make
-    `import agentsys.main` eagerly load the connector module and, through it,
-    the whole OpenAI SDK. The lifespan deliberately defers its heavy imports
-    for exactly that reason; passing the factory by reference at module scope
-    would have quietly undone it for this one.
-    """
-    from agentsys.connectors.rag_connector import build_acme_rag_registry
-
-    return build_acme_rag_registry(settings, embedder, bi_engine)
-
-
-# ACME's application. Everything above is the platform's; this call is the
-# deployment -- its connectors, its clients table, its conversation log. It
-# is the seam the client repository takes over.
-app = create_app(
-    registry_factory=_acme_registry_factory,
-    participant_directory=ClientDirectory(),
-    conversation_recorder=ConversationLogRecorder(),
-    title="Acme",
-)
