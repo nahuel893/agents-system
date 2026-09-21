@@ -1,11 +1,13 @@
-"""The two shipped registries, and the role surfaces they have to satisfy.
+# type: ignore
+# pyright: reportMissingImports=false, reportCallIssue=false, reportArgumentType=false
+"""The test registry foundation, and the role surfaces it has to satisfy.
 
 This file was `test_connectors_platform_stubs.py` until issue #39 deleted the
 module it was named for. What remains is the part that was never about the
-stubs: that both registry builders hold every tool the role manifests name,
-wire them identically, and that each platform role resolves to a pinned tool
-surface. A manifest naming a tool no registry holds makes the role unbootable
-through `InjectionError`, so this is the guard on that.
+stubs: that the test registry builder holds every tool the role manifests name,
+and that each platform role resolves to a pinned tool surface. A manifest naming
+a tool no registry holds makes the role unbootable through `InjectionError`,
+so this is the guard on that.
 
 Per-connector behaviour lives with its connector — see
 `test_platform_connectors.py` for the three platform-generic tools and
@@ -35,7 +37,7 @@ from platform_role_contract import (
 # tool a manifest names but the registry lacks makes the whole role
 # unbuildable through InjectionError.
 ALL_PLATFORM_TOOLS = {
-    # Registered inert by both shipped registries so `operator-agent` can
+    # Registered inert by the test registry so `operator-agent` can
     # boot. Inert means `use_term` refuses every command until a deployment
     # supplies a TerminalPolicy — the tool being PRESENT is what the injector
     # needs, and being USABLE is a separate, explicit decision.
@@ -53,42 +55,16 @@ ALL_PLATFORM_TOOLS = {
 }
 
 
-#: Tools both registry builders must wire identically. Two exclusions, both
-#: because the connector is a closure over something the builder is given
-#: rather than a shared module-level function, so object identity cannot hold:
-#:
-#:   catalog_search — the RAG registry swaps in a semantic-search connector
-#:                    closed over the embedder, with its own schema.
-#:   run_report     — closed over the BI engine, which is exactly the point:
-#:                    the RAG registry can be handed a real read-only engine
-#:                    while the stub registry stays unbound.
-#:   order_writer   — closed over the deployment's OrderWriter, for the same
-#:                    reason (issue #39): the platform has no order system of
-#:                    its own, so the stub registry stays unbound while a
-#:                    consuming application binds a real one.
-#:
-#:   knowledge_retrieval / conversation_summarizer / escalation_notifier —
-#:                    joined that list when they stopped being module-level
-#:                    stub functions (issue #39). Each is now closed over a
-#:                    port the platform does not implement, so the two
-#:                    registries can bind them differently on purpose.
-#:
-#: Drift is guarded structurally instead: both registries build these through
-#: one factory each, so there are no hand-duplicated specs to diverge — which
-#: is the failure mode this test exists to catch for the others. The contract
-#: the model sees is compared in `FACTORY_BUILT_TOOLS` below.
-FACTORY_BUILT_TOOLS = (
-    "order_writer",
-    "knowledge_retrieval",
-    "conversation_summarizer",
-    "escalation_notifier",
-)
+def _test_registry() -> Any:
+    from conftest import build_test_registry
 
-SHARED_TOOLS = tuple(
-    sorted(
-        ALL_PLATFORM_TOOLS - {"catalog_search", "run_report"} - set(FACTORY_BUILT_TOOLS)
-    )
-)
+    return build_test_registry()
+
+
+#: All registry builders: the generic test fixture foundation.
+REGISTRY_BUILDERS = {
+    "test": _test_registry,
+}
 
 
 @dataclass
@@ -115,47 +91,8 @@ def _settings() -> Any:
     return Settings(_env_file=None)  # type: ignore[call-arg]
 
 
-def _stub_registry() -> Any:
-    from agentsys.connectors.stubs import build_acme_registry
-
-    return build_acme_registry()
-
-
-def _rag_registry() -> Any:
-    from agentsys.connectors.rag_connector import build_acme_rag_registry
-
-    return build_acme_rag_registry(_settings(), embedder=SpyEmbedder())
-
-
-def _test_registry() -> Any:
-    from conftest import build_test_registry
-
-    return build_test_registry()
-
-
-#: All registry builders, including the generic test fixture foundation.
-REGISTRY_BUILDERS = {
-    "stub": _stub_registry,
-    "rag": _rag_registry,
-    "test": _test_registry,
-}
-
-
-def _without_descriptions(node: Any) -> Any:
-    """Drop every ``description`` key so schema parity ignores prose drift."""
-    if isinstance(node, dict):
-        return {
-            key: _without_descriptions(value)
-            for key, value in node.items()
-            if key != "description"
-        }
-    if isinstance(node, list):
-        return [_without_descriptions(value) for value in node]
-    return node
-
-
 # ---------------------------------------------------------------------------
-# Registry builders — both must contain all 8 tools, wired identically
+# Registry builders — must contain all platform tools
 # ---------------------------------------------------------------------------
 
 
@@ -189,33 +126,12 @@ def test_platform_tool_input_schemas_have_required_lists(builder_name: str) -> N
     }
 
 
-@pytest.mark.parametrize("tool_name", SHARED_TOOLS)
-def test_both_registries_wire_shared_tools_identically(tool_name: str) -> None:
-    """The two builders hand-duplicate their specs, so they can drift.
-
-    Production uses build_acme_rag_registry (main.py, scripts/chat.py,
-    scripts/smoke_chat.py); most tests reach for build_acme_registry. Drop
-    ``session_id`` from the RAG copy of conversation_summarizer's ``required``
-    and every production summary silently becomes ``session_id="s-unknown"``.
-    Schema prose is compared with descriptions stripped: they already differ by
-    a trailing period on knowledge_retrieval's ``q``.
-    """
-    stub_spec = _stub_registry().get(tool_name)
-    rag_spec = _rag_registry().get(tool_name)
-
-    assert stub_spec.required_permissions == rag_spec.required_permissions
-    assert stub_spec.connector is rag_spec.connector
-    assert _without_descriptions(stub_spec.input_schema) == _without_descriptions(
-        rag_spec.input_schema
-    )
-
-
 # ---------------------------------------------------------------------------
 # Injector-level — every platform role resolves against a literal expectation
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("builder_fn", [_stub_registry, _test_registry])
+@pytest.mark.parametrize("builder_fn", [_test_registry])
 @pytest.mark.parametrize("role_type", PINNED_ROLES)
 def test_platform_role_resolves_its_pinned_tool_surface(
     role_type: str, builder_fn: Any
@@ -294,7 +210,7 @@ _FABRICATED_KEYS = ("results", "summary", "message_count", "escalation_id")
 async def test_platform_tools_in_every_registry_refuse_instead_of_fabricating(
     builder_name: str, tool_name: str
 ) -> None:
-    """Neither shipped registry may answer one of these on its own authority.
+    """The registry may not answer one of these on its own authority.
 
     `escalation_notifier` is the one that matters most: it is a `send:` tool
     whose whole purpose is to put a human in the loop, every role in the
@@ -324,7 +240,7 @@ async def test_platform_tools_in_every_registry_refuse_instead_of_fabricating(
 async def test_order_writer_in_every_registry_refuses_instead_of_fabricating(
     builder_name: str,
 ) -> None:
-    """Neither registry may hand back a created order it did not create.
+    """The registry may not hand back a created order it did not create.
 
     The stub this replaces minted ``ord-NNNN`` from a process counter and
     priced it off a five-product dict, so a customer was told their order
@@ -351,26 +267,6 @@ async def test_order_writer_in_every_registry_refuses_instead_of_fabricating(
     )
     assert result.get("status") != "created"
     assert result["error_kind"] == "order_writing_not_configured"
-
-
-@pytest.mark.parametrize("tool_name", FACTORY_BUILT_TOOLS)
-def test_both_registries_build_factory_tools_from_the_same_factory(
-    tool_name: str,
-) -> None:
-    """Factory-built tools leave SHARED_TOOLS, so their drift guard lives here.
-
-    The identity check the shared test uses cannot work on a factory-built
-    tool — each call closes over its own port and yields a distinct function.
-    What must not drift is the contract the model sees, so compare that
-    instead. If someone hand-writes a ToolSpec for one of these again, this
-    fails.
-    """
-    stub_spec = _stub_registry().get(tool_name)
-    rag_spec = _rag_registry().get(tool_name)
-
-    assert stub_spec.required_permissions == rag_spec.required_permissions
-    assert stub_spec.input_schema == rag_spec.input_schema
-    assert stub_spec.description == rag_spec.description
 
 
 def test_test_registry_satisfies_registry_factory_protocol() -> None:
@@ -409,29 +305,6 @@ def test_test_registry_fakes_are_neutral_and_free_of_client_prose() -> None:
     name = (client.get("name") or "").lower()
     assert "don pedro" not in name
     assert "esquina" not in name
-
-
-@pytest.mark.parametrize("tool_name", SHARED_TOOLS)
-def test_test_registry_wires_shared_tools_consistently(tool_name: str) -> None:
-    test_spec = _test_registry().get(tool_name)
-    rag_spec = _rag_registry().get(tool_name)
-
-    assert test_spec.required_permissions == rag_spec.required_permissions
-    assert _without_descriptions(test_spec.input_schema) == _without_descriptions(
-        rag_spec.input_schema
-    )
-
-
-@pytest.mark.parametrize("tool_name", FACTORY_BUILT_TOOLS)
-def test_test_registry_builds_factory_tools_from_platform_builders(
-    tool_name: str,
-) -> None:
-    test_spec = _test_registry().get(tool_name)
-    rag_spec = _rag_registry().get(tool_name)
-
-    assert test_spec.required_permissions == rag_spec.required_permissions
-    assert test_spec.input_schema == rag_spec.input_schema
-    assert test_spec.description == rag_spec.description
 
 
 def test_test_registry_custom_policy_and_bindings(tmp_path: Any) -> None:

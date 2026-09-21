@@ -16,6 +16,7 @@ No real network / DB / embedder / LLM calls: every heavy dependency the
 lifespan touches is patched at its defining module (main.py imports them
 lazily inside the function body).
 """
+
 from __future__ import annotations
 
 from contextlib import ExitStack, asynccontextmanager
@@ -31,7 +32,7 @@ from conftest import create_test_app
 
 
 @pytest.fixture(autouse=True)
-def clear_settings_cache():
+def clear_settings_cache() -> Any:
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -41,7 +42,7 @@ def _make_settings(**overrides: object) -> Settings:
     defaults: dict[str, object] = dict(
         database_url="postgresql+asyncpg://localhost:5432/agentsys_test",
         redis_url="redis://localhost:6379/0",
-        adapter_runtimes=["acme__sales-agent"],
+        adapter_runtimes=["_generic__sales-agent"],
         whatsapp_token="test-token",
         whatsapp_phone_number_id="1234567890",
     )
@@ -59,7 +60,7 @@ def _stack(patchers: tuple[Any, ...]) -> ExitStack:
 
 def _fake_checkpointer_cm_factory(
     fake_checkpointer: Any, aexit_calls: list[str] | None = None
-):
+) -> Any:
     """Build a callable matching `_build_checkpointer_cm(settings)`'s
     signature/return shape: an async context manager yielding a fake
     checkpointer, with no real Redis connection involved."""
@@ -103,10 +104,6 @@ async def test_lifespan_uses_data_driven_grants() -> None:
             return_value=MagicMock(),
         ),
         patch(
-            "agentsys.connectors.rag_connector.build_acme_rag_registry",
-            return_value=MagicMock(),
-        ),
-        patch(
             "agentsys.harness.loader.resolve", return_value=fake_definition
         ) as mock_resolve,
         patch(
@@ -119,18 +116,11 @@ async def test_lifespan_uses_data_driven_grants() -> None:
         async with lifespan(app):
             assert app.state.runtimes
 
-        # resolve() called for the sales-agent role with the acme deployment
-        # `roots=` is part of the call now: the lifespan passes an explicit
-        # deployments root rather than letting the library guess one (#62).
-        # Asserting the call WITHOUT it would pass while the seam was gone.
+        # resolve() called for the sales-agent role
         resolve_call = next(
-            c
-            for c in mock_resolve.call_args_list
-            if c.args == ("sales-agent",) and c.kwargs.get("client") == "acme"
+            c for c in mock_resolve.call_args_list if c.args == ("sales-agent",)
         )
-        assert resolve_call.kwargs.get("roots") is not None, (
-            "resolve() was called without an explicit roots="
-        )
+        assert resolve_call.kwargs.get("client") is None
 
         # build_runtime received the resolved definition's permissions —
         # NOT a hardcoded role -> permissions map.
@@ -189,10 +179,6 @@ async def test_lifespan_injects_checkpointer_into_runtimes() -> None:
             "agentsys.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch(
-            "agentsys.connectors.rag_connector.build_acme_rag_registry",
-            return_value=MagicMock(),
-        ),
         patch("agentsys.harness.loader.resolve", return_value=fake_definition),
         patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
         patch("agentsys.agent.graph.AgentRuntime") as mock_agent_runtime,
@@ -227,10 +213,6 @@ async def test_lifespan_skips_checkpointer_when_disabled() -> None:
         patch("agentsys.main._build_checkpointer_cm") as mock_build_checkpointer_cm,
         patch(
             "agentsys.services.embeddings.get_embedding_provider",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "agentsys.connectors.rag_connector.build_acme_rag_registry",
             return_value=MagicMock(),
         ),
         patch("agentsys.harness.loader.resolve", return_value=fake_definition),
@@ -276,10 +258,6 @@ async def test_lifespan_resource_teardown_survives_engine_dispose_failure() -> N
         ),
         patch(
             "agentsys.services.embeddings.get_embedding_provider",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "agentsys.connectors.rag_connector.build_acme_rag_registry",
             return_value=MagicMock(),
         ),
         patch("agentsys.harness.loader.resolve", return_value=fake_definition),
@@ -439,7 +417,7 @@ def test_openai_compatible_model_still_supports_bind_tools() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _dedup_invariant_patches(fake_definition: Any):
+def _dedup_invariant_patches(fake_definition: Any) -> tuple[Any, tuple[Any, ...]]:
     """Common lifespan patches for the dedup-TTL invariant tests. Checkpointer
     is disabled so no real Redis connection is attempted."""
     mock_engine = MagicMock()
@@ -450,10 +428,6 @@ def _dedup_invariant_patches(fake_definition: Any):
         patch("agentsys.main._build_chat_model", return_value=MagicMock()),
         patch(
             "agentsys.services.embeddings.get_embedding_provider",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "agentsys.connectors.rag_connector.build_acme_rag_registry",
             return_value=MagicMock(),
         ),
         patch("agentsys.harness.loader.resolve", return_value=fake_definition),
@@ -481,9 +455,7 @@ async def test_lifespan_rejects_runtime_when_total_timeout_ge_dedup_ttl(
     with patch("agentsys.main.get_settings", return_value=test_settings):
         with _stack(patches):
             app = create_test_app()
-            with pytest.raises(
-                (ValueError, RuntimeError)
-            ) as excinfo:
+            with pytest.raises((ValueError, RuntimeError)) as excinfo:
                 async with lifespan(app):
                     pass
 
@@ -643,7 +615,7 @@ def test_shipped_platform_default_satisfies_dedup_ttl_invariant() -> None:
 
 def _bi_settings(**overrides: object) -> Settings:
     values: dict[str, object] = dict(
-        adapter_runtimes=["acme__sales-agent"],
+        adapter_runtimes=["_generic__sales-agent"],
         whatsapp_checkpointer_enabled=False,
         bi_database_url="postgresql+asyncpg://bi_readonly:pw@localhost:5432/acme",
     )
@@ -687,18 +659,14 @@ def _bi_lifespan_patches(settings: Settings, bi_engine: Any) -> tuple[Any, ...]:
         patch("agentsys.main.get_settings", return_value=settings),
         patch(
             "agentsys.main.get_engine",
-            side_effect=lambda url: bi_engine
-            if url == settings.bi_database_url
-            else app_engine,
+            side_effect=lambda url: (
+                bi_engine if url == settings.bi_database_url else app_engine
+            ),
         ),
         patch("agentsys.main.close_redis_pool", new=AsyncMock()),
         patch("agentsys.main._build_chat_model", return_value=MagicMock()),
         patch(
             "agentsys.services.embeddings.get_embedding_provider",
-            return_value=MagicMock(),
-        ),
-        patch(
-            "agentsys.connectors.rag_connector.build_acme_rag_registry",
             return_value=MagicMock(),
         ),
         patch("agentsys.harness.loader.resolve", return_value=fake_definition),
@@ -809,9 +777,9 @@ async def test_bi_tool_is_unbound_when_no_url_is_configured() -> None:
 async def test_create_app_boots_with_a_caller_supplied_registry() -> None:
     """A consumer supplies its own registry factory and never edits the library.
 
-    This is the seam the client repository takes over: `main.py`'s module-level
-    `app = create_app(...)` passes ACME's wiring, and nothing about that call
-    is privileged. The factory here registers a tool that exists in no
+    This is the seam the client repository takes over: a consumer passes its
+    own wiring through `create_app(...)`, and nothing about that call is
+    privileged. The factory here registers a tool that exists in no
     deployment in this repository, and the lifespan calls it with the settings,
     embedder and BI engine it resolved.
     """
@@ -834,9 +802,7 @@ async def test_create_app_boots_with_a_caller_supplied_registry() -> None:
         )
         return registry
 
-    application = create_app(
-        registry_factory=consumer_registry, title="Consumer App"
-    )
+    application = create_app(registry_factory=consumer_registry, title="Consumer App")
 
     assert application.title == "Consumer App"
     assert application.state.registry_factory is consumer_registry
@@ -888,6 +854,25 @@ async def test_create_app_stores_the_ports_it_is_given() -> None:
     assert application.state.conversation_recorder is recorder
 
 
+def test_create_app_accepts_and_stores_roots_on_app_state() -> None:
+    """`create_app` exposes an explicit `roots: RootConfig | None = None` and stores it on app.state."""
+    from agentsys.harness.loader import RootConfig
+    from agentsys.harness.registry import ToolRegistry
+    from agentsys.main import create_app
+
+    custom_roots = RootConfig()
+    app = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        roots=custom_roots,
+    )
+    assert app.state.roots is custom_roots
+
+    app_default = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+    )
+    assert app_default.state.roots is None
+
+
 async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None:
     """The factory has to be the one the lifespan actually invokes.
 
@@ -903,7 +888,9 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
 
     calls: list[tuple[Any, ...]] = []
 
-    def consumer_registry(settings, embedder=None, bi_engine=None):
+    def consumer_registry(
+        settings: Any, embedder: Any = None, bi_engine: Any = None
+    ) -> ToolRegistry:
         calls.append((settings, embedder, bi_engine))
         return ToolRegistry()
 
@@ -914,9 +901,9 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
     # itself questionable -- it makes an OpenAI-adapter setting decide whether
     # the WhatsApp channel has runtimes -- but it is not this test's subject.
     test_settings = Settings(
-        _env_file=None,
+        _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
-        adapter_runtimes=["acme__sales-agent"],
+        adapter_runtimes=["_generic__sales-agent"],
     )
 
     with (
@@ -945,57 +932,17 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
             # but a swallowed cause that leaves `calls` empty would otherwise
             # be reported as "the seam is broken", pointing a reader at
             # main.py when the real cause was upstream.
-            lifespan_error = exc
+            lifespan_error: Exception | None = exc
         else:
             lifespan_error = None
 
-    assert calls, (
-        "the lifespan never called the caller-supplied factory"
-        + (f" (it died first: {lifespan_error!r})" if lifespan_error else "")
+    assert calls, "the lifespan never called the caller-supplied factory" + (
+        f" (it died first: {lifespan_error!r})" if lifespan_error else ""
     )
     # The docstring claims the factory receives what the lifespan resolved,
     # so assert it rather than only that the list is non-empty.
     settings_seen, _embedder_seen, _bi_seen = calls[0]
     assert settings_seen is test_settings
-
-
-def test_the_acme_registry_factory_satisfies_the_protocol_it_is_passed_as() -> None:
-    """The fix's own new production function had zero coverage.
-
-    `_acme_registry_factory` is the entire mechanism the deferred-import
-    change rests on, and nothing in the suite called it: `create_test_app`
-    bypasses it by importing `build_acme_rag_registry` directly, and the
-    only other reference is the module-scope `app = create_app(...)` that no
-    test drives. Because `embedder` and `bi_engine` are both annotated `Any`,
-    mypy strict cannot catch an argument swap in the forwarding call either —
-    so `build_acme_rag_registry(settings, bi_engine, embedder)` would
-    typecheck, pass every test, and break production boot.
-    """
-    from unittest.mock import MagicMock, patch
-
-    from agentsys.harness.registry import ToolRegistry
-    from agentsys.main import _acme_registry_factory
-
-    seen: dict[str, Any] = {}
-
-    def spy(settings: Any, embedder: Any = None, bi_engine: Any = None) -> ToolRegistry:
-        seen.update(settings=settings, embedder=embedder, bi_engine=bi_engine)
-        return ToolRegistry()
-
-    settings = Settings(_env_file=None, allow_insecure=True)
-    embedder = MagicMock(name="embedder")
-    bi_engine = MagicMock(name="bi_engine")
-
-    with patch(
-        "agentsys.connectors.rag_connector.build_acme_rag_registry", side_effect=spy
-    ):
-        result = _acme_registry_factory(settings, embedder, bi_engine)
-
-    assert isinstance(result, ToolRegistry)
-    # Distinct objects on purpose: equal ones would let a swap pass.
-    assert seen["settings"] is settings
-    assert seen["embedder"] is embedder
-    assert seen["bi_engine"] is bi_engine
 
 
 # ---------------------------------------------------------------------------
@@ -1026,14 +973,16 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
 
     def spy_build_runtime(*args: Any, **kwargs: Any) -> Any:
         role = kwargs.get("role_type") or (args[0] if args else None)
-        built.append(f"{kwargs.get('client')}__{role}")
+        client = kwargs.get("client")
+        tag = f"{client}__{role}" if client else f"_generic__{role}"
+        built.append(tag)
         raise RuntimeError("stop here — the call itself is what is asserted")
 
     test_settings = Settings(
-        _env_file=None,
+        _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
         adapter_runtimes=[],  # nothing published on /v1 ...
-        whatsapp_runtime_id="acme__sales-agent",  # ... but WhatsApp needs one
+        whatsapp_runtime_id="_generic__sales-agent",  # ... but WhatsApp needs one
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",
@@ -1059,32 +1008,109 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
         except RuntimeError as exc:
             assert "stop here" in str(exc), exc
 
-    assert built == ["acme__sales-agent"], (
+    assert built == ["_generic__sales-agent"], (
         "the WhatsApp runtime was not built; adapter_runtimes gated it"
     )
 
 
 async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
-    """Both call sites in the loop must use the same explicit root.
+    """Both call sites in the loop must use the caller-supplied explicit root.
 
-    `resolve` got `roots=` and `build_runtime` did not, so the definition
-    used for the permission grant came from the explicit path while the
-    runtime actually installed — its tool surface and its skill files —
-    resolved against the library's guessed default. Two different roots for
-    one runtime, and the one that decides what the agent can DO was the
-    guessed one.
+    The caller supplies a valid fixture RootConfig to create_app.
+    lifespan passes the exact caller-supplied RootConfig object to BOTH
+    `resolve` and `build_runtime` for the client override runtime.
     """
     import pathlib as _pathlib
     from unittest.mock import AsyncMock, MagicMock, patch
 
+    from agentsys.harness.loader import RootConfig
     from agentsys.harness.registry import ToolRegistry
     from agentsys.main import create_app, lifespan
 
-    seen: list[Any] = []
+    resolve_roots: list[Any] = []
+    build_runtime_roots: list[Any] = []
+
+    def _awaitable_engine() -> MagicMock:
+        engine = MagicMock()
+        engine.dispose = AsyncMock()
+        return engine
+
+    def spy_resolve(*args: Any, **kwargs: Any) -> Any:
+        resolve_roots.append(kwargs.get("roots"))
+        fake_def = MagicMock()
+        fake_def.permissions = ("read:catalog",)
+        fake_def.execution_limits = None
+        return fake_def
 
     def spy_build_runtime(*args: Any, **kwargs: Any) -> Any:
-        seen.append(kwargs.get("roots"))
+        build_runtime_roots.append(kwargs.get("roots"))
         raise RuntimeError("stop here — the call itself is what is asserted")
+
+    fixture_deployments = (
+        _pathlib.Path(__file__).resolve().parent
+        / "fixtures"
+        / "agents"
+        / "overrides"
+        / "deployments"
+    )
+    fixture_roots = RootConfig(deployments_root=fixture_deployments)
+
+    test_settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        allow_insecure=True,
+        adapter_runtimes=["client-a__sales-agent"],
+        whatsapp_checkpointer_enabled=False,
+        embedding_provider="openai",
+        openai_api_key="test-key",
+    )
+    application = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        roots=fixture_roots,
+    )
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
+        patch("agentsys.audit.sink.AuditSink") as sink_cls,
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.loader.resolve", side_effect=spy_resolve),
+        patch("agentsys.harness.factory.build_runtime", side_effect=spy_build_runtime),
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        try:
+            async with lifespan(application):
+                pass
+        except RuntimeError as exc:
+            assert "stop here" in str(exc), exc
+
+    assert resolve_roots, "resolve was never reached"
+    assert resolve_roots[0] is fixture_roots, (
+        f"resolve got {resolve_roots[0]!r}, expected {fixture_roots!r}"
+    )
+    assert build_runtime_roots, "build_runtime was never reached"
+    assert build_runtime_roots[0] is fixture_roots, (
+        f"build_runtime got {build_runtime_roots[0]!r}, expected {fixture_roots!r}"
+    )
+    assert build_runtime_roots[0].deployments_root == fixture_deployments
+    assert fixture_deployments.is_dir(), "the fixture path must actually exist"
+
+
+async def test_client_runtime_without_explicit_roots_raises_definition_error() -> None:
+    """A <client>__<role> runtime with no explicit roots raises DefinitionError.
+
+    agentsys does not derive a default deployments root; a consumer must pass
+    RootConfig explicitly to create_app.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agentsys.harness.loader import DefinitionError
+    from agentsys.harness.registry import ToolRegistry
+    from agentsys.main import create_app, lifespan
 
     def _awaitable_engine() -> MagicMock:
         engine = MagicMock()
@@ -1092,15 +1118,13 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
         return engine
 
     test_settings = Settings(
-        _env_file=None,
+        _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
-        adapter_runtimes=["acme__sales-agent"],
+        adapter_runtimes=["client-a__sales-agent"],
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",
     )
-    # `registry_factory` is required as of the app-factory change; this
-    # test is about the ROOTS, so it supplies the smallest one that works.
     application = create_app(registry_factory=lambda *a, **k: ToolRegistry())
 
     with (
@@ -1112,20 +1136,98 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
             "agentsys.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.factory.build_runtime", side_effect=spy_build_runtime),
     ):
         sink_cls.return_value.start = AsyncMock()
         sink_cls.return_value.stop = AsyncMock()
-        try:
+        with pytest.raises(DefinitionError) as exc_info:
             async with lifespan(application):
                 pass
-        except RuntimeError as exc:
-            assert "stop here" in str(exc), exc
 
-    assert seen, "build_runtime was never reached"
-    assert seen[0] is not None, "build_runtime got no explicit roots"
-    # Compared against a path this test computes itself. Asserting against
-    # `main._DEPLOYMENTS_ROOT` would grade main against its own constant.
-    expected = _pathlib.Path(__file__).resolve().parents[1] / "deployments"
-    assert seen[0].deployments_root == expected
-    assert expected.is_dir(), "the path must actually exist in this checkout"
+        assert "client-a__sales-agent" in str(exc_info.value)
+        assert "client-a" in str(exc_info.value)
+
+
+async def test_client_whatsapp_runtime_without_explicit_roots_raises_definition_error() -> (
+    None
+):
+    """A client override in whatsapp_runtime_id with no roots also raises DefinitionError."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agentsys.harness.loader import DefinitionError
+    from agentsys.harness.registry import ToolRegistry
+    from agentsys.main import create_app, lifespan
+
+    def _awaitable_engine() -> MagicMock:
+        engine = MagicMock()
+        engine.dispose = AsyncMock()
+        return engine
+
+    test_settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        allow_insecure=True,
+        adapter_runtimes=[],
+        whatsapp_runtime_id="client-a__sales-agent",
+        whatsapp_checkpointer_enabled=False,
+        embedding_provider="openai",
+        openai_api_key="test-key",
+    )
+    application = create_app(registry_factory=lambda *a, **k: ToolRegistry())
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
+        patch("agentsys.audit.sink.AuditSink") as sink_cls,
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        with pytest.raises(DefinitionError) as exc_info:
+            async with lifespan(application):
+                pass
+
+        assert "client-a__sales-agent" in str(exc_info.value)
+
+
+async def test_generic_runtime_boots_without_explicit_roots() -> None:
+    """Generic (_generic__role) runtimes remain usable with no explicit roots."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agentsys.harness.registry import ToolRegistry
+    from agentsys.main import create_app, lifespan
+
+    def _awaitable_engine() -> MagicMock:
+        engine = MagicMock()
+        engine.dispose = AsyncMock()
+        return engine
+
+    test_settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        allow_insecure=True,
+        adapter_runtimes=["_generic__sales-agent"],
+        whatsapp_checkpointer_enabled=False,
+        embedding_provider="openai",
+        openai_api_key="test-key",
+    )
+    application = create_app(registry_factory=lambda *a, **k: ToolRegistry())
+
+    fake_equipped = MagicMock()
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
+        patch("agentsys.audit.sink.AuditSink") as sink_cls,
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        async with lifespan(application):
+            assert "_generic__sales-agent" in application.state.runtimes

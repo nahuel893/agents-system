@@ -1,3 +1,5 @@
+# type: ignore
+# pyright: reportMissingImports=false, reportCallIssue=false, reportArgumentType=false
 """Unit tests for the RAG catalog connector (D-010).
 
 Strict TDD: these tests are written BEFORE the production module exists.
@@ -5,6 +7,7 @@ All external DB calls are monkeypatched — no real Postgres required.
 
 asyncio_mode = "auto" (set in pyproject.toml) — async tests need NO marker.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -53,10 +56,10 @@ class StubCatalogSource:
         return await self.search_keywords_fn(session, query=query, limit=limit)
 
 
-
 # ---------------------------------------------------------------------------
 # Shared fake stubs
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SpyEmbedder:
@@ -81,18 +84,10 @@ def _settings(**kwargs: Any) -> Settings:
     )
 
 
-def _make_registry(embedder: Any = None, settings: Settings | None = None) -> Any:
-    from agentsys.connectors.rag_connector import build_acme_rag_registry
-
-    s = settings or _settings()
-    if embedder is not None:
-        return build_acme_rag_registry(s, embedder=embedder)
-    return build_acme_rag_registry(s, embedder=SpyEmbedder())
-
-
 # ---------------------------------------------------------------------------
 # Test 1: connector is a coroutine function
 # ---------------------------------------------------------------------------
+
 
 def test_connector_is_async_coroutine_function() -> None:
     """The connector must be a true async def so D-009 dispatch routes it correctly."""
@@ -108,13 +103,18 @@ def test_connector_is_async_coroutine_function() -> None:
 # Test 2: direct match maps to results + classification
 # ---------------------------------------------------------------------------
 
+
 async def test_direct_match_maps_to_results_and_classification() -> None:
     from agentsys.services.rag import VectorSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
-    async def fake_search_vector(session: Any, *, embedding: Any, limit: int, ef_search: int) -> list[Any]:
+    async def fake_search_vector(
+        session: Any, *, embedding: Any, limit: int, ef_search: int
+    ) -> list[Any]:
         return [
-            VectorSearchCandidate("SKU-A1", "Aceite de girasol 900ml", 0.04),  # similarity 0.96
+            VectorSearchCandidate(
+                "SKU-A1", "Aceite de girasol 900ml", 0.04
+            ),  # similarity 0.96
         ]
 
     source = StubCatalogSource(search_vector_fn=fake_search_vector)
@@ -134,14 +134,19 @@ async def test_direct_match_maps_to_results_and_classification() -> None:
 # Test 3: ambiguous match mapping
 # ---------------------------------------------------------------------------
 
+
 async def test_ambiguous_match_mapping() -> None:
     from agentsys.services.rag import VectorSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
 
-    async def fake_search_vector(session: Any, *, embedding: Any, limit: int, ef_search: int) -> list[Any]:
+    async def fake_search_vector(
+        session: Any, *, embedding: Any, limit: int, ef_search: int
+    ) -> list[Any]:
         return [
             VectorSearchCandidate("SKU-B1", "Coca-Cola 2.25L", 0.15),  # similarity 0.85
-            VectorSearchCandidate("SKU-B2", "Coca-Cola Zero 2.25L", 0.17),  # similarity 0.83
+            VectorSearchCandidate(
+                "SKU-B2", "Coca-Cola Zero 2.25L", 0.17
+            ),  # similarity 0.83
         ]
 
     source = StubCatalogSource(search_vector_fn=fake_search_vector)
@@ -158,6 +163,7 @@ async def test_ambiguous_match_mapping() -> None:
 # ---------------------------------------------------------------------------
 # Test 4: no match returns empty results
 # ---------------------------------------------------------------------------
+
 
 async def test_no_match_returns_empty_results() -> None:
     """A vector-path no_match, distinguished from a fallback-path one.
@@ -176,13 +182,19 @@ async def test_no_match_returns_empty_results() -> None:
 
     keyword_calls: list[str] = []
 
-    async def fake_search_keywords(session: Any, *, query: str, limit: int) -> list[Any]:
+    async def fake_search_keywords(
+        session: Any, *, query: str, limit: int
+    ) -> list[Any]:
         keyword_calls.append(query)
         return []
 
-    async def fake_search_vector(session: Any, *, embedding: Any, limit: int, ef_search: int) -> list[Any]:
+    async def fake_search_vector(
+        session: Any, *, embedding: Any, limit: int, ef_search: int
+    ) -> list[Any]:
         return [
-            VectorSearchCandidate("SKU-C1", "Agua mineral", 0.25),  # similarity 0.75 — below threshold
+            VectorSearchCandidate(
+                "SKU-C1", "Agua mineral", 0.25
+            ),  # similarity 0.75 — below threshold
         ]
 
     source = StubCatalogSource(
@@ -204,6 +216,7 @@ async def test_no_match_returns_empty_results() -> None:
 # Test 5: keyword fallback similarity is None (not coerced to 0.0)
 # ---------------------------------------------------------------------------
 
+
 async def test_keyword_fallback_similarity_is_null() -> None:
     from agentsys.services.rag import KeywordSearchCandidate
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
@@ -211,7 +224,9 @@ async def test_keyword_fallback_similarity_is_null() -> None:
     # Embedder returns empty vector → triggers keyword fallback
     embedder = SpyEmbedder(vectors=[])
 
-    async def fake_search_keywords(session: Any, *, query: str, limit: int) -> list[Any]:
+    async def fake_search_keywords(
+        session: Any, *, query: str, limit: int
+    ) -> list[Any]:
         return [KeywordSearchCandidate("SKU-K1", "BrandA 1L")]
 
     source = StubCatalogSource(search_keywords_fn=fake_search_keywords)
@@ -227,6 +242,7 @@ async def test_keyword_fallback_similarity_is_null() -> None:
 # ---------------------------------------------------------------------------
 # Test 6: empty query short-circuits without calling embedder
 # ---------------------------------------------------------------------------
+
 
 async def test_empty_q_short_circuits_without_embedding() -> None:
     from agentsys.connectors.rag_connector import build_catalog_rag_connector
@@ -255,112 +271,9 @@ async def test_empty_q_short_circuits_without_embedding() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 7: embedder built once when not injected
+# Test 7: build_runtime wires session_provider correctly
 # ---------------------------------------------------------------------------
 
-def test_embedder_built_once_in_registry(monkeypatch: Any) -> None:
-    from agentsys.connectors import rag_connector
-
-    provider_calls: list[Any] = []
-
-    def counting_factory(settings: Any) -> SpyEmbedder:
-        provider_calls.append(settings)
-        return SpyEmbedder()
-
-    monkeypatch.setattr(rag_connector, "get_embedding_provider", counting_factory)
-
-    s = _settings()
-
-    # Without embedder injection — factory should be called once
-    rag_connector.build_acme_rag_registry(s)
-    assert len(provider_calls) == 1
-
-    # Reset and test with injected embedder — factory should NOT be called
-    provider_calls.clear()
-    rag_connector.build_acme_rag_registry(s, embedder=SpyEmbedder())
-    assert len(provider_calls) == 0
-
-
-# ---------------------------------------------------------------------------
-# Test 8: ToolSpec description has no "price" or "stock"
-# ---------------------------------------------------------------------------
-
-def test_catalog_toolspec_description_has_no_price_or_stock() -> None:
-    registry = _make_registry()
-    desc = registry.get("catalog_search").description.lower()
-
-    assert "price" not in desc
-    assert "precio" not in desc
-    assert "stock" not in desc
-
-
-# ---------------------------------------------------------------------------
-# Test 9: registry has exactly 8 tools; catalog is async, others sync
-# ---------------------------------------------------------------------------
-
-def test_registry_has_the_expected_tools_with_async_catalog() -> None:
-    registry = _make_registry()
-
-    assert set(registry.names()) == {
-        "catalog_search",
-        "client_lookup",
-        "order_writer",
-        "message_sender",
-        "session_state",
-        # Registered unbound when no BI engine is passed. It must be present
-        # in BOTH registries or `data-agent`, whose manifest names it, is
-        # unbuildable through whichever one the caller happens to use.
-        "run_report",
-        "knowledge_retrieval",
-        "conversation_summarizer",
-        "escalation_notifier",
-        # Registered INERT so `platform/roles/operator-agent` can boot. They
-        # refuse every command and read nothing outside the process cwd until
-        # a deployment supplies a TerminalPolicy.
-        "use_term",
-        "read_file",
-    }
-
-    # `order_writer` joined `catalog_search` on the async side with issue #39:
-    # it now delegates to the deployment's OrderWriter (or refuses) instead of
-    # computing a fake order from a module-level price dict.
-    #
-    # The three platform-generic tools followed, for the same reason and in the
-    # same issue: each delegates to a port the deployment supplies
-    # (KnowledgeBase, ConversationSummarizer, EscalationChannel), and those are
-    # async because a real knowledge base, transcript store or escalation
-    # channel is I/O. Sync was only ever possible while the answers came from
-    # module-level fixtures.
-    for name in (
-        "catalog_search",
-        "order_writer",
-        "knowledge_retrieval",
-        "conversation_summarizer",
-        "escalation_notifier",
-    ):
-        spec = registry.get(name)
-        assert asyncio.iscoroutinefunction(spec.connector), (
-            f"{name} should be async but iscoroutinefunction returned False"
-        )
-
-    # Still sync, and still fabricating — issue #39 is not closed by this
-    # branch. These three are the remaining work: `client_lookup` matches a
-    # two-phone dict, `message_sender` reports `sent` with no network call, and
-    # `session_state` echoes its input without persisting anything.
-    for name in (
-        "client_lookup",
-        "message_sender",
-        "session_state",
-    ):
-        spec = registry.get(name)
-        assert not asyncio.iscoroutinefunction(spec.connector), (
-            f"{name} should be sync but iscoroutinefunction returned True"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Test 10: build_runtime wires session_provider correctly
-# ---------------------------------------------------------------------------
 
 def _full_sales_registry() -> Any:
     """Registry with all five generic deployment sales-agent tools."""
@@ -368,11 +281,37 @@ def _full_sales_registry() -> Any:
 
     reg = ToolRegistry()
     dummy = lambda inputs: {}  # noqa: E731
-    reg.register(ToolSpec(name="catalog_search", required_permissions=("read:catalog",), connector=dummy))
-    reg.register(ToolSpec(name="client_lookup", required_permissions=("read:client_registry",), connector=dummy))
-    reg.register(ToolSpec(name="order_writer", required_permissions=("write:orders", "write:order_items"), connector=dummy))
-    reg.register(ToolSpec(name="message_sender", required_permissions=("send:message",), connector=dummy))
-    reg.register(ToolSpec(name="session_state", required_permissions=(), connector=dummy))
+    reg.register(
+        ToolSpec(
+            name="catalog_search",
+            required_permissions=("read:catalog",),
+            connector=dummy,
+        )
+    )
+    reg.register(
+        ToolSpec(
+            name="client_lookup",
+            required_permissions=("read:client_registry",),
+            connector=dummy,
+        )
+    )
+    reg.register(
+        ToolSpec(
+            name="order_writer",
+            required_permissions=("write:orders", "write:order_items"),
+            connector=dummy,
+        )
+    )
+    reg.register(
+        ToolSpec(
+            name="message_sender",
+            required_permissions=("send:message",),
+            connector=dummy,
+        )
+    )
+    reg.register(
+        ToolSpec(name="session_state", required_permissions=(), connector=dummy)
+    )
     return reg
 
 
@@ -386,7 +325,13 @@ def test_build_runtime_wires_session_provider() -> None:
     runtime = build_runtime(
         "sales-agent",
         reg,
-        ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "send:message"],
+        [
+            "read:catalog",
+            "read:client_registry",
+            "write:orders",
+            "write:order_items",
+            "send:message",
+        ],
         client="client-a",
         roots=_client_a_roots(),
         session_provider=sentinel,
@@ -430,7 +375,11 @@ async def test_catalog_tables_forwards_each_argument_to_the_right_parameter(
     seen: dict[str, Any] = {}
 
     async def fake_search_vector(session, *, embedding, limit, ef_search):
-        seen["vector"] = {"embedding": embedding, "limit": limit, "ef_search": ef_search}
+        seen["vector"] = {
+            "embedding": embedding,
+            "limit": limit,
+            "ef_search": ef_search,
+        }
         return []
 
     async def fake_search_keywords(session, *, query, limit):
@@ -451,7 +400,7 @@ async def test_catalog_tables_forwards_each_argument_to_the_right_parameter(
 
 
 def test_catalog_tables_satisfies_the_catalog_source_protocol() -> None:
-    """`build_acme_rag_registry` wires this in by name; nothing checked it.
+    """CatalogTables satisfies the CatalogSource protocol structural contract.
 
     A Protocol is structural, so a renamed or missing method is invisible at
     the wiring site and to every test that passes a stub instead.
