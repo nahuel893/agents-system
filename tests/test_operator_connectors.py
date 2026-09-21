@@ -8,6 +8,7 @@ gets an inert tool rather than an open one.
 The tests that matter here are the escape attempts. A happy-path test proves
 the tool works; only these prove it is safe to have.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -82,9 +83,7 @@ async def test_shell_metacharacters_are_not_interpreted(
     canary = tmp_path / "a-shell-ran-here"
     connector = build_terminal_connector(_policy(tmp_path))
 
-    result = await connector(
-        {"argv": ["echo", f"safe; touch {canary} && whoami"]}
-    )
+    result = await connector({"argv": ["echo", f"safe; touch {canary} && whoami"]})
 
     assert result["exit_code"] == 0
     # The metacharacters came back as literal text...
@@ -245,7 +244,12 @@ async def test_an_unconfigured_deployment_gets_tools_that_refuse_everything(
     assert "stdout" not in term
 
     # The half that was open. Try the most valuable targets directly.
-    for target in ("etc/passwd", "proc/self/environ", "../../../etc/passwd", "/etc/passwd"):
+    for target in (
+        "etc/passwd",
+        "proc/self/environ",
+        "../../../etc/passwd",
+        "/etc/passwd",
+    ):
         read = await specs["read_file"].connector({"path": target})
         assert read.get("error_kind") == "not_configured", target
         assert "content" not in read, target
@@ -441,9 +445,7 @@ async def test_output_larger_than_a_pipe_buffer_does_not_time_out(
         _policy(tmp_path, max_output_bytes=8192, timeout_s=5.0)
     )
 
-    result = await connector(
-        {"argv": [sys.executable, "-c", "print('z' * 2_000_000)"]}
-    )
+    result = await connector({"argv": [sys.executable, "-c", "print('z' * 2_000_000)"]})
 
     assert result.get("error_kind") != "timeout", (
         "a working command was killed because the reader stopped draining"
@@ -476,8 +478,9 @@ async def test_a_large_stderr_does_not_stall_the_stdout_read(
     assert result["truncated"] is True
 
 
+@pytest.mark.parametrize("builder_name", ["test", "stub"])
 async def test_a_deployment_can_actually_configure_the_sandbox(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, builder_name: str
 ) -> None:
     """The documented escape hatch, which did not exist.
 
@@ -489,13 +492,15 @@ async def test_a_deployment_can_actually_configure_the_sandbox(
     their own docstring named.
     """
     from agentsys.connectors.stubs import build_acme_registry
+    from conftest import build_test_registry
 
     (tmp_path / "hello.txt").write_text("configured", encoding="utf-8")
     policy = TerminalPolicy(
         root=tmp_path, allowed_commands=frozenset({"echo"}), timeout_s=5.0
     )
 
-    registry = build_acme_registry(terminal_policy=policy)
+    builder = build_test_registry if builder_name == "test" else build_acme_registry
+    registry = builder(terminal_policy=policy)
 
     reader = registry.get("read_file").connector
     assert (await reader({"path": "hello.txt"}))["content"] == "configured"

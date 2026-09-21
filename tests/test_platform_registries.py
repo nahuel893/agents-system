@@ -16,6 +16,7 @@ derived from the object under test. A test that compares a pure function to
 itself ("call it twice, assert equal") cannot fail for any implementation and
 is not written here.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -52,7 +53,6 @@ ALL_PLATFORM_TOOLS = {
 }
 
 
-
 #: Tools both registry builders must wire identically. Two exclusions, both
 #: because the connector is a closure over something the builder is given
 #: rather than a shared module-level function, so object identity cannot hold:
@@ -86,9 +86,7 @@ FACTORY_BUILT_TOOLS = (
 
 SHARED_TOOLS = tuple(
     sorted(
-        ALL_PLATFORM_TOOLS
-        - {"catalog_search", "run_report"}
-        - set(FACTORY_BUILT_TOOLS)
+        ALL_PLATFORM_TOOLS - {"catalog_search", "run_report"} - set(FACTORY_BUILT_TOOLS)
     )
 )
 
@@ -129,12 +127,18 @@ def _rag_registry() -> Any:
     return build_acme_rag_registry(_settings(), embedder=SpyEmbedder())
 
 
-#: Both registry builders, so every registry assertion also runs against the
-#: one production actually uses (build_acme_rag_registry — main.py,
-#: scripts/chat.py, scripts/smoke_chat.py), not only the stub registry.
-REGISTRY_BUILDERS = {"stub": _stub_registry, "rag": _rag_registry}
+def _test_registry() -> Any:
+    from conftest import build_test_registry
+
+    return build_test_registry()
 
 
+#: All registry builders, including the generic test fixture foundation.
+REGISTRY_BUILDERS = {
+    "stub": _stub_registry,
+    "rag": _rag_registry,
+    "test": _test_registry,
+}
 
 
 def _without_descriptions(node: Any) -> Any:
@@ -153,6 +157,7 @@ def _without_descriptions(node: Any) -> Any:
 # ---------------------------------------------------------------------------
 # Registry builders — both must contain all 8 tools, wired identically
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("builder_name", sorted(REGISTRY_BUILDERS))
 def test_registry_contains_all_platform_tools(builder_name: str) -> None:
@@ -209,8 +214,12 @@ def test_both_registries_wire_shared_tools_identically(tool_name: str) -> None:
 # Injector-level — every platform role resolves against a literal expectation
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.parametrize("builder_fn", [_stub_registry, _test_registry])
 @pytest.mark.parametrize("role_type", PINNED_ROLES)
-def test_platform_role_resolves_its_pinned_tool_surface(role_type: str) -> None:
+def test_platform_role_resolves_its_pinned_tool_surface(
+    role_type: str, builder_fn: Any
+) -> None:
     """Expected surface is a literal, NOT ``set(definition.tools)``.
 
     Grading the resolved surface against the manifest that produced it means
@@ -220,7 +229,7 @@ def test_platform_role_resolves_its_pinned_tool_surface(role_type: str) -> None:
     from agentsys.harness.injector import resolve_tool_surface
 
     definition = loader.resolve(role_type, client=None)
-    registry = _stub_registry()
+    registry = builder_fn()
 
     # Mirrors main.py: the role's own resolved permissions are the grants.
     result = resolve_tool_surface(
@@ -362,3 +371,98 @@ def test_both_registries_build_factory_tools_from_the_same_factory(
     assert stub_spec.required_permissions == rag_spec.required_permissions
     assert stub_spec.input_schema == rag_spec.input_schema
     assert stub_spec.description == rag_spec.description
+
+
+def test_test_registry_satisfies_registry_factory_protocol() -> None:
+    import inspect
+    from agentsys.harness.registry import ToolRegistry
+    from conftest import TestRegistryFactory, build_test_registry
+
+    # RegistryFactory protocol requires: (settings, embedder=None, bi_engine=None) -> ToolRegistry
+    for target in (build_test_registry, TestRegistryFactory()):
+        assert callable(target)
+        sig = inspect.signature(target)
+        params = list(sig.parameters)
+        assert params[0] == "settings"
+        assert "embedder" in sig.parameters
+        assert "bi_engine" in sig.parameters
+
+        built = target(_settings(), embedder=SpyEmbedder(), bi_engine=None)
+        assert isinstance(built, ToolRegistry)
+        assert set(built.names()) == ALL_PLATFORM_TOOLS
+
+
+def test_test_registry_fakes_are_neutral_and_free_of_client_prose() -> None:
+    from conftest import build_test_registry
+
+    registry = build_test_registry()
+    search = registry.get("catalog_search").connector
+    results = search({"q": ""})
+    for item in results.get("results", []):
+        name = item.get("name", "").lower()
+        assert "azúcar" not in name
+        assert "yerba" not in name
+        assert "acme" not in name
+
+    lookup = registry.get("client_lookup").connector
+    client = lookup({"phone": "5491112345678"})
+    name = (client.get("name") or "").lower()
+    assert "don pedro" not in name
+    assert "esquina" not in name
+
+
+@pytest.mark.parametrize("tool_name", SHARED_TOOLS)
+def test_test_registry_wires_shared_tools_consistently(tool_name: str) -> None:
+    test_spec = _test_registry().get(tool_name)
+    rag_spec = _rag_registry().get(tool_name)
+
+    assert test_spec.required_permissions == rag_spec.required_permissions
+    assert _without_descriptions(test_spec.input_schema) == _without_descriptions(
+        rag_spec.input_schema
+    )
+
+
+@pytest.mark.parametrize("tool_name", FACTORY_BUILT_TOOLS)
+def test_test_registry_builds_factory_tools_from_platform_builders(
+    tool_name: str,
+) -> None:
+    test_spec = _test_registry().get(tool_name)
+    rag_spec = _rag_registry().get(tool_name)
+
+    assert test_spec.required_permissions == rag_spec.required_permissions
+    assert test_spec.input_schema == rag_spec.input_schema
+    assert test_spec.description == rag_spec.description
+
+
+def test_test_registry_custom_policy_and_bindings(tmp_path: Any) -> None:
+    import pathlib
+    from agentsys.connectors.operator import TerminalPolicy
+    from agentsys.services.reports import ReportSpec
+    from conftest import build_test_registry
+
+    policy = TerminalPolicy(
+        root=pathlib.Path(tmp_path),
+        allowed_commands=frozenset({"echo"}),
+        timeout_s=2.0,
+    )
+    import importlib
+
+    text_fn = importlib.import_module("sqlalchemy").text
+    custom_spec = ReportSpec(
+        name="custom_sales",
+        description="Custom sales report",
+        sql=text_fn("SELECT 42 AS total"),
+    )
+    custom_catalog = {"custom_sales": custom_spec}
+
+    registry = build_test_registry(
+        terminal_policy=policy,
+        report_catalog=custom_catalog,
+    )
+
+    assert (
+        "custom_sales"
+        in registry.get("run_report").input_schema["properties"]["report"]["enum"]
+    )
+    assert "use_term" in registry
+    assert "read_file" in registry
