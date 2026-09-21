@@ -9,10 +9,12 @@ anything touches the database (AD-7, AD-8).
 AD-2 is absolute: nothing in this module ever builds a SQL string by
 f-string / `.format()` / concatenation of a caller-supplied value - not even
 a column or table name. A report that needs a variable dimension becomes a
-separate ReportSpec, never a template hole. Client-specific catalogs (e.g.
-`agentsys.connectors.acme_reports`) supply the actual `ReportSpec` values;
-this module only knows how to validate parameters against a spec and run it.
+separate ReportSpec, never a template hole. Deployment-provided catalogs,
+such as the portable sales-report catalog, supply the actual `ReportSpec`
+values; this module only knows how to validate parameters against a spec and
+run it.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -115,7 +117,7 @@ def clamp_row_limit(requested: int, ceiling: int = HARD_ROW_CEILING) -> int:
     This is a pure, code-level safety net independent of any report's own
     ParamSpec bounds - it runs unconditionally in `run_report`.
     """
-    return max(1, min(int(requested), ceiling))
+    return max(1, min(requested, ceiling))
 
 
 def validate_params(spec: ReportSpec, raw_params: Mapping[str, Any]) -> dict[str, Any]:
@@ -175,13 +177,11 @@ def validate_params(spec: ReportSpec, raw_params: Mapping[str, Any]) -> dict[str
             )
         if param.minimum is not None and value < param.minimum:
             raise ReportValidationError(
-                f"Parameter '{param.name}' must be >= {param.minimum}, "
-                f"got {value}."
+                f"Parameter '{param.name}' must be >= {param.minimum}, got {value}."
             )
         if param.maximum is not None and value > param.maximum:
             raise ReportValidationError(
-                f"Parameter '{param.name}' must be <= {param.maximum}, "
-                f"got {value}."
+                f"Parameter '{param.name}' must be <= {param.maximum}, got {value}."
             )
         if param.allowed is not None and value not in param.allowed:
             raise ReportValidationError(
