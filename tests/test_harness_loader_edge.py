@@ -5,12 +5,14 @@ the full directive vocabulary (inherit / add / remove / override), the
 frontmatter parser edges, the value coercion, and the validation edges. They
 complement test_harness_loader.py (which drives the public resolve() path).
 """
+
 from __future__ import annotations
 
 import pathlib
 from typing import Any
 
 import pytest
+
 
 from agentsys.harness.loader import (
     DefinitionError,
@@ -24,6 +26,21 @@ from agentsys.harness.loader import (
     merge,
     resolve,
 )
+
+
+_REPO_ROOT = pathlib.Path(__file__).parent.parent
+_CLIENT_A_DEPLOYMENTS = (
+    _REPO_ROOT / "tests" / "fixtures" / "agents" / "overrides" / "deployments"
+)
+
+
+def _client_a_roots() -> Any:
+    from agentsys.harness.loader import RootConfig
+
+    return RootConfig(
+        platform_root=_REPO_ROOT / "platform",
+        deployments_root=_CLIENT_A_DEPLOYMENTS,
+    )
 
 
 def _raw(**overrides: Any) -> RawDefinition:
@@ -107,11 +124,16 @@ def test_list_add_appends() -> None:
 
 
 def test_list_add_dedupes() -> None:
-    assert _resolve_list_directive(["a"], {"inherit": True, "add": ["a", "b"]}) == ["a", "b"]
+    assert _resolve_list_directive(["a"], {"inherit": True, "add": ["a", "b"]}) == [
+        "a",
+        "b",
+    ]
 
 
 def test_list_remove_subtracts() -> None:
-    assert _resolve_list_directive(["a", "b"], {"inherit": True, "remove": ["a"]}) == ["b"]
+    assert _resolve_list_directive(["a", "b"], {"inherit": True, "remove": ["a"]}) == [
+        "b"
+    ]
 
 
 def test_list_override_replaces() -> None:
@@ -145,7 +167,9 @@ def test_mapping_inherit_overlay_adds_conditions() -> None:
 
 
 def test_mapping_inherit_removes_conditions() -> None:
-    out = _resolve_mapping_directive({"conditions": ["x", "y"]}, {"inherit": True, "remove": ["x"]})
+    out = _resolve_mapping_directive(
+        {"conditions": ["x", "y"]}, {"inherit": True, "remove": ["x"]}
+    )
     assert out["conditions"] == ["y"]
 
 
@@ -254,7 +278,9 @@ def test_resolve_permissions_unexpected_value_falls_back() -> None:
 # _resolve_mapping_directive — plain key under inherit is overlaid
 # ---------------------------------------------------------------------------
 def test_mapping_inherit_overlays_plain_key() -> None:
-    out = _resolve_mapping_directive({"a": 1}, {"inherit": True, "escalate_to": "slack"})
+    out = _resolve_mapping_directive(
+        {"a": 1}, {"inherit": True, "escalate_to": "slack"}
+    )
     assert out == {"a": 1, "escalate_to": "slack"}
 
 
@@ -267,9 +293,9 @@ def test_resolve_default_roots_generic() -> None:
     assert definition.deployment is None
 
 
-def test_resolve_default_roots_with_real_deployment() -> None:
-    definition = resolve("sales-agent", client="acme")  # default roots
-    assert definition.deployment == "acme"
+def test_resolve_client_a_fixture_roots_with_deployment() -> None:
+    definition = resolve("sales-agent", client="client-a", roots=_client_a_roots())
+    assert definition.deployment == "client-a"
 
 
 def test_load_generic_default_roots() -> None:
@@ -279,9 +305,9 @@ def test_load_generic_default_roots() -> None:
     assert raw.role_name == "sales-agent"
 
 
-def test_load_override_default_roots() -> None:
+def test_load_override_client_a_fixture_roots() -> None:
     from agentsys.harness.loader import load_override
 
-    raw = load_override("acme", "sales-agent")  # called directly, no roots
+    raw = load_override("client-a", "sales-agent", roots=_client_a_roots())
     assert raw is not None
-    assert raw.deployment == "acme"
+    assert raw.deployment == "client-a"

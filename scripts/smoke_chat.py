@@ -1,13 +1,11 @@
-"""End-to-end smoke (D-011): the ACME agent answering CRIOLLO over the real catalog.
+"""End-to-end smoke (D-011) for the generic sales-agent fixture.
 
 Unlike ``scripts/smoke_rag.py`` (which probes the retriever directly with
-distilled keywords), this exercises the FULL chain — LLM + Layer-2 interceptor +
-RAG connector + pgvector — with raw Rioplatense slang, exactly as a customer
-would type it on WhatsApp. The LLM distills each colloquial phrase into a clean
-catalog query, so you can watch the system understand criollo end-to-end.
+distilled keywords), this exercises the full chain — LLM, Layer-2 interceptor,
+RAG connector, and pgvector — against neutral request language.
 
-For each turn it prints the customer message, the catalog lookup the agent
-chose (the distilled query), and the agent's reply.
+For each turn it prints the user message, the catalog lookup the agent chose,
+and the agent's reply.
 
 Usage::
 
@@ -21,15 +19,18 @@ import asyncio
 import os
 import sys
 import textwrap
+from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agentsys.agent.graph import AgentRuntime
 from agentsys.config import get_settings
 from agentsys.connectors.rag_connector import build_acme_rag_registry
 from agentsys.harness.factory import build_runtime
+from agentsys.harness.loader import RootConfig
 from agentsys.models.base import get_engine
 from agentsys.observability import setup_logging
 from agentsys.services.embeddings import get_embedding_provider
@@ -45,13 +46,18 @@ GRANTED_PERMISSIONS = [
     "send:message",
 ]
 
-# Raw Rioplatense slang — none of these is a clean product query. The agent's
-# job is to distill the intent and call catalog_search with sane keywords.
-CRIOLLO_TURNS = [
-    "che, tenés una birra bien helada?",
-    "y un tinto que vaya bien con el asado?",
-    "dame una coca grande para la mesa",
-    "algo dulzón para cerrar la cena?",
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_CLIENT_A_ROOTS = RootConfig(
+    platform_root=_REPO_ROOT / "platform",
+    deployments_root=(
+        _REPO_ROOT / "tests" / "fixtures" / "agents" / "overrides" / "deployments"
+    ),
+)
+
+REQUEST_TURNS = [
+    "Please find an option for this request.",
+    "Can you clarify the available choices?",
+    "Prepare a summary before completing the request.",
 ]
 
 
@@ -64,7 +70,9 @@ def _build_model(provider: str) -> tuple[BaseChatModel, str]:
         if not api_key:
             print("ERROR: GROQ_API_KEY not set. Add it to your .env file.")
             sys.exit(1)
-        return ChatGroq(model=GROQ_MODEL, api_key=api_key), f"Groq ({GROQ_MODEL})"
+        return ChatGroq(
+            model=GROQ_MODEL, api_key=SecretStr(api_key)
+        ), f"Groq ({GROQ_MODEL})"
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -112,17 +120,18 @@ async def main() -> int:
         role_type="sales-agent",
         registry=registry,
         granted_permissions=GRANTED_PERMISSIONS,
-        client="acme",
+        client="client-a",
+        roots=_CLIENT_A_ROOTS,
         session_provider=session_provider,
     )
 
     model, label = _build_model(provider)
     runtime = AgentRuntime(runtime=equipped, model=model)
-    print(f"Criollo end-to-end smoke — {label}")
+    print(f"Generic end-to-end smoke — {label}")
 
     history: list[AnyMessage] = []
     try:
-        for user_text in CRIOLLO_TURNS:
+        for user_text in REQUEST_TURNS:
             history.append(HumanMessage(content=user_text))
             result = await runtime.run_turn(
                 messages=history,

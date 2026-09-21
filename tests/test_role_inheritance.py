@@ -25,19 +25,32 @@ Between two platform roles there is no second party, so a child declaring
 `full` is a design decision rather than an escalation, and refusing it bought
 no safety. The ceiling that matters is unchanged and asserted below.
 """
+
 from __future__ import annotations
 
 import pathlib
+from typing import Any
 
 import pytest
 
 from agentsys.harness.loader import DefinitionError, RootConfig, resolve
 
 _FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "agents" / "hierarchy"
+_REPO_ROOT = pathlib.Path(__file__).parent.parent
+_CLIENT_A_DEPLOYMENTS = (
+    _REPO_ROOT / "tests" / "fixtures" / "agents" / "overrides" / "deployments"
+)
 
 
 def _roots() -> RootConfig:
     return RootConfig(platform_root=_FIXTURES)
+
+
+def _client_a_roots() -> RootConfig:
+    return RootConfig(
+        platform_root=_REPO_ROOT / "platform",
+        deployments_root=_CLIENT_A_DEPLOYMENTS,
+    )
 
 
 # --- The chain resolves ----------------------------------------------------
@@ -128,12 +141,12 @@ def test_a_chain_deeper_than_the_cap_raises_a_depth_error(
             f'---\nname: deep-{i}\nversion: "1.0"\n---\n\nbody\n', encoding="utf-8"
         )
         (folder / "manifest.md").write_text(
-            f'---\nrole: deep-{i}{parent}\ntools: []\nskills: []\n'
+            f"---\nrole: deep-{i}{parent}\ntools: []\nskills: []\n"
             f"context: {{}}\npermissions: []\n---\n\nmanifest\n",
             encoding="utf-8",
         )
         (folder / "policy.md").write_text(
-            f'---\nrole: deep-{i}\nautonomy: supervised\n'
+            f"---\nrole: deep-{i}\nautonomy: supervised\n"
             f"execution_limits: null\n---\n\npolicy\n",
             encoding="utf-8",
         )
@@ -334,7 +347,7 @@ def test_a_deployed_agent_still_sees_its_platform_roles_prose() -> None:
     from agentsys.harness.loader import resolve as real_resolve
 
     role = real_resolve("sales-agent")
-    deployed = real_resolve("sales-agent", client="acme")
+    deployed = real_resolve("sales-agent", client="client-a", roots=_client_a_roots())
 
     # Every non-empty line of the role's prose survives into the deployment's.
     missing = [
@@ -376,7 +389,9 @@ def test_a_deployment_may_not_declare_a_parent_it_does_not_have(
     )
 
     with pytest.raises(DefinitionError) as excinfo:
-        load_override("acme", "sales-agent", roots=RootConfig(deployments_root=tmp_path))
+        load_override(
+            "acme", "sales-agent", roots=RootConfig(deployments_root=tmp_path)
+        )
 
     message = str(excinfo.value)
     assert "orchestrator" in message
@@ -482,7 +497,7 @@ def test_a_deployment_that_declares_no_autonomy_keeps_the_roles(
     assert resolve("fx-confirm", client="quiet", roots=roots).autonomy == "confirm"
 
 
-def _chain(tmp_path: pathlib.Path, **roles: dict) -> RootConfig:
+def _chain(tmp_path: pathlib.Path, **roles: dict[str, Any]) -> RootConfig:
     """Write a throwaway role chain and return roots pointing at it."""
     base = tmp_path / "roles"
     for name, spec in roles.items():
