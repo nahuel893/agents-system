@@ -24,6 +24,8 @@ pass ``allow_insecure=False`` as an init kwarg, which outranks the env var.
 ``tests/test_conftest_contract.py`` pins this.
 """
 
+from dataclasses import dataclass
+import inspect
 import itertools
 import os
 from typing import Any, Callable
@@ -266,6 +268,107 @@ class TestRegistryFactory:
         )
 
 
+@dataclass
+class FakeParticipant:
+    """Deterministic, test-only participant conforming to Participant protocol."""
+
+    id: Any = "test-p-001"
+    active: bool = True
+    name: str = "Test Participant"
+    phone_number: str = "+5491123456789"
+
+
+def fake_normalize_address(raw: str) -> str:
+    """Deterministic, test-only address normalizer.
+
+    Rejects empty or non-phone inputs with ValueError.
+    Stays deliberately generic without regional quirks.
+    """
+    if not raw or not isinstance(raw, str):
+        raise ValueError("address is empty")
+    cleaned = raw.strip()
+    if not cleaned:
+        raise ValueError("address is empty")
+    has_plus = cleaned.startswith("+")
+    body = cleaned[1:] if has_plus else cleaned
+    sanitized = body.replace("-", "").replace(" ", "").replace("(", "").replace(")", "")
+    if not sanitized.isdigit() or len(sanitized) < 7:
+        raise ValueError(f"invalid phone: {raw!r}")
+    return f"+{sanitized}"
+
+
+class FakeParticipantDirectory:
+    """Deterministic test-only directory implementing ParticipantDirectory."""
+
+    def __init__(
+        self,
+        participants: dict[str, FakeParticipant | None] | None = None,
+        *,
+        default_participant: FakeParticipant | None = None,
+        resolve_fn: Callable[..., Any] | None = None,
+    ) -> None:
+        self.participants: dict[str, FakeParticipant | None] = (
+            dict(participants) if participants is not None else {}
+        )
+        self.default_participant = (
+            default_participant
+            if default_participant is not None
+            else FakeParticipant()
+        )
+        self.resolve_fn = resolve_fn
+        self.resolved: list[tuple[Any, str]] = []
+
+    def normalize_address(self, raw: str) -> str:
+        return fake_normalize_address(raw)
+
+    async def resolve(self, session: Any, address: str) -> Any:
+        self.resolved.append((session, address))
+        if self.resolve_fn is not None:
+            res = self.resolve_fn(session, address)
+            if inspect.isawaitable(res):
+                return await res
+            return res
+        if address in self.participants:
+            return self.participants[address]
+        return self.default_participant
+
+
+class FakeConversationRecorder:
+    """Deterministic in-memory ConversationRecorder fake with spy support."""
+
+    def __init__(self, spy: Callable[..., Any] | None = None) -> None:
+        self.turns: list[dict[str, Any]] = []
+        self.spy = spy
+
+    async def record_turn(
+        self,
+        session: Any,
+        *,
+        thread_id: str,
+        participant_id: Any,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        entry: dict[str, Any] = {
+            "session": session,
+            "thread_id": thread_id,
+            "participant_id": participant_id,
+            "user_text": user_text,
+            "assistant_text": assistant_text,
+        }
+        self.turns.append(entry)
+        if self.spy is not None:
+            res = self.spy(
+                session,
+                thread_id=thread_id,
+                participant_id=participant_id,
+                user_text=user_text,
+                assistant_text=assistant_text,
+            )
+            if inspect.isawaitable(res):
+                await res
+
+
 def create_test_app(**overrides: Any) -> Any:
     """`create_app` with generic test fixture composition filled in.
 
@@ -278,13 +381,11 @@ def create_test_app(**overrides: Any) -> Any:
     A test that IS about composition passes its own arguments instead.
     """
     from agentsys.main import create_app
-    from agentsys.services.clients import ClientDirectory
-    from agentsys.services.conversation_log import ConversationLogRecorder
 
     kwargs: dict[str, Any] = {
         "registry_factory": build_test_registry,
-        "participant_directory": ClientDirectory(),
-        "conversation_recorder": ConversationLogRecorder(),
+        "participant_directory": FakeParticipantDirectory(),
+        "conversation_recorder": FakeConversationRecorder(),
     }
     kwargs.update(overrides)
     return create_app(**kwargs)

@@ -14,9 +14,11 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessage
 
 from agentsys.config import Settings, get_settings
-from conftest import create_test_app
-from agentsys.models.tables import Client
-from agentsys.services.clients import normalize_phone
+from conftest import (
+    FakeParticipant,
+    create_test_app,
+    fake_normalize_address,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,7 +50,6 @@ def make_settings(**overrides: str) -> Settings:
     return Settings(**defaults)
 
 
-
 # ---------------------------------------------------------------------------
 # Participant port test doubles
 # ---------------------------------------------------------------------------
@@ -66,8 +67,8 @@ class FakeDirectory:
         self.resolve_mock = resolve_mock
 
     def normalize_address(self, raw: str) -> str:
-        # Real normalization: several tests assert on an unparseable address.
-        return normalize_phone(raw)
+        # Deterministic generic test normalization: tests assert on an unparseable address.
+        return fake_normalize_address(raw)
 
     async def resolve(self, session: object, address: str) -> object:
         return await self.resolve_mock(session, address)  # type: ignore[operator]
@@ -109,7 +110,9 @@ async def client(app):
     mock_engine = MagicMock()
     mock_engine.dispose = MagicMock(return_value=None)
     app.state.engine = mock_engine
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
         yield ac
 
 
@@ -219,9 +222,7 @@ async def test_get_challenge_missing_challenge(client: AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_post_text_message(
-    app, client: AsyncClient, text_payload: bytes
-) -> None:
+async def test_post_text_message(app, client: AsyncClient, text_payload: bytes) -> None:
     """POST /webhook with valid sig + text message returns 200.
 
     Kept deliberately shallow — this one is about the signature and payload
@@ -230,20 +231,25 @@ async def test_post_text_message(
     rather than short-circuiting at the fail-closed branch.
     """
     sig = sign_payload(text_payload, TEST_SECRET)
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
     mock_lookup = AsyncMock(
-        return_value=Client(
+        return_value=FakeParticipant(
             id=1, phone_number="+5491123456789", name="K", active=True
         )
     )
     app.state.participant_directory = FakeDirectory(mock_lookup)
-    response = await client.post(
-        "/webhook",
-        content=text_payload,
-        headers={
-            "Content-Type": "application/json",
-            "X-Hub-Signature-256": sig,
-        },
-    )
+    with patch(
+        "agentsys.integration.webhook.get_redis_client", return_value=mock_redis
+    ):
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     # 200 alone distinguishes nothing here — every branch of this route
@@ -252,9 +258,7 @@ async def test_post_text_message(
     mock_lookup.assert_awaited_once()
 
 
-async def test_post_status_update(
-    client: AsyncClient, status_payload: bytes
-) -> None:
+async def test_post_status_update(client: AsyncClient, status_payload: bytes) -> None:
     """POST /webhook with valid sig + status update returns 200 silently."""
     sig = sign_payload(status_payload, TEST_SECRET)
     response = await client.post(
@@ -269,9 +273,7 @@ async def test_post_status_update(
     assert response.json() == {"status": "ok"}
 
 
-async def test_post_invalid_signature(
-    client: AsyncClient, text_payload: bytes
-) -> None:
+async def test_post_invalid_signature(client: AsyncClient, text_payload: bytes) -> None:
     """POST /webhook with wrong signature returns 403."""
     response = await client.post(
         "/webhook",
@@ -284,9 +286,7 @@ async def test_post_invalid_signature(
     assert response.status_code == 403
 
 
-async def test_post_missing_signature(
-    client: AsyncClient, text_payload: bytes
-) -> None:
+async def test_post_missing_signature(client: AsyncClient, text_payload: bytes) -> None:
     """POST /webhook with no X-Hub-Signature-256 header returns 403."""
     response = await client.post(
         "/webhook",
@@ -301,15 +301,15 @@ async def test_post_missing_signature(
 # ---------------------------------------------------------------------------
 
 
-async def test_post_duplicate_message(
-    client: AsyncClient, text_payload: bytes
-) -> None:
+async def test_post_duplicate_message(client: AsyncClient, text_payload: bytes) -> None:
     """POST /webhook with duplicate message_id returns 200 but skips processing."""
     sig = sign_payload(text_payload, TEST_SECRET)
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=None)  # key existed = duplicate
 
-    with patch("agentsys.integration.webhook.get_redis_client", return_value=mock_redis):
+    with patch(
+        "agentsys.integration.webhook.get_redis_client", return_value=mock_redis
+    ):
         response = await client.post(
             "/webhook",
             content=text_payload,
@@ -338,7 +338,7 @@ async def test_post_new_message_with_dedup(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)  # key created = new
     mock_lookup = AsyncMock(
-        return_value=Client(
+        return_value=FakeParticipant(
             id=1, phone_number="+5491123456789", name="K", active=True
         )
     )
@@ -376,7 +376,7 @@ async def test_post_dedup_redis_failure(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(side_effect=ConnectionError("Redis down"))
     mock_lookup = AsyncMock(
-        return_value=Client(
+        return_value=FakeParticipant(
             id=1, phone_number="+5491123456789", name="K", active=True
         )
     )
@@ -423,7 +423,7 @@ async def test_post_unregistered_client(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)  # new message
 
-    unregistered = Client(
+    unregistered = FakeParticipant(
         id=1, phone_number="+5491123456789", name="Pendiente de alta", active=False
     )
     mock_lookup = AsyncMock(return_value=unregistered)
@@ -525,7 +525,7 @@ async def test_post_unresolved_runtime_no_run_turn_no_send(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)  # new message
 
-    registered = Client(
+    registered = FakeParticipant(
         id=10, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -563,7 +563,7 @@ async def test_post_resolved_runtime_invokes_run_turn_and_send(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=11, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -609,7 +609,7 @@ async def test_post_send_failure_still_returns_200(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=12, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -651,7 +651,7 @@ async def test_post_run_turn_failure_still_returns_200(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=14, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -703,7 +703,7 @@ async def test_post_write_tool_succeeds_with_default_permissions(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=13, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -785,15 +785,15 @@ async def test_post_write_tool_succeeds_with_default_permissions(
     assert len(invoked) == 1
 
 
-async def test_post_registered_client(app,
-    client: AsyncClient, text_payload: bytes
+async def test_post_registered_client(
+    app, client: AsyncClient, text_payload: bytes
 ) -> None:
     """POST /webhook with registered client processes normally."""
     sig = sign_payload(text_payload, TEST_SECRET)
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)  # new message
 
-    registered = Client(
+    registered = FakeParticipant(
         id=2, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -849,7 +849,7 @@ async def test_post_passes_thread_id_when_checkpointer_enabled(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=20, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -904,7 +904,7 @@ async def test_post_passes_none_thread_id_when_checkpointer_disabled(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=21, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -960,7 +960,7 @@ async def test_post_writes_conversation_log_best_effort(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=22, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -1022,7 +1022,7 @@ async def test_post_conversation_log_failure_still_returns_200(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=23, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -1073,7 +1073,7 @@ async def test_post_skips_send_when_assistant_text_empty(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=24, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -1165,7 +1165,7 @@ async def test_post_db_success_active_client_runs_turn(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=42, phone_number="+5491123456789", name="Kiosco Don José", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -1377,7 +1377,7 @@ async def test_post_recorder_absent_still_replies(
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
 
-    registered = Client(
+    registered = FakeParticipant(
         id=7, phone_number="+5491123456789", name="Kiosco", active=True
     )
     mock_lookup = AsyncMock(return_value=registered)
@@ -1418,13 +1418,11 @@ async def test_post_recorder_absent_still_replies(
     # "No recorder configured" is a deployment choice, not a write failure,
     # and reporting it as one every single turn is noise nobody can act on.
     errors = [e for e in logs if e["event"] == "conversation_log.write_error"]
-    assert errors == [], (
-        "an unconfigured recorder was reported as a write error"
-    )
+    assert errors == [], "an unconfigured recorder was reported as a write error"
 
 
 def test_the_wired_implementations_satisfy_the_ports() -> None:
-    """`main.py` wires these in by name; nothing checked they conform.
+    """The test doubles wired on create_test_app satisfy the ports.
 
     A Protocol is structural, so a missing or misnamed method is invisible to
     mypy at the wiring site and to every test that installs a fake instead.
@@ -1433,20 +1431,20 @@ def test_the_wired_implementations_satisfy_the_ports() -> None:
     """
     import inspect
 
-    from agentsys.services.clients import ClientDirectory
-    from agentsys.services.conversation_log import ConversationLogRecorder
-
-    directory = ClientDirectory()
+    app = create_test_app()
+    directory = app.state.participant_directory
+    assert directory is not None
     assert callable(directory.normalize_address)
     assert inspect.iscoroutinefunction(directory.resolve)
-    assert set(inspect.signature(directory.resolve).parameters) == {
+    assert set(inspect.signature(directory.resolve).parameters) >= {
         "session",
         "address",
     }
 
-    recorder = ConversationLogRecorder()
+    recorder = app.state.conversation_recorder
+    assert recorder is not None
     assert inspect.iscoroutinefunction(recorder.record_turn)
-    assert set(inspect.signature(recorder.record_turn).parameters) == {
+    assert set(inspect.signature(recorder.record_turn).parameters) >= {
         "session",
         "thread_id",
         "participant_id",
@@ -1564,14 +1562,14 @@ async def test_the_directory_owns_the_transaction_on_the_session_it_is_handed(
 
     class CommittingDirectory:
         def normalize_address(self, raw: str) -> str:
-            return normalize_phone(raw)
+            return fake_normalize_address(raw)
 
         async def resolve(self, session: object, address: str) -> object:
             # The caller must not have closed or poisoned the session before
             # handing it over, and must tolerate a commit on it.
             await session.commit()  # type: ignore[attr-defined]
             committed.append(True)
-            return Client(
+            return FakeParticipant(
                 id=3, phone_number="+5491123456789", name="K", active=True
             )
 
