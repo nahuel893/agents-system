@@ -22,7 +22,7 @@ Never hardcode client specifics into the platform — inject them from `deployme
 | Agent | `src/agentsys/agent/` | `graph.py` (LangGraph), `state.py`. `AgentRuntime.run_turn(...)`. |
 | Connectors | `src/agentsys/connectors/` | Tools behind the interceptor (`rag_connector.py` = `catalog_search`). |
 | Services | `src/agentsys/services/` | Domain logic + I/O (rag, catalog, orders, embeddings, redis, medallion). |
-| Models | `src/agentsys/models/` | `base.py` (async engine), `tables.py` (ORM incl. `ConversationLog`). |
+| Models | `src/agentsys/models/` | `base.py` (async engine), `audit_event.py` (the only platform-owned table, Alembic-managed). |
 
 Cross-cutting: `config.py` (pydantic Settings — **`.env` overrides code defaults**), `observability/`.
 

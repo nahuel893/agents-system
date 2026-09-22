@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 from datetime import datetime
 
-from sqlalchemy import Connection, DateTime, Table
+from sqlalchemy import DateTime, Table
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import DeclarativeBase
 
 #: Key a model sets in its ``Table.info`` to declare that Alembic — not the
-#: ORM — owns its DDL. See ``create_orm_owned_tables`` for why that matters.
+#: ORM — owns its DDL. See ``alembic_owned_tables`` for why that matters.
 ALEMBIC_OWNED = "alembic_owned"
 
 
@@ -54,37 +54,28 @@ def alembic_owned_tables() -> tuple[Table, ...]:
 
     A table opts in by setting ``{"info": {ALEMBIC_OWNED: True}}`` in its
     ``__table_args__``, so adding another one requires no edit here.
-    """
-    return tuple(
-        table
-        for table in Base.metadata.sorted_tables
-        if table.info.get(ALEMBIC_OWNED) is True
-    )
-
-
-def create_orm_owned_tables(connection: Connection) -> None:
-    """``Base.metadata.create_all`` minus the tables Alembic owns.
-
-    Use as ``await conn.run_sync(create_orm_owned_tables)``.
 
     Some DDL cannot be expressed in the ORM at all — ``audit_event`` is RANGE
     partitioned, and SQLAlchemy has no construct for that. Creating such a
     table from metadata does not raise on PostgreSQL; it silently produces an
     UNPARTITIONED table that differs from what the migration builds, which is
     worse than an error because nothing reports it. On SQLite it fails
-    outright, on the composite primary key.
+    outright, on the composite primary key. So metadata-driven creation must
+    skip these tables everywhere, and this is the single place that knows
+    which ones they are. Alembic creates them for real.
 
-    So metadata-driven creation must skip those tables everywhere, and this is
-    the single place that knows how. Alembic creates them for real.
+    Until #70, this fed ``create_orm_owned_tables`` (``Base.metadata.create_all``
+    minus this set), used by ``scripts/init_db.py`` to bulk-create the
+    platform's other, ORM-owned tables. That helper was removed once
+    ``audit_event`` became ``Base.metadata``'s only declared table: excluding
+    the only table it knew about left it creating nothing, which is not a
+    fixture worth keeping around. A future ORM-owned (non-Alembic) table
+    should reintroduce that helper rather than resurrect this comment.
     """
-    excluded = {table.name for table in alembic_owned_tables()}
-    Base.metadata.create_all(
-        connection,
-        tables=[
-            table
-            for table in Base.metadata.sorted_tables
-            if table.name not in excluded
-        ],
+    return tuple(
+        table
+        for table in Base.metadata.sorted_tables
+        if table.info.get(ALEMBIC_OWNED) is True
     )
 
 
