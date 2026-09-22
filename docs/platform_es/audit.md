@@ -188,10 +188,14 @@ class AuditEvent(Base):
     __table_args__ = {"info": {ALEMBIC_OWNED: True}}
 ```
 
-`create_orm_owned_tables()` respeta esa bandera, y tanto `scripts/init_db.py`
-como las fixtures de test pasan por ahí. El descubrimiento es por bandera y no
-por una lista de nombres, así que una segunda tabla particionada hereda el
-comportamiento sin cambiar código.
+`alembic_owned_tables()` descubre esa bandera; nada en `Base.metadata` puede
+crearse en bloque desde metadata del ORM si aparece ahí. El descubrimiento es
+por bandera y no por una lista de nombres, así que una segunda tabla
+particionada hereda el comportamiento sin cambiar código. `audit_event` es
+hoy la única tabla que declara el ORM (#70 eliminó las tablas propias del
+cliente), así que no queda nada que el ORM deba crear — `scripts/init_db.py`
+ahora sólo aprovisiona la extensión `pgvector`, y `alembic upgrade head`
+es dueño de todas las tablas.
 
 ### La partición `DEFAULT` es un resguardo de disponibilidad, no una comodidad
 

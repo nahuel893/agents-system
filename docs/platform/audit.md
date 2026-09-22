@@ -180,9 +180,13 @@ class AuditEvent(Base):
     __table_args__ = {"info": {ALEMBIC_OWNED: True}}
 ```
 
-`create_orm_owned_tables()` honours that flag, and both `scripts/init_db.py` and
-the test fixtures go through it. Discovery is by flag, not by a name list, so a
-second partitioned table inherits the behaviour without a code change.
+`alembic_owned_tables()` discovers that flag; nothing in `Base.metadata` may be
+bulk-created from ORM metadata if it appears there. Discovery is by flag, not
+by a name list, so a second partitioned table inherits the behaviour without a
+code change. `audit_event` is currently the platform's only ORM-declared
+table (#70 removed the client-owned ones), so there is nothing left for the
+ORM to create at all — `scripts/init_db.py` only provisions the `pgvector`
+extension now, and `alembic upgrade head` owns every table.
 
 ### The `DEFAULT` partition is an availability guard, not a convenience
 

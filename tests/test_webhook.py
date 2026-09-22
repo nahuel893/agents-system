@@ -1453,25 +1453,17 @@ def test_the_wired_implementations_satisfy_the_ports() -> None:
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "SOURCE FIX REQUIRED (#70): importing the webhook still pulls in "
-        "agentsys.models.tables — ACME's clients/orders/catalog_embeddings "
-        "ORM models. webhook.py imports agentsys.models.base, and "
-        "models/__init__.py eagerly re-exports models.tables so that "
-        "Base.metadata holds every table (its docstring explains why that "
-        "eagerness is deliberate). Fixing it means changing that re-export, "
-        "which belongs with the deletion of models/tables.py, not here."
-    ),
-)
-def test_webhook_does_not_pull_in_client_orm_models_documented_gap() -> None:
+def test_webhook_does_not_pull_in_client_orm_models() -> None:
     """Pins a leak the substring scan above cannot see.
 
     Found by the runtime probe: the two-literal file scan reports a clean
-    boundary while a client-owned ORM module is loaded transitively. Written
-    as a strict xfail so the gap is visible and its fix is a deliberate,
-    reviewed deletion of this test rather than a silent drift.
+    boundary while a client-owned ORM module was loaded transitively.
+    ``agentsys.models.tables`` — ACME's clients/orders/catalog_embeddings ORM
+    models — no longer exists (#70): ``webhook.py`` imports
+    ``agentsys.models.base``, and ``models/__init__.py`` used to eagerly
+    re-export ``models.tables`` so that ``Base.metadata`` held every table.
+    Now it only re-exports the platform's own ``audit_event``, so this
+    boundary holds for real instead of by strict xfail.
     """
     import subprocess
     import sys

@@ -76,11 +76,11 @@ jobs:
         run: uv sync --group dev
 
       # Two steps, not one, because two different things own this schema.
-      # init_db.py creates the ORM-owned tables; alembic creates the ones the
-      # ORM cannot express. audit_event is RANGE partitioned, so creating it
-      # from metadata would yield a plain unpartitioned table with no error —
-      # which is why create_orm_owned_tables skips it. See models/base.py.
-      - name: Create ORM-owned schema
+      # init_db.py creates the pgvector extension; alembic creates every
+      # table, including audit_event, which is RANGE partitioned — creating
+      # it from metadata would yield a plain unpartitioned table with no
+      # error. See models/base.py (ALEMBIC_OWNED / alembic_owned_tables).
+      - name: Create pgvector extension
         run: uv run python scripts/init_db.py
 
       - name: Apply migrations (Alembic-owned schema)
