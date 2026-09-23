@@ -162,7 +162,9 @@ class TestRecorderEventFamilies:
         from agentsys.audit.recorder import record_runtime_built
 
         definition = MockDefinition()
-        event = await record_runtime_built(definition, tools_count=5, denied_count=2, skills_count=3)
+        event = await record_runtime_built(
+            definition, tools_count=5, denied_count=2, skills_count=3
+        )
         assert isinstance(event, RuntimeBuilt)
         assert event.tools == 5
         assert event.denied == 2
@@ -175,7 +177,9 @@ class TestRecorderEventFamilies:
         from agentsys.audit.recorder import record_runtime_initialized
 
         definition = MockDefinition()
-        event = await record_runtime_initialized(definition, tools_count=5, model_type="groq")
+        event = await record_runtime_initialized(
+            definition, tools_count=5, model_type="groq"
+        )
         assert isinstance(event, RuntimeInitialized)
         assert event.tools == 5
         assert event.model_type == "groq"
@@ -307,7 +311,6 @@ class TestRecorderIdentityExtraction:
         event = await record_skill_loaded(MockDefinition(role="sales-agent"), skill="s")
         assert event.role == "sales-agent"
 
-
     @pytest.mark.asyncio
     async def test_role_falls_back_to_unknown(self) -> None:
         """A definition with no role attribute never crashes the recorder."""
@@ -350,7 +353,9 @@ class TestRecorderAgentDefinitionContract:
         """The deployment must survive onto the event."""
         from agentsys.audit.recorder import record_skill_loaded
 
-        event = await record_skill_loaded(real_definition(deployment="acme"), skill="sales-kb")
+        event = await record_skill_loaded(
+            real_definition(deployment="acme"), skill="sales-kb"
+        )
         assert event.deployment == "acme"
 
 

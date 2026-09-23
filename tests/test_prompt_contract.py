@@ -43,9 +43,7 @@ def _real_roots() -> RootConfig:
     return RootConfig(platform_root=_REAL_PLATFORM_ROOT)
 
 
-def _write_role(
-    tmp_path: pathlib.Path, role_type: str, role_body: str
-) -> RootConfig:
+def _write_role(tmp_path: pathlib.Path, role_type: str, role_body: str) -> RootConfig:
     """Write a minimal, valid role folder under tmp_path and return its roots."""
     folder = tmp_path / "roles" / role_type
     folder.mkdir(parents=True)
@@ -55,9 +53,7 @@ def _write_role(
     (folder / "manifest.md").write_text(
         "---\ntools: []\nskills: []\ncontext: {}\npermissions: []\n---\n\nm\n"
     )
-    (folder / "policy.md").write_text(
-        "---\nautonomy: supervised\n---\n\np\n"
-    )
+    (folder / "policy.md").write_text("---\nautonomy: supervised\n---\n\np\n")
     return RootConfig(platform_root=tmp_path)
 
 
@@ -82,9 +78,9 @@ def test_resolved_sales_agent_prompt_has_no_agent_role_rationale() -> None:
     """`agent/role.md`'s inheritance-mechanics rationale must be gone too."""
     definition = resolve("sales-agent", roots=_real_roots())
 
-    assert (
-        "roles instead of one" not in definition.system_prompt
-    ), "agent/role.md's taxonomy rationale leaked into the resolved prompt"
+    assert "roles instead of one" not in definition.system_prompt, (
+        "agent/role.md's taxonomy rationale leaked into the resolved prompt"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -72,7 +72,9 @@ class TestAuditSinkQueueOverflow:
             await sink.record(make_event())
             mock_logger.warning.assert_called_once()
             args, kwargs = mock_logger.warning.call_args
-            assert "audit.event_dropped" in args or kwargs.get("event", "").startswith("audit.")
+            assert "audit.event_dropped" in args or kwargs.get("event", "").startswith(
+                "audit."
+            )
 
 
 class _FakeSession:
@@ -374,7 +376,7 @@ class TestDrainFailureIsDiagnosable:
     @pytest.mark.asyncio
     async def test_flush_failure_logs_the_actual_exception(self):
         """A failing session surfaces its own message, not an empty string."""
-        sentinel = "asyncpg: relation \"audit_event\" does not exist"
+        sentinel = 'asyncpg: relation "audit_event" does not exist'
 
         class _ExplodingSession:
             async def __aenter__(self):

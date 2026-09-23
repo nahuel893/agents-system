@@ -12,6 +12,7 @@ distributor's ERP (`facturas`, `factura_lineas`, `articulos`), so the
 databases most likely to be hit by accident are exactly the ones whose
 contents look familiar.
 """
+
 from __future__ import annotations
 
 import importlib.util

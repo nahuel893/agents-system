@@ -133,9 +133,9 @@ class Settings(BaseSettings):
 
     # OpenAI-compatible adapter (D-012)
     adapter_api_key: str = ""
-    adapter_provider: Literal[
-        "ollama", "groq", "anthropic", "openai_compatible"
-    ] = "ollama"
+    adapter_provider: Literal["ollama", "groq", "anthropic", "openai_compatible"] = (
+        "ollama"
+    )
     # List of model ids to expose via /v1/models. Format: "{deployment}__{role}",
     # e.g. "acme__sales-agent". Generic (no deployment) → "_generic__{role}".
     adapter_runtimes: list[str] = []
@@ -202,8 +202,7 @@ class Settings(BaseSettings):
     def validate_rag_thresholds(self) -> "Settings":
         if self.rag_threshold_direct <= self.rag_threshold_ambiguous:
             raise ValueError(
-                "rag_threshold_direct must be greater than "
-                "rag_threshold_ambiguous"
+                "rag_threshold_direct must be greater than rag_threshold_ambiguous"
             )
 
         return self

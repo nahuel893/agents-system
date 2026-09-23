@@ -23,6 +23,7 @@ checks the formalized suite in ``tests/test_role_contract_suite.py`` applies
 to every role ``discover_concrete_platform_roles`` finds — one definition per
 invariant, shared instead of re-asserted per role or copied per test file.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -143,7 +144,11 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
     ),
     "summary-agent": frozenset(
         {
-            "escalation_notifier","conversation_summarizer", "knowledge_retrieval", "session_state"}
+            "escalation_notifier",
+            "conversation_summarizer",
+            "knowledge_retrieval",
+            "session_state",
+        }
     ),
 }
 

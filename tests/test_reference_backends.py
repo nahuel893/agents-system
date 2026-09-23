@@ -12,6 +12,7 @@ through the SAME connectors those two files already hold fail-closed: they
 prove the bound path actually works now, and that leaving a backend
 unconfigured is unchanged.
 """
+
 from __future__ import annotations
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -97,7 +98,9 @@ async def test_in_memory_order_writer_records_and_retrieves_an_order() -> None:
 # --- EscalationChannel ---------------------------------------------------------
 
 
-async def test_logging_escalation_channel_writes_a_structured_log_not_a_notification() -> None:
+async def test_logging_escalation_channel_writes_a_structured_log_not_a_notification() -> (
+    None
+):
     """It reports having LOGGED the escalation, never that a human was
     notified — there is no paging system behind this reference backend, and
     it must not fabricate one."""

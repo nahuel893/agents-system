@@ -89,7 +89,8 @@ class TestAuditEventModelImports:
         table = AuditEvent.__table__
         # Check that the unique constraint exists and covers correlation_id + sequence
         has_unique = any(
-            {"correlation_id", "sequence", "occurred_at"} == {col.name for col in c.columns}
+            {"correlation_id", "sequence", "occurred_at"}
+            == {col.name for col in c.columns}
             for c in table.constraints
             if c.__class__.__name__ == "UniqueConstraint"
         )

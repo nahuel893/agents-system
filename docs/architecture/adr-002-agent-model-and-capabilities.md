@@ -33,7 +33,7 @@
 | 25 | Agent-own memory (`remember`/`recall`) | G. Persistence & memory | ⏳ pending | Depends on 2, 3 — #123 |
 | 26 | Reasoning persistence — explicit decision | G. Persistence & memory | ⏳ pending | New PR — #124 |
 | 27 | Integration tests that never run | H. CI | ✅ done | CI PR 1 (issue #42) |
-| 28 | Formatting not enforced (`ruff format`) | H. CI | ⏳ pending | CI PR 2 — #105 |
+| 28 | Formatting not enforced (`ruff format`) | H. CI | ✅ done | CI PR 2 — #105 |
 | 29 | No dependency vulnerability checks | H. CI | ⏳ pending | CI PR 3 — #115 |
 | 30 | Secret scanning only local | H. CI | ⏳ pending | CI PR 3 — #115 |
 | 31 | Every run executes twice; no cancellation | H. CI | ✅ done | CI PR 1 — #104 |
@@ -1802,7 +1802,7 @@ produces different whitespace, and reviews and merges pay for it.
 **Alternatives considered.** Formatting only touched files — rejected: the
 drift never converges, and each unrelated PR carries formatting noise.
 
-**Status.** ⏳ pending. **Planned slice:** CI PR 2.
+**Status.** ✅ done (#105). **Planned slice:** CI PR 2.
 
 #### H.29 — No dependency vulnerability checks
 

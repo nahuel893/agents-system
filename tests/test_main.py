@@ -1450,7 +1450,12 @@ async def test_lifespan_starts_and_stops_the_webhook_worker_around_dependencies(
             assert app.state.webhook_worker is fake_worker
             assert "worker.stop" not in events
 
-        assert events == ["worker.start", "worker.stop", "whatsapp.aclose", "engine.dispose"]
+        assert events == [
+            "worker.start",
+            "worker.stop",
+            "whatsapp.aclose",
+            "engine.dispose",
+        ]
 
 
 @pytest.mark.asyncio

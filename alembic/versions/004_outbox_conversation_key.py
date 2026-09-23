@@ -54,7 +54,9 @@ _INCOMPLETE_WORK_EXISTS = """
 """
 
 
-def _extract_conversation_key(payload: dict[str, Any], meta_message_id: str) -> str | None:
+def _extract_conversation_key(
+    payload: dict[str, Any], meta_message_id: str
+) -> str | None:
     """Find the sender ("from") of the message matching *meta_message_id*.
 
     Mirrors ``webhook_worker._extract_inbound_turn``'s envelope walk, but
@@ -97,16 +99,16 @@ def upgrade() -> None:
         )
     ).fetchall()
     for row in rows:
-        payload = row.payload if isinstance(row.payload, dict) else json.loads(row.payload)
+        payload = (
+            row.payload if isinstance(row.payload, dict) else json.loads(row.payload)
+        )
         sender = _extract_conversation_key(payload, row.meta_message_id)
         # A message the walk cannot resolve (malformed/non-text/missing
         # sender) gets its own singleton key rather than a shared/NULL one --
         # it never collides with, or blocks, any other conversation.
         conversation_key = sender or f"unresolved:{row.meta_message_id}"
         bind.execute(
-            sa.text(
-                "UPDATE outbox_work SET conversation_key = :key WHERE id = :id"
-            ),
+            sa.text("UPDATE outbox_work SET conversation_key = :key WHERE id = :id"),
             {"key": conversation_key, "id": row.id},
         )
 

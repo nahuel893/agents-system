@@ -15,6 +15,7 @@ Isolation strategy:
   agentsys.integration.openai_adapter.get_settings so the verify_bearer
   dependency sees a controlled adapter_api_key.
 """
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -400,7 +401,12 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
     first_response = AIMessage(
         content="",
         tool_calls=[
-            {"id": tool_call_id, "name": "create_order", "args": {}, "type": "tool_call"}
+            {
+                "id": tool_call_id,
+                "name": "create_order",
+                "args": {},
+                "type": "tool_call",
+            }
         ],
     )
     final_response = AIMessage(content="Order created.")

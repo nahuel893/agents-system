@@ -76,8 +76,7 @@ def upgrade() -> None:
         ["available_at", "id"],
         unique=False,
         postgresql_where=sa.text(
-            "completed_at IS NULL AND failed_at IS NULL "
-            "AND lease_expires_at IS NULL"
+            "completed_at IS NULL AND failed_at IS NULL AND lease_expires_at IS NULL"
         ),
     )
     op.create_index(

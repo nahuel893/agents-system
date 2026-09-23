@@ -634,7 +634,9 @@ def test_terminal_policy_rejects_a_forbidden_root(forbidden: pathlib.Path) -> No
     `command_tools` `Path.cwd()` hole."""
     with pytest.raises(ValueError, match="forbids"):
         TerminalPolicy(
-            root=forbidden, allowed_commands=frozenset({"echo"}), sandbox=SandboxPolicy()
+            root=forbidden,
+            allowed_commands=frozenset({"echo"}),
+            sandbox=SandboxPolicy(),
         )
 
 
@@ -670,7 +672,9 @@ def test_terminal_policy_rejects_the_process_cwd_as_root() -> None:
         pathlib.Path("/var/run"),
     ],
 )
-def test_sandbox_policy_rejects_a_forbidden_extra_ro_bind(forbidden: pathlib.Path) -> None:
+def test_sandbox_policy_rejects_a_forbidden_extra_ro_bind(
+    forbidden: pathlib.Path,
+) -> None:
     with pytest.raises(ValueError, match="forbids"):
         SandboxPolicy(extra_ro_binds=(forbidden,))
 

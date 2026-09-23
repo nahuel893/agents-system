@@ -13,6 +13,7 @@ platform's inbound route depend on one deployment's `clients` and
 The seam is the same one `services.rag.CatalogSource` and
 `services.embeddings.EmbeddingProvider` already use.
 """
+
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable

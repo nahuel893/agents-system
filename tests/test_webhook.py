@@ -295,9 +295,7 @@ async def test_post_persists_the_message_before_ack_and_runs_no_turn(
     proof that nothing in this handler reaches for either."""
     sig = sign_payload(text_payload, TEST_SECRET)
     accept = AsyncMock(
-        return_value=InboundAcceptance(
-            inbound_message_id=uuid.uuid4(), duplicate=False
-        )
+        return_value=InboundAcceptance(inbound_message_id=uuid.uuid4(), duplicate=False)
     )
 
     p1, p2 = _patch_persistence(accept)
@@ -395,9 +393,7 @@ async def test_post_message_with_no_sender_gets_its_own_singleton_conversation_k
 
     assert response.status_code == 200
     accept.assert_awaited_once()
-    assert (
-        accept.call_args.kwargs["conversation_key"] == "unresolved:wamid.no-sender"
-    )
+    assert accept.call_args.kwargs["conversation_key"] == "unresolved:wamid.no-sender"
 
 
 async def test_post_status_update_is_not_persisted(
@@ -455,9 +451,7 @@ async def test_post_skips_a_message_with_no_id_but_persists_the_rest(
     ).encode()
     sig = sign_payload(payload, TEST_SECRET)
     accept = AsyncMock(
-        return_value=InboundAcceptance(
-            inbound_message_id=uuid.uuid4(), duplicate=False
-        )
+        return_value=InboundAcceptance(inbound_message_id=uuid.uuid4(), duplicate=False)
     )
 
     p1, p2 = _patch_persistence(accept)
@@ -551,9 +545,7 @@ async def test_post_duplicate_meta_message_id_is_accepted_idempotently(
     contract, exercised here through its caller)."""
     sig = sign_payload(text_payload, TEST_SECRET)
     accept = AsyncMock(
-        return_value=InboundAcceptance(
-            inbound_message_id=uuid.uuid4(), duplicate=True
-        )
+        return_value=InboundAcceptance(inbound_message_id=uuid.uuid4(), duplicate=True)
     )
 
     p1, p2 = _patch_persistence(accept)

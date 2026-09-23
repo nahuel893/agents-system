@@ -101,7 +101,9 @@ async def test_status_summary_recovers_the_seeded_status_mix(engine: Any) -> Non
     A mapping that dropped a value would not error — the rows would simply be
     absent from every filtered report. This is where that shows up.
     """
-    result = await _report(engine, "status_summary", months_back=WHOLE_HISTORY, limit=10)
+    result = await _report(
+        engine, "status_summary", months_back=WHOLE_HISTORY, limit=10
+    )
 
     counts = {row["status"]: row["sale_count"] for row in result["rows"]}
 
@@ -118,7 +120,9 @@ async def test_no_sale_falls_outside_the_canonical_vocabulary(engine: Any) -> No
 
     An unmapped company status would surface here as a fourth key.
     """
-    result = await _report(engine, "status_summary", months_back=WHOLE_HISTORY, limit=50)
+    result = await _report(
+        engine, "status_summary", months_back=WHOLE_HISTORY, limit=50
+    )
 
     assert {row["status"] for row in result["rows"]} <= {
         "confirmed",
@@ -172,7 +176,9 @@ async def test_an_unmapped_source_status_is_not_reported_as_a_cancellation(
     CANCELLATION that no invoice in the company ever recorded, and the agent
     would report that figure with full confidence.
     """
-    result = await _report(engine, "status_summary", months_back=WHOLE_HISTORY, limit=50)
+    result = await _report(
+        engine, "status_summary", months_back=WHOLE_HISTORY, limit=50
+    )
 
     counts = {row["status"]: row["sale_count"] for row in result["rows"]}
 
@@ -287,7 +293,9 @@ def Decimalish(value: Any) -> Any:
 
 
 async def test_every_seeded_zone_and_segment_appears(engine: Any) -> None:
-    by_zone = await _report(engine, "sales_by_zone", months_back=WHOLE_HISTORY, limit=50)
+    by_zone = await _report(
+        engine, "sales_by_zone", months_back=WHOLE_HISTORY, limit=50
+    )
     by_segment = await _report(
         engine, "sales_by_segment", months_back=WHOLE_HISTORY, limit=50
     )

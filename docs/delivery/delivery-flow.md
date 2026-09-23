@@ -121,6 +121,9 @@ not twice. A newer push to a pull request cancels the run it supersedes; runs
 on `main` are never cancelled. A branch without a pull request gets no CI
 until it has one.
 
+Formatting is enforced: the `ci` job runs `ruff format --check .` and fails on
+drift, and the `ruff-format` pre-commit hook formats what a commit touches.
+
 ### 5. Review — required, and by the right person
 
 At least one approval from someone who is not the author. **CODEOWNERS routes

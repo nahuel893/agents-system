@@ -42,6 +42,7 @@ Prompt composition (ADR-002 B.8/B.9)
   once regardless of ``extends:`` chain depth — no role.md or deployment
   override declares it and none can omit or contradict it.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -289,8 +290,8 @@ class RawDefinition:
     #: ADR-002 C.12. `{name: full declaration}`, populated ONLY by a platform
     #: role's own manifest (`_load_role_files`) — a deployment override never
     #: originates a new declaration, it only narrows `command_tools` above.
-    command_tool_declarations: dict[str, CommandToolDeclaration] = (
-        dataclasses.field(default_factory=dict)
+    command_tool_declarations: dict[str, CommandToolDeclaration] = dataclasses.field(
+        default_factory=dict
     )
 
 
@@ -702,9 +703,7 @@ _PROMPT_SEPARATOR = "\n\n---\n\n"
 # level, a typo, "design note" singular — so a mis-typed heading raises
 # loudly instead of silently leaving the rationale in the prompt.
 _DESIGN_NOTES_EXACT = re.compile(r"^##\s+design\s+notes\s*$", re.IGNORECASE)
-_DESIGN_NOTES_NEAR_MISS = re.compile(
-    r"^#{1,6}\s*design[\s_-]*notes?\b", re.IGNORECASE
-)
+_DESIGN_NOTES_NEAR_MISS = re.compile(r"^#{1,6}\s*design[\s_-]*notes?\b", re.IGNORECASE)
 
 #: A fenced code block delimiter (```` ``` ```` or ``~~~``, 3+ characters).
 #: Content inside a fence — including an *example* `## design notes` heading
@@ -843,7 +842,9 @@ def _extends_target(raw: Any) -> str:
     return str(raw).strip().rstrip("/").rsplit("/", 1)[-1]
 
 
-def _parse_untrusted_input(policy_fm: dict[str, Any], *, source: pathlib.Path) -> bool | None:
+def _parse_untrusted_input(
+    policy_fm: dict[str, Any], *, source: pathlib.Path
+) -> bool | None:
     """Read `untrusted_input` from parsed policy.md frontmatter (ADR-002 C.11).
 
     Accepts only a real YAML bool (`true`/`false`) or plain absence (the key
@@ -886,18 +887,14 @@ def _load_role_files(
     folder = _role_folder(_require_platform_root(roots.platform_root), role_type)
 
     if not folder.is_dir():
-        raise DefinitionError(
-            f"Role '{role_type}' has no folder at {folder}."
-        )
+        raise DefinitionError(f"Role '{role_type}' has no folder at {folder}.")
 
     role_fm, role_body = _read_md(folder / "role.md")
     role_body = _split_design_notes(role_body, source=folder / "role.md")
     manifest_fm, _ = _read_md(folder / "manifest.md")
     policy_fm, _ = _read_md(folder / "policy.md")
 
-    role_name: str = str(
-        role_fm.get("name", manifest_fm.get("role", role_type))
-    )
+    role_name: str = str(role_fm.get("name", manifest_fm.get("role", role_type)))
     version: str = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
 
     parent_raw = manifest_fm.get("extends")
@@ -1251,9 +1248,7 @@ def load_override(
     policy_fm, _ = _read_md(folder / "policy.md")
 
     # Use parent role_type as the role_name fallback
-    role_name = str(
-        role_fm.get("name", manifest_fm.get("role", role_type))
-    )
+    role_name = str(role_fm.get("name", manifest_fm.get("role", role_type)))
     version = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
     deployment = str(manifest_fm.get("deployment", client))
 
@@ -1458,9 +1453,7 @@ def _validate_permissions(
     resolved_perms: list[str],
 ) -> None:
     parent_perms = (
-        set(parent.permissions)
-        if isinstance(parent.permissions, list)
-        else set()
+        set(parent.permissions) if isinstance(parent.permissions, list) else set()
     )
     resolved_set = set(resolved_perms)
     extra = resolved_set - parent_perms
@@ -1658,7 +1651,9 @@ def merge(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
     return result
 
 
-def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
+def _merge_validated(
+    generic: RawDefinition, override: RawDefinition
+) -> AgentDefinition:
     """Apply override merge directives to the generic definition.
 
     Validates all structural invariants and raises ``DefinitionError`` on any
@@ -1695,9 +1690,7 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
 
     # --- Resolve permissions ---
     parent_perms = (
-        list(generic.permissions)
-        if isinstance(generic.permissions, list)
-        else []
+        list(generic.permissions) if isinstance(generic.permissions, list) else []
     )
     resolved_perms = _resolve_permissions(parent_perms, override.permissions)
     _validate_permissions(generic, resolved_perms)
@@ -1783,9 +1776,7 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
     # context". Same separator the factory uses for skills, so the composed
     # prompt reads as one document.
     prompt_parts = [
-        part
-        for part in (generic.system_prompt, override.system_prompt)
-        if part.strip()
+        part for part in (generic.system_prompt, override.system_prompt) if part.strip()
     ]
     resolved_prompt = _PROMPT_SEPARATOR.join(prompt_parts)
 
@@ -1849,9 +1840,7 @@ def resolve(
 
     # No override — wrap the generic RawDefinition into a frozen AgentDefinition
     parent_perms = (
-        list(generic.permissions)
-        if isinstance(generic.permissions, list)
-        else []
+        list(generic.permissions) if isinstance(generic.permissions, list) else []
     )
     exec_limits: Mapping[str, Any] | None = (
         dict(generic.execution_limits)

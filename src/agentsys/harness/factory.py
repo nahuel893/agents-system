@@ -27,6 +27,7 @@ Skills are deployment-specific: they live in
 ``deployments/{client}/{role_type}/skills/{name}.md``. A generic role (no
 client) has no skills, so its prompt is just the role body.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -34,7 +35,11 @@ from typing import TYPE_CHECKING, Iterable
 
 import structlog
 
-from agentsys.harness.injector import _emit, resolve_command_tool_surface, resolve_tool_surface
+from agentsys.harness.injector import (
+    _emit,
+    resolve_command_tool_surface,
+    resolve_tool_surface,
+)
 from agentsys.harness.loader import (
     AgentDefinition,
     RootConfig,

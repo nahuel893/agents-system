@@ -44,9 +44,7 @@ def _configured_settings() -> Settings:
     """Skip cleanly when the provider is not configured in this environment."""
     get_settings.cache_clear()
     settings = get_settings()
-    if not (
-        settings.openai_compatible_base_url and settings.openai_compatible_model
-    ):
+    if not (settings.openai_compatible_base_url and settings.openai_compatible_model):
         pytest.skip(
             "OPENAI_COMPATIBLE_BASE_URL / OPENAI_COMPATIBLE_MODEL not configured"
         )

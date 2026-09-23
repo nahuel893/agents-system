@@ -153,9 +153,7 @@ def build_command_tool_connector(declaration: CommandToolDeclaration) -> AsyncCo
 
         unknown = set(inputs) - set(declaration.params)
         if unknown:
-            return _refuse(
-                "unknown_param", f"unknown parameter(s): {sorted(unknown)}."
-            )
+            return _refuse("unknown_param", f"unknown parameter(s): {sorted(unknown)}.")
         missing = set(declaration.params) - set(inputs)
         if missing:
             return _refuse(

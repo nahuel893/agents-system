@@ -4,6 +4,7 @@ Wraps an injected ``httpx.AsyncClient`` so it is testable without real network
 calls (tests substitute a mocked transport) and so its lifecycle is owned by
 the app's lifespan (built once, stored on ``app.state.whatsapp_client``).
 """
+
 from __future__ import annotations
 
 import httpx

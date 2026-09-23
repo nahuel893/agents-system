@@ -27,6 +27,7 @@ Everything an agent gets back is a RESULT, never an exception: a refusal is
 something the model can reason about and report, while a raised error escapes
 the tool boundary and degrades differently at every entry point.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -375,7 +376,9 @@ def _prlimit_path() -> str | None:
     return shutil.which("prlimit")
 
 
-def _prlimit_argv(wrapped: list[str], *, policy: TerminalPolicy, prlimit: str) -> list[str]:
+def _prlimit_argv(
+    wrapped: list[str], *, policy: TerminalPolicy, prlimit: str
+) -> list[str]:
     """Prepend *wrapped* (an already-built `bwrap` invocation) with
     `prlimit --as=... --cpu=... --` (ADR-002 C.14).
 
@@ -411,7 +414,8 @@ def log_sandbox_availability_at_boot(*, context: str) -> None:
     whether this warning was ever read.
     """
     missing = [
-        name for name, path in (("bwrap", _bwrap_path()), ("prlimit", _prlimit_path()))
+        name
+        for name, path in (("bwrap", _bwrap_path()), ("prlimit", _prlimit_path()))
         if path is None
     ]
     if missing:
@@ -650,9 +654,7 @@ def build_file_reader_connector(policy: TerminalPolicy) -> AsyncConnector:
         try:
             candidate = (root / raw_path).resolve()
         except (OSError, ValueError) as error:
-            return _refuse(
-                "invalid_path", f"could not resolve '{raw_path}': {error}"
-            )
+            return _refuse("invalid_path", f"could not resolve '{raw_path}': {error}")
 
         if not candidate.is_relative_to(root):
             return _refuse(

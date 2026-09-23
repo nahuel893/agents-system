@@ -153,9 +153,7 @@ class AuditSink:
         while not self._shutdown:
             try:
                 # Wait up to 100ms for an event
-                event = await asyncio.wait_for(
-                    self._queue.get(), timeout=0.1
-                )
+                event = await asyncio.wait_for(self._queue.get(), timeout=0.1)
                 batch.append(event)
             except asyncio.TimeoutError:
                 pass  # fell through — check flush conditions

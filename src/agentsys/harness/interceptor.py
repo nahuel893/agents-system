@@ -21,6 +21,7 @@ D-009: intercept() is async-native. Async connectors are awaited directly;
 sync connectors are offloaded via asyncio.to_thread so the event loop stays
 free. Policy enforcement remains synchronous and runs before dispatch.
 """
+
 from __future__ import annotations
 
 import asyncio

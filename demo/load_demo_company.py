@@ -212,7 +212,9 @@ async def _summarize(conn: AsyncConnection) -> None:
         # asserting it: a future contract key that is not a plain identifier
         # stops here rather than reaching the database as SQL.
         if not view.isidentifier():
-            raise ValueError(f"refusing to interpolate non-identifier view name: {view!r}")
+            raise ValueError(
+                f"refusing to interpolate non-identifier view name: {view!r}"
+            )
         result = await conn.execute(text(f"SELECT COUNT(*) FROM {view}"))  # noqa: S608
         print(f"  {view:<22} {result.scalar_one():>6} rows")
 

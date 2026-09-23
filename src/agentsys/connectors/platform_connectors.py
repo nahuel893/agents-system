@@ -246,8 +246,7 @@ _SUMMARIZER_INPUT_SCHEMA: dict[str, Any] = {
         "max_messages": {
             "type": "integer",
             "description": (
-                "Optional cap on the number of most recent messages to "
-                "summarize"
+                "Optional cap on the number of most recent messages to summarize"
             ),
         },
     },
@@ -264,7 +263,9 @@ def build_conversation_summarizer_connector(
         inputs: dict[str, Any], *, session: Any = None
     ) -> ConnectorOutput:
         if summarizer is None:
-            return _not_configured(_SUMMARY_NOT_CONFIGURED, "summarization_not_configured")
+            return _not_configured(
+                _SUMMARY_NOT_CONFIGURED, "summarization_not_configured"
+            )
 
         session_id = str(inputs.get("session_id") or "").strip()
         if not session_id:
@@ -273,8 +274,7 @@ def build_conversation_summarizer_connector(
             # conversation that was never identified.
             return {
                 "error": (
-                    "No session_id was given, so no conversation was "
-                    "summarized."
+                    "No session_id was given, so no conversation was summarized."
                 ),
                 "error_kind": "invalid_summary_request",
             }

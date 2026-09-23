@@ -182,7 +182,9 @@ async def test_monthly_partitions_are_named_for_the_month_they_hold(
     moment the month rolls over, and they cannot be matched by pattern when
     something needs to enumerate or drop partitions.
     """
-    monthly = {n for n in await _partition_names(migrated_engine) if n != "audit_event_default"}
+    monthly = {
+        n for n in await _partition_names(migrated_engine) if n != "audit_event_default"
+    }
     assert monthly, "expected at least one monthly partition"
     for name in monthly:
         suffix = name.removeprefix("audit_event_")
@@ -214,10 +216,7 @@ async def test_downgrade_removes_partitions_created_after_install(
 
     async with migrated_engine.connect() as conn:
         remaining = await conn.scalar(
-            text(
-                "SELECT count(*) FROM pg_class "
-                "WHERE relname LIKE 'audit_event%'"
-            )
+            text("SELECT count(*) FROM pg_class WHERE relname LIKE 'audit_event%'")
         )
     assert remaining == 0, (
         "downgrade left audit_event relations behind — most likely it drops a "

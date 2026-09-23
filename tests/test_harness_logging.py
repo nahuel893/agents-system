@@ -6,6 +6,7 @@ assert that those decisions emit structured log events.
 
 Strict TDD: written before the logging instrumentation exists.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -55,11 +56,7 @@ def _spec(name: str, perms: list[str]) -> Any:
 
     # Mirror the pre-tier write:/send: heuristic so fixtures keep their
     # original sensitivity classification (ADR-002 C.10).
-    tier = (
-        Tier.T2
-        if any(p.startswith(("write:", "send:")) for p in perms)
-        else Tier.T1
-    )
+    tier = Tier.T2 if any(p.startswith(("write:", "send:")) for p in perms) else Tier.T1
     return ToolSpec(
         name=name, required_permissions=tuple(perms), connector=lambda: None, tier=tier
     )
@@ -80,7 +77,9 @@ def _registry_with(*specs: Any) -> Any:
 def test_injector_logs_granted_tool() -> None:
     from agentsys.harness.injector import resolve_tool_surface
 
-    definition = _make_definition(tools=["catalog_search"], permissions=["read:catalog"])
+    definition = _make_definition(
+        tools=["catalog_search"], permissions=["read:catalog"]
+    )
     registry = _registry_with(_spec("catalog_search", ["read:catalog"]))
 
     with structlog.testing.capture_logs() as logs:

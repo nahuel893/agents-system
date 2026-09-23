@@ -48,6 +48,7 @@ submodule — those are only imported the first time you actually touch the
 corresponding name (e.g. ``agentsys.AgentRuntime`` imports ``agent.graph``,
 and only then, pulling in LangGraph as a side effect).
 """
+
 from __future__ import annotations
 
 import importlib

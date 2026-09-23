@@ -831,9 +831,7 @@ async def test_claim_serializes_one_conversation_but_runs_two_concurrently(
             work for work in first_round.claimed if work.inbound_message_id == a_first
         )
         async with session_factory() as session:
-            await complete_outbox_work(
-                session, work=a_first_work, worker_id="worker-a"
-            )
+            await complete_outbox_work(session, work=a_first_work, worker_id="worker-a")
 
         async with session_factory() as session:
             third_round = await claim_available_outbox_work(
@@ -910,9 +908,7 @@ async def test_claim_releases_a_conversation_once_its_oldest_item_fails_terminal
     finally:
         async with migrated_engine.begin() as conn:
             await conn.execute(
-                text(
-                    "DELETE FROM audit_event WHERE correlation_id = :correlation_id"
-                ),
+                text("DELETE FROM audit_event WHERE correlation_id = :correlation_id"),
                 {"correlation_id": f"outbox:{older_work.id}"},
             )
             for inbound_id in (older, newer):
