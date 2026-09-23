@@ -162,6 +162,7 @@ Esta carpeta de definición del agente establece la frontera de comportamiento d
 
 ## Referencias cruzadas
 
+- Definición formal de "agente" (como algo distinto de "rol") y su estado de implementación actual: `docs/platform_es/agent.md`
 - Definición de herramientas (*tools*): `docs/platform_es/tool.md`
 - Definición de habilidades (*skills*): `docs/platform_es/skill.md`
 - Ciclo de vida del runtime y orden de inyección: `docs/platform_es/harness.md`

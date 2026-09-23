@@ -6,6 +6,8 @@
 
 The platform is not a product for one client. It is the foundation on which client-specific products are built.
 
+For the formal definition of "agent" this manifesto uses informally throughout — including how it differs from "role" and what part of it is implemented today — see `docs/platform/agent.md`.
+
 **Core responsibilities of the platform:**
 - Declarative role definition via folder-based agent definitions
 - Agent factory that resolves models, policies, and baseline configuration

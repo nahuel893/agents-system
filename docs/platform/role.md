@@ -162,6 +162,7 @@ This agent definition folder defines the Preventa Agent's behavioral boundary. A
 
 ## Cross-references
 
+- Formal definition of "agent" (as distinct from "role") and its current implementation status: `docs/platform/agent.md`
 - Tool definitions: `docs/platform/tool.md`
 - Skill definitions: `docs/platform/skill.md`
 - Runtime lifecycle and injection order: `docs/platform/harness.md`
