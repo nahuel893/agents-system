@@ -12,13 +12,15 @@ from agentsys.models.audit_event import AuditEvent  # noqa: F401
 #: all of them, so this inventory is the same whether the suite runs whole or
 #: one module at a time — it did not used to be.
 #:
-#: ``audit_event`` is the platform's only table (#70 deleted the client-owned
-#: ``clients``/``orders``/``order_items``/``conversation_logs``/
-#: ``catalog_embeddings`` tables and the models submodule that declared
-#: them). A deployment that adds its own ORM tables extends this inventory by
-#: importing them the same way.
+#: The platform owns ``audit_event`` plus the durable webhook inbox/outbox
+#: tables. (#70 deleted the client-owned ``clients``/``orders``/``order_items``/
+#: ``conversation_logs``/``catalog_embeddings`` tables and the models submodule
+#: that declared them.) A deployment that adds its own ORM tables extends this
+#: inventory by importing them the same way.
 EXPECTED_TABLES = {
     "audit_event",
+    "outbox_work",
+    "webhook_inbox",
 }
 
 

@@ -5,13 +5,15 @@ to express partitioning, so ``Base.metadata.create_all`` does not fail on
 PostgreSQL — it quietly emits a plain, UNPARTITIONED ``audit_event``, a
 different table than the one Alembic's migration builds. On SQLite it fails
 outright, because the composite PK ``(occurred_at, id)`` has an autoincrement
-column.
+column. ``webhook_inbox`` and ``outbox_work`` are likewise created only by
+Alembic so their PostgreSQL JSONB columns, partial indexes, and constraints
+match the durable delivery schema.
 
-Both outcomes come from the same mistake: creating this table from ORM
-metadata. So every call site that does that must skip it — before #70,
-that meant both ``scripts/init_db.py`` and the test fixtures; ``audit_event``
-is now the only table ``Base.metadata`` declares at all, so there is nothing
-left for either to bulk-create from metadata, and both stopped trying.
+The same mistake is creating any of these tables from ORM metadata. So every
+call site that does that must skip those tables — before #70, that meant both
+``scripts/init_db.py`` and the test fixtures; ``audit_event`` was then the only
+table ``Base.metadata`` declared at all, so there was nothing left for either
+to bulk-create from metadata, and both stopped trying.
 
 These tests pin the rule where it is enforced, and pin it as a property the
 table *declares* rather than a name someone has to remember to add to a list.
@@ -37,10 +39,10 @@ def test_alembic_owned_tables_finds_it_by_the_flag() -> None:
     assert "audit_event" in {table.name for table in alembic_owned_tables()}
 
 
-def test_every_other_table_is_orm_owned() -> None:
-    """Only the partitioned table opts out. A typo'd flag would show up here."""
+def test_platform_tables_declare_themselves_alembic_owned() -> None:
+    """Every platform-managed table opts out. A typo'd flag would show up here."""
     owned = {table.name for table in alembic_owned_tables()}
-    assert owned == {"audit_event"}
+    assert owned == {"audit_event", "outbox_work", "webhook_inbox"}
 
 
 def test_every_datetime_column_is_timezone_aware() -> None:
