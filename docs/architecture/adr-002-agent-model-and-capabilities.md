@@ -1866,11 +1866,23 @@ without one does not need CI until it has one.
 
 #### H.32 — No coverage measurement
 
-**Current state.** No job measures which code the tests exercise.
+**Current state (before this change).** No job measured which code the
+tests exercise.
 
-**Decision.** Run the unit suite with `pytest --cov=agentsys` and publish
-the report as a job artifact. Set the minimum at the measured baseline and
-ratchet it upward; never set it above the baseline on day one.
+**Decision.** The `ci` job's `Test` step now runs `pytest --cov=agentsys
+--cov-report=term-missing --cov-report=xml --cov-report=html
+--cov-fail-under=94` (`ci.yml`), and an `actions/upload-artifact@v4` step
+right after it publishes `coverage.xml` and `htmlcov/` as the
+`coverage-report` job artifact on every run, pass or fail (`if: always()`).
+The measured baseline on the default unit suite (`-m 'not integration'`
+still applies, unchanged) was 94.87 % (3109/3277 statements); the threshold
+is the *floor* of that number, 94, not the raw baseline — so it ratchets up
+from a value slightly below what was actually observed, not from the
+observed value itself. The seven `integration`-marked jobs run against live
+services this job does not have and deliberately do not contribute to this
+number: mixing them in would make the threshold depend on which of those
+jobs happened to run in a given invocation, not on what the default suite
+alone proves.
 
 **Rationale.** Coverage does not prove tests are good, but a drop flags new
 code that nothing exercises — which is exactly the kind of gap H.27 found by
@@ -1878,18 +1890,26 @@ hand.
 
 **Alternatives considered.** A fixed high threshold (e.g. 90 %) — rejected:
 it breaks the build on day one and pushes people towards tests written for
-the number instead of the behaviour.
+the number instead of the behaviour. Folding the integration jobs into the
+same coverage number — rejected: it would make the gate depend on which
+optional live services happened to be reachable, not on the default suite.
 
-**Status.** ⏳ pending. **Planned slice:** CI PR 4.
+**Status.** ✅ done (#116). **Planned slice:** CI PR 4.
 
 #### H.33 — Shell scripts are not linted in CI
 
-**Current state.** `.claude/hooks/guard-main.sh` (#99) is a security control
-written in bash. Its behaviour is covered by `tests/test_guard_main_hook.py`
-(runs in the `ci` job), but `shellcheck` and `bash -n` ran only locally.
-`scripts/preflight_local_embeddings.sh` has no check at all.
+**Current state (before this change).** `.claude/hooks/guard-main.sh` (#99)
+is a security control written in bash. Its behaviour is covered by
+`tests/test_guard_main_hook.py` (46 tests, runs in the `ci` job), but
+`shellcheck` and `bash -n` ran only locally. `scripts/preflight_local_embeddings.sh`
+had no check at all.
 
-**Decision.** Add a `shellcheck` step over every tracked `*.sh`.
+**Decision.** A dedicated `shellcheck` job (`ci.yml`) installs a pinned
+shellcheck release (0.11.0, downloaded directly from the upstream GitHub
+release rather than the runner image's apt package or an unpinned
+third-party Action) and runs it over `git ls-files -z -- '*.sh'` — every
+tracked shell script, present and future, with no file list to remember to
+update here.
 
 **Rationale.** Bash fails silently in ways Python does not (unquoted
 expansion, word splitting); a linter catches those classes statically.
@@ -1897,7 +1917,13 @@ expansion, word splitting); a linter catches those classes statically.
 **Alternatives considered.** Rewriting the hook in Python — possible later,
 but the hook must start fast and depend on nothing outside the base system.
 
-**Status.** ⏳ pending. **Planned slice:** CI PR 4.
+**Findings.** Both tracked scripts were already shellcheck-clean against
+0.11.0 (zero findings, exit 0). `guard-main.sh` already carried one
+documented `# shellcheck disable=SC2088` (in `resolve_dir`, for literal `~`
+prefix checks that are not path expansion) from its original authoring — no
+script needed a code fix or a new suppression to pass this gate.
+
+**Status.** ✅ done (#116). **Planned slice:** CI PR 4.
 
 #### H.34 — Green CI does not gate a merge
 

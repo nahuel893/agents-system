@@ -27,6 +27,8 @@ ENV/
 # Testing
 .pytest_cache/
 .coverage
+coverage.xml
+htmlcov/
 
 # Agent-generated registries / caches
 .atl/
