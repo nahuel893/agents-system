@@ -21,7 +21,7 @@ import pytest
 from agentsys.audit.sink import AuditSink
 from agentsys.harness.injector import resolve_tool_surface
 from agentsys.harness.loader import AgentDefinition
-from agentsys.harness.registry import ToolRegistry, ToolSpec
+from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 
 
 class CapturingSink(AuditSink):
@@ -102,6 +102,7 @@ async def test_a_synchronous_caller_delivers_an_event_to_the_sink(sink: Capturin
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=lambda **_: "ok",
+        tier=Tier.T1,
     )
     resolve_tool_surface(
         _definition(tools=("catalog_search",), permissions=("read:catalog",)),
@@ -124,6 +125,7 @@ async def test_a_denied_tool_is_auditable(sink: CapturingSink) -> None:
         name="order_writer",
         required_permissions=("write:orders",),
         connector=lambda **_: "ok",
+        tier=Tier.T2,
     )
     result = resolve_tool_surface(
         _definition(tools=("order_writer",), permissions=("write:orders",)),

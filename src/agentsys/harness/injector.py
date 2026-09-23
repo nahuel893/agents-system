@@ -9,7 +9,7 @@ from typing import Any
 import structlog
 
 from agentsys.harness.loader import AgentDefinition
-from agentsys.harness.registry import ToolRegistry, ToolSpec
+from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 
 logger = structlog.get_logger()
 
@@ -100,6 +100,33 @@ def resolve_tool_surface(
             raise InjectionError(f"Unknown tool: {name}")
 
         spec = registry.get(name)
+
+        if definition.untrusted_input and spec.tier == Tier.T3:
+            # ADR-002 C.10 — second barrier, independent of C.11's exec:*
+            # invariant: an untrusted_input role must never receive a T3
+            # tool, even if its permission happens to be granted and carries
+            # no exec: prefix (i.e. even where the permission-name heuristic
+            # alone would have missed it).
+            reason = (
+                "tier T3 tools are never granted to an untrusted_input role "
+                "(ADR-002 C.10)"
+            )
+            denied.append((name, reason))
+            logger.warning(
+                "injector.tool_denied",
+                tool=name,
+                role=definition.role_name,
+                deployment=definition.deployment,
+                reason=reason,
+            )
+            _emit(
+                "record_tool_denied",
+                definition=definition,
+                tool_name=name,
+                reason=reason,
+            )
+            continue
+
         if set(spec.required_permissions) <= effective:
             granted.append(spec)
             logger.info(

@@ -34,7 +34,7 @@ Cross-cutting: `config.py` (pydantic Settings — **`.env` overrides code defaul
 
 ## Security invariants (do not weaken)
 
-- **Two RBAC layers.** Layer-1: only granted tools are equipped at build time. Layer-2 (`harness/interceptor.py`): sensitive tools are **revalidated at call time** against current permissions. Sensitive = `required_permissions` starts with `write:` / `send:`, **or** `ToolSpec.always_revalidate=True` (opt-in for sensitive reads).
+- **Two RBAC layers.** Layer-1: only granted tools are equipped at build time. Layer-2 (`harness/interceptor.py`): sensitive tools are **revalidated at call time** against current permissions. Sensitive = `ToolSpec.tier` is `T2` (scoped write/send) or `T3` (host execution), **or** `ToolSpec.always_revalidate=True` (opt-in for sensitive T0/T1 reads) — ADR-002 C.10. `ToolSpec` itself fails closed at construction: a `write:`/`send:` permission requires `tier` in `{T2, T3}`, and an `exec:*` permission requires `tier=T3`, so a mismatched tier raises immediately rather than silently under-enforcing.
 - **Permissions are data-driven.** Grants come from the role/deployment definition the loader parses (`definition.permissions`) — never a hardcoded role→list map in `main.py`.
 - **Execution limits are enforced, not just parsed.** `graph.py` bounds the loop by `execution_limits` (max_tool_calls → terminal node; per-call + per-turn `asyncio.timeout`). Defaults live in `loader.PLATFORM_DEFAULT_LIMITS` (20 / 60s / 10s).
 

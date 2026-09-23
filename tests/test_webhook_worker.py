@@ -754,7 +754,7 @@ async def test_process_claimed_work_does_not_force_empty_permissions(
     from agentsys.agent.graph import AgentRuntime
     from agentsys.harness.factory import EquippedRuntime
     from agentsys.harness.loader import AgentDefinition
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     inbound = _inbound()
     work = _work(inbound)
@@ -776,6 +776,7 @@ async def test_process_claimed_work_does_not_force_empty_permissions(
         name="create_order",
         required_permissions=("write:orders",),
         connector=create_order,
+        tier=Tier.T2,
         description="Create an order",
         input_schema={"type": "object", "properties": {}},
     )

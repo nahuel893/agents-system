@@ -144,11 +144,16 @@ def test_build_report_tool_spec_can_be_added_to_an_existing_registry() -> None:
     ONE registry, so the spec has to be composable into the shared one.
     """
     from agentsys.connectors.report_connector import build_report_tool_spec
-    from agentsys.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     registry.register(
-        ToolSpec(name="already_here", required_permissions=(), connector=lambda i: {})
+        ToolSpec(
+            name="already_here",
+            required_permissions=(),
+            connector=lambda i: {},
+            tier=Tier.T0,
+        )
     )
 
     spec = build_report_tool_spec(object(), _catalog())

@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable
 
 import structlog
 
-from agentsys.harness.registry import ToolSpec
+from agentsys.harness.registry import Tier, ToolSpec
 from agentsys.services.orders import OrderWriter
 
 _logger = structlog.get_logger(__name__)
@@ -202,4 +202,5 @@ def build_order_writer_tool_spec(writer: OrderWriter | None) -> ToolSpec:
         required_permissions=("write:orders", "write:order_items"),
         input_schema=_INPUT_SCHEMA,
         connector=build_order_writer_connector(writer),
+        tier=Tier.T2,
     )

@@ -7,12 +7,15 @@ invocation before the connector fires.
 This catches what Layer 1 cannot: model hallucinations of out-of-scope tools,
 prompt injection attempts, and incomplete injection bugs.
 
-Sensitive tools — those whose required_permissions include any write:* or
-send:* permission, OR whose ToolSpec opts in via ``always_revalidate=True`` —
-are revalidated against current permissions at call time. This guards against
+Sensitive tools — those tiered T2 (scoped write/send) or T3 (host execution,
+ADR-002 C.10), OR whose ToolSpec opts in via ``always_revalidate=True`` — are
+revalidated against current permissions at call time. This guards against
 permission changes that occur between runtime instantiation and the actual
-tool invocation in long-running sessions. ``always_revalidate`` lets specific
-read tools opt into the same revalidation without a blanket prefix rule.
+tool invocation in long-running sessions, and against a tool whose
+`required_permissions` name carries no `write:`/`send:`/`exec:` prefix but
+whose `tier` correctly marks it dangerous. ``always_revalidate`` lets
+specific T0/T1 read tools opt into the same revalidation without
+reclassifying them.
 
 D-009: intercept() is async-native. Async connectors are awaited directly;
 sync connectors are offloaded via asyncio.to_thread so the event loop stays
@@ -28,18 +31,21 @@ import structlog
 
 from agentsys.harness.factory import EquippedRuntime
 from agentsys.harness.injector import _emit
-from agentsys.harness.registry import ToolSpec
+from agentsys.harness.registry import Tier, ToolSpec
 
 logger = structlog.get_logger()
 
-_SENSITIVE_PREFIXES = ("write:", "send:")
+_SENSITIVE_TIERS = (Tier.T2, Tier.T3)
 
 
 def _is_sensitive(spec: ToolSpec) -> bool:
-    return (
-        any(perm.startswith(_SENSITIVE_PREFIXES) for perm in spec.required_permissions)
-        or spec.always_revalidate
-    )
+    """ADR-002 C.10: tier-based, replacing the old write:/send: prefix
+    heuristic. Any tool whose ``required_permissions`` start with
+    ``write:``/``send:`` is, by construction, classified T2 or T3 — so this
+    rule is a superset of, not a narrowing of, prior behavior: nothing
+    previously revalidated stops being revalidated.
+    """
+    return spec.tier in _SENSITIVE_TIERS or spec.always_revalidate
 
 
 class PolicyViolation(Exception):

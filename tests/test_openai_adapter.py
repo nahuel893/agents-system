@@ -303,7 +303,7 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
     from agentsys.agent.graph import AgentRuntime
     from agentsys.harness.factory import EquippedRuntime
     from agentsys.harness.loader import AgentDefinition
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     invoked: list[dict[str, Any]] = []
 
@@ -315,6 +315,7 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
         name="create_order",
         required_permissions=("write:orders",),
         connector=create_order,
+        tier=Tier.T2,
         description="Create an order",
         input_schema={"type": "object", "properties": {}},
     )

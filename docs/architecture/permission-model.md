@@ -26,6 +26,8 @@ If a required tool (one the role cannot function without) is excluded, the runti
 
 This is the primary enforcement gate. Most permission decisions are made here.
 
+**Second barrier (ADR-002 C.10, issue #109):** independent of the permission check above, a role whose `policy.md` declares `untrusted_input: true` never receives a `T3`-tiered (host execution) tool, even when `required_permissions` would otherwise be satisfied. This closes the case a permission-name check alone cannot: a T3 tool registered under a permission with no `exec:` prefix.
+
 ### At execution time (revalidation)
 
 For sensitive actions — those that write records, send messages, or modify organizational state — permissions are revalidated at the moment of execution. This guards against:
@@ -36,7 +38,7 @@ For sensitive actions — those that write records, send messages, or modify org
 
 The revalidation check is performed on the same RBAC source that was consulted at injection time. If the revalidation fails, the tool call is aborted and the situation is treated as an escalation trigger.
 
-> **Open decision (3):** The threshold for what constitutes a "sensitive action" requiring revalidation has not been formally defined. Candidates include: any write operation, any outbound communication, any operation above a configured financial threshold, or any operation that is irreversible. The definition affects latency (revalidation is a round-trip) and operational complexity. A tiered approach (write = always revalidate, read = injection-time only) is a likely resolution, but it has not been decided. Formal resolution is tracked by this platform's ADR-002, item C.10 (capability tiers — issue #109) together with C.9 (four-layer enforcement); this callout stays open until C.10 ships.
+> **Resolved:** the threshold for what constitutes a "sensitive action" requiring revalidation is each tool's capability **tier** (ADR-002 C.10, issue #109): T2 (scoped write/send) and T3 (host execution) are always revalidated at call time; T0 (inherent) and T1 (scoped read) are not, unless a specific tool opts in via `always_revalidate: true`. Tier is an explicit, reviewable field on every `ToolSpec` — not inferred from how `required_permissions` happens to be named — so a tool whose dangerous permission carries no `write:`/`send:`/`exec:` prefix is still caught. See ADR-002's four deterministic enforcement layers (section C's introduction) and C.10 for the full tier table and rationale.
 
 ---
 

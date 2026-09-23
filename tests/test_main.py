@@ -783,7 +783,7 @@ async def test_create_app_boots_with_a_caller_supplied_registry() -> None:
     deployment in this repository, and the lifespan calls it with the settings,
     embedder and BI engine it resolved.
     """
-    from agentsys.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
     from agentsys.main import create_app
 
     calls: list[tuple[Any, Any]] = []
@@ -798,6 +798,7 @@ async def test_create_app_boots_with_a_caller_supplied_registry() -> None:
                 name="consumer_owned_tool",
                 required_permissions=(),
                 connector=lambda inputs: {"ok": True},
+                tier=Tier.T0,
             )
         )
         return registry

@@ -39,7 +39,7 @@ from typing import Any, Awaitable, Callable
 
 import structlog
 
-from agentsys.harness.registry import ToolSpec
+from agentsys.harness.registry import Tier, ToolSpec
 
 _logger = structlog.get_logger()
 
@@ -392,11 +392,15 @@ def build_operator_tool_specs(
 ) -> tuple[ToolSpec, ...]:
     """Return the `use_term` and `read_file` specs over *policy*.
 
-    Both are marked `always_revalidate=True`. Their permissions do not start
-    with `write:` or `send:`, so the Layer-2 interceptor would not otherwise
-    re-check them at call time - and a read that can reach any file under the
-    root, or a command that can change the host, is exactly the "sensitive
-    read" that opt-in exists for.
+    Both are tiered `Tier.T3` (ADR-002 C.10), which alone already makes the
+    Layer-2 interceptor revalidate them at call time (`tier in (T2, T3)`) —
+    their permissions do not start with `write:`/`send:`, so the tier is the
+    only thing that catches them. `always_revalidate=True` is ALSO set on
+    both, intentionally redundant with the tier: a read that can reach any
+    file under the root, or a command that can change the host, is exactly
+    the "sensitive" case this opt-in exists for, and keeping it set is
+    defense in depth against a future change to the tier-derivation logic
+    ever silently un-classifying these two tools.
     """
     if policy is None:
         # Memoised so both shipped registries share ONE spec object per tool.
@@ -456,6 +460,7 @@ def _specs(term: AsyncConnector, reader: AsyncConnector) -> tuple[ToolSpec, ...]
                 "required": ["argv"],
             },
             connector=term,
+            tier=Tier.T3,
             always_revalidate=True,
         ),
         ToolSpec(
@@ -473,6 +478,7 @@ def _specs(term: AsyncConnector, reader: AsyncConnector) -> tuple[ToolSpec, ...]
                 "required": ["path"],
             },
             connector=reader,
+            tier=Tier.T3,
             always_revalidate=True,
         ),
     )

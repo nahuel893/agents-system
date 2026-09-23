@@ -15,7 +15,7 @@
 | 7 | `agent.md` como definición de referencia | A. Modelo de agentes | ✅ hecho (este cambio) | — |
 | 8 | BUG: el prosa de role.md se filtra como prompt de sistema / notas de diseño se filtran a usuarios | B. Prompts | ✅ hecho | PR0 (recomendado antes de B.9 y de cualquier evaluación en vivo) — #107 |
 | 9 | Contrato universal del prompt base | B. Prompts | ✅ hecho | Mismo PR que 8 — #107 |
-| 10 | Niveles de capacidad (T0–T3) en `ToolSpec` | C. Herramientas y permisos | ⏳ pendiente | PR2 — #109 |
+| 10 | Niveles de capacidad (T0–T3) en `ToolSpec` | C. Herramientas y permisos | ✅ hecho | PR2 — #109 |
 | 11 | Bandera `untrusted_input` + invariante vs. `exec:*` | C. Herramientas y permisos | ✅ hecho | PR1 — #108 |
 | 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ⏳ pendiente | PR3 — #110 |
 | 13 | Aplicación por canal (falla al arrancar, no por mensaje) | C. Herramientas y permisos | ⏳ pendiente | PR4 — #111 |
@@ -781,7 +781,19 @@ convenciones de nombres son exactamente el tipo de regla implícita que el
 principio "declarativo primero" (`manifesto.md` §1) de esta plataforma
 rechaza para cualquier cosa relevante a seguridad.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR2.
+**Estado.** ✅ hecho — se agregó `tier: Tier` (T0-T3) a `ToolSpec` como
+campo obligatorio sin valor por defecto (`harness/registry.py`); se
+clasificó toda herramienta registrada por la plataforma (`use_term`/
+`read_file`: T3; `order_writer`/`escalation_notifier`: T2; `run_report`/
+`knowledge_retrieval`/`conversation_summarizer`: T1); se reescribió
+`_is_sensitive` del Interceptor Layer 2 como `tier in (T2, T3) or
+always_revalidate`, reemplazando por completo la heurística de prefijo
+`write:`/`send:`; y se aplicó la segunda barrera en `resolve_tool_surface`
+(`harness/injector.py`) — un rol con `untrusted_input=true` es rechazado
+para cualquier herramienta con tier T3, sin importar si el permiso
+coincide. Una prueba de auditoría fail-closed recorre cada constructor
+público de herramientas y verifica que cada una tenga un tier válido —
+#109.
 
 ---
 
@@ -1500,10 +1512,12 @@ agrega en su lugar un puntero hacia adelante desde el recuadro hacia C.10
 
 **Decisión.** Una vez que C.10 se entregue, reemplazar el recuadro "Open
 decision (3)" con una referencia a C.10 (niveles) y a la descripción de
-las cuatro capas de aplicación de C.9 de este ADR. **Estado:** ✅ hecho
-(#106) — se agregó el puntero hacia adelante; el recuadro en sí permanece
-abierto hasta que C.10 (#109) efectivamente aterrice, momento en el cual
-debería reemplazarse directamente en vez de solo volver a apuntarse.
+las cuatro capas de aplicación de C.9 de este ADR. **Estado:** ✅ hecho —
+C.10 (#109) se entregó, y el recuadro "Open decision (3)" de
+`permission-model.md` ahora está reemplazado directamente por una
+resolución que nombra la tabla de tiers y los dos puntos de aplicación que
+gobierna (revalidación del interceptor, barrera untrusted_input/T3 del
+inyector), en ambos idiomas.
 
 ---
 

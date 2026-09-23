@@ -236,7 +236,7 @@ def test_base_contract_is_the_final_block_the_model_actually_receives() -> None:
     last block, exactly once, even with skill content in the mix.
     """
     from agentsys.harness.factory import build_runtime
-    from agentsys.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     for name, perms in (
@@ -247,8 +247,19 @@ def test_base_contract_is_the_final_block_the_model_actually_receives() -> None:
         ("client_lookup", ["read:client_registry"]),
         ("escalation_notifier", ["send:escalation"]),
     ):
+        # Mirror the pre-tier write:/send: heuristic (ADR-002 C.10).
+        tier = (
+            Tier.T2
+            if any(p.startswith(("write:", "send:")) for p in perms)
+            else Tier.T1
+        )
         registry.register(
-            ToolSpec(name=name, required_permissions=tuple(perms), connector=lambda: None)
+            ToolSpec(
+                name=name,
+                required_permissions=tuple(perms),
+                connector=lambda: None,
+                tier=tier,
+            )
         )
 
     runtime = build_runtime(

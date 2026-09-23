@@ -32,7 +32,7 @@ from typing import Any, Awaitable, Callable
 
 import structlog
 
-from agentsys.harness.registry import ToolSpec
+from agentsys.harness.registry import Tier, ToolSpec
 from agentsys.services.escalation import EscalationChannel
 from agentsys.services.knowledge import KnowledgeBase
 from agentsys.services.summaries import ConversationSummarizer
@@ -221,6 +221,7 @@ def build_knowledge_retrieval_tool_spec(
         required_permissions=("read:knowledge_base",),
         input_schema=_KNOWLEDGE_INPUT_SCHEMA,
         connector=build_knowledge_retrieval_connector(knowledge_base),
+        tier=Tier.T1,
     )
 
 
@@ -314,6 +315,7 @@ def build_conversation_summarizer_tool_spec(
         required_permissions=("read:conversation_logs",),
         input_schema=_SUMMARIZER_INPUT_SCHEMA,
         connector=build_conversation_summarizer_connector(summarizer),
+        tier=Tier.T1,
     )
 
 
@@ -420,4 +422,5 @@ def build_escalation_notifier_tool_spec(
         required_permissions=("send:escalation",),
         input_schema=_ESCALATION_INPUT_SCHEMA,
         connector=build_escalation_notifier_connector(channel),
+        tier=Tier.T2,
     )

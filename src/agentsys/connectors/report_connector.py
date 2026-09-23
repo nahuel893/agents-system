@@ -25,7 +25,7 @@ import structlog
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from agentsys.harness.registry import ToolRegistry, ToolSpec
+from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 from agentsys.services.reports import ReportSpec, ReportValidationError, run_report
 
 _logger = structlog.get_logger(__name__)
@@ -195,6 +195,7 @@ def build_report_tool_spec(
         required_permissions=("read:reports",),
         input_schema=_input_schema(catalog),
         connector=build_report_connector(engine, catalog),
+        tier=Tier.T1,
         always_revalidate=True,
     )
 

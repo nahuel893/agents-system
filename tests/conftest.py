@@ -120,7 +120,7 @@ def build_test_registry(
         build_knowledge_retrieval_tool_spec,
     )
     from agentsys.connectors.report_connector import build_report_tool_spec
-    from agentsys.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
 
@@ -130,6 +130,7 @@ def build_test_registry(
             name="catalog_search",
             description="Search the test product catalog. Returns a list of matching products with id, name, price, and stock.",
             required_permissions=("read:catalog",),
+            tier=Tier.T1,
             input_schema={
                 "type": "object",
                 "properties": {
@@ -150,6 +151,7 @@ def build_test_registry(
             name="client_lookup",
             description="Look up a client by phone number. Returns client_id, name, and phone. Use this before creating an order.",
             required_permissions=("read:client_registry",),
+            tier=Tier.T1,
             input_schema={
                 "type": "object",
                 "properties": {
@@ -173,6 +175,7 @@ def build_test_registry(
             name="message_sender",
             description="Send a message to a phone number.",
             required_permissions=("send:message",),
+            tier=Tier.T2,
             input_schema={
                 "type": "object",
                 "properties": {
@@ -191,6 +194,7 @@ def build_test_registry(
             name="session_state",
             description="Get or set session state data for the current conversation.",
             required_permissions=(),
+            tier=Tier.T0,
             input_schema={
                 "type": "object",
                 "properties": {
