@@ -6,6 +6,8 @@
 
 La plataforma no es un producto diseñado para un único cliente. Es la base sobre la cual se construyen los productos específicos de cada cliente.
 
+Para la definición formal de "agente" que este manifiesto usa de manera informal a lo largo del documento — incluyendo en qué se diferencia de "rol" y qué parte está implementada hoy — ver `docs/platform_es/agent.md`.
+
 **Responsabilidades principales de la plataforma:**
 - Definición declarativa de roles a través de carpetas de definición del agente.
 - Factoría de agentes (*Agent Factory*) que resuelve modelos, políticas y configuración base.

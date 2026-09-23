@@ -432,3 +432,5 @@ The following decisions are still intentionally open:
    - rules for child-agent spawning and escalation
 4. `docs/architecture/tool-permission-model.md`
    - RBAC and injection rules per connector
+5. `docs/architecture/adr-002-agent-model-and-capabilities.md`
+   - architecture corrections to the agent model, prompts, tool permissions, and persistence described in this document — includes the formal "agent" definition (`docs/platform/agent.md`) and notes where this document's `agents/` folder path is stale (real path: `platform/roles/`)
