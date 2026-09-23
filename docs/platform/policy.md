@@ -32,6 +32,36 @@ The autonomy level is a ceiling, not a floor. A `supervised` agent operating on 
 
 ---
 
+## Untrusted input (ADR-002 C.11)
+
+`untrusted_input: bool` is declared in the agent's `policy.md`. It answers a question distinct from the permission model: not "can this role execute commands on the host" (the `exec:*` permission family), but "can this role's input come from someone who is not a trusted operator" — a customer over a message channel, for example.
+
+| Value | Meaning |
+|---|---|
+| `true` | The role's input can come from an untrusted, external source (e.g. a customer over WhatsApp). |
+| `false` | The role is only ever invoked by a trusted internal actor (an operator, another platform role, a scheduled job). |
+
+### Invariant — mutually exclusive with `exec:*`
+
+A role may never combine `untrusted_input: true` with any `exec:*` permission. This is the platform's defense against the "lethal trifecta" (private data access + untrusted input + an exfiltration channel, together in one agent): once a role holds host execution, the only deterministic defense left is refusing it untrusted input. The loader enforces this as a `DefinitionError` at role-resolution time, on every path `resolve()` can return through — including a role resolved with no deployment override.
+
+| `untrusted_input` | holds `exec:*` | Valid? |
+|---|---|---|
+| `false` | `false` | ✅ |
+| `false` | `true` | ✅ |
+| `true` | `false` | ✅ |
+| `true` | `true` | ❌ `DefinitionError` |
+
+### Monotonic, once true
+
+Once a role declares `untrusted_input: true`, neither an `extends:` descendant nor a deployment override may set it back to `false` — role-to-role composition is checked exactly like a deployment override, because this flag is a fact about where untrusted input can reach, not a policy choice a role's own author is trusted to loosen. Declaring nothing inherits the parent's (or resolved role's) value in either direction. Both directions may only restrict, never elevate trust back — the same direction every other override invariant in this file enforces.
+
+If nothing in a role's `extends:` chain declares the field at all, it defaults to `false` (untrusted). Every concrete platform role is required, by a dedicated test, to declare it explicitly somewhere in its chain — the implicit default is a floor for roles this document does not cover, not a value any shipped role actually relies on.
+
+Full design rationale: `docs/architecture/adr-002-agent-model-and-capabilities.md`, section C.11.
+
+---
+
 ## Escalation rules
 
 An agent must escalate when any of the following conditions are met:

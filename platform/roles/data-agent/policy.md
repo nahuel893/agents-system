@@ -2,6 +2,7 @@
 role: data-agent
 version: "1.0"
 autonomy: full
+untrusted_input: false
 escalation_rules:
   escalate_to: human
   conditions:

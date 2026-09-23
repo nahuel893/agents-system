@@ -2,6 +2,7 @@
 role: base
 version: "1.0"
 autonomy: supervised
+untrusted_input: false
 escalation_rules:
   escalate_to: human
   conditions:
