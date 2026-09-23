@@ -206,6 +206,9 @@ class AgentDefinition:
     memory_policy: Mapping[str, Any]
     audit_policy: Mapping[str, Any]
     execution_limits: Mapping[str, Any] | None
+    #: ADR-002 C.11. Always a concrete bool on a resolved AgentDefinition —
+    #: defaults to False when no role in the chain declared it.
+    untrusted_input: bool = False
 
 
 @dataclasses.dataclass
@@ -228,6 +231,10 @@ class RawDefinition:
     memory_policy: dict[str, Any]
     audit_policy: dict[str, Any]
     execution_limits: dict[str, Any] | str | None
+    #: ADR-002 C.11. `None` means "not declared" — inherit from the parent
+    #: role or, on an override, from the resolved generic definition. Only
+    #: an explicit `True`/`False` is a declaration.
+    untrusted_input: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +495,38 @@ def _extends_target(raw: Any) -> str:
     return str(raw).strip().rstrip("/").rsplit("/", 1)[-1]
 
 
+def _parse_untrusted_input(policy_fm: dict[str, Any], *, source: pathlib.Path) -> bool | None:
+    """Read `untrusted_input` from parsed policy.md frontmatter (ADR-002 C.11).
+
+    Accepts only a real YAML bool (`true`/`false`) or plain absence (the key
+    never written — `None`, meaning "not declared", inherit). YAML happily
+    parses a quoted `"false"` as a string (truthy in Python — a typo would
+    SILENTLY DISARM the exec:* invariant for whatever role declares it),
+    `0`/`1` as int, and an explicit `null` as `None` — indistinguishable
+    from the key being absent, which is exactly the ambiguity a security-
+    relevant flag must not have written on disk. Each of those raises
+    loudly, naming the offending file, instead of silently coercing.
+    """
+    if "untrusted_input" not in policy_fm:
+        return None
+    value = policy_fm["untrusted_input"]
+    if value is None:
+        raise DefinitionError(
+            f"Invariant violation — untrusted_input: {source} declares "
+            f"'untrusted_input: null', which is ambiguous with the key "
+            f"being absent entirely. Omit the line to inherit, or declare "
+            f"an explicit 'true'/'false'."
+        )
+    if not isinstance(value, bool):
+        raise DefinitionError(
+            f"Invariant violation — untrusted_input: {source} declares "
+            f"untrusted_input={value!r} ({type(value).__name__}), which is "
+            f"not a boolean. Only a real YAML bool ('true'/'false') is "
+            f"accepted — not a string, an int, or null."
+        )
+    return value
+
+
 def _load_role_files(
     role_type: str, roots: RootConfig
 ) -> tuple[RawDefinition, str | None, bool]:
@@ -537,6 +576,13 @@ def _load_role_files(
         memory_policy=dict(policy_fm.get("memory_policy") or {}),
         audit_policy=dict(policy_fm.get("audit_policy") or {}),
         execution_limits=policy_fm.get("execution_limits"),
+        # ADR-002 C.11. Absent means NOT DECLARED (`None`), same reasoning as
+        # `autonomy` above: a child role inherits the parent's value, so
+        # defaulting here would erase the difference between "declared
+        # false" and "said nothing", which is exactly the distinction the
+        # monotonicity invariant needs. `_parse_untrusted_input` type-checks
+        # whatever was actually written on disk.
+        untrusted_input=_parse_untrusted_input(policy_fm, source=folder / "policy.md"),
     )
     return definition, parent, is_abstract
 
@@ -573,6 +619,13 @@ def _fold_parent_into_child(
     The ceiling that matters is unchanged: ``_merge_validated`` still refuses
     a deployment that elevates either field, now measured against the fully
     resolved chain.
+
+    ``untrusted_input`` (ADR-002 C.11) is the one field where that "no trust
+    boundary between two platform roles" reasoning does NOT apply, and is
+    validated here: it is not a policy choice like ``autonomy``, it is a
+    fact about where untrusted input can reach, so a child declaring
+    ``false`` under a ``true`` parent is rejected exactly like a deployment
+    override would be — see ``_validate_untrusted_input_monotonic``.
     """
 
     # An undeclared child keeps its parent's level. Defaulting at load time
@@ -580,6 +633,21 @@ def _fold_parent_into_child(
     # nothing, so a silent child LOOSENED a `confirm` parent -- while
     # `execution_limits` inherited on omission. Same file, opposite rule.
     resolved_autonomy = child.autonomy or parent.autonomy
+
+    # ADR-002 C.11. Unlike autonomy, a DECLARED reversal here is rejected
+    # even between two platform roles: `untrusted_input` is not a policy
+    # choice a role's own author may loosen at will, it is a fact about
+    # where untrusted input can reach, and a role `extends:`-ing a
+    # `true` parent could otherwise declare `false` and add `exec:*` —
+    # the exact lethal-trifecta gap this flag exists to close — with the
+    # deployment-override check (`_merge_validated`) never seeing a
+    # conflict, because by then the chain has already resolved to `false`.
+    _validate_untrusted_input_monotonic(parent, child)
+    resolved_untrusted_input = (
+        child.untrusted_input
+        if child.untrusted_input is not None
+        else parent.untrusted_input
+    )
 
     parent_perms = (
         list(parent.permissions) if isinstance(parent.permissions, list) else []
@@ -650,6 +718,7 @@ def _fold_parent_into_child(
         memory_policy=_merge_mapping(parent.memory_policy, child.memory_policy),
         audit_policy=_merge_mapping(parent.audit_policy, child.audit_policy),
         execution_limits=resolved_limits,
+        untrusted_input=resolved_untrusted_input,
     )
 
 
@@ -729,6 +798,36 @@ def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefin
         # Nothing in the chain declared one. `supervised` is the platform
         # floor, applied once here rather than at every load.
         resolved = dataclasses.replace(resolved, autonomy="supervised")
+
+    if resolved.untrusted_input is None:
+        # ADR-002 C.11 — explicit decision, not a neutral default.
+        #
+        # Nothing in the chain declared it, so this falls back to `False`.
+        # For most bools in this file `False` is the uncontroversially safe
+        # default (a narrower grant). For THIS flag it is the opposite:
+        # `False` disarms `_validate_untrusted_input_exec` below, so a role
+        # that actually needs `true` but whose author forgot to declare it
+        # would silently resolve as trusted — fail-OPEN for the exact
+        # invariant this ADR item exists to add.
+        #
+        # It is accepted here anyway, for one reason only: every concrete
+        # platform role's chain passes through `agent` (or `base`), and
+        # both now declare `untrusted_input` explicitly (see
+        # `platform/roles/agent/policy.md`, `platform/roles/base/policy.md`)
+        # — so this branch is dead code for the real, shipped role surface.
+        # `tests/test_untrusted_input_invariant.py::
+        # test_every_concrete_platform_role_explicitly_declares_untrusted_input`
+        # makes that a checked guarantee: it fails the moment a new concrete
+        # role lands without extending agent/base and without declaring its
+        # own value, forcing a deliberate choice instead of a silent one.
+        #
+        # A blanket "fail at load for ANY concrete role missing the
+        # declaration" was considered and rejected as this issue's fix:
+        # dozens of pre-existing, unrelated test fixtures across the suite
+        # (e.g. every `fx-*` role in `tests/fixtures/agents/hierarchy/`,
+        # `simple-role`) declare no `untrusted_input` and would all need
+        # touching — out of proportion to ADR-002 C.11's scope.
+        resolved = dataclasses.replace(resolved, untrusted_input=False)
 
     if is_abstract:
         raise DefinitionError(
@@ -817,6 +916,10 @@ def load_override(
         memory_policy=dict(policy_fm.get("memory_policy") or {}),
         audit_policy=dict(policy_fm.get("audit_policy") or {}),
         execution_limits=policy_fm.get("execution_limits"),
+        # ADR-002 C.11. `None` means the override says nothing and inherits
+        # the resolved role's value — see `_validate_untrusted_input_monotonic`.
+        # `_parse_untrusted_input` type-checks whatever was actually written.
+        untrusted_input=_parse_untrusted_input(policy_fm, source=folder / "policy.md"),
     )
 
 
@@ -994,6 +1097,99 @@ def _validate_autonomy(parent: RawDefinition, override: RawDefinition) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# ADR-002 C.11 — `untrusted_input` flag and `exec:*` mutual-exclusion
+# ---------------------------------------------------------------------------
+_EXEC_PERMISSION_PREFIX = "exec:"
+
+
+def _is_exec_permission(permission: str) -> bool:
+    """Whether *permission* is in the `exec:*` family (ADR-002 C.11).
+
+    Case-insensitive and whitespace-tolerant (review follow-up: a plain
+    `p.startswith("exec:")` let `EXEC:shell`/`Exec:Shell`/a leading-space
+    typo through untouched — still, functionally, an exec:* permission, so
+    a case or whitespace variant must not silently disarm the
+    lethal-trifecta guard).
+    """
+    return permission.strip().lower().startswith(_EXEC_PERMISSION_PREFIX)
+
+
+def _validate_untrusted_input_monotonic(
+    parent: RawDefinition, child: RawDefinition
+) -> None:
+    """Monotonic, once true (ADR-002 C.11).
+
+    Mirrors ``_validate_autonomy``'s rank-comparison pattern for a two-value
+    rank (``false=0 < true=1``): once ``parent`` has ``untrusted_input=true``,
+    ``child`` may not declare it ``false``. A ``child`` that declares nothing
+    (``None``) inherits ``parent``'s value and is never a violation — same
+    reasoning as an undeclared ``autonomy`` above.
+
+    Shared by BOTH directions the ADR names ("no descendant or deployment
+    override" — the ADR's own wording): ``_fold_parent_into_child`` calls
+    this once per level of the ``extends:`` chain (``child`` is the next
+    role's own declaration, ``parent`` the chain folded so far), and
+    ``_merge_validated`` calls it once for the deployment-override boundary
+    (``child`` is the override, ``parent`` the resolved generic role). A
+    role-to-role composition and a deployment override are told apart by
+    ``child.deployment`` (``None`` for a role, a client name for an
+    override) purely to phrase the right error — the rule itself is
+    identical either way, because unlike ``autonomy`` this flag is not a
+    policy choice a role's own author is trusted to loosen: it is a fact
+    about where untrusted input can reach, and a false one is fail-OPEN for
+    the exec:* invariant below.
+    """
+    if child.untrusted_input is None:
+        return
+    if not (parent.untrusted_input and not child.untrusted_input):
+        return
+    if child.deployment is not None:
+        raise DefinitionError(
+            f"Invariant violation — untrusted_input: override for "
+            f"'{parent.role_name}'/'{child.deployment}' sets "
+            f"untrusted_input=false, but the resolved role already has "
+            f"untrusted_input=true.  Deployments may only restrict, not "
+            f"elevate — once a role's input can be untrusted, no override "
+            f"may set it back to trusted."
+        )
+    raise DefinitionError(
+        f"Invariant violation — untrusted_input: role '{child.role_name}' "
+        f"declares untrusted_input=false, but its parent '{parent.role_name}' "
+        f"already has untrusted_input=true.  Role-to-role composition may "
+        f"only restrict, not elevate trust back — once a role's input can "
+        f"be untrusted, no descendant may set it back to trusted."
+    )
+
+
+def _validate_untrusted_input_exec(
+    untrusted_input: bool,
+    permissions: list[str],
+    *,
+    role_name: str,
+) -> None:
+    """`untrusted_input=true` ⊥ `exec:*` — mutually exclusive (ADR-002 C.11).
+
+    The lethal-trifecta guard: a role whose input can come from an untrusted
+    source may never also hold host-execution permissions. Checked
+    unconditionally by both callers — the ``merge()`` branch and the
+    no-override branch of ``resolve()`` — so a role resolved with no
+    deployment override enforces this exactly like one that has one.
+    """
+    if not untrusted_input:
+        return
+    exec_perms = sorted(p for p in permissions if _is_exec_permission(p))
+    if not exec_perms:
+        return
+    raise DefinitionError(
+        f"Invariant violation — untrusted_input: role '{role_name}' declares "
+        f"untrusted_input=true and also holds permission '{exec_perms[0]}'. "
+        "A role whose input can come from an untrusted source may never "
+        "also hold exec:* permissions (lethal-trifecta guard). Split into "
+        "two roles, or remove one side of the conflict."
+    )
+
+
 def _validate_execution_limits(
     baseline: dict[str, int],
     override_limits: dict[str, int],
@@ -1070,6 +1266,19 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
     # --- Validate autonomy BEFORE resolving other fields ---
     _validate_autonomy(generic, override)
 
+    # --- Validate untrusted_input monotonicity, same stage as autonomy ---
+    _validate_untrusted_input_monotonic(generic, override)
+    # `bool(...)`: both operands are typed `bool | None` on `RawDefinition`
+    # (`None` means "not declared"), but `load_generic()` always resolves
+    # `generic.untrusted_input` to a concrete bool before `merge()` is
+    # reachable through `resolve()` — the coercion only guards a `merge()`
+    # call built directly from an unresolved `RawDefinition`.
+    resolved_untrusted_input: bool = bool(
+        override.untrusted_input
+        if override.untrusted_input is not None
+        else generic.untrusted_input
+    )
+
     # --- Resolve tools ---
     resolved_tools = override.tools  # override declares its own tool subset
     _validate_tools(generic, override)
@@ -1082,6 +1291,12 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
     )
     resolved_perms = _resolve_permissions(parent_perms, override.permissions)
     _validate_permissions(generic, resolved_perms)
+
+    # --- ADR-002 C.11: untrusted_input ⊥ exec:*, checked once permissions
+    # are fully resolved (the merge branch of resolve()'s two return paths) ---
+    _validate_untrusted_input_exec(
+        resolved_untrusted_input, resolved_perms, role_name=generic.role_name
+    )
 
     # --- Resolve escalation_rules ---
     resolved_escalation = _resolve_mapping_directive(
@@ -1179,6 +1394,7 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
         memory_policy=resolved_memory,
         audit_policy=resolved_audit,
         execution_limits=resolved_limits,
+        untrusted_input=resolved_untrusted_input,
     )
 
 
@@ -1232,6 +1448,16 @@ def resolve(
         else None
     )
 
+    # --- ADR-002 C.11: untrusted_input ⊥ exec:*, the no-override branch ---
+    # `merge()` is never called on this path, so nothing above has validated
+    # anything — this call is the only guard a role resolved with no
+    # deployment override gets. `bool(...)`: see the identical coercion note
+    # in `_merge_validated`.
+    resolved_untrusted_input: bool = bool(generic.untrusted_input)
+    _validate_untrusted_input_exec(
+        resolved_untrusted_input, parent_perms, role_name=generic.role_name
+    )
+
     return AgentDefinition(
         role_name=generic.role_name,
         version=generic.version,
@@ -1247,4 +1473,5 @@ def resolve(
         memory_policy=dict(generic.memory_policy),
         audit_policy=dict(generic.audit_policy),
         execution_limits=exec_limits,
+        untrusted_input=resolved_untrusted_input,
     )

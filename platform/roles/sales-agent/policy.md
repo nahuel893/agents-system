@@ -2,6 +2,7 @@
 role: sales-agent
 version: "1.0"
 autonomy: supervised
+untrusted_input: true
 escalation_rules:
   escalate_to: human
   conditions:

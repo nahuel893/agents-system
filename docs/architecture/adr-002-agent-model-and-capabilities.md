@@ -16,7 +16,7 @@
 | 8 | BUG: role.md prose leaks as system prompt / design notes leak to users | B. Prompts | ✅ done | PR0 (recommended before B.9 and any live eval) — #107 |
 | 9 | Universal base prompt contract | B. Prompts | ✅ done | Same PR as 8 — #107 |
 | 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ⏳ pending | PR2 — #109 |
-| 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ⏳ pending | PR1 — #108 |
+| 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ✅ done | PR1 — #108 |
 | 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ⏳ pending | PR3 — #110 |
 | 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ⏳ pending | PR4 — #111 |
 | 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ⏳ pending | PR5 — #112 |
@@ -778,8 +778,13 @@ in the system; permissions answer "what can this role do," this answers
 "what can reach this role," a different axis the manifest's permission list
 should not have to encode.
 
-**Status.** ⏳ pending. **Planned slice:** PR1 — first, because C.10's tier
-field and C.13's channel-level check both reference this flag.
+**Status.** ✅ done — `untrusted_input: bool` added to `policy.md`, the
+mutual-exclusion invariant enforced on both `resolve()` return paths, the
+monotonic-once-true rule enforced at the deployment-override boundary
+(mirroring `_validate_autonomy`), and every existing platform role marked
+(`sales-agent`/`support-agent`: `true`; `agent`, `data-agent`,
+`summary-agent`, `accountant-agent`, `orchestrator`, `operator-agent`,
+`developer-agent`: `false`) — #108.
 
 ---
 

@@ -16,7 +16,7 @@
 | 8 | BUG: el prosa de role.md se filtra como prompt de sistema / notas de diseño se filtran a usuarios | B. Prompts | ✅ hecho | PR0 (recomendado antes de B.9 y de cualquier evaluación en vivo) — #107 |
 | 9 | Contrato universal del prompt base | B. Prompts | ✅ hecho | Mismo PR que 8 — #107 |
 | 10 | Niveles de capacidad (T0–T3) en `ToolSpec` | C. Herramientas y permisos | ⏳ pendiente | PR2 — #109 |
-| 11 | Bandera `untrusted_input` + invariante vs. `exec:*` | C. Herramientas y permisos | ⏳ pendiente | PR1 — #108 |
+| 11 | Bandera `untrusted_input` + invariante vs. `exec:*` | C. Herramientas y permisos | ✅ hecho | PR1 — #108 |
 | 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ⏳ pendiente | PR3 — #110 |
 | 13 | Aplicación por canal (falla al arrancar, no por mensaje) | C. Herramientas y permisos | ⏳ pendiente | PR4 — #111 |
 | 14 | Sandbox T3 (bubblewrap) | C. Herramientas y permisos | ⏳ pendiente | PR5 — #112 |
@@ -871,9 +871,14 @@ hacer este rol", esto responde "qué puede alcanzar a este rol", un eje
 distinto que la lista de permisos del manifiesto no debería tener que
 codificar.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR1 — primero, porque el
-campo de nivel de C.10 y el control a nivel de canal de C.13 hacen
-referencia a esta bandera.
+**Estado.** ✅ hecho — se agregó `untrusted_input: bool` a `policy.md`, se
+aplica el invariante de exclusión mutua en ambos puntos de retorno de
+`resolve()`, se aplica la regla de monotonicidad (una vez en `true`) en el
+límite de sobreescritura de despliegue (siguiendo el patrón de
+`_validate_autonomy`), y se marcó cada rol existente de la plataforma
+(`sales-agent`/`support-agent`: `true`; `agent`, `data-agent`,
+`summary-agent`, `accountant-agent`, `orchestrator`, `operator-agent`,
+`developer-agent`: `false`) — #108.
 
 ---
 

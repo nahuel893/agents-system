@@ -32,6 +32,36 @@ El nivel de autonomía es un techo, no un piso. Un agente `supervised` que opere
 
 ---
 
+## Entrada no confiable (`untrusted_input`, ADR-002 C.11)
+
+`untrusted_input: bool` se declara en el `policy.md` del agente. Responde una pregunta distinta de la que responde el modelo de permisos: no "¿puede este rol ejecutar comandos en el host?" (la familia de permisos `exec:*`), sino "¿puede la entrada de este rol venir de alguien que no es un operador de confianza?" — por ejemplo, un cliente a través de un canal de mensajería.
+
+| Valor | Significado |
+|---|---|
+| `true` | La entrada del rol puede provenir de una fuente externa no confiable (p. ej. un cliente por WhatsApp). |
+| `false` | El rol solo es invocado por un actor interno de confianza (un operador, otro rol de la plataforma, una tarea programada). |
+
+### Invariante — mutuamente excluyente con `exec:*`
+
+Un rol nunca puede combinar `untrusted_input: true` con ningún permiso `exec:*`. Esta es la defensa de la plataforma contra la "trifecta letal" (acceso a datos privados + entrada no confiable + un canal de exfiltración, juntos en un mismo agente): una vez que un rol posee ejecución en el host, la única defensa determinista que queda es negarle la entrada no confiable. El loader aplica esto como un `DefinitionError` en tiempo de resolución del rol, en cualquier camino por el que `resolve()` pueda devolver un resultado — incluyendo un rol resuelto sin sobreescritura de despliegue.
+
+| `untrusted_input` | posee `exec:*` | ¿Válido? |
+|---|---|---|
+| `false` | `false` | ✅ |
+| `false` | `true` | ✅ |
+| `true` | `false` | ✅ |
+| `true` | `true` | ❌ `DefinitionError` |
+
+### Monótono, una vez en `true`
+
+Una vez que un rol declara `untrusted_input: true`, ni un descendiente por `extends:` ni una sobreescritura de despliegue pueden volver a fijarlo en `false` — la composición rol a rol se controla exactamente igual que una sobreescritura de despliegue, porque esta bandera es un hecho sobre dónde puede llegar la entrada no confiable, no una decisión de política que el propio autor del rol tenga permitido relajar. Una declaración ausente hereda el valor del padre (o del rol ya resuelto) en cualquiera de las dos direcciones. Ambas direcciones solo pueden restringir, nunca elevar la confianza de vuelta — la misma dirección que aplican todos los demás invariantes de sobreescritura de este documento.
+
+Si nada en la cadena `extends:` de un rol declara la bandera, se usa `false` (no confiable) por defecto. Cada rol concreto de la plataforma está obligado, mediante una prueba dedicada, a declararla explícitamente en algún punto de su cadena — el valor implícito por defecto es un piso para roles que este documento no cubre, no un valor del que dependa ningún rol ya distribuido.
+
+Justificación de diseño completa: `docs/architecture_es/adr-002-agent-model-and-capabilities.md`, sección C.11.
+
+---
+
 ## Reglas de escalamiento (*Escalation rules*)
 
 Un agente debe escalar cuando se cumpla cualquiera de las siguientes condiciones:
