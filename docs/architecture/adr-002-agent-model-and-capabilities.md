@@ -36,7 +36,7 @@
 | 28 | Formatting not enforced (`ruff format`) | H. CI | ⏳ pending | CI PR 2 — #105 |
 | 29 | No dependency vulnerability checks | H. CI | ⏳ pending | CI PR 3 — #115 |
 | 30 | Secret scanning only local | H. CI | ⏳ pending | CI PR 3 — #115 |
-| 31 | Every run executes twice; no cancellation | H. CI | ⏳ pending | CI PR 1 — #104 |
+| 31 | Every run executes twice; no cancellation | H. CI | ✅ done | CI PR 1 — #104 |
 | 32 | No coverage measurement | H. CI | ⏳ pending | CI PR 4 — #116 |
 | 33 | Shell scripts not linted in CI | H. CI | ⏳ pending | CI PR 4 — #116 |
 | 34 | Green CI does not gate a merge | H. CI | ⏳ pending | Settings, issue #61 |
@@ -1613,7 +1613,7 @@ duplicate delays the signal the author is waiting for.
 without a PR — rejected: work here always goes through a PR; a branch
 without one does not need CI until it has one.
 
-**Status.** ⏳ pending. **Planned slice:** CI PR 1.
+**Status.** ✅ done (#104). **Planned slice:** CI PR 1.
 
 #### H.32 — No coverage measurement
 

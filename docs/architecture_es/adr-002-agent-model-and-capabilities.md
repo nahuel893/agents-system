@@ -36,7 +36,7 @@
 | 28 | El formato no se exige (`ruff format`) | H. CI | ⏳ pendiente | PR de CI 2 — #105 |
 | 29 | No se revisan vulnerabilidades en dependencias | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
 | 30 | Detección de secretos solo local | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
-| 31 | Cada ejecución corre dos veces; sin cancelación | H. CI | ⏳ pendiente | PR de CI 1 — #104 |
+| 31 | Cada ejecución corre dos veces; sin cancelación | H. CI | ✅ hecho | PR de CI 1 — #104 |
 | 32 | No se mide la cobertura | H. CI | ⏳ pendiente | PR de CI 4 — #116 |
 | 33 | Los scripts de shell no se validan en CI | H. CI | ⏳ pendiente | PR de CI 4 — #116 |
 | 34 | CI en verde no condiciona el merge | H. CI | ⏳ pendiente | Configuración, issue #61 |
@@ -1786,7 +1786,7 @@ nada, y un duplicado lento demora la señal que el autor está esperando.
 que no tienen PR: descartado, porque el trabajo acá siempre pasa por un PR;
 una rama sin PR no necesita CI hasta que lo tenga.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 1.
+**Estado.** ✅ hecho (#104). **Etapa planificada:** PR de CI 1.
 
 #### H.32 — No se mide la cobertura
 

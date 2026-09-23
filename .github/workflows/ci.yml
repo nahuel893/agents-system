@@ -2,8 +2,14 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+
+# One run per PR or per main push. A newer push to a PR cancels the stale run;
+# runs on main are never cancelled, so every merged commit gets a full result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ci:
