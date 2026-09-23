@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cmd=$(jq -r '.tool_input.command // empty'); case \"$cmd\" in *\"git commit\"*|*\"git push\"*) if [ \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" = \"main\" ]; then printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked: no direct commits or pushes to main. Per AGENTS.md, work on a feature branch and let the Lead integrate.\"}}'; fi ;; esac",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-main.sh",
             "statusMessage": "Guarding main branch"
           }
         ]
