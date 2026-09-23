@@ -53,8 +53,32 @@ jobs:
       - name: Type check
         run: uv run mypy src/
 
+      # ADR-002 H.32: coverage is measured over this default unit suite only
+      # -- the `-m 'not integration'` deselect in pyproject.toml still
+      # applies, and the seven `integration`-marked jobs below need live
+      # services this job does not have, so they do not contribute to this
+      # number. The threshold (94, `--cov-fail-under=94`) is the floor of
+      # the baseline measured when this gate was added (94.87%): ratchet it
+      # up as coverage improves, never raise it above a freshly measured
+      # baseline.
       - name: Test
-        run: uv run pytest
+        run: >
+          uv run pytest
+          --cov=agentsys
+          --cov-report=term-missing
+          --cov-report=xml
+          --cov-report=html
+          --cov-fail-under=94
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 14
 
   # The read-only database role is the layer that is supposed to hold even if
   # parameter validation and the Layer-2 interceptor both have bugs. Nothing
@@ -415,3 +439,31 @@ jobs:
 
       - name: Verify the bubblewrap sandbox for real
         run: uv run pytest -m integration tests/test_sandbox_integration.py -v
+
+  # ADR-002 H.33: `.claude/hooks/guard-main.sh` (#99) is a security control
+  # written in bash. Its BEHAVIOUR is covered by tests/test_guard_main_hook.py
+  # (46 tests, runs in the `ci` job above), but nothing checked the SCRIPT
+  # itself for the failure modes bash allows silently -- unquoted expansion,
+  # word splitting -- until now. `scripts/preflight_local_embeddings.sh` had
+  # no check at all. `git ls-files -- '*.sh'` means a new tracked script is
+  # covered automatically, with no list to remember to update here.
+  shellcheck:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to an exact shellcheck release instead of the runner image's
+      # apt package (version not otherwise controlled by us) or an unpinned
+      # third-party Action.
+      - name: Install shellcheck
+        env:
+          SHELLCHECK_VERSION: "0.11.0"
+        run: |
+          curl -sSfL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz" -o /tmp/shellcheck.tar.gz
+          tar -xzf /tmp/shellcheck.tar.gz -C /tmp
+          sudo mv "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+
+      - name: shellcheck every tracked shell script
+        run: git ls-files -z -- '*.sh' | xargs -0 shellcheck

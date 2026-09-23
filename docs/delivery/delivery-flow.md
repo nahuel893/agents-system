@@ -124,6 +124,16 @@ until it has one.
 Formatting is enforced: the `ci` job runs `ruff format --check .` and fails on
 drift, and the `ruff-format` pre-commit hook formats what a commit touches.
 
+Coverage is measured, not just tests run: the `ci` job's `Test` step runs the
+default unit suite with `pytest --cov=agentsys` and fails the build under a
+threshold set at the measured baseline (94, the floor of 94.87 % measured
+when the gate was added), then publishes `coverage.xml` and `htmlcov/` as the
+`coverage-report` job artifact on every run. Shell scripts are linted too: a
+separate `shellcheck` job runs a pinned shellcheck release over every tracked
+`*.sh` file, `.claude/hooks/guard-main.sh` included, so a script that would
+fail silently in bash (unquoted expansion, word splitting) fails loudly here
+instead (ADR-002 H.32, H.33).
+
 ### 5. Review — required, and by the right person
 
 At least one approval from someone who is not the author. **CODEOWNERS routes

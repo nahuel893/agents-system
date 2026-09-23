@@ -2069,12 +2069,23 @@ una rama sin PR no necesita CI hasta que lo tenga.
 
 #### H.32 — No se mide la cobertura
 
-**Estado actual.** Ningún job mide qué código ejercitan los tests.
+**Estado actual (antes de este cambio).** Ningún job medía qué código
+ejercitan los tests.
 
-**Decisión.** Ejecutar la suite unitaria con `pytest --cov=agentsys` y
-publicar el reporte como artefacto del job. Fijar el mínimo en la línea
-base medida e ir subiéndolo; nunca fijarlo por encima de la línea base el
-primer día.
+**Decisión.** El paso `Test` del job `ci` ahora ejecuta `pytest
+--cov=agentsys --cov-report=term-missing --cov-report=xml
+--cov-report=html --cov-fail-under=94` (`ci.yml`), y un paso
+`actions/upload-artifact@v4` justo después publica `coverage.xml` y
+`htmlcov/` como el artefacto de job `coverage-report` en cada corrida, pase
+o falle (`if: always()`). La línea base medida sobre la suite unitaria por
+defecto (`-m 'not integration'` sigue aplicando, sin cambios) fue 94.87 %
+(3109/3277 sentencias); el umbral es el *piso* de ese número, 94, no la
+línea base cruda — así que sube desde un valor levemente por debajo de lo
+observado, nunca desde el valor observado mismo. Los siete jobs marcados
+`integration` corren contra servicios reales que este job no tiene y
+deliberadamente no aportan a este número: mezclarlos haría que el umbral
+dependiera de cuáles de esos jobs corrieron en una invocación dada, no de lo
+que prueba la suite por defecto por sí sola.
 
 **Justificación.** La cobertura no demuestra que los tests sean buenos, pero
 una caída señala código nuevo que nada ejercita, que es justamente el tipo
@@ -2082,19 +2093,27 @@ de hueco que H.27 encontró a mano.
 
 **Alternativas consideradas.** Un umbral fijo alto (por ejemplo 90 %):
 descartado, porque rompe el build el primer día y empuja a escribir tests
-para el número en lugar de para el comportamiento.
+para el número en lugar de para el comportamiento. Sumar los jobs de
+integración al mismo número de cobertura: descartado, porque haría que el
+gate dependiera de qué servicios en vivo opcionales estuvieron disponibles,
+no de la suite por defecto.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 4.
+**Estado.** ✅ hecho (#116). **Etapa planificada:** PR de CI 4.
 
 #### H.33 — Los scripts de shell no se validan en CI
 
-**Estado actual.** `.claude/hooks/guard-main.sh` (#99) es un control de
-seguridad escrito en bash. Su comportamiento lo cubre
-`tests/test_guard_main_hook.py` (corre en el job `ci`), pero `shellcheck` y
-`bash -n` solo se ejecutaron localmente.
-`scripts/preflight_local_embeddings.sh` no tiene ninguna verificación.
+**Estado actual (antes de este cambio).** `.claude/hooks/guard-main.sh`
+(#99) es un control de seguridad escrito en bash. Su comportamiento lo cubre
+`tests/test_guard_main_hook.py` (46 tests, corre en el job `ci`), pero
+`shellcheck` y `bash -n` solo se ejecutaron localmente.
+`scripts/preflight_local_embeddings.sh` no tenía ninguna verificación.
 
-**Decisión.** Agregar un paso de `shellcheck` sobre todo `*.sh` versionado.
+**Decisión.** Un job dedicado `shellcheck` (`ci.yml`) instala una versión
+fija de shellcheck (0.11.0, descargada directamente del release oficial en
+GitHub en lugar del paquete apt de la imagen del runner o de una Action de
+terceros sin versión fija) y lo ejecuta sobre `git ls-files -z -- '*.sh'`:
+todo script de shell versionado, presente y futuro, sin una lista de
+archivos que haya que recordar actualizar acá.
 
 **Justificación.** Bash falla en silencio de formas en que Python no lo hace
 (expansiones sin comillas, separación de palabras); un linter detecta esas
@@ -2104,7 +2123,14 @@ clases de error de forma estática.
 adelante, pero el hook tiene que arrancar rápido y no depender de nada fuera
 del sistema base.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 4.
+**Hallazgos.** Los dos scripts versionados ya estaban limpios según
+shellcheck 0.11.0 (cero hallazgos, exit 0). `guard-main.sh` ya traía un
+`# shellcheck disable=SC2088` documentado (en `resolve_dir`, para chequeos
+de prefijo `~` literal que no son expansión de rutas) desde su autoría
+original — ningún script necesitó una corrección de código ni una supresión
+nueva para pasar este gate.
+
+**Estado.** ✅ hecho (#116). **Etapa planificada:** PR de CI 4.
 
 #### H.34 — Que CI esté en verde no condiciona el merge
 
