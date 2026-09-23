@@ -1231,3 +1231,113 @@ async def test_generic_runtime_boots_without_explicit_roots() -> None:
         sink_cls.return_value.stop = AsyncMock()
         async with lifespan(application):
             assert "_generic__sales-agent" in application.state.runtimes
+
+
+# ---------------------------------------------------------------------------
+# W2b2 — the deferred webhook worker's lifespan wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lifespan_starts_and_stops_the_webhook_worker_around_dependencies() -> (
+    None
+):
+    """The worker is constructed only once engine/whatsapp_client/runtimes
+    already exist on app.state, is started before ``yield``, and is stopped
+    before the engine is disposed and the WhatsApp client is closed --
+    AsyncExitStack's LIFO teardown runs the worker's own stop() first among
+    the callbacks pushed so far, ahead of the dependencies it used."""
+    test_settings = _make_settings(
+        whatsapp_runtime_id="_generic__sales-agent",
+        whatsapp_checkpointer_enabled=False,
+    )
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = None
+    fake_equipped = MagicMock()
+
+    events: list[str] = []
+
+    mock_engine = MagicMock()
+
+    async def dispose() -> None:
+        events.append("engine.dispose")
+
+    mock_engine.dispose = dispose
+
+    async def aclose(self: object) -> None:
+        events.append("whatsapp.aclose")
+
+    fake_worker = MagicMock()
+
+    async def worker_start() -> None:
+        events.append("worker.start")
+
+    async def worker_stop() -> None:
+        events.append("worker.stop")
+
+    fake_worker.start = AsyncMock(side_effect=worker_start)
+    fake_worker.stop = AsyncMock(side_effect=worker_stop)
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
+        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
+        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch(
+            "agentsys.integration.whatsapp_client.WhatsAppClient.aclose",
+            new=aclose,
+        ),
+        patch(
+            "agentsys.services.webhook_worker.DeferredWebhookWorker",
+            return_value=fake_worker,
+        ) as mock_worker_cls,
+    ):
+        app = create_test_app()
+
+        async with lifespan(app):
+            assert app.state.runtimes
+            # Constructed with the dependencies it needs already in place.
+            _, kwargs = mock_worker_cls.call_args
+            assert kwargs["runtime"] is app.state.runtimes["_generic__sales-agent"]
+            assert kwargs["whatsapp_client"] is app.state.whatsapp_client
+            assert kwargs["directory"] is app.state.participant_directory
+            assert kwargs["recorder"] is app.state.conversation_recorder
+
+            fake_worker.start.assert_awaited_once()
+            assert app.state.webhook_worker is fake_worker
+            assert "worker.stop" not in events
+
+        assert events == ["worker.start", "worker.stop", "whatsapp.aclose", "engine.dispose"]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_skips_the_webhook_worker_when_no_runtime_is_resolved() -> None:
+    """Unset whatsapp_runtime_id (the platform default) must not start a
+    worker with no runtime to hand it -- durable inbound work then simply
+    waits unprocessed, matching the webhook route's own no-runtime handling."""
+    test_settings = _make_settings(adapter_runtimes=[])
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agentsys.services.webhook_worker.DeferredWebhookWorker"
+        ) as mock_worker_cls,
+    ):
+        app = create_test_app()
+
+        async with lifespan(app):
+            assert app.state.webhook_worker is None
+
+        mock_worker_cls.assert_not_called()

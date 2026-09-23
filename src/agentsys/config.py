@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     whatsapp_checkpointer_enabled: bool = True
     checkpointer_ttl_s: int | None = 86400
 
+    # W2b2 — DeferredWebhookWorker's poll loop, started in the lifespan once
+    # a runtime is resolved for whatsapp_runtime_id (see main.py::lifespan).
+    # No runtime resolved means the worker never starts; durable work then
+    # waits, unprocessed, rather than being dropped.
+    webhook_worker_poll_interval_s: float = Field(default=1.0, gt=0)
+    webhook_worker_claim_limit: int = Field(default=10, gt=0)
+
     # Slack (optional, for alerts)
     slack_webhook_url: str = ""
 

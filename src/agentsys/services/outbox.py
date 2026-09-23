@@ -18,7 +18,9 @@ from agentsys.models.outbox import InboundMessage, OutboxWork
 
 _INBOX_META_MESSAGE_CONSTRAINT = "uq_webhook_inbox_meta_message_id"
 MAX_OUTBOX_ATTEMPTS = 5
-DEFAULT_LEASE_DURATION = timedelta(minutes=2)
+# The runtime permits turns below 300 seconds; keep a bounded lease longer than
+# one worst-case turn plus provider send, rather than recovering live work early.
+DEFAULT_LEASE_DURATION = timedelta(minutes=10)
 _RETRY_BASE_SECONDS = 1
 _RETRY_MAX_SECONDS = 300
 
@@ -41,6 +43,14 @@ class OutboxFailureOutcome:
 
     terminal: bool
     alert_required: bool
+
+
+@dataclass(frozen=True)
+class OutboxClaimOutcome:
+    """Committed claim results, including terminal recovery transitions."""
+
+    claimed: list[OutboxWork]
+    terminalized: list[OutboxWork]
 
 
 class OutboxLeaseLostError(RuntimeError):
@@ -146,12 +156,13 @@ async def claim_available_outbox_work(
     worker_id: str,
     limit: int,
     lease_duration: timedelta = DEFAULT_LEASE_DURATION,
-) -> list[OutboxWork]:
-    """Commit leases before returning work, using the database clock.
+) -> OutboxClaimOutcome:
+    """Commit leases and terminal recovery state using the database clock.
 
     An expired lease is recoverable. If it already consumed the maximum number
     of attempts, the lock-holder terminalizes it with its audit event instead
-    of returning a sixth attempt after a crash.
+    of returning a sixth attempt after a crash. The returned terminalized rows
+    are committed durable operator-action signals for W2b's notifier.
     """
     if not worker_id:
         raise ValueError("worker_id must not be empty")
@@ -169,6 +180,7 @@ async def claim_available_outbox_work(
         ).all()
     )
     claimed: list[OutboxWork] = []
+    terminalized: list[OutboxWork] = []
     for work in work_rows:
         if work.attempt_count >= MAX_OUTBOX_ATTEMPTS:
             _terminalize_work(
@@ -178,6 +190,7 @@ async def claim_available_outbox_work(
                 error=work.last_error
                 or "lease expired after maximum delivery attempts",
             )
+            terminalized.append(work)
             continue
         work.lease_owner = worker_id
         work.lease_expires_at = database_now + lease_duration
@@ -185,7 +198,7 @@ async def claim_available_outbox_work(
         claimed.append(work)
 
     await _commit_or_rollback(session)
-    return claimed
+    return OutboxClaimOutcome(claimed=claimed, terminalized=terminalized)
 
 
 async def persist_outbound_intent(
@@ -210,6 +223,21 @@ async def persist_outbound_intent(
 
     current.outbound_body = body
     current.outbound_send_key = send_key
+    await _commit_or_rollback(session)
+
+
+async def complete_outbox_work(
+    session: AsyncSession,
+    *,
+    work: OutboxWork,
+    worker_id: str,
+) -> None:
+    """Fence successful or deliberately non-service completion to a live lease."""
+    database_now = await _database_now(session)
+    current = await _locked_live_work(session, work_id=work.id, worker_id=worker_id)
+    current.completed_at = database_now
+    current.lease_owner = None
+    current.lease_expires_at = None
     await _commit_or_rollback(session)
 
 

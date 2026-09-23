@@ -24,6 +24,7 @@ from agentsys.models.base import get_engine
 from agentsys.models.outbox import OutboxWork
 from agentsys.services.outbox import (
     MAX_OUTBOX_ATTEMPTS,
+    OutboxClaimOutcome,
     OutboxLeaseLostError,
     accept_inbound_message,
     claim_available_outbox_work,
@@ -260,7 +261,7 @@ async def test_concurrent_claims_skip_a_live_lease_after_the_first_commit(
             payload={"text": "claim me"},
         )
 
-    async def claim(worker_id: str) -> list[OutboxWork]:
+    async def claim(worker_id: str) -> OutboxClaimOutcome:
         async with session_factory() as session:
             return await claim_available_outbox_work(
                 session,
@@ -269,7 +270,7 @@ async def test_concurrent_claims_skip_a_live_lease_after_the_first_commit(
             )
 
     first, second = await asyncio.gather(claim("worker-a"), claim("worker-b"))
-    assert sorted([len(first), len(second)]) == [0, 1]
+    assert sorted([len(first.claimed), len(second.claimed)]) == [0, 1]
 
     async with migrated_engine.begin() as conn:
         await conn.execute(
@@ -295,13 +296,13 @@ async def test_terminal_failure_commits_outbox_state_and_audit_together(
             payload={"text": "fail me"},
         )
     async with session_factory() as session:
-        claimed = await claim_available_outbox_work(
+        claim_outcome = await claim_available_outbox_work(
             session,
             worker_id="worker-a",
             limit=1,
         )
-        assert len(claimed) == 1
-        work = claimed[0]
+        assert len(claim_outcome.claimed) == 1
+        work = claim_outcome.claimed[0]
         assert work.inbound_message_id == acceptance.inbound_message_id
         # Model the final live attempt, not an unleased row: fenced failures
         # must reject a worker that never held the lease.
@@ -364,7 +365,7 @@ async def test_stale_worker_cannot_mutate_work_reclaimed_by_another_worker(
                 worker_id="worker-a",
                 limit=1,
             )
-        )[0]
+        ).claimed[0]
 
     async with migrated_engine.begin() as conn:
         await conn.execute(
@@ -381,7 +382,7 @@ async def test_stale_worker_cannot_mutate_work_reclaimed_by_another_worker(
             worker_id="worker-b",
             limit=1,
         )
-    assert [work.id for work in recovered] == [stale_work.id]
+    assert [work.id for work in recovered.claimed] == [stale_work.id]
 
     async with session_factory() as session:
         with pytest.raises(OutboxLeaseLostError):
@@ -436,21 +437,21 @@ async def test_expired_max_attempt_claim_is_terminalized_with_audit(
         )
         last_claim: OutboxWork | None = None
         for attempt in range(MAX_OUTBOX_ATTEMPTS):
-            claimed = await claim_available_outbox_work(
+            claim_outcome = await claim_available_outbox_work(
                 session,
                 worker_id=f"worker-{attempt}",
                 limit=1,
             )
-            assert len(claimed) == 1
+            assert len(claim_outcome.claimed) == 1
             await session.execute(
                 text(
                     "UPDATE outbox_work SET lease_expires_at = clock_timestamp() - "
                     "INTERVAL '1 second' WHERE id = CAST(:id AS uuid)"
                 ),
-                {"id": str(claimed[0].id)},
+                {"id": str(claim_outcome.claimed[0].id)},
             )
             await session.commit()
-            last_claim = claimed[0]
+            last_claim = claim_outcome.claimed[0]
         assert last_claim is not None
         work_id = last_claim.id
 
@@ -460,7 +461,8 @@ async def test_expired_max_attempt_claim_is_terminalized_with_audit(
             worker_id="recovery-worker",
             limit=1,
         )
-    assert recovered == []
+    assert recovered.claimed == []
+    assert [work.id for work in recovered.terminalized] == [work_id]
 
     async with migrated_engine.connect() as conn:
         failed_at = await conn.scalar(

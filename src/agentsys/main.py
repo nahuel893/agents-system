@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Literal
@@ -343,6 +344,49 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else:
             app.state.runtimes = {}
             app.state.adapter_model_ids = frozenset()
+
+        # W2b2 — the deferred webhook worker. Started LAST, after every
+        # dependency it needs (engine, whatsapp_client, runtimes, the
+        # participant directory / recorder create_app stashed on app.state)
+        # already exists, and its stop() is pushed last so AsyncExitStack's
+        # LIFO teardown runs it FIRST — before any of those dependencies are
+        # torn down. Its own cancellation-safety (a claim left mid-flight
+        # keeps its lease, recoverable once that lease expires) is
+        # ``DeferredWebhookWorker``'s, reusing W2a's lease primitives; this
+        # lifespan only owns when start()/stop() run.
+        webhook_runtime = (
+            app.state.runtimes.get(settings.whatsapp_runtime_id)
+            if settings.whatsapp_runtime_id
+            else None
+        )
+        if webhook_runtime is not None:
+            from agentsys.services.webhook_worker import DeferredWebhookWorker
+
+            webhook_worker = DeferredWebhookWorker(
+                session_factory=get_session_factory(app.state.engine),
+                worker_id=f"webhook-worker-{uuid.uuid4()}",
+                directory=app.state.participant_directory,
+                runtime=webhook_runtime,
+                whatsapp_client=app.state.whatsapp_client,
+                recorder=app.state.conversation_recorder,
+                checkpointer_enabled=settings.whatsapp_checkpointer_enabled,
+                poll_interval_s=settings.webhook_worker_poll_interval_s,
+                claim_limit=settings.webhook_worker_claim_limit,
+            )
+            await webhook_worker.start()
+            resource_stack.push_async_callback(webhook_worker.stop)
+            app.state.webhook_worker = webhook_worker
+        else:
+            structlog.get_logger().warning(
+                "webhook_worker.no_runtime_resolved",
+                whatsapp_runtime_id=settings.whatsapp_runtime_id,
+                detail=(
+                    "no runtime resolved for whatsapp_runtime_id; the "
+                    "deferred webhook worker did not start. Durable inbound "
+                    "work still accumulates and waits -- it is not dropped."
+                ),
+            )
+            app.state.webhook_worker = None
 
         yield
 
