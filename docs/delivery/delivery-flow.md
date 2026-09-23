@@ -116,6 +116,11 @@ merge button unavailable rather than merely discouraged.
 A tolerated red build is a dead build. Once the team learns that `main` is
 sometimes red, CI has stopped being a signal.
 
+CI runs on every pull request and on every push to `main`: once per commit,
+not twice. A newer push to a pull request cancels the run it supersedes; runs
+on `main` are never cancelled. A branch without a pull request gets no CI
+until it has one.
+
 ### 5. Review — required, and by the right person
 
 At least one approval from someone who is not the author. **CODEOWNERS routes
