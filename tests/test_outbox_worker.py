@@ -12,9 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agentsys.models.audit_event import AuditEvent
 from agentsys.models.outbox import OutboxWork
 from agentsys.services.outbox import (
+    DEFAULT_LEASE_DURATION,
     MAX_OUTBOX_ATTEMPTS,
     OutboxLeaseLostError,
     claim_available_outbox_work,
+    complete_outbox_work,
     persist_outbound_intent,
     record_outbox_failure,
 )
@@ -96,38 +98,83 @@ class TestClaimOutboxWork:
         work = _work()
         session = _ClaimSession([work], database_now=now)
 
-        claimed = await claim_available_outbox_work(
+        outcome = await claim_available_outbox_work(
             cast(AsyncSession, session),
             worker_id="worker-a",
             limit=1,
             lease_duration=timedelta(minutes=2),
         )
 
-        assert claimed == [work]
+        assert outcome.claimed == [work]
+        assert outcome.terminalized == []
         assert session.commit_count == 1
         assert work.lease_owner == "worker-a"
         assert work.lease_expires_at == now + timedelta(minutes=2)
         assert work.attempt_count == 1
 
-    async def test_expired_work_at_attempt_cap_is_failed_and_not_returned(self) -> None:
+    async def test_expired_work_at_attempt_cap_is_committed_and_returned_for_alert(
+        self,
+    ) -> None:
         now = datetime(2026, 8, 4, tzinfo=UTC)
         work = _work(attempt_count=MAX_OUTBOX_ATTEMPTS)
         work.lease_owner = "crashed-worker"
         work.lease_expires_at = now - timedelta(seconds=1)
         session = _ClaimSession([work], database_now=now)
 
-        claimed = await claim_available_outbox_work(
+        outcome = await claim_available_outbox_work(
             cast(AsyncSession, session),
             worker_id="recovery-worker",
             limit=1,
         )
 
-        assert claimed == []
+        assert outcome.claimed == []
+        assert outcome.terminalized == [work]
         assert work.failed_at == now
         assert work.lease_owner is None
         assert work.lease_expires_at is None
         assert session.commit_count == 1
         assert any(isinstance(row, AuditEvent) for row in session.added)
+
+
+class TestOutboxCompletion:
+    async def test_completion_is_fenced_to_the_live_owner_lease(self) -> None:
+        now = datetime(2026, 8, 4, tzinfo=UTC)
+        work = _work(attempt_count=1)
+        work.lease_owner = "worker-a"
+        work.lease_expires_at = now + timedelta(minutes=10)
+        session = _MutationSession(current_work=work, database_now=now)
+
+        await complete_outbox_work(
+            cast(AsyncSession, session),
+            work=work,
+            worker_id="worker-a",
+        )
+
+        assert work.completed_at == now
+        assert work.lease_owner is None
+        assert work.lease_expires_at is None
+        assert session.commit_count == 1
+
+    async def test_completion_lease_loss_rolls_back_without_stale_mutation(
+        self,
+    ) -> None:
+        now = datetime(2026, 8, 4, tzinfo=UTC)
+        stale_work = _work()
+        session = _MutationSession(current_work=None, database_now=now)
+
+        with pytest.raises(OutboxLeaseLostError):
+            await complete_outbox_work(
+                cast(AsyncSession, session),
+                work=stale_work,
+                worker_id="worker-a",
+            )
+
+        assert stale_work.completed_at is None
+        assert session.commit_count == 0
+        assert session.rollback_count == 1
+
+    def test_default_lease_exceeds_the_runtime_turn_timeout(self) -> None:
+        assert DEFAULT_LEASE_DURATION >= timedelta(minutes=10)
 
 
 class TestOutboxFailure:
