@@ -20,7 +20,7 @@
 | 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ⏳ pending | PR3 — #110 |
 | 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ⏳ pending | PR4 — #111 |
 | 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ⏳ pending | PR5 — #112 |
-| 15 | Reference backends for platform-generic ports | C. Tools & permissions | ⏳ pending | Needed before live evals (E.18) — #113 |
+| 15 | Reference backends for platform-generic ports | C. Tools & permissions | ✅ done (this change) | — #113 |
 | 16 | Rejected: `operator-agent` as parent of `data-agent`; composition over multi-inheritance | D. Role composition | ✅ decision recorded (no code change) | Issue #53 |
 | 17 | Inherited role contract test suite | D. Role composition | ⚠️ partial (templates exist, not a formal suite) | New PR — #114 |
 | 18 | Live evaluation pipeline | E. Verification | ⏳ pending | New PR, after 8/9 land — #52 |
@@ -1004,10 +1004,19 @@ integrations"); the library's job is to ship something that makes the
 *contract* exercisable, not a production-grade integration for any one
 client.
 
-**Status.** ⏳ pending. **Planned slice:** needed before E.18's live
-evaluation pipeline can produce meaningful results; also a prerequisite for
-D.17's contract suite to test real tool-call behavior rather than only
-fail-closed refusals.
+**Status.** ✅ done (this change) — `src/agentsys/services/reference.py` ships
+`InMemoryKnowledgeBase`, `LLMConversationSummarizer` (reuses the role's
+already-configured `BaseChatModel`, no new provider config),
+`LoggingEscalationChannel` (writes a structured log entry, reports
+`status: "logged"`, never fabricates `"notified"`), and `InMemoryOrderWriter`
+against the four ports above. Opt-in only: `platform_connectors.py` and
+`order_connector.py` are unchanged, so a consumer that configures none of
+these keeps the same fail-closed refusals (pinned by
+`tests/test_reference_backends.py`'s regression case). Wiring examples in
+`docs/platform/reference-backends.md` / `docs/platform_es/reference-backends.md`.
+Unblocks E.18's live evaluation pipeline and D.17's contract suite, both of
+which now have a real backend to exercise instead of only fail-closed
+refusals.
 
 ---
 

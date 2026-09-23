@@ -20,7 +20,7 @@
 | 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ⏳ pendiente | PR3 — #110 |
 | 13 | Aplicación por canal (falla al arrancar, no por mensaje) | C. Herramientas y permisos | ⏳ pendiente | PR4 — #111 |
 | 14 | Sandbox T3 (bubblewrap) | C. Herramientas y permisos | ⏳ pendiente | PR5 — #112 |
-| 15 | Backends de referencia para los puertos genéricos de la plataforma | C. Herramientas y permisos | ⏳ pendiente | Necesario antes de las evaluaciones en vivo (E.18) — #113 |
+| 15 | Backends de referencia para los puertos genéricos de la plataforma | C. Herramientas y permisos | ✅ hecho (este cambio) | — #113 |
 | 16 | Rechazado: `operator-agent` como padre de `data-agent`; composición en vez de herencia múltiple | D. Composición de roles | ✅ decisión registrada (sin cambio de código) | Issue #53 |
 | 17 | Suite de pruebas de contrato heredado por rol | D. Composición de roles | ⚠️ parcial (existen plantillas, no una suite formal) | PR nuevo — #114 |
 | 18 | Pipeline de evaluación en vivo | E. Verificación | ⏳ pendiente | PR nuevo, después de que aterricen 8/9 — #52 |
@@ -1119,11 +1119,20 @@ plataforma/cliente de `manifesto.md`); el trabajo de la biblioteca es
 entregar algo que haga el *contrato* ejercitable, no una integración de
 grado productivo para ningún cliente en particular.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** necesario antes de que el
-pipeline de evaluación en vivo de E.18 pueda producir resultados
-significativos; también un prerrequisito para que la suite de contrato de
-D.17 pruebe comportamiento real de llamadas a herramientas en vez de solo
-rechazos en modo cerrado.
+**Estado.** ✅ hecho (este cambio) — `src/agentsys/services/reference.py`
+entrega `InMemoryKnowledgeBase`, `LLMConversationSummarizer` (reutiliza el
+`BaseChatModel` ya configurado para el rol, sin configuración de proveedor
+nueva), `LoggingEscalationChannel` (escribe una entrada de log estructurado
+e informa `status: "logged"`, nunca fabrica `"notified"`) e
+`InMemoryOrderWriter` para los cuatro puertos de arriba. Es opcional
+(opt-in): `platform_connectors.py` y `order_connector.py` quedan sin
+cambios, así que un consumidor que no configura ninguno de estos sigue
+recibiendo los mismos rechazos en modo cerrado (fijado por el caso de
+regresión de `tests/test_reference_backends.py`). Ejemplos de cableado en
+`docs/platform/reference-backends.md` / `docs/platform_es/reference-backends.md`.
+Desbloquea el pipeline de evaluación en vivo de E.18 y la suite de contrato
+de D.17, que ahora tienen un backend real contra el cual ejercitarse en vez
+de solo rechazos en modo cerrado.
 
 ---
 
