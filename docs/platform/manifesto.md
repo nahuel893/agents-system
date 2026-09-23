@@ -33,7 +33,7 @@ For the formal definition of "agent" this manifesto uses informally throughout �
 
 ### 1. Declarative first
 
-Agent roles are defined as folders under `agents/` — not as subclasses, not as configuration blobs, not as hardcoded prompt strings. Each folder contains `role.md` (identity), `manifest.md` (capabilities), and `policy.md` (behavior). The agent definition folder is the authoritative specification of what a role is allowed to be and do.
+Agent roles are defined as folders under `platform/roles/` — not as subclasses, not as configuration blobs, not as hardcoded prompt strings. Each folder contains `role.md` (identity), `manifest.md` (capabilities), and `policy.md` (behavior). The agent definition folder is the authoritative specification of what a role is allowed to be and do.
 
 **Rationale:** Declarative definitions are readable by humans, auditable, version-controlled, and independent of the runtime implementation. They make the system inspectable without tracing code.
 

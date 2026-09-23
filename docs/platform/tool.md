@@ -54,7 +54,7 @@ The Capability Injector resolves tools as the first step in the injection pipeli
 1. Confirm the tool name exists in the registry. If not, fail instantiation.
 2. Evaluate `required_permissions` against the requesting agent's permission set. If any required permission is absent, the tool is excluded. If the agent's `manifest.md` listed this tool as required, fail instantiation; if optional, skip silently.
 3. Attach the tool's connector handle to the runtime's capability surface.
-4. For sensitive tools (those whose `required_permissions` include write or send permissions), mark the tool for revalidation at execution time.
+4. For sensitive tools (those whose `required_permissions` include write or send permissions) or any tool explicitly declared `always_revalidate: true`, mark the tool for revalidation at execution time. `always_revalidate` lets a read-only tool opt into the same execution-time revalidation without needing a `write:`/`send:` permission — the escape hatch for a read that still needs to be checked at call time. Defaults to `false`.
 
 > **Note on permission revalidation:** Permission checks at injection time reflect the state at the moment of instantiation. For actions with significant side effects — writing records, sending messages, modifying state — permissions are revalidated at the moment of execution, not only at injection time. This guards against permission changes that occur between instantiation and execution in long-running sessions. See `docs/architecture/permission-model.md`.
 

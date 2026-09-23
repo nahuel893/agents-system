@@ -24,9 +24,9 @@
 | 16 | Rechazado: `operator-agent` como padre de `data-agent`; composición en vez de herencia múltiple | D. Composición de roles | ✅ decisión registrada (sin cambio de código) | Issue #53 |
 | 17 | Suite de pruebas de contrato heredado por rol | D. Composición de roles | ⚠️ parcial (existen plantillas, no una suite formal) | PR nuevo — #114 |
 | 18 | Pipeline de evaluación en vivo | E. Verificación | ⏳ pendiente | PR nuevo, después de que aterricen 8/9 — #52 |
-| 19 | Desactualizado: `role.md`/`manifesto.md` dicen `agents/`, la ruta real es `platform/roles/` | F. Documentación desactualizada | ⏳ pendiente | Corrección solo de documentación — #106 |
-| 20 | Desactualizado: descripción de `sensitive:` en `tool.md`, descripción de RAG con pgvector | F. Documentación desactualizada | ⏳ pendiente | Corrección solo de documentación — #106 |
-| 21 | Desactualizado: decisión abierta de `permission-model.md` (resuelta por 10) + pgvector | F. Documentación desactualizada | ⏳ pendiente | Corrección solo de documentación — #106 |
+| 19 | Desactualizado: `role.md`/`manifesto.md` dicen `agents/`, la ruta real es `platform/roles/` | F. Documentación desactualizada | ✅ hecho (#106) | Corrección solo de documentación — #106 |
+| 20 | Desactualizado: descripción de `sensitive:` en `tool.md`, descripción de RAG con pgvector | F. Documentación desactualizada | ✅ hecho (#106) | Corrección solo de documentación — #106 |
+| 21 | Desactualizado: decisión abierta de `permission-model.md` (resuelta por 10) + pgvector | F. Documentación desactualizada | ✅ hecho (#106) | Corrección solo de documentación — #106 |
 | 22 | Historial de chat durable | G. Persistencia y memoria | ⚠️ parcial (mismo que 4) | Mismo PR que 4 — #118 |
 | 23 | Implementación de referencia de `ConversationRecorder` | G. Persistencia y memoria | ⚠️ parcial (puerto + doble de prueba solamente, sin implementación de producción) | PR nuevo — #121 |
 | 24 | Control del tamaño de contexto (recorte/compactación) | G. Persistencia y memoria | ⏳ pendiente | PR nuevo — #122 |
@@ -1375,8 +1375,8 @@ inglés.
 ningún otro contenido de ninguno de los dos que fuera inexacto respecto de
 la *forma* de una definición de rol (tres archivos,
 `role.md`/`manifest.md`/`policy.md`) — solo el nombre de la carpeta
-contenedora está mal. **Estado:** ⏳ pendiente. **Etapa:** corrección solo
-de documentación, sin cambio de código; segura de hacer en el mismo PR que
+contenedora está mal. **Estado:** ✅ hecho (#106). **Etapa:** corrección
+solo de documentación, sin cambio de código; aplicada en el mismo PR que
 las demás correcciones de documentación de este ADR.
 
 ---
@@ -1416,7 +1416,20 @@ Este ADR registra la corrección de documentación (quitar la descripción de
 pgvector/`catalog_embeddings` de ambos archivos) como el estado final
 correcto; el lado del código lo resuelve #98, no este ADR.
 
-**Estado.** ⏳ pendiente. **Etapa:** corrección solo de documentación; el
+**Corrección (#106).** Para cuando #106 tomó este ítem, `refactor: close
+the remaining platform boundary gaps` (#101) ya había reemplazado
+`rag_catalog_search`/pgvector por el diseño `catalog_search`/`CatalogSource`
+provisto por el despliegue, tanto en `docs/platform/tool.md` como en
+`docs/architecture/permission-model.md` — #101 se fusionó después del
+commit base de este ADR (`e9d37e3`) pero antes de que #106 comenzara.
+Reverificado contra `/home/nh/wt-106-docs`: ninguno de los dos archivos
+menciona ya `pgvector`, `rag_catalog_search` ni `catalog_embeddings`. El
+trabajo real de #106 para este ítem fue entonces solo la corrección de
+`sensitive:`/`always_revalidate`: agregar la mención faltante de
+`always_revalidate` al paso 4 de la secuencia de inyección de `tool.md`,
+junto a la heurística existente de `write:`/`send:`.
+
+**Estado.** ✅ hecho (#106). **Etapa:** corrección solo de documentación; el
 texto sobre `sensitive:`/`tier` debería revisarse de nuevo una vez que C.10
 efectivamente se entregue (`tier` se vuelve el vocabulario preciso), así
 que conviene considerar una segunda pasada ligera sobre `tool.md` en ese
@@ -1435,13 +1448,23 @@ es precisamente esta resolución, formalizada. La misma tabla de
 conectores del archivo (`permission-model.md:89`) repite la descripción
 desactualizada de `rag_catalog_search`/pgvector cubierta en F.20.
 
+**Corrección (#106).** Igual que en F.20, la tabla de conectores de
+`permission-model.md:89` ya no describe `rag_catalog_search`/pgvector — #101
+ya había reemplazado esa fila con la descripción de `catalog_search`
+provista por el despliegue antes de que #106 comenzara. C.10 (#109, niveles
+de capacidad) **no** se ha entregado a la fecha de #106 (el issue #109
+sigue abierto, y `ToolSpec` en `registry.py` no tiene campo `tier`), por lo
+que el recuadro "Open decision (3)" todavía no puede reemplazarse con una
+resolución real. Según los criterios de aceptación de este mismo ítem, #106
+agrega en su lugar un puntero hacia adelante desde el recuadro hacia C.10
+(#109) y C.9, sin afirmar una resolución que aún no se entregó.
+
 **Decisión.** Una vez que C.10 se entregue, reemplazar el recuadro "Open
 decision (3)" con una referencia a C.10 (niveles) y a la descripción de
-las cuatro capas de aplicación de C.9 de este ADR, y quitar la fila
-desactualizada de pgvector según F.20. **Estado:** ⏳ pendiente. **Etapa:**
-corrección solo de documentación, secuenciada después de que C.10
-efectivamente aterrice (la decisión abierta debería cerrarse con una
-respuesta real, no simplemente borrarse antes del código que la resuelve).
+las cuatro capas de aplicación de C.9 de este ADR. **Estado:** ✅ hecho
+(#106) — se agregó el puntero hacia adelante; el recuadro en sí permanece
+abierto hasta que C.10 (#109) efectivamente aterrice, momento en el cual
+debería reemplazarse directamente en vez de solo volver a apuntarse.
 
 ---
 
