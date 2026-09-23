@@ -39,14 +39,23 @@ async def verify_webhook(
     raise HTTPException(status_code=403, detail="Verification token mismatch")
 
 
-def _extract_meta_message_ids(payload: Any) -> list[str]:
-    """Collect every valid Meta message id in a (possibly batched) payload.
+def _extract_meta_messages(payload: Any) -> list[tuple[str, str]]:
+    """Collect every valid Meta message in a (possibly batched) payload.
 
     Meta may deliver several messages sharing one signed envelope. Each gets
     its own durable inbox/outbox row keyed by its OWN Meta message id, and
     the FULL envelope is stored against every one of them so the deferred
     worker can later find the exact message that id refers to inside the
     shared batch (``webhook_worker._extract_inbound_turn``).
+
+    Returns ``(message_id, conversation_key)`` pairs. ``conversation_key`` is
+    the message's raw ``from`` (#46 follow-up: what the claim query
+    serializes on, see ``services.outbox.pending_outbox_statement``) --
+    unnormalized, since this route deliberately never touches the
+    participant directory (that stays entirely in ``DeferredWebhookWorker``).
+    A message with no usable ``from`` gets a key derived from its own id
+    instead of an empty/shared one, so it can never collide with, or block,
+    any other conversation.
 
     Returns an empty list for a status update, an absent/empty messages
     array, a malformed payload shape, or a message with no usable id -- none
@@ -58,7 +67,7 @@ def _extract_meta_message_ids(payload: Any) -> list[str]:
     if not isinstance(entries, list):
         return []
 
-    ids: list[str] = []
+    messages_out: list[tuple[str, str]] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -78,9 +87,16 @@ def _extract_meta_message_ids(payload: Any) -> list[str]:
                 if not isinstance(message, dict):
                     continue
                 message_id = message.get("id")
-                if isinstance(message_id, str) and message_id:
-                    ids.append(message_id)
-    return ids
+                if not isinstance(message_id, str) or not message_id:
+                    continue
+                sender = message.get("from")
+                conversation_key = (
+                    sender
+                    if isinstance(sender, str) and sender
+                    else f"unresolved:{message_id}"
+                )
+                messages_out.append((message_id, conversation_key))
+    return messages_out
 
 
 @webhook_router.post("")
@@ -114,18 +130,19 @@ async def receive_message(
     except json.JSONDecodeError:
         return {"status": "ok"}
 
-    message_ids = _extract_meta_message_ids(payload)
-    if not message_ids:
+    messages = _extract_meta_messages(payload)
+    if not messages:
         return {"status": "ok"}
 
     session_factory = get_session_factory(request.app.state.engine)
-    for message_id in message_ids:
+    for message_id, conversation_key in messages:
         try:
             async with session_factory() as session:
                 await accept_inbound_message(
                     session,
                     meta_message_id=message_id,
                     payload=payload,
+                    conversation_key=conversation_key,
                 )
         except Exception as exc:
             logger.error(

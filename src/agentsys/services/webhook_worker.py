@@ -17,6 +17,10 @@ import structlog
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 
 from agentsys.models.outbox import InboundMessage, OutboxWork
+from agentsys.services.admission import (
+    DEFAULT_MAX_CONCURRENT_TURNS,
+    TurnAdmissionLimiter,
+)
 from agentsys.services.outbox import (
     DEFAULT_LEASE_DURATION,
     OutboxLeaseLostError,
@@ -86,6 +90,7 @@ class DeferredWebhookWorker:
         terminal_notifier: TerminalFailureNotifier | None = None,
         poll_interval_s: float = 1.0,
         claim_limit: int = 10,
+        admission_limiter: TurnAdmissionLimiter | None = None,
     ) -> None:
         if not worker_id:
             raise ValueError("worker_id must not be empty")
@@ -99,6 +104,15 @@ class DeferredWebhookWorker:
         self._terminal_notifier = terminal_notifier
         self._poll_interval_s = poll_interval_s
         self._claim_limit = claim_limit
+        # #46 -- shared, process-wide bound (see services/admission.py). A
+        # caller that shares one limiter across every turn-running entry
+        # point (main.py's lifespan does, for the OpenAI adapter too) gets a
+        # true process-wide cap; falling back to a private limiter here just
+        # keeps a worker built without one (e.g. existing tests) bounded on
+        # its own, never unbounded.
+        self._admission_limiter = admission_limiter or TurnAdmissionLimiter(
+            DEFAULT_MAX_CONCURRENT_TURNS
+        )
         self._started = False
         self._loop_task: asyncio.Task[None] | None = None
 
@@ -137,26 +151,72 @@ class DeferredWebhookWorker:
             await asyncio.sleep(self._poll_interval_s)
 
     async def process_available(self, *, limit: int) -> None:
-        """Claim currently ready work, then process each committed claim once."""
-        try:
-            async with self._session_factory() as session:
-                claim_outcome = await claim_available_outbox_work(
-                    session,
-                    worker_id=self._worker_id,
-                    limit=limit,
-                    lease_duration=DEFAULT_LEASE_DURATION,
-                )
-        except Exception:
-            logger.exception("webhook_worker.claim_failed", worker_id=self._worker_id)
+        """Reserve slots, claim only what was reserved, then process at once.
+
+        #46 SHOULD-FIX 1: admission is reserved with ``try_acquire`` BEFORE
+        claiming, not just checked -- a claimed row's lease must never tick
+        down while it waits for a slot admission already promised was free.
+        At capacity (no slot reserved) nothing is claimed at all -- the
+        durable row stays pending in the outbox, no lease is taken and no
+        attempt is spent on work that cannot start yet; it is claimed on a
+        later poll once a slot frees. A row claimed short of the reserved
+        count (or terminalized instead of leased) immediately releases its
+        unused reservation rather than holding capacity nothing will use.
+        Claimed items are then processed concurrently, each handed its own
+        already-reserved slot, so this worker alone never runs more turns at
+        once than configured -- and, because the limiter is process-wide,
+        neither does the process as a whole across this worker and the
+        OpenAI adapter together.
+        """
+        reserved = 0
+        while reserved < limit and self._admission_limiter.try_acquire():
+            reserved += 1
+        if reserved == 0:
             return
 
-        for work in claim_outcome.terminalized:
-            await self._notify_terminal_failure(
-                work,
-                work.last_error or "lease expired after maximum delivery attempts",
+        claimed: list[OutboxWork] = []
+        try:
+            try:
+                async with self._session_factory() as session:
+                    claim_outcome = await claim_available_outbox_work(
+                        session,
+                        worker_id=self._worker_id,
+                        limit=reserved,
+                        lease_duration=DEFAULT_LEASE_DURATION,
+                    )
+            except Exception:
+                logger.exception(
+                    "webhook_worker.claim_failed", worker_id=self._worker_id
+                )
+                return
+
+            for work in claim_outcome.terminalized:
+                await self._notify_terminal_failure(
+                    work,
+                    work.last_error or "lease expired after maximum delivery attempts",
+                )
+            claimed = claim_outcome.claimed
+        finally:
+            # Release every reservation this call did not hand off to a
+            # claimed row: a claim failure (early return above) must not
+            # leak admission capacity, and claiming fewer rows than
+            # reserved (including rows that terminalized instead of being
+            # leased) releases the excess immediately.
+            for _ in range(reserved - len(claimed)):
+                await self._admission_limiter.release()
+
+        if claimed:
+            await asyncio.gather(
+                *(self._process_claimed_work_admitted(work) for work in claimed)
             )
-        for work in claim_outcome.claimed:
+
+    async def _process_claimed_work_admitted(self, work: OutboxWork) -> None:
+        """Process one claimed item using the slot already reserved for it
+        in ``process_available`` -- this never blocks waiting for one."""
+        try:
             await self.process_claimed_work(work)
+        finally:
+            await self._admission_limiter.release()
 
     async def process_claimed_work(self, work: OutboxWork) -> None:
         """Process one already-committed claim without mutating a stale row."""

@@ -317,6 +317,87 @@ async def test_post_persists_the_message_before_ack_and_runs_no_turn(
     call_kwargs = accept.call_args.kwargs
     assert call_kwargs["meta_message_id"] == TEXT_PAYLOAD_MESSAGE_ID
     assert call_kwargs["payload"] == json.loads(text_payload)
+    # #46 follow-up -- per-conversation ordering: the route resolves the
+    # sender's raw (unnormalized) "from" as the conversation key itself,
+    # without touching the participant directory.
+    assert call_kwargs["conversation_key"] == "5491123456789"
+
+
+async def test_post_batch_same_sender_shares_one_conversation_key(
+    client: AsyncClient,
+) -> None:
+    """#46 follow-up: every message from the same sender in one batch
+    resolves to the SAME conversation_key, so the claim query serializes
+    them -- make_batch_payload's messages all carry the same "from"."""
+    payload = make_batch_payload("wamid.1", "wamid.2")
+    sig = sign_payload(payload, TEST_SECRET)
+    accept = AsyncMock(
+        return_value=InboundAcceptance(inbound_message_id=uuid.uuid4(), duplicate=False)
+    )
+
+    p1, p2 = _patch_persistence(accept)
+    with p1, p2:
+        response = await client.post(
+            "/webhook",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    assert accept.await_count == 2
+    conversation_keys = {c.kwargs["conversation_key"] for c in accept.call_args_list}
+    assert conversation_keys == {"5491123456789"}
+
+
+async def test_post_message_with_no_sender_gets_its_own_singleton_conversation_key(
+    client: AsyncClient,
+) -> None:
+    """A message with no usable "from" never shares a key with, or blocks,
+    any other conversation -- it gets one derived from its own id."""
+    payload = json.dumps(
+        {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "wamid.no-sender",
+                                        "text": {"body": "no from field"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ).encode()
+    sig = sign_payload(payload, TEST_SECRET)
+    accept = AsyncMock(
+        return_value=InboundAcceptance(inbound_message_id=uuid.uuid4(), duplicate=False)
+    )
+
+    p1, p2 = _patch_persistence(accept)
+    with p1, p2:
+        response = await client.post(
+            "/webhook",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    accept.assert_awaited_once()
+    assert (
+        accept.call_args.kwargs["conversation_key"] == "unresolved:wamid.no-sender"
+    )
 
 
 async def test_post_status_update_is_not_persisted(

@@ -45,6 +45,10 @@ class OutboxWork(Base):
         unique=True,
         nullable=False,
     )
+    # #46 follow-up (migration 004): the sender identity a claim must
+    # serialize on -- see services/outbox.py::pending_outbox_statement for
+    # the per-conversation ordering this backs.
+    conversation_key: Mapped[str] = mapped_column(Text, nullable=False)
     enqueued_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -103,6 +107,23 @@ class OutboxWork(Base):
             "ix_outbox_work_expired_recoverable",
             "lease_expires_at",
             "id",
+            postgresql_where=(
+                completed_at.is_(None)
+                & failed_at.is_(None)
+                & lease_expires_at.is_not(None)
+            ),
+        ),
+        Index(
+            "ix_outbox_work_conversation_active",
+            "conversation_key",
+            "enqueued_at",
+            "id",
+            postgresql_where=(completed_at.is_(None) & failed_at.is_(None)),
+        ),
+        Index(
+            "ux_outbox_work_conversation_live_lease",
+            "conversation_key",
+            unique=True,
             postgresql_where=(
                 completed_at.is_(None)
                 & failed_at.is_(None)

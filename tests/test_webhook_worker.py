@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -12,6 +12,7 @@ import structlog.testing
 from langchain_core.messages import AIMessage
 
 from agentsys.models.outbox import InboundMessage, OutboxWork
+from agentsys.services.admission import TurnAdmissionLimiter
 from agentsys.services.outbox import (
     OutboxClaimOutcome,
     OutboxFailureOutcome,
@@ -1087,3 +1088,219 @@ async def test_non_text_message_is_durably_completed_without_a_turn_or_reply(
     ]
     assert len(non_text_logs) == 1
     assert non_text_logs[0]["message_type"] == "image"
+
+
+# ---------------------------------------------------------------------------
+# #46 — bounded concurrent turns (admission control)
+# ---------------------------------------------------------------------------
+
+
+async def test_process_available_claims_nothing_when_admission_is_saturated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(b) at capacity, additional work must not be claimed at all: no lease
+    is taken and no attempt is spent on a row the worker cannot run yet."""
+    claim = AsyncMock()
+    monkeypatch.setattr(
+        "agentsys.services.webhook_worker.claim_available_outbox_work", claim
+    )
+    limiter = TurnAdmissionLimiter(1)
+    await limiter.acquire()  # saturate the only slot
+
+    worker = DeferredWebhookWorker(
+        session_factory=_SessionFactory(None),
+        worker_id="worker-a",
+        directory=_Directory(_Participant()),
+        runtime=MagicMock(),
+        whatsapp_client=MagicMock(),
+        admission_limiter=limiter,
+    )
+
+    await worker.process_available(limit=5)
+
+    claim.assert_not_awaited()
+
+
+async def test_process_available_resumes_claiming_once_a_slot_frees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(b) continued: once admission has room again, claiming resumes, and
+    the amount claimed is capped at the slots actually free -- not at
+    ``limit``."""
+    inbound = _inbound()
+    claim_calls: list[int] = []
+
+    async def claim(*args: object, **kwargs: object) -> OutboxClaimOutcome:
+        claim_calls.append(kwargs["limit"])
+        return OutboxClaimOutcome(claimed=[], terminalized=[])
+
+    monkeypatch.setattr(
+        "agentsys.services.webhook_worker.claim_available_outbox_work", claim
+    )
+    limiter = TurnAdmissionLimiter(1)
+    await limiter.acquire()
+
+    worker = DeferredWebhookWorker(
+        session_factory=_SessionFactory(inbound),
+        worker_id="worker-a",
+        directory=_Directory(_Participant()),
+        runtime=MagicMock(),
+        whatsapp_client=MagicMock(),
+        admission_limiter=limiter,
+    )
+
+    await worker.process_available(limit=5)
+    assert claim_calls == [], "claimed durable work while at capacity"
+
+    await limiter.release()
+    await worker.process_available(limit=5)
+    assert claim_calls == [1], "must cap the claim at the single free slot"
+
+
+async def test_process_available_claims_only_the_reserved_slot_count_and_runs_it_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(a) mutation-provable, updated for SHOULD-FIX 1 (reserve admission
+    BEFORE claiming): with max_concurrent_turns=2 and 5 ready DB rows,
+    process_available claims exactly 2 -- the reserved count, never the
+    raw ``limit`` -- and runs both concurrently (no artificial
+    serialization on top of what was already reserved). Deterministic via
+    events -- no sleeps as a substitute for synchronization."""
+    inbound = _inbound()
+    works = [_work(inbound) for _ in range(5)]
+    requested_limits: list[int] = []
+
+    async def claim(*args: object, **kwargs: object) -> OutboxClaimOutcome:
+        requested = cast(int, kwargs["limit"])
+        requested_limits.append(requested)
+        return OutboxClaimOutcome(claimed=list(works[:requested]), terminalized=[])
+
+    monkeypatch.setattr(
+        "agentsys.services.webhook_worker.claim_available_outbox_work", claim
+    )
+
+    in_flight = 0
+    peak = 0
+    entered = [asyncio.Event() for _ in range(2)]
+    release = asyncio.Event()
+
+    async def fake_process(self: DeferredWebhookWorker, work: OutboxWork) -> None:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        entered[works.index(work)].set()
+        await release.wait()
+        in_flight -= 1
+
+    monkeypatch.setattr(DeferredWebhookWorker, "process_claimed_work", fake_process)
+
+    worker = DeferredWebhookWorker(
+        session_factory=_SessionFactory(inbound),
+        worker_id="worker-a",
+        directory=_Directory(_Participant()),
+        runtime=MagicMock(),
+        whatsapp_client=MagicMock(),
+        admission_limiter=TurnAdmissionLimiter(2),
+    )
+
+    task = asyncio.create_task(worker.process_available(limit=5))
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(entered[0].wait(), entered[1].wait()), timeout=1
+        )
+        assert requested_limits == [2], (
+            "the claim must be capped at the reserved slot count (2), "
+            "not the requested limit (5)"
+        )
+        assert peak == 2, "both reserved items must run concurrently"
+
+        release.set()
+        await asyncio.wait_for(task, timeout=1)
+    finally:
+        if not task.done():
+            task.cancel()
+
+    assert peak == 2
+
+
+async def test_process_claimed_work_admitted_never_waits_for_a_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SHOULD-FIX 1: a claimed row's slot was already reserved in
+    process_available -- _process_claimed_work_admitted must never itself
+    block acquiring one (that would tick the claimed row's lease down while
+    waiting on a slot admission already promised was free). Proven by
+    making the limiter's acquire()/slot() raise if ever called from here;
+    only release() may be used."""
+    limiter = TurnAdmissionLimiter(1)
+    assert limiter.try_acquire() is True  # simulate process_available's reservation
+
+    async def forbidden_acquire() -> None:
+        raise AssertionError(
+            "_process_claimed_work_admitted must not wait for a slot"
+        )
+
+    monkeypatch.setattr(limiter, "acquire", forbidden_acquire)
+
+    async def fake_process(self: DeferredWebhookWorker, work: OutboxWork) -> None:
+        return None
+
+    monkeypatch.setattr(DeferredWebhookWorker, "process_claimed_work", fake_process)
+
+    worker = DeferredWebhookWorker(
+        session_factory=_SessionFactory(None),
+        worker_id="worker-a",
+        directory=_Directory(_Participant()),
+        runtime=MagicMock(),
+        whatsapp_client=MagicMock(),
+        admission_limiter=limiter,
+    )
+    work = _work(_inbound())
+
+    await worker._process_claimed_work_admitted(work)
+
+    assert limiter.in_flight == 0, "the reserved slot must be released after processing"
+
+
+async def test_process_claimed_work_admitted_releases_slot_on_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SHOULD-FIX 4: a claimed item cancelled mid-flight (e.g. worker
+    shutdown) still releases its reserved admission slot -- and, matching
+    the existing mid-turn-cancellation guarantee, records no spurious
+    failure, so the lease simply expires and becomes reclaimable."""
+    limiter = TurnAdmissionLimiter(1)
+    assert limiter.try_acquire() is True
+
+    record_failure = AsyncMock()
+    monkeypatch.setattr(
+        "agentsys.services.webhook_worker.record_outbox_failure", record_failure
+    )
+
+    started = asyncio.Event()
+    hang_forever = asyncio.Event()
+
+    async def fake_process(self: DeferredWebhookWorker, work: OutboxWork) -> None:
+        started.set()
+        await hang_forever.wait()
+
+    monkeypatch.setattr(DeferredWebhookWorker, "process_claimed_work", fake_process)
+
+    worker = DeferredWebhookWorker(
+        session_factory=_SessionFactory(None),
+        worker_id="worker-a",
+        directory=_Directory(_Participant()),
+        runtime=MagicMock(),
+        whatsapp_client=MagicMock(),
+        admission_limiter=limiter,
+    )
+    work = _work(_inbound())
+
+    task = asyncio.create_task(worker._process_claimed_work_admitted(work))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert limiter.in_flight == 0, "the reserved slot must be released on cancellation"
+    record_failure.assert_not_awaited()

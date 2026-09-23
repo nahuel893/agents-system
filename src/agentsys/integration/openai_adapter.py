@@ -23,9 +23,11 @@ Surface:
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import time
 import uuid
+from contextlib import AsyncExitStack
 from typing import Annotated, Any
 
 import structlog
@@ -237,26 +239,57 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     # Permissions: omitted — run_turn defaults to the runtime's own resolved
     # grants (design AD-4). The adapter has no separate caller identity, so
     # the role's own permissions ARE the correct execution-time RBAC set.
-    try:
-        result_messages: list[AnyMessage] = await runtime.run_turn(
-            messages=lc_messages,
-            session_id=session_id,
-        )
-    except Exception:
-        # Anything escaping run_turn used to leave here as a raw 500 with
-        # nothing written anywhere: RequestIdMiddleware is try/finally with no
-        # `except`, and this codebase has neither Sentry nor metrics, so an
-        # unlogged 500 is an outage nobody can see. Log it with the stack, and
-        # answer with a fixed message — an internal exception string can carry
-        # a DSN, a prompt, or a customer's data, and this response goes
-        # straight to the client.
-        structlog.get_logger(__name__).exception(
-            "adapter.turn_failed", model_id=model_id, session_id=session_id
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="The agent could not complete this turn. The failure has been logged.",
-        ) from None
+    #
+    # #46 — this is a second turn-running entry point besides the webhook
+    # worker, and each request runs one in-process, concurrently with every
+    # other. It shares the SAME TurnAdmissionLimiter the lifespan built for
+    # the worker (main.py::lifespan), so the process-wide bound on concurrent
+    # turns holds across both. A request served outside that lifespan (e.g.
+    # a test app that never runs it) simply runs unbound, exactly as before.
+    #
+    # SHOULD-FIX 2 (review follow-up): unlike the webhook worker (which
+    # reserves its slot before claiming and so never waits with a lease
+    # already running), this in-request caller has nothing else it could do
+    # but wait -- and an unbounded wait would hang the HTTP request
+    # indefinitely under a sustained burst. Bound it: on expiry, answer 503
+    # with Retry-After rather than hang the client.
+    admission_limiter = getattr(request.app.state, "turn_admission_limiter", None)
+    turn_stack = AsyncExitStack()
+    if admission_limiter is not None:
+        wait_timeout_s = get_settings().admission_wait_timeout_s
+        try:
+            await asyncio.wait_for(
+                turn_stack.enter_async_context(admission_limiter.slot()),
+                timeout=wait_timeout_s,
+            )
+        except TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail="The agent is at capacity. Retry shortly.",
+                headers={"Retry-After": str(max(1, int(wait_timeout_s)))},
+            ) from None
+
+    async with turn_stack:
+        try:
+            result_messages: list[AnyMessage] = await runtime.run_turn(
+                messages=lc_messages,
+                session_id=session_id,
+            )
+        except Exception:
+            # Anything escaping run_turn used to leave here as a raw 500 with
+            # nothing written anywhere: RequestIdMiddleware is try/finally with
+            # no `except`, and this codebase has neither Sentry nor metrics, so
+            # an unlogged 500 is an outage nobody can see. Log it with the
+            # stack, and answer with a fixed message — an internal exception
+            # string can carry a DSN, a prompt, or a customer's data, and this
+            # response goes straight to the client.
+            structlog.get_logger(__name__).exception(
+                "adapter.turn_failed", model_id=model_id, session_id=session_id
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="The agent could not complete this turn. The failure has been logged.",
+            ) from None
 
     # Extract final assistant text
     assistant_text = _extract_assistant_text(result_messages)

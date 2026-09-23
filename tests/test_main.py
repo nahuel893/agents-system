@@ -1437,6 +1437,14 @@ async def test_lifespan_starts_and_stops_the_webhook_worker_around_dependencies(
             assert kwargs["whatsapp_client"] is app.state.whatsapp_client
             assert kwargs["directory"] is app.state.participant_directory
             assert kwargs["recorder"] is app.state.conversation_recorder
+            # #46 — the SAME limiter instance the lifespan exposes on
+            # app.state (and that the OpenAI adapter reads at request time)
+            # is what bounds this worker's concurrent processing too.
+            assert kwargs["admission_limiter"] is app.state.turn_admission_limiter
+            assert (
+                app.state.turn_admission_limiter.max_concurrent_turns
+                == test_settings.max_concurrent_turns
+            )
 
             fake_worker.start.assert_awaited_once()
             assert app.state.webhook_worker is fake_worker
@@ -1466,5 +1474,9 @@ async def test_lifespan_skips_the_webhook_worker_when_no_runtime_is_resolved() -
 
         async with lifespan(app):
             assert app.state.webhook_worker is None
+            # #46 — the admission limiter is not the webhook worker's: it
+            # must still exist so POST /v1/chat/completions stays bounded
+            # even when no WhatsApp runtime is configured at all.
+            assert app.state.turn_admission_limiter is not None
 
         mock_worker_cls.assert_not_called()

@@ -9,9 +9,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, exists, func, or_, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from agentsys.models.audit_event import AuditEvent
 from agentsys.models.outbox import InboundMessage, OutboxWork
@@ -62,13 +63,23 @@ async def accept_inbound_message(
     *,
     meta_message_id: str,
     payload: dict[str, Any],
+    conversation_key: str,
 ) -> InboundAcceptance:
     """Commit an inbound Meta message and its one work row atomically.
 
     A unique conflict is idempotent only when the conflicting Meta identity is
     present after rollback. Other commit failures propagate so W2's HTTP route
     can return a retryable failure instead of acknowledging an uncommitted row.
+
+    *conversation_key* (#46 follow-up) is the caller's choice of what must
+    serialize: two rows sharing one key are never both claimable at once (see
+    ``pending_outbox_statement``). This module stays payload-format agnostic
+    -- it does not interpret *payload* itself -- so the caller (the webhook
+    route) resolves the key from the Meta envelope before calling this.
     """
+    if not conversation_key:
+        raise ValueError("conversation_key must not be empty")
+
     inbound = InboundMessage(
         id=uuid.uuid4(),
         meta_message_id=meta_message_id,
@@ -77,6 +88,7 @@ async def accept_inbound_message(
     work = OutboxWork(
         id=uuid.uuid4(),
         inbound_message_id=inbound.id,
+        conversation_key=conversation_key,
     )
     session.add_all([inbound, work])
 
@@ -132,7 +144,31 @@ def pending_outbox_statement(
     The two partial indexes on ``outbox_work`` cover unleased ready work and
     expired leases. ``SKIP LOCKED`` lets future workers select independently;
     it does not itself create a lease or send a provider request.
+
+    #46 follow-up -- per-conversation ordering: a row is excluded whenever an
+    older (by arrival order: ``enqueued_at``, then ``id``) non-terminal
+    sibling still exists for the same ``conversation_key``, regardless of
+    that sibling's own lease or backoff state. This is what makes the whole
+    conversation wait behind its oldest item -- live-leased, still in retry
+    backoff, or simply unclaimed -- without a separate lease-liveness check:
+    once that oldest sibling terminalizes (completed or failed), it drops out
+    of the subquery and the next message of that conversation becomes
+    claimable. Combined with row-level ``FOR UPDATE SKIP LOCKED`` on the
+    single resulting candidate per conversation, two workers cannot both
+    claim one conversation; ``ux_outbox_work_conversation_live_lease``
+    (migration 004) is a DB-level backstop for that same invariant, not the
+    primary mechanism.
     """
+    sibling = aliased(OutboxWork)
+    no_older_sibling = ~exists(
+        select(1).where(
+            sibling.conversation_key == OutboxWork.conversation_key,
+            sibling.completed_at.is_(None),
+            sibling.failed_at.is_(None),
+            tuple_(sibling.enqueued_at, sibling.id)
+            < tuple_(OutboxWork.enqueued_at, OutboxWork.id),
+        )
+    )
     return (
         select(OutboxWork)
         .where(
@@ -143,6 +179,7 @@ def pending_outbox_statement(
                 OutboxWork.lease_expires_at.is_(None),
                 OutboxWork.lease_expires_at < now,
             ),
+            no_older_sibling,
         )
         .order_by(OutboxWork.available_at, OutboxWork.id)
         .limit(limit)

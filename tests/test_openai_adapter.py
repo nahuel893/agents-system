@@ -17,6 +17,7 @@ Isolation strategy:
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any, Sequence
 from unittest.mock import AsyncMock, MagicMock
 
@@ -232,6 +233,57 @@ def test_chat_completion_stream_true_400(monkeypatch: pytest.MonkeyPatch):
     body = response.json()
     # Error message must mention streaming is not supported
     assert "stream" in body["detail"].lower() or "streaming" in body["detail"].lower()
+
+
+def test_chat_completions_uses_the_shared_admission_limiter_around_run_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#46 -- this is a second turn-running entry point besides the webhook
+    worker, and must be gated by the SAME TurnAdmissionLimiter the lifespan
+    installs on app.state, not run unbounded. Proven deterministically with
+    a spy limiter: the turn must run strictly between its enter and exit."""
+    app_instance = create_test_app()
+    events: list[str] = []
+
+    async def run_turn(*, messages: object, session_id: str) -> list[AIMessage]:
+        events.append("run_turn")
+        return [AIMessage(content="ok")]
+
+    runtime = MagicMock()
+    runtime.run_turn = AsyncMock(side_effect=run_turn)
+    app_instance.state.runtimes = {"acme__sales-agent": runtime}
+    app_instance.state.adapter_model_ids = frozenset({"acme__sales-agent"})
+    app_instance.state.engine = MagicMock()
+
+    class _SpyLimiter:
+        @asynccontextmanager
+        async def slot(self) -> Any:
+            events.append("enter")
+            try:
+                yield
+            finally:
+                events.append("exit")
+
+    app_instance.state.turn_admission_limiter = _SpyLimiter()
+
+    import agentsys.integration.openai_adapter as adapter_mod
+
+    fake_settings = MagicMock()
+    fake_settings.adapter_api_key = ""
+    fake_settings.admission_wait_timeout_s = 5.0
+    monkeypatch.setattr(adapter_mod, "get_settings", lambda: fake_settings)
+
+    client = TestClient(app_instance)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "acme__sales-agent",
+            "messages": [{"role": "user", "content": "hola"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert events == ["enter", "run_turn", "exit"]
 
 
 def test_system_message_dropped(monkeypatch: pytest.MonkeyPatch):
