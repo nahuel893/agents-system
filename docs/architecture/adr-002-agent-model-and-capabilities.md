@@ -18,7 +18,7 @@
 | 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ✅ done | PR2 — #109 |
 | 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ✅ done | PR1 — #108 |
 | 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ⏳ pending | PR3 — #110 |
-| 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ⏳ pending | PR4 — #111 |
+| 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ✅ done | PR4 — #111 |
 | 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ⏳ pending | PR5 — #112 |
 | 15 | Reference backends for platform-generic ports | C. Tools & permissions | ✅ done (this change) | — #113 |
 | 16 | Rejected: `operator-agent` as parent of `data-agent`; composition over multi-inheritance | D. Role composition | ✅ decision recorded (no code change) | Issue #53 |
@@ -877,29 +877,41 @@ regex that is supposed to reject one.
 
 #### C.13 — Channel enforcement
 
-**Current state.** No boot-time check exists tying a channel's runtime to
-`untrusted_input` (which does not exist yet, C.11). The WhatsApp webhook
-today resolves its runtime from `app.state.runtimes` and, if unresolved,
-logs and returns 200 with no further check (`webhook.py:221-230`) — there is
-no point in `main.py`'s `lifespan` (`main.py:260-340`, the loop constructing
-each `AgentRuntime`) that validates anything about the role being safe for
-the channel it is about to be attached to.
+**Current state (as of #111).** `AgentRuntime` exposes an `untrusted_input`
+property (`agent/graph.py`, next to the existing `permissions` property)
+that reads straight through to the resolved `AgentDefinition.untrusted_input`
+(C.11). `create_app`'s `lifespan` refuses to boot when the role bound to
+`whatsapp_runtime_id` resolves `untrusted_input=False`: the check runs
+inside the loop that resolves and constructs each runtime (`main.py`,
+immediately after `resolve()`, before `build_runtime` or the
+`AgentRuntime(...)` construction for that `model_id`), scoped to the exact
+`model_id` equal to `settings.whatsapp_runtime_id` — every other runtime in
+the same loop (including anything published only via `adapter_runtimes`) is
+unaffected. The refusal is a `DefinitionError` naming both the role and the
+channel, raised before `app.state.runtimes` is assigned, so a misconfigured
+deployment is a boot failure, not a runtime surprise.
 
-**Decision.** Add an `AgentRuntime.untrusted_input` property (reading the
-resolved `definition`'s policy field once C.11 exists), and make
-`create_app` refuse to boot if the role bound to the WhatsApp runtime lacks
-`untrusted_input=true` — at the point `main.py:326-336` constructs each
-runtime, before `app.state.runtimes` is ever populated, so a misconfiguration
-is a boot failure, not a runtime surprise. This replaces checking anything
-per-message at `webhook.py:223-230` — a boot-time refusal is strictly
-earlier and cannot be bypassed by a request that arrives before the check
-would run.
+**Per-message check — confirmed redundant, not removed (there was none to
+remove).** The issue's original line references
+(`webhook.py:221-230`/`223-230`, `main.py:260-340`) predate #43/#44, which
+moved turn execution out of the request path entirely: `integration/webhook.py`
+now only verifies the HMAC signature and durably persists each inbound
+message (`accept_inbound_message`) before returning 200 — it no longer
+resolves a runtime, references `app.state.runtimes`, or reads
+`untrusted_input` at all. The actual turn runs later, out of band, in
+`services/webhook_worker.py`'s `DeferredWebhookWorker`, against the single
+runtime the lifespan resolved once at boot and injected into it
+(`main.py`'s `webhook_runtime = app.state.runtimes.get(settings.whatsapp_runtime_id)`).
+There is therefore no live per-message `untrusted_input` check anywhere in
+the current codebase for this boot check to replace; the boot-time check
+above is confirmed as the only enforcement point, which is the acceptance
+criterion this section satisfies.
 
 **OpenAI adapter — accepted risk, not enforced.** The adapter is excluded
-from this check for now. It sits behind `adapter_api_key`
-(`config.py:106`; enforced via `HTTPBearer` in
-`openai_adapter.py:80-99`, "every `/v1/*` request must carry `Authorization:
-Bearer <key>`" per the module's own comment at lines 8-9), reachable only by
+from this check. It sits behind `adapter_api_key`
+(`config.py`; enforced via `HTTPBearer` in
+`openai_adapter.py`, "every `/v1/*` request must carry `Authorization:
+Bearer <key>`" per the module's own comment), reachable only by
 internal users with that key. This is recorded here as an **accepted risk**,
 not a gap this ADR closes: pasting an external document into an OpenWebUI
 session in front of one of these roles is untrusted input reaching a role
@@ -907,6 +919,9 @@ that may not be marked `untrusted_input=true`, and the platform's only
 current defense is "you needed the API key to be in that conversation at
 all." If OpenWebUI usage patterns change (e.g., a workflow that pipes
 scraped external content through it), this acceptance should be revisited.
+See also #71 (channel port extraction) — related to how a channel's runtime
+is resolved, but distinct from this boot-time invariant; #111 does not
+depend on #71's port shape.
 
 **Rationale.** Fail at boot, not per message, because a per-message check
 that is skippable or buggy fails open exactly once too often for a
@@ -914,13 +929,20 @@ security-relevant gate; a boot-time refusal fails the whole deployment
 loudly, which is the correct failure direction for "this configuration
 would expose host execution to untrusted input."
 
-**Alternatives considered.** Per-message enforcement at `webhook.py:223-230`
-instead — rejected as strictly weaker: it re-runs the same check on every
-message for a configuration that cannot change between messages (the role
-bound to a runtime is fixed at boot), for no benefit over checking once.
+**Alternatives considered.** Per-message enforcement in the webhook path
+instead — rejected as strictly weaker: it would re-run the same check on
+every message for a configuration that cannot change between messages (the
+role bound to a runtime is fixed at boot), for no benefit over checking
+once, and — after #43/#44 — there is no longer a per-message runtime
+resolution point to attach it to at all.
 
-**Status.** ⏳ pending. **Planned slice:** PR4, after C.10/C.11 exist to
-check against.
+**Status.** ✅ done — #111. **Tests:**
+`tests/test_agent_runtime.py::test_agent_runtime_untrusted_input_property_reflects_false`/`_true`
+(the property), and
+`tests/test_main.py::test_create_app_refuses_to_boot_when_whatsapp_role_is_not_untrusted_input`
+/ `test_create_app_boots_when_whatsapp_role_is_untrusted_input_true` /
+`test_boot_check_does_not_apply_to_adapter_only_runtimes` (the boot check,
+its regression counterpart, and the adapter-scoping regression).
 
 ---
 

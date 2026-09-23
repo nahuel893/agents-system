@@ -49,6 +49,7 @@ class ToolAwareFakeModel(FakeMessagesListChatModel):
 
 def _fake_definition(
     execution_limits: Mapping[str, Any] | None = None,
+    untrusted_input: bool = False,
 ) -> AgentDefinition:
     return AgentDefinition(
         role_name="sales-agent",
@@ -65,12 +66,16 @@ def _fake_definition(
         memory_policy={},
         audit_policy={},
         execution_limits=execution_limits,
+        untrusted_input=untrusted_input,
     )
 
 
-def _make_runtime(tools: tuple[ToolSpec, ...] = ()) -> EquippedRuntime:
+def _make_runtime(
+    tools: tuple[ToolSpec, ...] = (),
+    untrusted_input: bool = False,
+) -> EquippedRuntime:
     return EquippedRuntime(
-        definition=_fake_definition(),
+        definition=_fake_definition(untrusted_input=untrusted_input),
         system_prompt="You are a helpful assistant.",
         tools=tools,
         denied_tools=(),
@@ -467,6 +472,35 @@ def test_agent_runtime_permissions_property() -> None:
     agent = AgentRuntime(runtime, model)
 
     assert agent.permissions == ("read:catalog",)
+
+
+# ---------------------------------------------------------------------------
+# ADR-002 C.13 — AgentRuntime.untrusted_input property
+# ---------------------------------------------------------------------------
+
+
+def test_agent_runtime_untrusted_input_property_reflects_false() -> None:
+    """AgentRuntime.untrusted_input returns the equipped runtime's
+    definition.untrusted_input when the resolved role is trusted."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
+    runtime = _make_runtime(untrusted_input=False)
+    agent = AgentRuntime(runtime, model)
+
+    assert agent.untrusted_input is False
+
+
+def test_agent_runtime_untrusted_input_property_reflects_true() -> None:
+    """Same property, sourced from a role resolved with untrusted_input=True
+    — the value create_app's boot-time channel check (ADR-002 C.13) reads."""
+    from agentsys.agent.graph import AgentRuntime
+
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
+    runtime = _make_runtime(untrusted_input=True)
+    agent = AgentRuntime(runtime, model)
+
+    assert agent.untrusted_input is True
 
 
 # ---------------------------------------------------------------------------

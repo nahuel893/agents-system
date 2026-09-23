@@ -1235,6 +1235,132 @@ async def test_generic_runtime_boots_without_explicit_roots() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ADR-002 C.13 — channel-to-role untrusted_input boot check
+#
+# `resolve()` is left unpatched in these three tests on purpose: the whole
+# point is that the check reads the REAL resolved untrusted_input of a real
+# platform role (`operator-agent` = False, `sales-agent` = True — see
+# tests/test_untrusted_input_invariant.py's _EXPECTED_UNTRUSTED_INPUT table),
+# not a mock that could drift from what `resolve()` actually returns.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_app_refuses_to_boot_when_whatsapp_role_is_not_untrusted_input() -> (
+    None
+):
+    """A WhatsApp-bound role that resolves untrusted_input=False must refuse
+    to boot, naming the role and the channel, before build_runtime runs and
+    before app.state.runtimes is ever populated (boot failure, not a runtime
+    surprise)."""
+    from agentsys.harness.loader import DefinitionError
+
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_runtime_id="_generic__operator-agent",
+        whatsapp_checkpointer_enabled=False,
+    )
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    build_runtime_calls: list[Any] = []
+
+    def spy_build_runtime(*args: Any, **kwargs: Any) -> Any:
+        build_runtime_calls.append(kwargs)
+        raise AssertionError(
+            "build_runtime must not be reached — the boot check runs first"
+        )
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.factory.build_runtime", side_effect=spy_build_runtime),
+    ):
+        app = create_test_app()
+
+        with pytest.raises(DefinitionError, match="operator-agent") as exc_info:
+            async with lifespan(app):
+                pass
+
+        assert "whatsapp" in str(exc_info.value).lower()
+        assert not build_runtime_calls, (
+            "build_runtime ran before the untrusted_input boot check"
+        )
+        assert not hasattr(app.state, "runtimes"), (
+            "app.state.runtimes was populated before the refusal — the "
+            "check must run before the cache is ever assigned"
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_app_boots_when_whatsapp_role_is_untrusted_input_true() -> None:
+    """The counterpart of the refusal test above: sales-agent resolves
+    untrusted_input=True, so binding it to WhatsApp boots normally."""
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_runtime_id="_generic__sales-agent",
+        whatsapp_checkpointer_enabled=False,
+    )
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+    fake_equipped = MagicMock()
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
+        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+    ):
+        app = create_test_app()
+
+        async with lifespan(app):
+            assert "_generic__sales-agent" in app.state.runtimes
+
+
+@pytest.mark.asyncio
+async def test_boot_check_does_not_apply_to_adapter_only_runtimes() -> None:
+    """Regression — the OpenAI adapter is an accepted risk (ADR-002 C.13),
+    not enforced by this check: an untrusted_input=False role published only
+    through adapter_runtimes (no whatsapp_runtime_id) still boots."""
+    test_settings = _make_settings(
+        adapter_runtimes=["_generic__operator-agent"],
+        whatsapp_runtime_id="",
+        whatsapp_checkpointer_enabled=False,
+    )
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+    fake_equipped = MagicMock()
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
+        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+    ):
+        app = create_test_app()
+
+        async with lifespan(app):
+            assert "_generic__operator-agent" in app.state.runtimes
+
+
+# ---------------------------------------------------------------------------
 # W2b2 — the deferred webhook worker's lifespan wiring
 # ---------------------------------------------------------------------------
 

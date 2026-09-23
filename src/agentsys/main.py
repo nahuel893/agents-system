@@ -304,6 +304,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     roots=roots,
                 )
 
+                # ADR-002 C.13 — a channel must only ever be bound to a role
+                # marked safe for the input it delivers. WhatsApp is
+                # attacker-reachable external input; check the resolved
+                # definition BEFORE build_runtime does any work and BEFORE
+                # app.state.runtimes is populated, so a misconfigured
+                # deployment (e.g. an untrusted_input=false role bound to
+                # WhatsApp) is a boot failure, not a per-message surprise
+                # caught (or missed) later. Scoped to the exact WhatsApp
+                # model_id only — the OpenAI adapter is an accepted risk,
+                # not enforced here (see ADR-002 C.13 "OpenAI adapter").
+                if (
+                    settings.whatsapp_runtime_id
+                    and model_id == settings.whatsapp_runtime_id
+                    and not definition.untrusted_input
+                ):
+                    raise DefinitionError(
+                        f"Channel 'whatsapp' is bound to role {role!r} "
+                        f"(runtime {model_id!r}), which resolves "
+                        "untrusted_input=False. WhatsApp delivers "
+                        "untrusted external input, so this role must "
+                        "declare untrusted_input: true (ADR-002 C.11/C.13) "
+                        "to be bound to it. Refusing to boot."
+                    )
+
                 # BLOCKER 3 — fail fast if this runtime's effective turn budget
                 # can outlive the dedup key (Meta retry → double processing +
                 # double send). The coupling is otherwise implicit and could be
