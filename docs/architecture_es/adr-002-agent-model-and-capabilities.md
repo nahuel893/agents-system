@@ -32,6 +32,14 @@
 | 24 | Control del tamaño de contexto (recorte/compactación) | G. Persistencia y memoria | ⏳ pendiente | PR nuevo |
 | 25 | Memoria propia del agente (`remember`/`recall`) | G. Persistencia y memoria | ⏳ pendiente | Depende de 2, 3 |
 | 26 | Razonamiento — decisión explícita sobre persistirlo | G. Persistencia y memoria | ⏳ pendiente | PR nuevo |
+| 27 | Tests de integración que nunca se ejecutan | H. CI | ⏳ pendiente | PR de CI 1 (issue #42) |
+| 28 | El formato no se exige (`ruff format`) | H. CI | ⏳ pendiente | PR de CI 2 |
+| 29 | No se revisan vulnerabilidades en dependencias | H. CI | ⏳ pendiente | PR de CI 3 |
+| 30 | Detección de secretos solo local | H. CI | ⏳ pendiente | PR de CI 3 |
+| 31 | Cada ejecución corre dos veces; sin cancelación | H. CI | ⏳ pendiente | PR de CI 1 |
+| 32 | No se mide la cobertura | H. CI | ⏳ pendiente | PR de CI 4 |
+| 33 | Los scripts de shell no se validan en CI | H. CI | ⏳ pendiente | PR de CI 4 |
+| 34 | CI en verde no condiciona el merge | H. CI | ⏳ pendiente | Configuración, issue #61 |
 
 ## Contexto
 
@@ -56,7 +64,7 @@ preguntas distintas que hoy la familia de permisos `exec:*` confunde en una
 sola.
 
 Este ADR es el primer documento de arquitectura consolidado sobre el modelo
-de agentes desde `agent-platform.md`. Hace cinco cosas: (A) define qué
+de agentes desde `agent-platform.md`. Cubre ocho grupos: (A) define qué
 significa "agente" en esta plataforma con la precisión suficiente para
 construir sobre esa definición, y deja claro qué parte de esa definición
 está implementada y cuál es aspiracional; (B) corrige el bug de composición
@@ -71,7 +79,9 @@ persistencia y memoria, porque "el runtime reenvía todo el contexto en cada
 llamada, como hace Claude Code" es hoy un principio que funciona solo para
 el *prompt de sistema* — el historial de chat, los resultados de
 herramientas y el razonamiento del modelo tienen, cada uno, una respuesta
-distinta y parcial.
+distinta y parcial; (H) enumera lo que la integración continua todavía no
+verifica ni exige (agregado el 2026-09-22, después de que la primera versión
+se mergeara en #100).
 
 Toda afirmación sobre el código actual, más abajo, está citada como
 `ruta:línea` y fue verificada contra `/home/nh/wt-adr-002` (rama
@@ -1638,6 +1648,208 @@ relación con los demás ítems de A/B/C/G, pero no debería seguir siendo un
 valor por defecto sin decidir de forma indefinida una vez que algún flujo
 de auditoría/depuración empiece a depender de que el razonamiento esté
 presente o ausente.
+
+---
+
+### H. Integración continua
+
+**Qué verifica CI hoy.** Un único workflow, `.github/workflows/ci.yml`, con
+cuatro jobs:
+
+| Job | Líneas | Qué demuestra |
+|---|---|---|
+| `ci` | `ci.yml:9-30` | `ruff check .` (lint), `mypy src/` (tipos) y `pytest`: la suite unitaria, que excluye todo test marcado `integration` (`pyproject.toml:73`, `addopts = "-m 'not integration'"`) |
+| `bi-readonly` | `ci.yml:44-92` | Sobre PostgreSQL real, crea el rol `bi_readonly` e intenta escribir con él: la última barrera si fallan tanto la validación de parámetros como el interceptor de Capa 2 |
+| `audit-migration` | `ci.yml:105-144` | Ejecuta de verdad el ciclo de migraciones de Alembic (subida y bajada) e inserta filas en la tabla `audit_event` particionada por rango, algo que ni SQLite ni el ORM pueden expresar |
+| `demo-reports` | `ci.yml:158-199` | Carga la empresa demo (un esquema ajeno: `facturas`, `padron_clientes`) y ejecuta los reportes de ventas portables contra ella sin cambios |
+
+Los tres jobs con PostgreSQL están bien elegidos: cada uno verifica una
+propiedad que ningún test unitario puede ver. Los huecos de abajo tratan de
+lo que *no* se verifica, de lo que se ejecuta dos veces y de lo que no
+condiciona un merge.
+
+#### H.27 — Tests de integración que nunca se ejecutan
+
+**Estado actual.** Ocho archivos de tests llevan el marcador `integration`;
+CI ejecuta tres (`ci.yml:92`, `:144`, `:199`). Nunca se ejecutan en ningún
+lado: `tests/test_db_integration.py` (conectividad con una base real),
+`tests/test_platform_tools_integration.py` (tools de la plataforma de punta
+a punta), el test marcado `integration` de `tests/test_reports.py`,
+`tests/test_embeddings_integration.py` (descarga un modelo) y
+`tests/test_openai_compatible_integration.py` (necesita un endpoint de LLM
+real). Se sigue en la issue #42.
+
+**Decisión.** Todo test marcado `integration` se ejecuta en algún lado. Los
+tres primeros se suman a un job con PostgreSQL. Los dos últimos, que
+necesitan descargar un modelo o un LLM real, pasan a un workflow de
+ejecución manual (`workflow_dispatch`) que comparte infraestructura con el
+pipeline de evaluación en vivo (E.18).
+
+**Justificación.** Un marcador que deselecciona un test no es cobertura. Un
+test que nunca se ejecuta aparenta proteger sin proteger nada: es la misma
+falla que registra el comentario del propio job `bi-readonly`
+(`ci.yml:31-35`).
+
+**Alternativas consideradas.** Borrar los tests que no se ejecutan:
+descartado, porque codifican comportamiento que vale la pena verificar; el
+defecto es el job que falta, no el test. Ejecutar en cada PR los tests que
+dependen de modelos: descartado, porque las descargas y las llamadas pagas o
+atadas a GPU vuelven la ejecución por PR lenta, inestable y costosa.
+
+**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 1, junto con H.31.
+
+#### H.28 — El formato no se exige
+
+**Estado actual.** `ruff format --check` no está en CI. La configuración de
+pre-commit registra el motivo (`.pre-commit-config.yaml:24`, `:188-194`):
+unos 74 de 117 archivos se reformatearían en la primera ejecución, así que
+el hook se postergó hasta un reformateo único. La deriva ya se nota: un
+editor que ejecuta `ruff format` al guardar produce diffs puramente
+cosméticos, y esos diffs chocan con los cambios entrantes al hacer pull (el
+`tests/test_main.py` sin commitear del checkout principal es exactamente
+eso).
+
+**Decisión.** Un PR ejecuta `ruff format .` sobre todo el árbol, agrega el
+hook `ruff-format` a pre-commit y suma `ruff format --check .` al job `ci`,
+como indica la nota de pre-commit. Ese PR no incluye nada más, para que la
+revisión sea puramente mecánica.
+
+**Justificación.** Sin un formato exigido, cada editor y cada agente produce
+espacios distintos, y lo pagan las revisiones y los merges.
+
+**Alternativas consideradas.** Formatear solo los archivos tocados:
+descartado, porque la deriva nunca converge y cada PR ajeno arrastra ruido
+de formato.
+
+**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 2.
+
+#### H.29 — No se revisan vulnerabilidades en las dependencias
+
+**Estado actual.** Nada verifica si una dependencia tiene una
+vulnerabilidad conocida, y nada propone actualizaciones. El árbol de
+dependencias es grande (`[project].dependencies` en `pyproject.toml`:
+FastAPI, LangGraph, cuatro proveedores de LLM, `torch` y
+`sentence-transformers`, entre otras).
+
+**Decisión.** Agregar un paso de `pip-audit` (o el equivalente de `uv`
+cuando sea estable) sobre el conjunto de dependencias bloqueado, que falle
+ante vulnerabilidades conocidas, y habilitar Dependabot para `pip`/`uv` y
+para las versiones de GitHub Actions.
+
+**Justificación.** Una plataforma que ejecuta agentes con acceso a tools
+está justo donde una dependencia comprometida o vulnerable hace más daño.
+
+**Alternativas consideradas.** Revisión manual periódica: descartada,
+porque no ocurre de forma confiable y las bases de avisos cambian a diario.
+
+**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 3, junto con H.30.
+
+#### H.30 — La detección de secretos solo corre en la máquina del desarrollador
+
+**Estado actual.** `detect-private-key` corre como hook de pre-commit
+(`.pre-commit-config.yaml:112`). Pre-commit corre solo donde está
+instalado, se puede saltar con `--no-verify` y nunca mira el historial. El
+repositorio tiene documentado un incidente con servicios expuestos
+(`docs/operations/dev-environment-security.md`).
+
+**Decisión.** Ejecutar `gitleaks` en CI en cada PR, sobre los commits del
+PR, con un escaneo completo del historial una única vez al incorporarlo.
+
+**Justificación.** Un control de secretos que el autor puede saltar es una
+sugerencia; uno en CI es una barrera.
+
+**Alternativas consideradas.** El escaneo de secretos nativo de GitHub:
+aceptable donde esté disponible y complementario, pero no cubre todas las
+formas de token que cubre una regla propia, y su disponibilidad depende del
+plan del repositorio.
+
+**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 3.
+
+#### H.31 — Cada ejecución corre dos veces y las ejecuciones viejas no se cancelan
+
+**Estado actual.** El workflow se dispara con `push` a todas las ramas
+(`ci.yml:4-5`, `branches: ["**"]`) **y** con `pull_request` (`ci.yml:6`).
+Un push a una rama con un PR abierto ejecuta entonces los cuatro jobs dos
+veces (observado en #101: dos ejecuciones por job). No hay un grupo de
+`concurrency`, así que un push nuevo no cancela la ejecución del anterior.
+
+**Decisión.** Disparar con `push` solo a `main`, más `pull_request`; agregar
+un grupo de `concurrency` por ref con `cancel-in-progress: true` para las
+ejecuciones de PR.
+
+**Justificación.** La mitad de los minutos que se gastan hoy no aportan
+nada, y un duplicado lento demora la señal que el autor está esperando.
+
+**Alternativas consideradas.** Mantener `push` en todas las ramas para las
+que no tienen PR: descartado, porque el trabajo acá siempre pasa por un PR;
+una rama sin PR no necesita CI hasta que lo tenga.
+
+**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 1.
+
+#### H.32 — No se mide la cobertura
+
+**Estado actual.** Ningún job mide qué código ejercitan los tests.
+
+**Decisión.** Ejecutar la suite unitaria con `pytest --cov=agentsys` y
+publicar el reporte como artefacto del job. Fijar el mínimo en la línea
+base medida e ir subiéndolo; nunca fijarlo por encima de la línea base el
+primer día.
+
+**Justificación.** La cobertura no demuestra que los tests sean buenos, pero
+una caída señala código nuevo que nada ejercita, que es justamente el tipo
+de hueco que H.27 encontró a mano.
+
+**Alternativas consideradas.** Un umbral fijo alto (por ejemplo 90 %):
+descartado, porque rompe el build el primer día y empuja a escribir tests
+para el número en lugar de para el comportamiento.
+
+**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 4.
+
+#### H.33 — Los scripts de shell no se validan en CI
+
+**Estado actual.** `.claude/hooks/guard-main.sh` (#99) es un control de
+seguridad escrito en bash. Su comportamiento lo cubre
+`tests/test_guard_main_hook.py` (corre en el job `ci`), pero `shellcheck` y
+`bash -n` solo se ejecutaron localmente.
+`scripts/preflight_local_embeddings.sh` no tiene ninguna verificación.
+
+**Decisión.** Agregar un paso de `shellcheck` sobre todo `*.sh` versionado.
+
+**Justificación.** Bash falla en silencio de formas en que Python no lo hace
+(expansiones sin comillas, separación de palabras); un linter detecta esas
+clases de error de forma estática.
+
+**Alternativas consideradas.** Reescribir el hook en Python: posible más
+adelante, pero el hook tiene que arrancar rápido y no depender de nada fuera
+del sistema base.
+
+**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 4.
+
+#### H.34 — Que CI esté en verde no condiciona el merge
+
+**Estado actual.** Nada exige que los jobs de CI pasen antes de mergear un
+PR a `main`, y la configuración del repositorio vive fuera del control de
+versiones (issues #59 y #61). Los checks son solo informativos.
+
+**Decisión.** Protección de rama (o un ruleset del repositorio) sobre `main`
+que exija `ci`, `bi-readonly`, `audit-migration` y `demo-reports`, más los
+jobs que agreguen H.27–H.33 una vez estables; la configuración se mantiene
+como código según #61.
+
+**Justificación.** Una barrera que se puede saltar en silencio no es una
+barrera. El incidente de PRs apilados del 2026-09-22 (#97 se mergeó en una
+rama ya fusionada con squash y nunca llegó a `main`) es la misma clase de
+falla: nada verificó qué había llegado realmente.
+
+**Alternativas consideradas.** Confiar en la disciplina de quien revisa:
+descartado, porque hoy el proyecto tiene un único revisor (#59).
+
+**Estado.** ⏳ pendiente. **Etapa planificada:** después de los PRs de CI
+1–4, como un cambio de configuración que sigue #61.
+
+**Más adelante, fuera de este grupo:** el pipeline de evaluación de agentes
+en vivo (E.18) llega como un workflow separado de ejecución manual, no como
+un job por PR.
 
 ---
 
