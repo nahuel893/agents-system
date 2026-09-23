@@ -32,7 +32,7 @@
 | 24 | Control del tamaño de contexto (recorte/compactación) | G. Persistencia y memoria | ⏳ pendiente | PR nuevo — #122 |
 | 25 | Memoria propia del agente (`remember`/`recall`) | G. Persistencia y memoria | ⏳ pendiente | Depende de 2, 3 — #123 |
 | 26 | Razonamiento — decisión explícita sobre persistirlo | G. Persistencia y memoria | ⏳ pendiente | PR nuevo — #124 |
-| 27 | Tests de integración que nunca se ejecutan | H. CI | ⏳ pendiente | PR de CI 1 (issue #42) |
+| 27 | Tests de integración que nunca se ejecutan | H. CI | ✅ hecho | PR de CI 1 (issue #42) |
 | 28 | El formato no se exige (`ruff format`) | H. CI | ⏳ pendiente | PR de CI 2 — #105 |
 | 29 | No se revisan vulnerabilidades en dependencias | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
 | 30 | Detección de secretos solo local | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
@@ -1670,35 +1670,69 @@ condiciona un merge.
 
 #### H.27 — Tests de integración que nunca se ejecutan
 
-**Estado actual.** Seis archivos de tests recolectan tests con el marcador
-`integration` (verificado con `pytest --collect-only -m integration`); CI
-ejecuta tres (`ci.yml:92`, `:144`, `:199`). Nunca se ejecutan en ningún
-lado: `tests/test_db_integration.py` (conectividad con una base real, 1
-test), `tests/test_embeddings_integration.py` (descarga un modelo, 2 tests)
-y `tests/test_openai_compatible_integration.py` (necesita un endpoint de LLM
-real, 2 tests). `tests/test_platform_tools_integration.py` y
-`tests/test_reports.py` mencionan el marcador solo en docstrings y no están
-marcados; el primero a propósito, para que corra en la suite por defecto. Se
-sigue en la issue #42.
+**Estado actual (antes de este cambio).** Siete archivos de tests
+recolectaban tests con el marcador `integration` (verificado con
+`pytest --collect-only -q -m integration`: 46 tests en 7 archivos); CI
+ejecutaba tres (`test_reports_integration.py`, `test_audit_migration_integration.py`,
+`test_sales_reports_integration.py`). Nunca se ejecutaban en ningún lado:
+`tests/test_db_integration.py` (conectividad con una base real, 1 test),
+`tests/test_embeddings_integration.py` (descarga un modelo, 2 tests),
+`tests/test_openai_compatible_integration.py` (necesita un endpoint
+compatible con OpenAI, 2 tests) y `tests/test_outbox_migration_integration.py`
+(agregado por el trabajo de inbox/outbox durable, #43/#131; ejecuta la
+migración hacia adelante y hacia atrás, 4 tests). `tests/test_platform_tools_integration.py`
+y `tests/test_reports.py` mencionan el marcador solo en docstrings y no
+están marcados; el primero a propósito, para que corra en la suite por
+defecto. Se sigue en la issue #42.
 
-**Decisión.** Todo test marcado `integration` se ejecuta en algún lado.
-`test_db_integration.py` se suma a un job con PostgreSQL. Los otros dos, que
-necesitan descargar un modelo o un LLM real, pasan a un workflow de
-ejecución manual (`workflow_dispatch`) que comparte infraestructura con el
-pipeline de evaluación en vivo (E.18).
+**Decisión.** Todo test marcado `integration` ahora se ejecuta en un job de
+CI dedicado, y ninguno mediante un skip silencioso:
+
+- `db-integration` — `test_db_integration.py` contra un contenedor de
+  servicio `postgres:16`; el test solo necesita conectividad, no un esquema.
+- `embeddings-integration` — `test_embeddings_integration.py` descarga y
+  ejecuta el modelo REAL `BAAI/bge-m3`. A diferencia del endpoint compatible
+  con OpenAI de abajo, es un modelo público y gratuito, sin API key ni
+  límite de tasa, así que no hay motivo para reemplazarlo por un doble.
+- `openai-compatible-integration` — `test_openai_compatible_integration.py`
+  contra un servidor HTTP local de reemplazo (`scripts/fake_openai_compatible_server.py`),
+  no contra el endpoint real de MiniMax. MiniMax es pago y tiene límite de
+  tasa (documentado en el propio docstring del archivo de test); un servidor
+  local que habla la misma forma de chat-completions igual ejercita el
+  round-trip HTTP real a través de `ReasoningSanitizedChatOpenAI` (el
+  razonamiento se elimina, `tool_calls` queda intacto) sin necesitar un
+  secreto de CI ni depender de un servicio externo inestable.
+- `outbox-migration` — `test_outbox_migration_integration.py` contra su
+  propio contenedor de servicio `postgres:16` descartable, el mismo patrón
+  que `audit-migration`: el test ejecuta `alembic upgrade head` y luego
+  `downgrade base` / `downgrade 001` de verdad, así que nunca debe compartir
+  base de datos con nada más.
 
 **Justificación.** Un marcador que deselecciona un test no es cobertura. Un
 test que nunca se ejecuta aparenta proteger sin proteger nada: es la misma
 falla que registra el comentario del propio job `bi-readonly`
-(`ci.yml:31-35`).
+(`ci.yml:31-35`). Cuando un test depende de un servicio remoto pago o con
+límite de tasa, un doble local que ejercita el mismo camino de código es
+mejor que saltearlo directamente: un skip que deja un job en verde sin
+ejecutar nada es indistinguible de una regresión no detectada.
 
 **Alternativas consideradas.** Borrar los tests que no se ejecutan:
 descartado, porque codifican comportamiento que vale la pena verificar; el
-defecto es el job que falta, no el test. Ejecutar en cada PR los tests que
-dependen de modelos: descartado, porque las descargas y las llamadas pagas o
-atadas a GPU vuelven la ejecución por PR lenta, inestable y costosa.
+defecto es el job que falta, no el test. Ejecutar
+`test_openai_compatible_integration.py` contra el endpoint real de MiniMax
+en CI: descartado, porque necesitaría un secreto, cuesta dinero en cada
+corrida, y el límite de tasa de MiniMax (documentado en el archivo de test)
+volvería el job inestable independientemente del código bajo prueba.
+Postergar los tests que dependen de modelos a un workflow de ejecución
+manual (`workflow_dispatch`): descartado a favor de ejecutarlos en cada PR,
+porque `bge-m3` no necesita secreto y el round-trip compatible con OpenAI no
+necesita una llamada de red real una vez que existe un doble local — ninguno
+de los dos tiene ya el costo o la inestabilidad que hubiera justificado
+postergarlos.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 1, junto con H.31.
+**Estado.** ✅ hecho — `db-integration`, `embeddings-integration`,
+`openai-compatible-integration`, `outbox-migration` (`.github/workflows/ci.yml`).
+**Etapa planificada:** PR de CI 1, junto con H.31 (#42).
 
 #### H.28 — El formato no se exige
 

@@ -32,7 +32,7 @@
 | 24 | Context-size control (trimming/compaction) | G. Persistence & memory | ⏳ pending | New PR — #122 |
 | 25 | Agent-own memory (`remember`/`recall`) | G. Persistence & memory | ⏳ pending | Depends on 2, 3 — #123 |
 | 26 | Reasoning persistence — explicit decision | G. Persistence & memory | ⏳ pending | New PR — #124 |
-| 27 | Integration tests that never run | H. CI | ⏳ pending | CI PR 1 (issue #42) |
+| 27 | Integration tests that never run | H. CI | ✅ done | CI PR 1 (issue #42) |
 | 28 | Formatting not enforced (`ruff format`) | H. CI | ⏳ pending | CI PR 2 — #105 |
 | 29 | No dependency vulnerability checks | H. CI | ⏳ pending | CI PR 3 — #115 |
 | 30 | Secret scanning only local | H. CI | ⏳ pending | CI PR 3 — #115 |
@@ -1503,34 +1503,65 @@ twice, and what does not gate a merge.
 
 #### H.27 — Integration tests that never run
 
-**Current state.** Six test files collect tests under the `integration`
-marker (verified with `pytest --collect-only -m integration`); CI runs three
-of them (`ci.yml:92`, `:144`, `:199`). Never executed anywhere:
+**Current state (before this change).** Seven test files collected tests
+under the `integration` marker (verified with
+`pytest --collect-only -q -m integration`: 46 tests across 7 files); CI ran
+three of them (`test_reports_integration.py`, `test_audit_migration_integration.py`,
+`test_sales_reports_integration.py`). Never executed anywhere:
 `tests/test_db_integration.py` (live database connectivity, 1 test),
-`tests/test_embeddings_integration.py` (downloads a model, 2 tests) and
-`tests/test_openai_compatible_integration.py` (needs a real LLM endpoint,
-2 tests). `tests/test_platform_tools_integration.py` and
-`tests/test_reports.py` mention the marker only in docstrings and are not
-marked — the first deliberately, so it runs in the default suite. Tracked as
-issue #42.
+`tests/test_embeddings_integration.py` (downloads a model, 2 tests),
+`tests/test_openai_compatible_integration.py` (needs an OpenAI-compatible
+endpoint, 2 tests), and `tests/test_outbox_migration_integration.py` (added
+by the durable inbox/outbox work, #43/#131; runs the migration up and down,
+4 tests). `tests/test_platform_tools_integration.py` and `tests/test_reports.py`
+mention the marker only in docstrings and are not marked — the first
+deliberately, so it runs in the default suite. Tracked as issue #42.
 
-**Decision.** Every `integration`-marked test runs somewhere.
-`test_db_integration.py` joins a PostgreSQL-backed job. The other two,
-which need a model download or a live LLM, move to a manually triggered workflow
-(`workflow_dispatch`) that shares infrastructure with the live evaluation
-pipeline (E.18).
+**Decision.** Every `integration`-marked test now runs in a dedicated CI
+job, and none of them through a silent skip:
+
+- `db-integration` — `test_db_integration.py` against a `postgres:16`
+  service container; the test only needs connectivity, not a schema.
+- `embeddings-integration` — `test_embeddings_integration.py` downloads and
+  runs the REAL `BAAI/bge-m3` model. Unlike the OpenAI-compatible endpoint
+  below, this is a free public model download with no API key and no rate
+  limit, so there is no reason to stand in for it.
+- `openai-compatible-integration` — `test_openai_compatible_integration.py`
+  against a local stand-in HTTP server (`scripts/fake_openai_compatible_server.py`),
+  not the real MiniMax endpoint. MiniMax is paid and rate-limited (documented
+  in the test file's own docstring); a local server that speaks the same
+  chat-completions shape still exercises the real HTTP round trip through
+  `ReasoningSanitizedChatOpenAI` (reasoning stripped, `tool_calls` intact)
+  without a CI secret or a flaky external dependency.
+- `outbox-migration` — `test_outbox_migration_integration.py` against its
+  own disposable `postgres:16` service container, the same pattern as
+  `audit-migration`: the test runs `alembic upgrade head` and then
+  `downgrade base` / `downgrade 001` for real, so it must never share a
+  database with anything else.
 
 **Rationale.** A marker that deselects a test is not coverage. A test that
 never runs reads as protection while providing none — the same failure the
-`bi-readonly` job's own comment records (`ci.yml:31-35`).
+`bi-readonly` job's own comment records (`ci.yml:31-35`). Where a test
+depends on a paid or rate-limited remote service, a local stand-in that
+exercises the same code path beats skipping outright: a skip that makes a
+job green without running anything is indistinguishable from an undetected
+regression.
 
 **Alternatives considered.** Deleting the unrun tests — rejected: they
 encode behaviour worth checking; the defect is the missing job, not the
-test. Running the model-dependent tests on every PR — rejected: network
-downloads and paid or GPU-bound calls make the per-PR run slow, flaky and
-costly.
+test. Running `test_openai_compatible_integration.py` against the real
+MiniMax endpoint in CI — rejected: it would need a secret, costs money per
+run, and MiniMax's rolling rate limit (documented in the test file) would
+make the job flaky independent of the code under test. Deferring the
+model-dependent tests to a manually triggered workflow (`workflow_dispatch`)
+— rejected in favor of running them on every PR: `bge-m3` needs no secret,
+and the OpenAI-compatible round trip needs no real network call once a
+local stand-in exists, so neither has the cost or flakiness that would have
+justified deferring them.
 
-**Status.** ⏳ pending. **Planned slice:** CI PR 1, together with H.31.
+**Status.** ✅ done — `db-integration`, `embeddings-integration`,
+`openai-compatible-integration`, `outbox-migration` (`.github/workflows/ci.yml`).
+**Planned slice:** CI PR 1, together with H.31 (#42).
 
 #### H.28 — Formatting is not enforced
 
