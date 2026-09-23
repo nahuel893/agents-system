@@ -168,7 +168,6 @@ Enforced invariants:
 | **LLM** | Pluggable: Anthropic, OpenAI, Groq, Ollama | Model per task, none locked in |
 | **Declarative Format** | YAML frontmatter in Markdown | Human-readable, diffable, composable |
 | **Tool Registry** | Python dataclasses + permission tuples | Simple, testable, auditable |
-| **Vector DB** | pgvector (PostgreSQL extension) | No extra dependency, good enough for catalog-scale |
 | **State / Cache** | Redis 7+ | Sub-millisecond reads, TTL-based eviction |
 | **Primary Database** | PostgreSQL 17 | Relational storage for orders, clients, audit logs |
 | **Logging** | structlog | Structured JSON with correlation IDs |
@@ -208,7 +207,7 @@ Enforced invariants:
 │
 ├── tests/                        # 30+ test files (Strict TDD)
 ├── docs/                         # Architecture, platform, delivery (EN + ES)
-├── docker-compose.yml            # pgvector + Redis
+├── docker-compose.yml            # PostgreSQL + Redis
 └── delegations.md                # Multi-agent work ledger
 ```
 
@@ -236,7 +235,7 @@ uv sync
 cp .env.example .env
 # Set at minimum: ANTHROPIC_API_KEY or OPENAI_API_KEY
 
-# Start infrastructure (PostgreSQL + pgvector + Redis)
+# Start infrastructure (PostgreSQL + Redis)
 docker compose up -d
 
 # Run tests to verify
