@@ -6,39 +6,39 @@
 
 | # | Ítem | Grupo | Estado | Etapa planificada |
 |---|---|---|---|---|
-| 1 | Rol = clase; agente = identidad durable + memoria, activación efímera | A. Modelo de agentes | ⏳ pendiente (solo la definición — ver `docs/platform/agent.md`) | — |
+| 1 | Rol = clase; agente = identidad durable + memoria, activación efímera | A. Modelo de agentes | ⏳ pendiente (solo la definición — ver `docs/platform/agent.md`) | #117 |
 | 2 | Identidad por principal en `granted_permissions` | A. Modelo de agentes | ⏳ pendiente | Atado al issue #53 |
-| 3 | Tres tipos de memoria, aislamiento por `agent_id` impuesto por la plataforma | A. Modelo de agentes | ⏳ pendiente | Depende de 25 |
-| 4 | Memoria de trabajo durable (persistencia del checkpointer) | A. Modelo de agentes | ⚠️ parcial (el checkpointer existe, no es durable) | PR nuevo — Redis AOF+volumen o Postgres |
-| 5 | `memory_policy` mezclada pero sin aplicarse | A. Modelo de agentes | ⏳ pendiente | Depende de 3, 25 |
+| 3 | Tres tipos de memoria, aislamiento por `agent_id` impuesto por la plataforma | A. Modelo de agentes | ⏳ pendiente | Depende de 25 — #119 |
+| 4 | Memoria de trabajo durable (persistencia del checkpointer) | A. Modelo de agentes | ⚠️ parcial (el checkpointer existe, no es durable) | PR nuevo — Redis AOF+volumen o Postgres — #118 |
+| 5 | `memory_policy` mezclada pero sin aplicarse | A. Modelo de agentes | ⏳ pendiente | Depende de 3, 25 — #120 |
 | 6 | Delegación declarada, no ejecutable | A. Modelo de agentes | ⏳ pendiente | Issue #53 |
 | 7 | `agent.md` como definición de referencia | A. Modelo de agentes | ✅ hecho (este cambio) | — |
-| 8 | BUG: el prosa de role.md se filtra como prompt de sistema / notas de diseño se filtran a usuarios | B. Prompts | ⏳ pendiente | PR0 (recomendado antes de B.9 y de cualquier evaluación en vivo) |
-| 9 | Contrato universal del prompt base | B. Prompts | ⏳ pendiente | Mismo PR que 8 |
-| 10 | Niveles de capacidad (T0–T3) en `ToolSpec` | C. Herramientas y permisos | ⏳ pendiente | PR2 |
-| 11 | Bandera `untrusted_input` + invariante vs. `exec:*` | C. Herramientas y permisos | ⏳ pendiente | PR1 |
-| 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ⏳ pendiente | PR3 |
-| 13 | Aplicación por canal (falla al arrancar, no por mensaje) | C. Herramientas y permisos | ⏳ pendiente | PR4 |
-| 14 | Sandbox T3 (bubblewrap) | C. Herramientas y permisos | ⏳ pendiente | PR5 |
-| 15 | Backends de referencia para los puertos genéricos de la plataforma | C. Herramientas y permisos | ⏳ pendiente | Necesario antes de las evaluaciones en vivo (E.18) |
+| 8 | BUG: el prosa de role.md se filtra como prompt de sistema / notas de diseño se filtran a usuarios | B. Prompts | ⏳ pendiente | PR0 (recomendado antes de B.9 y de cualquier evaluación en vivo) — #107 |
+| 9 | Contrato universal del prompt base | B. Prompts | ⏳ pendiente | Mismo PR que 8 — #107 |
+| 10 | Niveles de capacidad (T0–T3) en `ToolSpec` | C. Herramientas y permisos | ⏳ pendiente | PR2 — #109 |
+| 11 | Bandera `untrusted_input` + invariante vs. `exec:*` | C. Herramientas y permisos | ⏳ pendiente | PR1 — #108 |
+| 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ⏳ pendiente | PR3 — #110 |
+| 13 | Aplicación por canal (falla al arrancar, no por mensaje) | C. Herramientas y permisos | ⏳ pendiente | PR4 — #111 |
+| 14 | Sandbox T3 (bubblewrap) | C. Herramientas y permisos | ⏳ pendiente | PR5 — #112 |
+| 15 | Backends de referencia para los puertos genéricos de la plataforma | C. Herramientas y permisos | ⏳ pendiente | Necesario antes de las evaluaciones en vivo (E.18) — #113 |
 | 16 | Rechazado: `operator-agent` como padre de `data-agent`; composición en vez de herencia múltiple | D. Composición de roles | ✅ decisión registrada (sin cambio de código) | Issue #53 |
-| 17 | Suite de pruebas de contrato heredado por rol | D. Composición de roles | ⚠️ parcial (existen plantillas, no una suite formal) | PR nuevo |
-| 18 | Pipeline de evaluación en vivo | E. Verificación | ⏳ pendiente | PR nuevo, después de que aterricen 8/9 |
-| 19 | Desactualizado: `role.md`/`manifesto.md` dicen `agents/`, la ruta real es `platform/roles/` | F. Documentación desactualizada | ⏳ pendiente | Corrección solo de documentación |
-| 20 | Desactualizado: descripción de `sensitive:` en `tool.md`, descripción de RAG con pgvector | F. Documentación desactualizada | ⏳ pendiente | Corrección solo de documentación |
-| 21 | Desactualizado: decisión abierta de `permission-model.md` (resuelta por 10) + pgvector | F. Documentación desactualizada | ⏳ pendiente | Corrección solo de documentación |
-| 22 | Historial de chat durable | G. Persistencia y memoria | ⚠️ parcial (mismo que 4) | Mismo PR que 4 |
-| 23 | Implementación de referencia de `ConversationRecorder` | G. Persistencia y memoria | ⚠️ parcial (puerto + doble de prueba solamente, sin implementación de producción) | PR nuevo |
-| 24 | Control del tamaño de contexto (recorte/compactación) | G. Persistencia y memoria | ⏳ pendiente | PR nuevo |
-| 25 | Memoria propia del agente (`remember`/`recall`) | G. Persistencia y memoria | ⏳ pendiente | Depende de 2, 3 |
-| 26 | Razonamiento — decisión explícita sobre persistirlo | G. Persistencia y memoria | ⏳ pendiente | PR nuevo |
+| 17 | Suite de pruebas de contrato heredado por rol | D. Composición de roles | ⚠️ parcial (existen plantillas, no una suite formal) | PR nuevo — #114 |
+| 18 | Pipeline de evaluación en vivo | E. Verificación | ⏳ pendiente | PR nuevo, después de que aterricen 8/9 — #52 |
+| 19 | Desactualizado: `role.md`/`manifesto.md` dicen `agents/`, la ruta real es `platform/roles/` | F. Documentación desactualizada | ⏳ pendiente | Corrección solo de documentación — #106 |
+| 20 | Desactualizado: descripción de `sensitive:` en `tool.md`, descripción de RAG con pgvector | F. Documentación desactualizada | ⏳ pendiente | Corrección solo de documentación — #106 |
+| 21 | Desactualizado: decisión abierta de `permission-model.md` (resuelta por 10) + pgvector | F. Documentación desactualizada | ⏳ pendiente | Corrección solo de documentación — #106 |
+| 22 | Historial de chat durable | G. Persistencia y memoria | ⚠️ parcial (mismo que 4) | Mismo PR que 4 — #118 |
+| 23 | Implementación de referencia de `ConversationRecorder` | G. Persistencia y memoria | ⚠️ parcial (puerto + doble de prueba solamente, sin implementación de producción) | PR nuevo — #121 |
+| 24 | Control del tamaño de contexto (recorte/compactación) | G. Persistencia y memoria | ⏳ pendiente | PR nuevo — #122 |
+| 25 | Memoria propia del agente (`remember`/`recall`) | G. Persistencia y memoria | ⏳ pendiente | Depende de 2, 3 — #123 |
+| 26 | Razonamiento — decisión explícita sobre persistirlo | G. Persistencia y memoria | ⏳ pendiente | PR nuevo — #124 |
 | 27 | Tests de integración que nunca se ejecutan | H. CI | ⏳ pendiente | PR de CI 1 (issue #42) |
-| 28 | El formato no se exige (`ruff format`) | H. CI | ⏳ pendiente | PR de CI 2 |
-| 29 | No se revisan vulnerabilidades en dependencias | H. CI | ⏳ pendiente | PR de CI 3 |
-| 30 | Detección de secretos solo local | H. CI | ⏳ pendiente | PR de CI 3 |
-| 31 | Cada ejecución corre dos veces; sin cancelación | H. CI | ⏳ pendiente | PR de CI 1 |
-| 32 | No se mide la cobertura | H. CI | ⏳ pendiente | PR de CI 4 |
-| 33 | Los scripts de shell no se validan en CI | H. CI | ⏳ pendiente | PR de CI 4 |
+| 28 | El formato no se exige (`ruff format`) | H. CI | ⏳ pendiente | PR de CI 2 — #105 |
+| 29 | No se revisan vulnerabilidades en dependencias | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
+| 30 | Detección de secretos solo local | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
+| 31 | Cada ejecución corre dos veces; sin cancelación | H. CI | ⏳ pendiente | PR de CI 1 — #104 |
+| 32 | No se mide la cobertura | H. CI | ⏳ pendiente | PR de CI 4 — #116 |
+| 33 | Los scripts de shell no se validan en CI | H. CI | ⏳ pendiente | PR de CI 4 — #116 |
 | 34 | CI en verde no condiciona el merge | H. CI | ⏳ pendiente | Configuración, issue #61 |
 
 ## Contexto

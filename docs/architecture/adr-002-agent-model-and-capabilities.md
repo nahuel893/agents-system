@@ -6,39 +6,39 @@
 
 | # | Item | Group | Status | Planned slice |
 |---|---|---|---|---|
-| 1 | Role = class; agent = durable identity + memory, ephemeral activation | A. Agent model | ⏳ pending (definition only — see `docs/platform/agent.md`) | — |
+| 1 | Role = class; agent = durable identity + memory, ephemeral activation | A. Agent model | ⏳ pending (definition only — see `docs/platform/agent.md`) | #117 |
 | 2 | Per-principal identity into `granted_permissions` | A. Agent model | ⏳ pending | Tied to issue #53 |
-| 3 | Three memory types, platform-enforced isolation by `agent_id` | A. Agent model | ⏳ pending | Depends on 25 |
-| 4 | Durable working memory (checkpointer persistence) | A. Agent model | ⚠️ partial (checkpointer exists, not durable) | New PR — Redis AOF+volume or Postgres |
-| 5 | `memory_policy` folded but unenforced | A. Agent model | ⏳ pending | Depends on 3, 25 |
+| 3 | Three memory types, platform-enforced isolation by `agent_id` | A. Agent model | ⏳ pending | Depends on 25 — #119 |
+| 4 | Durable working memory (checkpointer persistence) | A. Agent model | ⚠️ partial (checkpointer exists, not durable) | New PR — Redis AOF+volume or Postgres — #118 |
+| 5 | `memory_policy` folded but unenforced | A. Agent model | ⏳ pending | Depends on 3, 25 — #120 |
 | 6 | Delegation declared, not executable | A. Agent model | ⏳ pending | Issue #53 |
 | 7 | `agent.md` as reference definition | A. Agent model | ✅ done (this change) | — |
-| 8 | BUG: role.md prose leaks as system prompt / design notes leak to users | B. Prompts | ⏳ pending | PR0 (recommended before B.9 and any live eval) |
-| 9 | Universal base prompt contract | B. Prompts | ⏳ pending | Same PR as 8 |
-| 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ⏳ pending | PR2 |
-| 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ⏳ pending | PR1 |
-| 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ⏳ pending | PR3 |
-| 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ⏳ pending | PR4 |
-| 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ⏳ pending | PR5 |
-| 15 | Reference backends for platform-generic ports | C. Tools & permissions | ⏳ pending | Needed before live evals (E.18) |
+| 8 | BUG: role.md prose leaks as system prompt / design notes leak to users | B. Prompts | ⏳ pending | PR0 (recommended before B.9 and any live eval) — #107 |
+| 9 | Universal base prompt contract | B. Prompts | ⏳ pending | Same PR as 8 — #107 |
+| 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ⏳ pending | PR2 — #109 |
+| 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ⏳ pending | PR1 — #108 |
+| 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ⏳ pending | PR3 — #110 |
+| 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ⏳ pending | PR4 — #111 |
+| 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ⏳ pending | PR5 — #112 |
+| 15 | Reference backends for platform-generic ports | C. Tools & permissions | ⏳ pending | Needed before live evals (E.18) — #113 |
 | 16 | Rejected: `operator-agent` as parent of `data-agent`; composition over multi-inheritance | D. Role composition | ✅ decision recorded (no code change) | Issue #53 |
-| 17 | Inherited role contract test suite | D. Role composition | ⚠️ partial (templates exist, not a formal suite) | New PR |
-| 18 | Live evaluation pipeline | E. Verification | ⏳ pending | New PR, after 8/9 land |
-| 19 | Stale: `role.md`/`manifesto.md` say `agents/`, real path is `platform/roles/` | F. Stale docs | ⏳ pending | Doc-only fix |
-| 20 | Stale: `tool.md` `sensitive:` description, pgvector RAG description | F. Stale docs | ⏳ pending | Doc-only fix |
-| 21 | Stale: `permission-model.md` open decision (resolved by 10) + pgvector | F. Stale docs | ⏳ pending | Doc-only fix |
-| 22 | Durable chat history | G. Persistence & memory | ⚠️ partial (same as 4) | Same PR as 4 |
-| 23 | `ConversationRecorder` reference implementation | G. Persistence & memory | ⚠️ partial (port + test fake only, no production impl) | New PR |
-| 24 | Context-size control (trimming/compaction) | G. Persistence & memory | ⏳ pending | New PR |
-| 25 | Agent-own memory (`remember`/`recall`) | G. Persistence & memory | ⏳ pending | Depends on 2, 3 |
-| 26 | Reasoning persistence — explicit decision | G. Persistence & memory | ⏳ pending | New PR |
+| 17 | Inherited role contract test suite | D. Role composition | ⚠️ partial (templates exist, not a formal suite) | New PR — #114 |
+| 18 | Live evaluation pipeline | E. Verification | ⏳ pending | New PR, after 8/9 land — #52 |
+| 19 | Stale: `role.md`/`manifesto.md` say `agents/`, real path is `platform/roles/` | F. Stale docs | ⏳ pending | Doc-only fix — #106 |
+| 20 | Stale: `tool.md` `sensitive:` description, pgvector RAG description | F. Stale docs | ⏳ pending | Doc-only fix — #106 |
+| 21 | Stale: `permission-model.md` open decision (resolved by 10) + pgvector | F. Stale docs | ⏳ pending | Doc-only fix — #106 |
+| 22 | Durable chat history | G. Persistence & memory | ⚠️ partial (same as 4) | Same PR as 4 — #118 |
+| 23 | `ConversationRecorder` reference implementation | G. Persistence & memory | ⚠️ partial (port + test fake only, no production impl) | New PR — #121 |
+| 24 | Context-size control (trimming/compaction) | G. Persistence & memory | ⏳ pending | New PR — #122 |
+| 25 | Agent-own memory (`remember`/`recall`) | G. Persistence & memory | ⏳ pending | Depends on 2, 3 — #123 |
+| 26 | Reasoning persistence — explicit decision | G. Persistence & memory | ⏳ pending | New PR — #124 |
 | 27 | Integration tests that never run | H. CI | ⏳ pending | CI PR 1 (issue #42) |
-| 28 | Formatting not enforced (`ruff format`) | H. CI | ⏳ pending | CI PR 2 |
-| 29 | No dependency vulnerability checks | H. CI | ⏳ pending | CI PR 3 |
-| 30 | Secret scanning only local | H. CI | ⏳ pending | CI PR 3 |
-| 31 | Every run executes twice; no cancellation | H. CI | ⏳ pending | CI PR 1 |
-| 32 | No coverage measurement | H. CI | ⏳ pending | CI PR 4 |
-| 33 | Shell scripts not linted in CI | H. CI | ⏳ pending | CI PR 4 |
+| 28 | Formatting not enforced (`ruff format`) | H. CI | ⏳ pending | CI PR 2 — #105 |
+| 29 | No dependency vulnerability checks | H. CI | ⏳ pending | CI PR 3 — #115 |
+| 30 | Secret scanning only local | H. CI | ⏳ pending | CI PR 3 — #115 |
+| 31 | Every run executes twice; no cancellation | H. CI | ⏳ pending | CI PR 1 — #104 |
+| 32 | No coverage measurement | H. CI | ⏳ pending | CI PR 4 — #116 |
+| 33 | Shell scripts not linted in CI | H. CI | ⏳ pending | CI PR 4 — #116 |
 | 34 | Green CI does not gate a merge | H. CI | ⏳ pending | Settings, issue #61 |
 
 ## Context
