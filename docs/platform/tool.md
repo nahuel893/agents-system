@@ -25,7 +25,7 @@ A tool *does something*. A skill *shapes how the agent thinks before doing somet
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | `string` | required | Unique identifier. Used by manifests and the injection pipeline to reference this tool. Snake-case (e.g., `rag_catalog_search`). |
+| `name` | `string` | required | Unique identifier. Used by manifests and the injection pipeline to reference this tool. Snake-case (e.g., `catalog_search`). |
 | `description` | `string` | required | What the tool does. Used by the agent runtime to select and invoke the tool correctly. Should be precise and unambiguous. |
 | `connector` | `string` | required | The external system or service this tool connects to. Examples: `meta_whatsapp_api`, `postgres`, `redis`, `slack`. |
 | `required_permissions` | `list[string]` | required | RBAC permission identifiers that must be present in the requesting agent's permission set before this tool can be injected. An agent lacking any required permission will not receive this tool. |
@@ -76,17 +76,16 @@ Sends a text message to a WhatsApp contact via the Meta Cloud API. Fails closed 
 
 ---
 
-### `rag_catalog_search`
+### `catalog_search`
 
 | Field | Value |
 |---|---|
-| Connector | `postgres` (pgvector HNSW index on `catalog_embeddings`) |
+| Connector | Deployment-supplied `CatalogSource` |
 | Required permissions | `read:catalog` |
-| Inputs | `query` (string, natural-language product request), `top_k` (integer, default 5), `min_score` (float, minimum cosine similarity threshold) |
-| Outputs | `results` (list of `{ sku, description, score }`) |
-| Error handling | `on_connector_unavailable: fail_open`, `on_permission_denied: fail_closed`, `retries: 0` |
+| Inputs | `q` (string, natural-language catalog request) |
+| Outputs | `results` (list of `{ sku, description, similarity }`, where `similarity` is a float or null for keyword fallback), `classification` (`direct`, `ambiguous`, or `no_match`) |
 
-Embeds the query using the platform's configured embedding provider and searches the `catalog_embeddings` table via cosine similarity. Returns ranked candidate products. Fails open on connector unavailability — the agent can still attempt a response with reduced confidence rather than blocking entirely.
+Searches the catalog through a deployment-supplied `CatalogSource`. The deployment owns its catalog schema and retrieval implementation; the public tool surface returns `results` and `classification`.
 
 ---
 

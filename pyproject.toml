@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentsys"
 version = "0.1.0"
-description = "WhatsApp Sales Agent powered by LangGraph"
+description = "Reusable platform for configurable AI agent runtimes"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1.0",

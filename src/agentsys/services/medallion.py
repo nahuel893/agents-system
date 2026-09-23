@@ -1,8 +1,7 @@
-"""Read-only async engine for the medallion data warehouse.
+"""Read-only async engine for a deployment's medallion data warehouse.
 
-The medallion warehouse is the source of truth for `gold.dim_articulo` and
-`gold.dim_cliente`. The bot only READS from it via dedicated sync pipelines
-(``sync_articles``, ``sync_clients``).
+The deployment owns the warehouse schema and accesses it through dedicated
+read-only sync pipelines.
 """
 
 from __future__ import annotations
@@ -26,12 +25,12 @@ def get_medallion_engine(url: str) -> AsyncEngine:
 
 
 class MedallionSettings(Settings):
-    """ACME's settings, extending the platform surface with its warehouse.
+    """Deployment settings that extend the platform surface with a warehouse.
 
-    The worked example of the extension point: `agentsys` owns no second
-    database, so these fields and the validator that composes their URL live
-    with the deployment that has one. pydantic-settings reads a subclass's
-    fields from the same environment, and the platform validators still run.
+    `agentsys` owns no second database, so these fields and the validator that
+    composes their URL live with the deployment that has one. pydantic-settings
+    reads a subclass's fields from the same environment, and the platform
+    validators still run.
 
     Every override falls back to the main DB connection — same server,
     different database — so only the parts that differ need setting.
@@ -65,8 +64,8 @@ class MedallionSettings(Settings):
 def get_medallion_settings() -> MedallionSettings:
     """Cached singleton of this deployment's settings.
 
-    The client-side counterpart of `config.get_settings`. Scripts that read
-    warehouse connection values must use this: `get_settings()` returns the
+    The deployment-specific counterpart of `config.get_settings`. Scripts that
+    read warehouse connection values must use this: `get_settings()` returns the
     platform surface, which deliberately has no `medallion_*` fields.
     """
     return MedallionSettings()

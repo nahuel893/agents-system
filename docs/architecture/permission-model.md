@@ -86,7 +86,7 @@ The following table defines which roles may inject which connectors, based on kn
 | Connector | Tool(s) | Roles permitted to inject | Required permissions |
 |---|---|---|---|
 | **WhatsApp Business API** (Meta Cloud API) | `whatsapp_sender` | `preventa_agent` | `send:whatsapp` |
-| **PostgreSQL / pgvector** | `rag_catalog_search` | `preventa_agent`, `data_agent` | `read:catalog` |
+| **Deployment-supplied catalog source** | `catalog_search` | Roles whose manifests declare the tool | `read:catalog` |
 | **PostgreSQL** | `postgres_order_writer` | `preventa_agent` | `write:orders`, `write:order_items` |
 | **PostgreSQL** | `client_lookup` | `preventa_agent`, `orchestrator_agent` | `read:client_registry` |
 | **Redis** | `redis_session_state` | `preventa_agent`, `orchestrator_agent`, `employee_agent` | `read:session_state`, `write:session_state` |
