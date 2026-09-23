@@ -106,6 +106,28 @@ class Settings(BaseSettings):
     webhook_worker_poll_interval_s: float = Field(default=1.0, gt=0)
     webhook_worker_claim_limit: int = Field(default=10, gt=0)
 
+    # #46 (ADR-001 D-033) -- bounds how many turns may run concurrently
+    # across the whole process: the webhook worker's poll loop AND
+    # POST /v1/chat/completions share one TurnAdmissionLimiter built from
+    # this value (see services/admission.py, main.py::lifespan). Without a
+    # bound, an arriving burst opens one turn per conversation and can
+    # exhaust the database pool regardless of process count. Default matches
+    # ADR-001's Stage A launch target (10 concurrent conversations, single
+    # process) and stays under the pool's default per-engine ceiling
+    # (pool_size=5 + max_overflow=10); #45 owns tuning the pool itself.
+    max_concurrent_turns: int = Field(default=10, ge=1)
+
+    # #46 review follow-up (SHOULD-FIX 2) -- only POST /v1/chat/completions
+    # ever blocks waiting for an admission slot (the webhook worker reserves
+    # its slots before claiming, so a claimed row never waits -- see
+    # DeferredWebhookWorker.process_available). An in-request HTTP caller
+    # still needs a bound: without one, a burst at the concurrency limit
+    # would hang requests indefinitely instead of failing fast. On expiry
+    # the adapter answers 503 with Retry-After. Conservative default: long
+    # enough to absorb a brief burst, short enough that a client is not left
+    # hanging for a full turn's worth of latency.
+    admission_wait_timeout_s: float = Field(default=10.0, gt=0)
+
     # Slack (optional, for alerts)
     slack_webhook_url: str = ""
 

@@ -64,6 +64,58 @@ def test_settings_reject_non_positive_rag_limits(field_name: str, value: int) ->
     assert field_name in str(excinfo.value)
 
 
+# ---------------------------------------------------------------------------
+# #46 (ADR-001 D-033) — admission control setting
+# ---------------------------------------------------------------------------
+
+
+def test_max_concurrent_turns_has_a_conservative_positive_default():
+    settings = Settings(_env_file=None)
+    assert settings.max_concurrent_turns >= 1
+
+
+def test_max_concurrent_turns_overridable_via_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAX_CONCURRENT_TURNS", "3")
+    settings = Settings(_env_file=None)
+    assert settings.max_concurrent_turns == 3
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_settings_reject_non_positive_max_concurrent_turns(value: int) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None, max_concurrent_turns=value)
+
+    assert "max_concurrent_turns" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# #46 review follow-up (SHOULD-FIX 2) — admission wait timeout setting
+# ---------------------------------------------------------------------------
+
+
+def test_admission_wait_timeout_s_has_a_conservative_positive_default():
+    settings = Settings(_env_file=None)
+    assert settings.admission_wait_timeout_s > 0
+
+
+def test_admission_wait_timeout_s_overridable_via_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ADMISSION_WAIT_TIMEOUT_S", "2.5")
+    settings = Settings(_env_file=None)
+    assert settings.admission_wait_timeout_s == 2.5
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_settings_reject_non_positive_admission_wait_timeout_s(value: float) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None, admission_wait_timeout_s=value)
+
+    assert "admission_wait_timeout_s" in str(excinfo.value)
+
+
 def test_get_settings_returns_singleton():
     get_settings.cache_clear()
     s1 = get_settings()

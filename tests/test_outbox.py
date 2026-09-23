@@ -88,6 +88,30 @@ class TestInboxOutboxSchema:
         assert table.c.outbound_body.nullable is True
         assert table.c.outbound_send_key.nullable is True
 
+    def test_conversation_key_is_required(self) -> None:
+        """#46 follow-up (migration 004): required, not backfill-only."""
+        column = OutboxWork.__table__.c.conversation_key
+
+        assert column.nullable is False
+
+    def test_pending_statement_excludes_a_row_with_an_older_non_terminal_sibling(
+        self,
+    ) -> None:
+        """#46 follow-up: the per-conversation ordering predicate is a
+        correlated NOT EXISTS over conversation_key, gated on the same
+        non-terminal condition as the outer row (see
+        pending_outbox_statement's docstring for why that -- not lease
+        state -- is what makes backoff and live leases both block
+        siblings)."""
+        now = datetime.now(UTC)
+        statement = pending_outbox_statement(now=now, limit=10)
+        sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+
+        assert "NOT (EXISTS" in sql or "NOT EXISTS" in sql
+        assert sql.count("conversation_key") >= 2  # outer row + subquery join
+        assert sql.count("completed_at IS NULL") >= 2
+        assert sql.count("failed_at IS NULL") >= 2
+
 
 class TestAcceptInboundMessage:
     async def test_new_message_commits_inbound_and_outbox_together(self) -> None:
@@ -97,6 +121,7 @@ class TestAcceptInboundMessage:
             cast(AsyncSession, session),
             meta_message_id="wamid.new-message",
             payload={"text": "hello"},
+            conversation_key="5491100000000",
         )
 
         assert result.duplicate is False
@@ -123,6 +148,7 @@ class TestAcceptInboundMessage:
             cast(AsyncSession, session),
             meta_message_id="wamid.duplicate",
             payload={"text": "retry"},
+            conversation_key="5491100000000",
         )
 
         assert result.duplicate is True
@@ -150,6 +176,7 @@ class TestAcceptInboundMessage:
                 cast(AsyncSession, session),
                 meta_message_id="wamid.unrelated-error",
                 payload={"text": "retry"},
+                conversation_key="5491100000000",
             )
 
         assert raised.value is unrelated_error
@@ -166,6 +193,20 @@ class TestAcceptInboundMessage:
                 cast(AsyncSession, session),
                 meta_message_id="wamid.commit-failure",
                 payload={"text": "hello"},
+                conversation_key="5491100000000",
             )
 
         assert session.rollback_count == 1
+
+    async def test_empty_conversation_key_is_rejected(self) -> None:
+        session = _Session()
+
+        with pytest.raises(ValueError, match="conversation_key"):
+            await accept_inbound_message(
+                cast(AsyncSession, session),
+                meta_message_id="wamid.no-key",
+                payload={"text": "hello"},
+                conversation_key="",
+            )
+
+        assert session.commit_count == 0

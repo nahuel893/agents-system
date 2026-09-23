@@ -27,6 +27,7 @@ from agentsys.services.participants import (
     ConversationRecorder,
     ParticipantDirectory,
 )
+from agentsys.services.admission import TurnAdmissionLimiter
 from agentsys.services.dedup import DEDUP_TTL_SECONDS
 from agentsys.services.redis import close_redis_pool, get_redis_client
 
@@ -121,6 +122,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Startup — create async engine and store on app state
         app.state.engine = get_engine(settings.database_url)
         resource_stack.push_async_callback(app.state.engine.dispose)
+
+        # #46 (ADR-001 D-033) — one process-wide bound on concurrent turns,
+        # shared by every entry point that runs one: the webhook worker
+        # below AND POST /v1/chat/completions (integration/openai_adapter.py
+        # reads it off app.state). No teardown needed — it holds no resource.
+        app.state.turn_admission_limiter = TurnAdmissionLimiter(
+            settings.max_concurrent_turns
+        )
 
         # D-007 — AuditSink: async fire-and-forget event sink.
         from agentsys.audit.sink import AuditSink
@@ -396,6 +405,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 checkpointer_enabled=settings.whatsapp_checkpointer_enabled,
                 poll_interval_s=settings.webhook_worker_poll_interval_s,
                 claim_limit=settings.webhook_worker_claim_limit,
+                admission_limiter=app.state.turn_admission_limiter,
             )
             await webhook_worker.start()
             resource_stack.push_async_callback(webhook_worker.stop)
