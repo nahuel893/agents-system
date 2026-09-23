@@ -25,6 +25,8 @@ Si la herramienta excluida estaba marcada como **obligatoria** (el rol no puede 
 
 Esta es la barrera de contención primaria de la plataforma. La mayoría de los descartes y controles ocurren aquí.
 
+**Segunda barrera (ADR-002 C.10, issue #109):** independientemente del control de permisos anterior, un rol cuyo `policy.md` declara `untrusted_input: true` nunca recibe una herramienta con tier `T3` (ejecución en el host), aunque `required_permissions` se cumpliría de otro modo. Esto cierra el caso que un control por nombre de permiso no puede cubrir: una herramienta T3 registrada bajo un permiso sin prefijo `exec:`.
+
 ### 2. En tiempo de ejecución (Revalidación en caliente)
 Para acciones clasificadas como **sensibles** —tales como escrituras en bases de datos, envíos de mensajes salientes a clientes o modificaciones de estado en ERPs externos— los permisos se vuelven a validar inmediatamente antes de que el conector de la herramienta se ejecute. Esto nos protege contra:
 - Cambios de permisos realizados en el backend administrativo mientras el agente corre en una sesión de chat larga.
@@ -33,7 +35,7 @@ Para acciones clasificadas como **sensibles** —tales como escrituras en bases 
 
 La revalidación consulta la misma fuente RBAC autoritativa que el inyector. Si la revalidación falla, el conector se bloquea, la llamada se aborta de inmediato y el harness dispara una alerta y regla de escalamiento.
 
-> **Decisión abierta #3:** El umbral exacto para clasificar qué constituye una "acción sensible" que amerita una revalidación en caliente no se ha finalizado. Las opciones bajo evaluación incluyen: toda operación de escritura sin excepción, cualquier mensaje saliente al cliente, transacciones que superen un determinado umbral monetario o cualquier acción irreversible. La definición final afecta directamente la latencia de respuesta del agente (la revalidación exige un viaje de ida y vuelta a la base de datos) y la complejidad operativa del conector. Un esquema de niveles (escrituras = revalidación obligatoria, lecturas = únicamente al inyectar) es la resolución más probable, pero sigue en debate. Su resolución formal está a cargo del ítem C.10 de ADR-002 de esta plataforma (niveles de capacidad — issue #109), junto con C.9 (aplicación en cuatro capas); este recuadro permanece abierto hasta que C.10 se entregue.
+> **Resuelto:** el umbral que clasifica qué constituye una "acción sensible" que amerita revalidación es el **tier** de capacidad de cada herramienta (ADR-002 C.10, issue #109): T2 (escritura/envío acotado) y T3 (ejecución en el host) siempre se revalidan en tiempo de llamada; T0 (inherente) y T1 (lectura acotada) no, salvo que una herramienta puntual opte por `always_revalidate: true`. El tier es un campo explícito y revisable en cada `ToolSpec` — no se infiere de cómo está nombrado `required_permissions` —, de modo que una herramienta cuyo permiso peligroso no lleva prefijo `write:`/`send:`/`exec:` igual queda atrapada. Ver las cuatro capas deterministas de aplicación de ADR-002 (introducción de la sección C) y C.10 para la tabla completa de tiers y su fundamento.
 
 ---
 

@@ -18,7 +18,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from agentsys.harness.factory import EquippedRuntime
 from agentsys.harness.loader import AgentDefinition
-from agentsys.harness.registry import ToolSpec
+from agentsys.harness.registry import Tier, ToolSpec
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +86,7 @@ def _catalog_spec() -> ToolSpec:
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=catalog_search,
+        tier=Tier.T1,
         description="Search catalog",
         input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
     )
@@ -214,6 +215,7 @@ async def test_sync_connector_does_not_block_event_loop() -> None:
         name="slow_tool",
         required_permissions=(),
         connector=slow_sync_connector,
+        tier=Tier.T0,
     )
     runtime = _make_runtime(tools=(slow_spec,))
     agent = AgentRuntime(runtime, model)
@@ -319,6 +321,7 @@ async def test_session_passed_to_async_connector() -> None:
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=async_catalog,
+        tier=Tier.T1,
         description="Async catalog search",
         input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
     )
@@ -381,6 +384,7 @@ async def test_no_session_provider_backward_compatible() -> None:
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=async_catalog,
+        tier=Tier.T1,
         description="Async catalog search",
         input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
     )
@@ -579,6 +583,7 @@ async def test_tool_call_timeout_appends_error_tool_message_and_continues() -> N
         name="slow_tool",
         required_permissions=(),
         connector=slow_connector,
+        tier=Tier.T0,
     )
 
     tool_call_id = "call_timeout_001"

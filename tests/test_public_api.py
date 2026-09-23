@@ -25,6 +25,7 @@ REPO_ROOT = pathlib.Path(__file__).parent.parent
 _EXPECTED_EXPORTS: dict[str, str] = {
     "ToolRegistry": "agentsys.harness.registry",
     "ToolSpec": "agentsys.harness.registry",
+    "Tier": "agentsys.harness.registry",
     "ToolNotFoundError": "agentsys.harness.registry",
     "RootConfig": "agentsys.harness.loader",
     "AgentDefinition": "agentsys.harness.loader",
@@ -184,6 +185,7 @@ def test_consumer_builds_own_registry_and_tool_comes_back_granted() -> None:
             name="catalog_search",
             required_permissions=("read:catalog",),
             connector=my_own_catalog_search,
+            tier=agentsys.Tier.T1,
         )
     )
     # The RESOLVED sales-agent declares 6 tools -- its own 5 plus
@@ -199,11 +201,18 @@ def test_consumer_builds_own_registry_and_tool_comes_back_granted() -> None:
         ("client_lookup", ("read:client_registry",)),
         ("escalation_notifier", ("send:escalation",)),
     ):
+        # Mirror the pre-tier write:/send: heuristic (ADR-002 C.10).
+        tier = (
+            agentsys.Tier.T2
+            if any(p.startswith(("write:", "send:")) for p in perms)
+            else agentsys.Tier.T1
+        )
         registry.register(
             agentsys.ToolSpec(
                 name=name,
                 required_permissions=perms,
                 connector=lambda inputs: {},
+                tier=tier,
             )
         )
 

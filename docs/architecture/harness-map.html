@@ -572,7 +572,7 @@
         </div>
       </div>
       <div class="comp-desc">
-        <strong style="color:var(--orange);">Layer 2 — call-time.</strong> Validates every tool invocation before the connector fires. Blocks hallucinated tool names, prompt injection, and incomplete injection bugs. Revalidates permissions for sensitive tools (<code>write:*</code> / <code>send:*</code>) at call time.
+        <strong style="color:var(--orange);">Layer 2 — call-time.</strong> Validates every tool invocation before the connector fires. Blocks hallucinated tool names, prompt injection, and incomplete injection bugs. Revalidates permissions for sensitive tools (tier <code>T2</code> / <code>T3</code>, ADR-002 C.10) at call time.
       </div>
       <div class="comp-api">
         <div class="comp-api-title">Public API</div>
@@ -786,7 +786,7 @@
       <div class="layer-step">
         <div class="step-num">3</div>
         <div class="step-body">
-          Sensitivity check: a tool is <strong>sensitive</strong> if any <code>required_permission</code> starts with <code>write:</code> or <code>send:</code>. Sensitive tools require <code>current_permissions</code> at call time.
+          Sensitivity check: a tool is <strong>sensitive</strong> if <code>spec.tier</code> is <code>T2</code> or <code>T3</code>, or <code>always_revalidate=True</code> (ADR-002 C.10). Sensitive tools require <code>current_permissions</code> at call time.
         </div>
       </div>
       <div class="layer-step">
@@ -1300,7 +1300,7 @@
       <div class="rf-sig" style="border-color:var(--orange);">await intercept(tool_name, input, runtime, permissions)&nbsp;&nbsp;<span style="color:var(--text-dim);"># L2</span></div>
       <div class="rf-steps">
         <div class="rf-step"><span class="rf-arm">├─</span> surface check &nbsp;(is it in runtime.tools?)</div>
-        <div class="rf-step"><span class="rf-arm">├─</span> sensitivity check &nbsp;(write:/send: → revalidate perms)</div>
+        <div class="rf-step"><span class="rf-arm">├─</span> sensitivity check &nbsp;(tier T2/T3 → revalidate perms)</div>
         <div class="rf-step"><span class="rf-arm">└─</span> <strong style="color:var(--orange);">DISPATCH the connector</strong> &nbsp;◄═══ ✓ D-009 (sync/async dispatch — done)</div>
       </div>
     </div>
@@ -1421,7 +1421,7 @@ const stageData = {
     items: [
       { label: 'Module', val: 'src/agentsys/harness/interceptor.py' },
       { label: 'Catches', val: 'Model hallucinations · Prompt injection attempts · Incomplete injection bugs · Revoked permissions' },
-      { label: 'Sensitivity rule', val: 'write:* or send:* perms → sensitive → revalidate current_permissions at call time' },
+      { label: 'Sensitivity rule', val: 'tier T2/T3, or always_revalidate=True → sensitive → revalidate current_permissions at call time (ADR-002 C.10)' },
       { label: 'On block', val: 'log interceptor.call_blocked · raise PolicyViolation(tool_name, reason)' },
       { label: 'On pass', val: 'log call_allowed · execute connector · log call_executed · return CallResult' },
       { label: 'Status', val: '✅ Done (D-005, merged to main)' },

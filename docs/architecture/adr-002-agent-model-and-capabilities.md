@@ -15,7 +15,7 @@
 | 7 | `agent.md` as reference definition | A. Agent model | ✅ done (this change) | — |
 | 8 | BUG: role.md prose leaks as system prompt / design notes leak to users | B. Prompts | ✅ done | PR0 (recommended before B.9 and any live eval) — #107 |
 | 9 | Universal base prompt contract | B. Prompts | ✅ done | Same PR as 8 — #107 |
-| 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ⏳ pending | PR2 — #109 |
+| 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ✅ done | PR2 — #109 |
 | 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ✅ done | PR1 — #108 |
 | 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ⏳ pending | PR3 — #110 |
 | 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ⏳ pending | PR4 — #111 |
@@ -696,7 +696,16 @@ conventions are exactly the kind of implicit rule this platform's
 "declarative first" principle (`manifesto.md` §1) argues against for
 anything security-relevant.
 
-**Status.** ⏳ pending. **Planned slice:** PR2.
+**Status.** ✅ done — `tier: Tier` (T0-T3) added to `ToolSpec` as a required
+field with no default (`harness/registry.py`); every platform-registered tool
+classified (`use_term`/`read_file`: T3; `order_writer`/`escalation_notifier`:
+T2; `run_report`/`knowledge_retrieval`/`conversation_summarizer`: T1);
+Interceptor Layer 2's `_is_sensitive` rewritten to `tier in (T2, T3) or
+always_revalidate`, replacing the `write:`/`send:` prefix heuristic
+entirely; and the second barrier enforced in `resolve_tool_surface`
+(`harness/injector.py`) — an `untrusted_input=true` role is denied any
+T3-tiered tool independent of permission match. A fail-closed audit test
+iterates every public tool builder and asserts each has a valid tier — #109.
 
 ---
 
@@ -1350,9 +1359,11 @@ without claiming a resolution that has not shipped.
 
 **Decision.** Once C.10 ships, replace the "Open decision (3)" callout with
 a reference to this ADR's C.10 (tiers) and C.9's four-layer enforcement
-description. **Status:** ✅ done (#106) — forward pointer added; the callout
-itself stays open until C.10 (#109) actually lands, at which point it should
-be replaced outright rather than just re-pointed.
+description. **Status:** ✅ done — C.10 (#109) shipped, and
+`permission-model.md`'s "Open decision (3)" callout is now replaced outright
+with a resolution naming the tier table and the two enforcement points it
+governs (interceptor revalidation, injector's untrusted_input/T3 barrier),
+in both languages.
 
 ---
 

@@ -21,13 +21,28 @@ import structlog
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-def _spec(name: str, perms: list[str], connector: Any = None) -> Any:
+def _infer_tier(perms: list[str]) -> Any:
+    """Mirror the pre-tier write:/send: heuristic so existing fixtures keep
+    their original sensitivity after `_is_sensitive` becomes tier-based."""
+    from agentsys.harness.registry import Tier
+
+    if any(p.startswith(("write:", "send:")) for p in perms):
+        return Tier.T2
+    return Tier.T1
+
+
+def _spec(name: str, perms: list[str], connector: Any = None, tier: Any = None) -> Any:
     from agentsys.harness.registry import ToolSpec
 
     if connector is None:
         def connector(_input: Any) -> str:
             return f"{name}_result"
-    return ToolSpec(name=name, required_permissions=tuple(perms), connector=connector)
+    return ToolSpec(
+        name=name,
+        required_permissions=tuple(perms),
+        connector=connector,
+        tier=tier if tier is not None else _infer_tier(perms),
+    )
 
 
 def _runtime(tools: list[Any]) -> Any:
@@ -207,7 +222,7 @@ async def test_intercept_logs_call_allowed_and_executed_on_success() -> None:
 async def test_async_connector_dispatched_and_awaited() -> None:
     """Async connector is awaited directly; session kwarg is forwarded."""
     from agentsys.harness.interceptor import CallResult, intercept
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     received_session: list[Any] = []
 
@@ -215,7 +230,12 @@ async def test_async_connector_dispatched_and_awaited() -> None:
         received_session.append(session)
         return {"async": True}
 
-    spec = ToolSpec(name="async_tool", required_permissions=(), connector=fake_async_connector)
+    spec = ToolSpec(
+        name="async_tool",
+        required_permissions=(),
+        connector=fake_async_connector,
+        tier=Tier.T0,
+    )
     runtime = _runtime([spec])
     sentinel = object()
 
@@ -231,7 +251,7 @@ async def test_async_connector_dispatched_and_awaited() -> None:
 async def test_policy_violation_raised_for_async_connector() -> None:
     """Enforcement (surface check) fires before async connector runs."""
     from agentsys.harness.interceptor import PolicyViolation, intercept
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     called: list[bool] = []
 
@@ -243,6 +263,7 @@ async def test_policy_violation_raised_for_async_connector() -> None:
         name="secure_async_tool",
         required_permissions=("send:message",),
         connector=sensitive_async_connector,
+        tier=Tier.T2,
     )
     runtime = _runtime([spec])
 
@@ -262,7 +283,7 @@ async def test_policy_violation_raised_for_async_connector() -> None:
 async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
     """An always_revalidate=True read tool is revalidated like write:/send:."""
     from agentsys.harness.interceptor import PolicyViolation, intercept
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     def connector(_input: Any) -> str:
         return "sensitive_result"
@@ -272,6 +293,7 @@ async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
         required_permissions=("read:orders",),
         connector=connector,
         always_revalidate=True,
+        tier=Tier.T1,
     )
     runtime = _runtime([spec])
 
@@ -290,7 +312,7 @@ async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
 async def test_always_revalidate_read_allowed_when_permission_present() -> None:
     """An always_revalidate=True read tool executes when the permission is present."""
     from agentsys.harness.interceptor import intercept
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     def connector(_input: Any) -> str:
         return "sensitive_result"
@@ -300,6 +322,7 @@ async def test_always_revalidate_read_allowed_when_permission_present() -> None:
         required_permissions=("read:orders",),
         connector=connector,
         always_revalidate=True,
+        tier=Tier.T1,
     )
     runtime = _runtime([spec])
 
@@ -318,7 +341,7 @@ async def test_unflagged_read_proceeds_regardless_of_current_permissions() -> No
     """Regression guard: a read tool with always_revalidate=False (default) is
     unaffected by current_permissions content — existing behavior unchanged."""
     from agentsys.harness.interceptor import intercept
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     def connector(_input: Any) -> str:
         return "catalog_result"
@@ -327,6 +350,7 @@ async def test_unflagged_read_proceeds_regardless_of_current_permissions() -> No
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=connector,
+        tier=Tier.T1,
     )
     runtime = _runtime([spec])
 

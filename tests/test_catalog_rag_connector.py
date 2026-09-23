@@ -277,7 +277,7 @@ async def test_empty_q_short_circuits_without_embedding() -> None:
 
 def _full_sales_registry() -> Any:
     """Registry with all five generic deployment sales-agent tools."""
-    from agentsys.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 
     reg = ToolRegistry()
     dummy = lambda inputs: {}  # noqa: E731
@@ -286,6 +286,7 @@ def _full_sales_registry() -> Any:
             name="catalog_search",
             required_permissions=("read:catalog",),
             connector=dummy,
+            tier=Tier.T1,
         )
     )
     reg.register(
@@ -293,6 +294,7 @@ def _full_sales_registry() -> Any:
             name="client_lookup",
             required_permissions=("read:client_registry",),
             connector=dummy,
+            tier=Tier.T1,
         )
     )
     reg.register(
@@ -300,6 +302,7 @@ def _full_sales_registry() -> Any:
             name="order_writer",
             required_permissions=("write:orders", "write:order_items"),
             connector=dummy,
+            tier=Tier.T2,
         )
     )
     reg.register(
@@ -307,10 +310,16 @@ def _full_sales_registry() -> Any:
             name="message_sender",
             required_permissions=("send:message",),
             connector=dummy,
+            tier=Tier.T2,
         )
     )
     reg.register(
-        ToolSpec(name="session_state", required_permissions=(), connector=dummy)
+        ToolSpec(
+            name="session_state",
+            required_permissions=(),
+            connector=dummy,
+            tier=Tier.T0,
+        )
     )
     return reg
 

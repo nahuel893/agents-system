@@ -8,13 +8,14 @@ def _connector() -> str:
 
 
 def test_register_and_get_round_trip() -> None:
-    from agentsys.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     spec = ToolSpec(
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=_connector,
+        tier=Tier.T1,
     )
 
     registry.register(spec)
@@ -32,13 +33,14 @@ def test_get_unknown_tool_raises_not_found() -> None:
 
 
 def test_register_duplicate_name_raises() -> None:
-    from agentsys.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     spec = ToolSpec(
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=_connector,
+        tier=Tier.T1,
     )
 
     registry.register(spec)
@@ -48,12 +50,13 @@ def test_register_duplicate_name_raises() -> None:
 
 
 def test_toolspec_has_description_and_schema_defaults() -> None:
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="x",
         required_permissions=(),
         connector=lambda i: i,
+        tier=Tier.T0,
     )
 
     assert spec.description == ""
@@ -61,12 +64,13 @@ def test_toolspec_has_description_and_schema_defaults() -> None:
 
 
 def test_to_langchain_tool_schema_shape() -> None:
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=lambda i: i,
+        tier=Tier.T1,
         description="Search catalog",
         input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
     )
@@ -83,24 +87,26 @@ def test_to_langchain_tool_schema_shape() -> None:
 
 
 def test_toolspec_always_revalidate_defaults_false() -> None:
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=_connector,
+        tier=Tier.T1,
     )
 
     assert spec.always_revalidate is False
 
 
 def test_toolspec_accepts_always_revalidate_true() -> None:
-    from agentsys.harness.registry import ToolSpec
+    from agentsys.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="sensitive_read",
         required_permissions=("read:orders",),
         connector=_connector,
+        tier=Tier.T1,
         always_revalidate=True,
     )
 
@@ -108,18 +114,20 @@ def test_toolspec_accepts_always_revalidate_true() -> None:
 
 
 def test_contains_and_names_reflect_registered_tools() -> None:
-    from agentsys.harness.registry import ToolRegistry, ToolSpec
+    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     first = ToolSpec(
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=_connector,
+        tier=Tier.T1,
     )
     second = ToolSpec(
         name="order_writer",
         required_permissions=("write:orders",),
         connector=_connector,
+        tier=Tier.T2,
     )
 
     registry.register(first)

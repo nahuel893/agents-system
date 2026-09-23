@@ -55,7 +55,8 @@ nothing more:
 | Name | Home module | What it is |
 |---|---|---|
 | `ToolRegistry` | `agentsys.harness.registry` | The registry you build and populate with your own tools |
-| `ToolSpec` | `agentsys.harness.registry` | One tool's contract: name, required permissions, connector, input schema |
+| `ToolSpec` | `agentsys.harness.registry` | One tool's contract: name, required permissions, connector, input schema, capability `tier` |
+| `Tier` | `agentsys.harness.registry` | Capability tier enum (`T0`-`T3`, ADR-002 C.10) — required on every `ToolSpec` |
 | `ToolNotFoundError` | `agentsys.harness.registry` | Raised by `ToolRegistry.get()` for an unregistered name |
 | `RootConfig` | `agentsys.harness.loader` | Injectable `platform_root` / `deployments_root` path pair |
 | `AgentDefinition` | `agentsys.harness.loader` | The frozen, resolved role definition `resolve()` returns |
@@ -96,6 +97,7 @@ registry.register(
         name="catalog_search",
         required_permissions=("read:catalog",),
         connector=my_catalog_search,
+        tier=agentsys.Tier.T1,  # required (ADR-002 C.10) — T1: scoped read
         description="Search the product catalog by free-text query.",
         input_schema={
             "type": "object",

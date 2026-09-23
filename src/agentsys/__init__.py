@@ -20,6 +20,7 @@ The injection flow, end to end::
             name="catalog_search",
             required_permissions=("read:catalog",),
             connector=my_catalog_search_connector,
+            tier=agentsys.Tier.T1,  # ADR-002 C.10 — required, no default
         )
     )
 
@@ -58,6 +59,7 @@ from typing import Any
 _EXPORTS: dict[str, tuple[str, str]] = {
     "ToolRegistry": ("agentsys.harness.registry", "ToolRegistry"),
     "ToolSpec": ("agentsys.harness.registry", "ToolSpec"),
+    "Tier": ("agentsys.harness.registry", "Tier"),
     "ToolNotFoundError": ("agentsys.harness.registry", "ToolNotFoundError"),
     "RootConfig": ("agentsys.harness.loader", "RootConfig"),
     "AgentDefinition": ("agentsys.harness.loader", "AgentDefinition"),
