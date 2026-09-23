@@ -25,7 +25,7 @@ Una herramienta *hace algo*. Una habilidad *define cómo piensa el agente antes 
 
 | Campo | Tipo | Obligatorio | Descripción |
 |---|---|---|---|
-| `name` | `string` | obligatorio | Identificador único de la herramienta. Utilizado por los manifiestos y el pipeline de inyección para referenciarla. En snake_case (ej. `rag_catalog_search`). |
+| `name` | `string` | obligatorio | Identificador único de la herramienta. Utilizado por los manifiestos y el pipeline de inyección para referenciarla. En snake_case (ej. `catalog_search`). |
 | `description` | `string` | obligatorio | Describe detalladamente qué hace la herramienta. El runtime del agente lee esta descripción para seleccionar e invocar la herramienta de forma correcta. Debe ser precisa y libre de ambigüedades. |
 | `connector` | `string` | obligatorio | El sistema externo o servicio con el que se conecta esta herramienta. Ejemplos: `meta_whatsapp_api`, `postgres`, `redis`, `slack`. |
 | `required_permissions` | `list[string]` | obligatorio | Identificadores de permisos RBAC que deben estar presentes en el conjunto de permisos del agente solicitante antes de que la herramienta pueda inyectarse. Si el agente carece de alguno de estos permisos, no recibirá la herramienta. |
@@ -76,17 +76,16 @@ Envía un mensaje de texto a un contacto de WhatsApp a través de la API de Meta
 
 ---
 
-### `rag_catalog_search` (Búsqueda de Catálogo RAG)
+### `catalog_search` (Búsqueda de Catálogo)
 
 | Campo | Valor |
 |---|---|
-| Conector | `postgres` (índice HNSW en pgvector sobre `catalog_embeddings`). |
+| Conector | `CatalogSource` provisto por el despliegue |
 | Permisos requeridos | `read:catalog` |
-| Entradas | `query` (string, solicitud de producto en lenguaje natural), `top_k` (entero, valor por defecto 5), `min_score` (float, umbral mínimo de similitud de coseno). |
-| Salidas | `results` (lista de objetos `{ sku, description, score }`). |
-| Manejo de errores | `on_connector_unavailable: fail_open`, `on_permission_denied: fail_closed`, `retries: 0`. |
+| Entradas | `q` (string, solicitud de catálogo en lenguaje natural) |
+| Salidas | `results` (lista de `{ sku, description, similarity }`, donde `similarity` es un float o null para la recuperación por palabras clave), `classification` (`direct`, `ambiguous` o `no_match`) |
 
-Genera el embedding de la consulta utilizando el proveedor configurado en la plataforma y busca coincidencias en la tabla `catalog_embeddings` mediante similitud de coseno. Devuelve los productos candidatos ordenados por relevancia. En caso de que el conector no esté disponible, falla de forma abierta (*fail open*): el agente puede intentar continuar respondiendo utilizando su razonamiento base y conocimientos previos con un nivel de confianza menor, en lugar de bloquearse por completo.
+Busca en el catálogo mediante un `CatalogSource` provisto por el despliegue. El despliegue es dueño de su esquema de catálogo y de su implementación de recuperación; la superficie pública de la herramienta devuelve `results` y `classification`.
 
 ---
 

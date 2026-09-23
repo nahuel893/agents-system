@@ -80,7 +80,7 @@ La siguiente tabla detalla qué roles de agente tienen permitido declarar e inye
 | Conector / Herramienta | Nombre del Tool | Roles permitidos | Permiso RBAC exigido |
 |---|---|---|---|
 | **WhatsApp Business API** | `whatsapp_sender` | `preventa_agent` | `send:whatsapp` |
-| **PostgreSQL / pgvector** | `rag_catalog_search` | `preventa_agent`, `data_agent` | `read:catalog` |
+| **Fuente de catálogo provista por el despliegue** | `catalog_search` | Roles cuyo manifiesto declara la herramienta | `read:catalog` |
 | **PostgreSQL** | `postgres_order_writer` | `preventa_agent` | `write:orders`, `write:order_items` |
 | **PostgreSQL** | `client_lookup` | `preventa_agent`, `orchestrator_agent` | `read:client_registry` |
 | **Redis** | `redis_session_state` | `preventa_agent`, `orchestrator_agent`, `employee_agent` | `read:session_state`, `write:session_state` |

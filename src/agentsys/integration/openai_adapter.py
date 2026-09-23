@@ -14,12 +14,13 @@ Surface:
   ``app.state.runtimes`` cache. The two differ: the cache holds a runtime for
   every channel that needs one, and only the ids the operator named in
   ``adapter_runtimes`` belong on an HTTP surface whose authentication is
-  optional. Serving the cache verbatim published a WhatsApp runtime on an
-  unauthenticated /v1 the moment the cache started covering other channels.
+  optional. Serving the cache verbatim could publish a runtime from another
+  channel on an unauthenticated /v1 surface.
 
   Absent means EMPTY, deliberately: an application that never declared an
   adapter surface exposes nothing rather than everything it happens to hold.
 """
+
 from __future__ import annotations
 
 import secrets
@@ -103,7 +104,6 @@ async def verify_bearer(
         raise HTTPException(status_code=401, detail="Invalid bearer token.")
 
 
-
 def _exposed_runtimes(request: Request) -> dict[str, Any]:
     """The runtimes this HTTP surface may serve.
 
@@ -185,9 +185,7 @@ def _extract_assistant_text(messages: list[AnyMessage]) -> str:
         content = msg.content
         if isinstance(content, list):
             content = " ".join(
-                block.get("text", "")
-                for block in content
-                if isinstance(block, dict)
+                block.get("text", "") for block in content if isinstance(block, dict)
             )
         if content:
             final_text = str(content)
