@@ -124,7 +124,11 @@ The connector built for a declared command tool (`connectors/command_tools.py`) 
 
 **Consequence, by design:** a negative integer value (e.g. `-1`) can never be passed through a command tool param — there is no narrow way to distinguish "a negative number" from "an option flag" at this layer, so both are refused. A command tool that genuinely needs a signed value must accept it as a `string` with a `pattern` that spells out its own sign-handling (e.g. an explicit sign word, or a param that is never negative in practice).
 
-Once every value validates, the connector substitutes them into the template and executes the result through the SAME no-shell subprocess engine `use_term` uses (`create_subprocess_exec`, never a shell; the same timeout and output-cap machinery) — a command tool is not a second command runner, it is a declarative front end over the one execution seam the platform already hardened. That single shared seam is also what lets ADR-002 C.14's future sandbox wrap both `use_term` and every command tool identically.
+Once every value validates, the connector substitutes them into the template and executes the result through the SAME no-shell subprocess engine `use_term` uses (`create_subprocess_exec`, never a shell; the same timeout and output-cap machinery) — a command tool is not a second command runner, it is a declarative front end over the one execution seam the platform already hardened. That single shared seam is also what lets ADR-002 C.14's bubblewrap sandbox wrap both `use_term` and every command tool identically — see "T3 sandbox (bubblewrap)" below.
+
+### T3 sandbox (bubblewrap)
+
+ADR-002 C.14. `TerminalPolicy.sandbox` is a required `SandboxPolicy` field — no default, the same posture `root` and `allowed_commands` already have. Every command run through the shared seam above (`use_term` and every `command_tools` entry) runs inside `bwrap`: no network unless the tool's policy explicitly declares it, the fixed system paths (`/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`) read-only, a private `/tmp`, `policy.root` read-write, a cleared environment, and a memory/CPU ceiling enforced via `RLIMIT_AS`/`RLIMIT_CPU` (bubblewrap itself has no resource-limit flags). If `bwrap` is not on the host, the command refuses rather than falling back to running unsandboxed.
 
 ---
 

@@ -19,7 +19,7 @@
 | 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ✅ done | PR1 — #108 |
 | 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ✅ done | PR3 — #110 |
 | 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ✅ done | PR4 — #111 |
-| 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ⏳ pending | PR5 — #112 |
+| 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ✅ done | PR5 — #112 |
 | 15 | Reference backends for platform-generic ports | C. Tools & permissions | ✅ done (this change) | — #113 |
 | 16 | Rejected: `operator-agent` as parent of `data-agent`; composition over multi-inheritance | D. Role composition | ✅ decision recorded (no code change) | Issue #53 |
 | 17 | Inherited role contract test suite | D. Role composition | ✅ done (this change) | — #114 |
@@ -1011,9 +1011,101 @@ requires a running daemon (an additional privileged service to operate and
 secure) and is heavyweight per invocation compared to `bwrap`, which runs as
 an unprivileged wrapper process with no daemon.
 
-**Status.** ⏳ pending. **Planned slice:** PR5 — last in the C sequence,
-since it hardens a connector that PR1-4 have already made harder to reach
-with untrusted input in the first place.
+**Status.** ✅ done — `TerminalPolicy.sandbox: SandboxPolicy` is required
+with no default (`connectors/operator.py`): a `TerminalPolicy` with no
+sandbox policy cannot even be constructed, the same posture `root` and
+`allowed_commands` already had. `SandboxPolicy` itself has closed defaults
+(`network=False`, `extra_ro_binds=()`, `max_memory_bytes=512 MiB`) — a
+deployment states exactly what a command needs beyond the fixed system
+image, rather than the sandbox guessing.
+
+`_run_argv` — the single seam C.12 already extracted, shared by `use_term`
+and `command_tools` — now wraps every command in
+`bwrap --unshare-all --die-with-parent --new-session`: every namespace
+bubblewrap supports (user, ipc, pid, net, uts, cgroup) is unshared by
+default, and `--share-net` opts back into network only when
+`sandbox.network=True`. Fixed system paths (`/usr`, `/bin`, `/sbin`, `/lib`,
+`/lib64`, `/etc`, each tried via `--ro-bind-try` so both a merged-`/usr` host
+and a split one work) are bound read-only; `policy.root` is bound
+read-write at the SAME path inside the sandbox as outside, so `cwd` and
+`read_file`'s own root check are unaffected by sandboxing; `/tmp` is a
+fresh, private `tmpfs`; the environment is `--clearenv`'d and rebuilt from
+`_child_env` via `--setenv`, defense in depth alongside the outer `env=`
+already passed to `create_subprocess_exec`. `_program_ro_binds` walks
+`argv[0]`'s own symlink chain component by component — `Path.resolve()`
+collapses a whole chain into just its final target and silently drops every
+INTERMEDIATE directory a hop passed through (a venv's `bin/python3` is
+typically several hops: its own `bin/`, then an interpreter manager's
+version-alias directory, then the real versioned install) — and binds
+read-only exactly the directories that chain needs, nothing more; `argv[0]`
+was already vetted by the caller (the allowlist, or a `command_tools`
+declaration resolved to an absolute path at load time), so this does not
+expand what can run.
+
+Resource limits: bubblewrap has no memory/CPU flags of its own (namespace/
+mount isolation only), so `_rlimits` sets `RLIMIT_AS`
+(`sandbox.max_memory_bytes`) and `RLIMIT_CPU` (`timeout_s` plus 5s headroom
+— a backstop behind the existing wall-clock timeout, never a race with it)
+via `preexec_fn` on the `bwrap` process itself; both limits are inherited
+across fork AND exec, so they bound bubblewrap's own setup and everything it
+goes on to fork or exec inside the sandbox, with no cgroup or daemon
+required. The existing `_kill_group` process-group `SIGKILL` (unchanged) now
+kills `bwrap` and everything it sandboxes together, and Linux additionally
+tears down the whole PID namespace the instant its pid-1-equivalent process
+(`bwrap`) dies — a second, redundant guarantee the pre-C.14 code did not
+have.
+
+Fails closed at the shared seam: `_bwrap_path()` (`shutil.which("bwrap")`,
+checked fresh on every call rather than cached, so a host that loses its
+`bwrap` install mid-process is caught on the very next command) returning
+`None` makes `_run_argv` refuse with `error_kind: "sandbox_unavailable"`
+before spawning anything — never a fallback to running *argv* raw. `read_
+file` is unchanged: it has no subprocess to sandbox (a direct,
+off-the-event-loop file read), so its containment stays the existing
+root-resolution check, unaffected by C.14.
+
+**Tests.** Unit (`tests/test_operator_connectors.py`): the sandbox field is
+required (construction without it raises `TypeError`); `use_term` refuses
+when `bwrap` is unavailable and never falls back to running raw; `--clearenv`
+precedes `--setenv` in the constructed `bwrap` argv. Integration, real
+`bwrap`, `tests/test_sandbox_integration.py` (`pytest -m integration`, run
+by the dedicated `sandbox-integration` CI job): no network is reachable; a
+sentinel outside `policy.root` cannot be read; a write outside it fails
+against a REAL read-only bind (not a bind-mount's auto-created scaffold
+directory, which is itself writable but never reaches host disk either way);
+a host-only environment variable is not visible inside the sandbox; a
+command over the configured memory ceiling is stopped; a hung command is
+still killed at timeout; a declared `command_tools` entry is sandboxed
+identically to `use_term` through the shared seam. The main CI job now also
+installs `bubblewrap`, since sandboxing is unconditional and every existing
+`use_term`/`command_tools` test runs sandboxed too, not only the new
+integration-marked ones.
+
+**Review follow-up (PR #148, BLOCKER + should-fix).** An independent review
+found `command_tools`'s internal policy still hardcoded
+`root=pathlib.Path.cwd()` — since `root` is bound read-write, a sandboxed
+command tool could read and overwrite the platform's own `.env` and
+`.git/config`. Fixed with a fresh `tempfile.mkdtemp()` scratch workspace
+per call, always removed in a `finally` (including on timeout and on any
+exception), never the process's own working directory. `TerminalPolicy.
+__post_init__`/`SandboxPolicy.__post_init__` now independently refuse a
+`root`/`extra_ro_binds` entry that resolves to the filesystem root, `/home`,
+`$HOME`, `/root`, `/run`, or `/var/run`, as a second barrier. Separately,
+the review also flagged `preexec_fn` (used to set `RLIMIT_AS`/`RLIMIT_CPU`
+on the `bwrap`-spawning `create_subprocess_exec` call) as unsafe in a
+threaded asyncio app per Python's own docs (fork-time deadlock risk);
+replaced with `prlimit --as=... --cpu=... -- bwrap ...` (util-linux,
+present on every mainstream Linux distribution), which sets the same
+limits on itself before `exec`-ing `bwrap` — no fork from inside this
+process. Process creation is now inside the same timeout as draining
+output, not outside it. Both `build_terminal_connector` and `command_tools.
+build_command_tool_connector` log an error-level
+`operator.sandbox_unavailable_at_boot` line once, at construction (boot)
+time, if `bwrap` or `prlimit` is missing. Host requirements (bwrap/prlimit
+installed, the AppArmor unprivileged-userns note, what
+`sandbox_unavailable` means) are documented in
+`docs/operations/sandbox-bwrap.md` (EN) and `docs/operations_es/
+sandbox-bwrap.md` (ES).
 
 ---
 

@@ -19,7 +19,7 @@
 | 11 | Bandera `untrusted_input` + invariante vs. `exec:*` | C. Herramientas y permisos | ✅ hecho | PR1 — #108 |
 | 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ✅ hecho | PR3 — #110 |
 | 13 | Aplicación por canal (falla al arrancar, no por mensaje) | C. Herramientas y permisos | ✅ hecho | PR4 — #111 |
-| 14 | Sandbox T3 (bubblewrap) | C. Herramientas y permisos | ⏳ pendiente | PR5 — #112 |
+| 14 | Sandbox T3 (bubblewrap) | C. Herramientas y permisos | ✅ hecho | PR5 — #112 |
 | 15 | Backends de referencia para los puertos genéricos de la plataforma | C. Herramientas y permisos | ✅ hecho (este cambio) | — #113 |
 | 16 | Rechazado: `operator-agent` como padre de `data-agent`; composición en vez de herencia múltiple | D. Composición de roles | ✅ decisión registrada (sin cambio de código) | Issue #53 |
 | 17 | Suite de pruebas de contrato heredado por rol | D. Composición de roles | ✅ hecho (este cambio) | — #114 |
@@ -1132,9 +1132,114 @@ rechazada: requiere un daemon en ejecución (un servicio privilegiado
 adicional que operar y asegurar) y es pesado por invocación comparado con
 `bwrap`, que corre como un proceso envoltorio sin privilegios y sin daemon.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR5 — el último en la
-secuencia de C, ya que endurece un conector al que PR1-4 ya le habrán hecho
-más difícil llegar con entrada no confiable en primer lugar.
+**Estado.** ✅ hecho — `TerminalPolicy.sandbox: SandboxPolicy` es
+obligatorio y sin valor por defecto (`connectors/operator.py`): un
+`TerminalPolicy` sin política de sandbox ni siquiera puede construirse, la
+misma postura que ya tenían `root` y `allowed_commands`. `SandboxPolicy`
+tiene por sí misma valores por defecto cerrados (`network=False`,
+`extra_ro_binds=()`, `max_memory_bytes=512 MiB`) — un despliegue declara
+exactamente lo que un comando necesita más allá de la imagen fija del
+sistema, en vez de que el sandbox lo adivine.
+
+`_run_argv` — el único mecanismo compartido que C.12 ya había extraído,
+usado tanto por `use_term` como por `command_tools` — ahora envuelve cada
+comando en `bwrap --unshare-all --die-with-parent --new-session`: cada
+espacio de nombres que soporta bubblewrap (usuario, ipc, pid, red, uts,
+cgroup) se separa por defecto, y `--share-net` reincorpora la red solo
+cuando `sandbox.network=True`. Las rutas fijas del sistema (`/usr`, `/bin`,
+`/sbin`, `/lib`, `/lib64`, `/etc`, cada una probada vía `--ro-bind-try` para
+que funcione tanto un host con `/usr` fusionado como uno separado) se
+montan de solo lectura; `policy.root` se monta de lectura-escritura en la
+MISMA ruta dentro del sandbox que fuera de él, de modo que `cwd` y la propia
+verificación de raíz de `read_file` no se ven afectadas por el sandboxing;
+`/tmp` es un `tmpfs` privado y nuevo; el entorno se limpia con `--clearenv`
+y se reconstruye desde `_child_env` vía `--setenv`, defensa en profundidad
+junto al `env=` externo que ya se pasaba a `create_subprocess_exec`.
+`_program_ro_binds` recorre la cadena de symlinks de `argv[0]` componente
+por componente — `Path.resolve()` colapsa toda la cadena en solo su destino
+final y descarta silenciosamente cada directorio INTERMEDIO por el que pasó
+un salto (el `bin/python3` de un venv típicamente son varios saltos: su
+propio `bin/`, luego el directorio de alias de versión de un gestor de
+intérpretes, luego la instalación real versionada) — y monta de solo
+lectura exactamente los directorios que esa cadena necesita, nada más;
+`argv[0]` ya fue validado por quien llama (la lista blanca, o una
+declaración de `command_tools` resuelta a una ruta absoluta en tiempo de
+carga), así que esto no amplía lo que puede ejecutarse.
+
+Límites de recursos: bubblewrap no tiene banderas propias de memoria/CPU
+(solo aislamiento de espacios de nombres/montajes), así que `_rlimits`
+establece `RLIMIT_AS` (`sandbox.max_memory_bytes`) y `RLIMIT_CPU`
+(`timeout_s` más 5s de margen — un respaldo detrás del tiempo límite de
+reloj ya existente, nunca una carrera contra él) vía `preexec_fn` sobre el
+propio proceso `bwrap`; ambos límites se heredan a través de fork Y exec,
+así que acotan tanto la configuración propia de bubblewrap como todo lo que
+este llegue a bifurcar o ejecutar dentro del sandbox, sin necesitar cgroup
+ni daemon. El `SIGKILL` de grupo de procesos de `_kill_group` (sin cambios)
+ahora mata a `bwrap` y a todo lo que sandboxea en conjunto, y Linux además
+destruye todo el espacio de nombres de PID en el instante en que muere su
+proceso equivalente a pid 1 (`bwrap`) — una segunda garantía, redundante,
+que el código previo a C.14 no tenía.
+
+Falla en modo cerrado en el mecanismo compartido: `_bwrap_path()`
+(`shutil.which("bwrap")`, verificado de nuevo en cada llamada en vez de
+guardarse en caché, de modo que un host que pierde su instalación de
+`bwrap` a mitad de proceso se detecta en el siguiente comando) que devuelve
+`None` hace que `_run_argv` se niegue con `error_kind: "sandbox_unavailable"`
+antes de lanzar nada — nunca una recaída hacia ejecutar *argv* sin
+sandbox. `read_file` no cambia: no tiene ningún subproceso que
+sandboxear (es una lectura de archivo directa, fuera del bucle de eventos),
+así que su contención sigue siendo la verificación de raíz ya existente,
+sin verse afectada por C.14.
+
+**Pruebas.** Unitarias (`tests/test_operator_connectors.py`): el campo de
+sandbox es obligatorio (construir sin él lanza `TypeError`); `use_term` se
+niega cuando `bwrap` no está disponible y nunca recae en ejecutar sin
+sandbox; `--clearenv` precede a `--setenv` en el argv de `bwrap`
+construido. De integración, con `bwrap` real,
+`tests/test_sandbox_integration.py` (`pytest -m integration`, ejecutadas
+por el job dedicado `sandbox-integration` de CI): no se puede alcanzar la
+red; no se puede leer un centinela fuera de `policy.root`; una escritura
+fuera de él falla contra un montaje de solo lectura REAL (no un directorio
+de relleno auto-creado por un bind-mount, que sí es escribible pero de
+todos modos nunca llega al disco del host); una variable de entorno solo
+del host no es visible dentro del sandbox; un comando que supera el techo
+de memoria configurado se detiene; un comando colgado sigue siendo matado
+al vencer el tiempo límite; una entrada declarada de `command_tools` queda
+sandboxeada de forma idéntica a `use_term` a través del mecanismo
+compartido. El job principal de CI ahora también instala `bubblewrap`, ya
+que el sandboxing es incondicional y cada prueba existente de
+`use_term`/`command_tools` también corre sandboxeada, no solo las nuevas
+marcadas como de integración.
+
+**Seguimiento de revisión (PR #148, BLOCKER + should-fix).** Una revisión
+independiente encontró que la política interna de `command_tools` todavía
+usaba `root=pathlib.Path.cwd()` — dado que `root` se monta en
+lectura-escritura, una herramienta de comando sandboxeada podía leer y
+sobrescribir el propio `.env` y `.git/config` de la plataforma. Corregido
+con un espacio de trabajo temporal nuevo (`tempfile.mkdtemp()`) por cada
+llamada, eliminado siempre en un `finally` (incluyendo ante un tiempo
+límite excedido y ante cualquier excepción), nunca el directorio de trabajo
+propio del proceso. `TerminalPolicy.__post_init__`/`SandboxPolicy.
+__post_init__` ahora rechazan de forma independiente un `root` o una
+entrada de `extra_ro_binds` que resuelva a la raíz del sistema de archivos,
+`/home`, `$HOME`, `/root`, `/run` o `/var/run`, como segunda barrera. Por
+separado, la revisión también señaló `preexec_fn` (usado para establecer
+`RLIMIT_AS`/`RLIMIT_CPU` sobre la llamada a `create_subprocess_exec` que
+lanzaba `bwrap`) como inseguro en una aplicación asyncio con hilos según la
+propia documentación de Python (riesgo de bloqueo mutuo en el momento del
+fork); reemplazado por `prlimit --as=... --cpu=... -- bwrap ...`
+(util-linux, presente en prácticamente toda distribución Linux
+convencional), que establece los mismos límites sobre sí mismo antes de
+hacer `exec` de `bwrap` — sin fork desde dentro de este proceso. La
+creación del proceso ahora está dentro del mismo tiempo límite que el
+drenaje de la salida, no fuera de él. Tanto `build_terminal_connector` como
+`command_tools.build_command_tool_connector` registran una línea de nivel
+error `operator.sandbox_unavailable_at_boot` una vez, en el momento de
+construcción (arranque), si falta `bwrap` o `prlimit`. Los requisitos del
+host (bwrap/prlimit instalados, la nota de AppArmor sobre espacios de
+nombres de usuario sin privilegios, qué significa `sandbox_unavailable`)
+están documentados en `docs/operations/sandbox-bwrap.md` (EN) y
+`docs/operations_es/sandbox-bwrap.md` (ES).
 
 ---
 

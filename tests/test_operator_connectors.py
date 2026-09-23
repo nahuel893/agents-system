@@ -20,6 +20,7 @@ import sys
 import pytest
 
 from agentsys.connectors.operator import (
+    SandboxPolicy,
     TerminalPolicy,
     build_file_reader_connector,
     build_terminal_connector,
@@ -30,6 +31,7 @@ def _policy(root: pathlib.Path, **kw: object) -> TerminalPolicy:
     defaults: dict[str, object] = {
         "root": root,
         "allowed_commands": frozenset({sys.executable, "echo"}),
+        "sandbox": SandboxPolicy(),
     }
     defaults.update(kw)
     return TerminalPolicy(**defaults)  # type: ignore[arg-type]
@@ -46,7 +48,9 @@ async def test_an_unconfigured_allowlist_runs_nothing(tmp_path: pathlib.Path) ->
     the file.
     """
     connector = build_terminal_connector(
-        TerminalPolicy(root=tmp_path, allowed_commands=frozenset())
+        TerminalPolicy(
+            root=tmp_path, allowed_commands=frozenset(), sandbox=SandboxPolicy()
+        )
     )
 
     result = await connector({"argv": ["echo", "hello"]})
@@ -319,15 +323,20 @@ async def test_a_timed_out_command_leaves_no_surviving_grandchild(
 
     The agent got a clean "was killed" refusal that was false about the host,
     and every timed-out call could seed another survivor.
-    """
-    import os
 
+    Found by a MARKER in its own argv, not by the pid it reports: inside the
+    sandbox's own PID namespace (ADR-002 C.14's `--unshare-all`) that pid is
+    namespace-local and may not name any process at all from the host's
+    view -- or worse, could collide with an unrelated one.
+    """
+    import uuid
+
+    marker = f"sandbox-grandchild-{uuid.uuid4().hex}"
     spawner = tmp_path / "spawn.py"
-    marker = tmp_path / "child.pid"
     spawner.write_text(
-        "import os, subprocess, sys, time, pathlib\n"
-        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
-        f"pathlib.Path({str(marker)!r}).write_text(str(p.pid))\n"
+        "import subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c',\n"
+        f"    'import time; time.sleep(60)  # {marker}'])\n"
         "time.sleep(60)\n",
         encoding="utf-8",
     )
@@ -336,23 +345,20 @@ async def test_a_timed_out_command_leaves_no_surviving_grandchild(
     result = await connector({"argv": [sys.executable, str(spawner)]})
 
     assert result["error_kind"] == "timeout"
-    assert marker.exists(), "the child never spawned; the test proves nothing"
 
-    child_pid = int(marker.read_text())
-    await asyncio.sleep(0.3)
-    alive = True
-    try:
-        os.kill(child_pid, 0)
-    except ProcessLookupError:
-        alive = False
-    finally:
-        if alive:
-            try:
-                os.kill(child_pid, 9)
-            except ProcessLookupError:
-                pass
+    await asyncio.sleep(0.5)
+    survivors = []
+    for pid_dir in pathlib.Path("/proc").iterdir():
+        if not pid_dir.name.isdigit():
+            continue
+        try:
+            cmdline = (pid_dir / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if marker.encode() in cmdline:
+            survivors.append(pid_dir.name)
 
-    assert not alive, f"grandchild {child_pid} survived the timeout"
+    assert not survivors, f"grandchild(ren) survived the timeout: {survivors}"
 
 
 async def test_the_child_does_not_inherit_the_parents_secrets(
@@ -496,7 +502,10 @@ async def test_a_deployment_can_actually_configure_the_sandbox(
 
     (tmp_path / "hello.txt").write_text("configured", encoding="utf-8")
     policy = TerminalPolicy(
-        root=tmp_path, allowed_commands=frozenset({"echo"}), timeout_s=5.0
+        root=tmp_path,
+        allowed_commands=frozenset({"echo"}),
+        sandbox=SandboxPolicy(),
+        timeout_s=5.0,
     )
 
     registry = build_test_registry(terminal_policy=policy)
@@ -541,3 +550,183 @@ async def test_an_unreadable_or_overlong_path_is_a_result_not_an_exception(
 
     assert "error_kind" in denied
     assert "content" not in denied
+
+
+# ---------------------------------------------------------------------------
+# ADR-002 C.14 — the bubblewrap sandbox: required, and fails closed
+# ---------------------------------------------------------------------------
+
+
+def test_terminal_policy_requires_a_sandbox_field(tmp_path: pathlib.Path) -> None:
+    """`sandbox` has no default -- the same "no permissive default" posture
+    `root` and `allowed_commands` already have. A deployment that forgets to
+    pass one gets a `TypeError` at construction, not a policy that quietly
+    runs unsandboxed.
+    """
+    with pytest.raises(TypeError):
+        TerminalPolicy(  # type: ignore[call-arg]
+            root=tmp_path, allowed_commands=frozenset({"echo"})
+        )
+
+
+async def test_use_term_refuses_when_bwrap_is_unavailable(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No `bwrap` on the host -> refuse. Never fall back to running raw.
+
+    Simulates absence by making the module's own lookup return None, rather
+    than fighting with `$PATH`, so the test is about the refusal, not about
+    hiding a real binary.
+    """
+    import agentsys.connectors.operator as operator_module
+
+    monkeypatch.setattr(operator_module, "_bwrap_path", lambda: None)
+    connector = build_terminal_connector(_policy(tmp_path))
+
+    result = await connector({"argv": ["echo", "hello"]})
+
+    assert result.get("error_kind") == "sandbox_unavailable"
+    assert "stdout" not in result
+
+
+def test_bwrap_argv_clears_the_environment_before_setting_it_explicitly(
+    tmp_path: pathlib.Path,
+) -> None:
+    """`--clearenv` before `--setenv` -- defense in depth alongside the
+    outer `env=_child_env(policy)` already passed to `create_subprocess_exec`
+    (which alone already keeps the HOST's broader environment away from
+    `bwrap`'s own process): if a future change ever widens that outer `env=`,
+    this inner guard still stops it from reaching the sandboxed command.
+    """
+    from agentsys.connectors.operator import _bwrap_argv
+
+    policy = _policy(tmp_path)
+    wrapped = _bwrap_argv(["echo", "hi"], policy=policy, bwrap="/usr/bin/bwrap")
+
+    assert "--clearenv" in wrapped
+    clear_index = wrapped.index("--clearenv")
+    setenv_indices = [i for i, tok in enumerate(wrapped) if tok == "--setenv"]
+    assert setenv_indices, "no --setenv for _child_env's PATH/HOME/LANG/LC_ALL"
+    assert all(i > clear_index for i in setenv_indices), (
+        "--setenv appeared before --clearenv"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ADR-002 C.14 review follow-up (PR #148) — forbidden roots, prlimit
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "forbidden",
+    [
+        pathlib.Path("/"),
+        pathlib.Path("/home"),
+        pathlib.Path("/root"),
+        pathlib.Path("/run"),
+        pathlib.Path("/var/run"),
+    ],
+)
+def test_terminal_policy_rejects_a_forbidden_root(forbidden: pathlib.Path) -> None:
+    """`root` is bound READ-WRITE inside the sandbox (ADR-002 C.14) -- the
+    filesystem root, `/home`, `/root`, `/run` and `/var/run` are refused
+    outright, the same review follow-up (PR #148) that closed the
+    `command_tools` `Path.cwd()` hole."""
+    with pytest.raises(ValueError, match="forbids"):
+        TerminalPolicy(
+            root=forbidden, allowed_commands=frozenset({"echo"}), sandbox=SandboxPolicy()
+        )
+
+
+def test_terminal_policy_rejects_home_as_root() -> None:
+    with pytest.raises(ValueError, match="forbids"):
+        TerminalPolicy(
+            root=pathlib.Path.home(),
+            allowed_commands=frozenset({"echo"}),
+            sandbox=SandboxPolicy(),
+        )
+
+
+def test_terminal_policy_rejects_the_process_cwd_as_root() -> None:
+    """The exact shape of the pre-follow-up `command_tools` bug: a policy
+    rooted at wherever the process happens to be running from -- typically
+    the repository checkout -- gets refused at construction, independent of
+    `command_tools`'s own fix (its per-call scratch workspace)."""
+    with pytest.raises(ValueError, match="forbids"):
+        TerminalPolicy(
+            root=pathlib.Path.cwd(),
+            allowed_commands=frozenset({"echo"}),
+            sandbox=SandboxPolicy(),
+        )
+
+
+@pytest.mark.parametrize(
+    "forbidden",
+    [
+        pathlib.Path("/"),
+        pathlib.Path("/home"),
+        pathlib.Path("/root"),
+        pathlib.Path("/run"),
+        pathlib.Path("/var/run"),
+    ],
+)
+def test_sandbox_policy_rejects_a_forbidden_extra_ro_bind(forbidden: pathlib.Path) -> None:
+    with pytest.raises(ValueError, match="forbids"):
+        SandboxPolicy(extra_ro_binds=(forbidden,))
+
+
+def test_sandbox_policy_rejects_home_as_an_extra_ro_bind() -> None:
+    with pytest.raises(ValueError, match="forbids"):
+        SandboxPolicy(extra_ro_binds=(pathlib.Path.home(),))
+
+
+def test_sandbox_policy_accepts_a_narrow_extra_ro_bind(tmp_path: pathlib.Path) -> None:
+    """The guard is about the specific forbidden list, not about being
+    somewhere under one of those trees -- a narrow, purpose-built directory
+    is exactly what `extra_ro_binds` is FOR."""
+    narrow = tmp_path / "some-tool-install"
+    narrow.mkdir()
+    SandboxPolicy(extra_ro_binds=(narrow,))  # must not raise
+
+
+async def test_use_term_refuses_when_prlimit_is_unavailable(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No `prlimit` on the host -> refuse, same fail-closed posture as a
+    missing `bwrap` -- running sandboxed but with NO enforced memory/CPU
+    ceiling is not an acceptable degraded mode (ADR-002 C.14)."""
+    import agentsys.connectors.operator as operator_module
+
+    monkeypatch.setattr(operator_module, "_prlimit_path", lambda: None)
+    connector = build_terminal_connector(_policy(tmp_path))
+
+    result = await connector({"argv": ["echo", "hello"]})
+
+    assert result.get("error_kind") == "sandbox_unavailable"
+    assert "stdout" not in result
+
+
+def test_run_argv_wraps_bwrap_in_prlimit_not_preexec_fn() -> None:
+    """Structural proof that resource limits are applied by `prlimit`
+    (a separate program) rather than `preexec_fn` (a fork-time callback in
+    THIS process, which Python's docs call unsafe in the presence of
+    threads) -- PR #148 review follow-up."""
+    import inspect
+
+    import agentsys.connectors.operator as operator_module
+
+    assert not hasattr(operator_module, "_rlimits"), (
+        "the preexec_fn-based _rlimits helper should be gone entirely"
+    )
+    source = inspect.getsource(operator_module._run_argv)
+    assert "preexec_fn" not in source
+
+    wrapped = operator_module._prlimit_argv(
+        ["/usr/bin/bwrap", "--unshare-all"],
+        policy=_policy(pathlib.Path("/tmp")),
+        prlimit="/usr/bin/prlimit",
+    )
+    assert wrapped[0] == "/usr/bin/prlimit"
+    assert any(tok.startswith("--as=") for tok in wrapped)
+    assert any(tok.startswith("--cpu=") for tok in wrapped)
+    assert wrapped[wrapped.index("--") + 1] == "/usr/bin/bwrap"

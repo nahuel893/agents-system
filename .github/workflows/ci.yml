@@ -26,6 +26,24 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
+      # ADR-002 C.14: `TerminalPolicy.sandbox` is required and `_run_argv`
+      # (the seam BOTH `use_term` and `command_tools` execute through) fails
+      # closed without `bwrap` -- so every existing operator/command-tools
+      # test in this job now runs sandboxed too, not only the dedicated
+      # `sandbox-integration` job's tests below.
+      - name: Install bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      # Ubuntu 24.04+ blocks the unprivileged user namespace bubblewrap
+      # needs to build its sandbox (`kernel.apparmor_restrict_unprivileged_
+      # userns=1` by default), which is exactly what `--unshare-net` (the
+      # no-network default) triggers. This relaxes it for THIS ephemeral,
+      # single-purpose runner only -- never applied on a real deployment
+      # host, and orthogonal to the sandbox itself, which still enforces no
+      # network/filesystem escape/env leak once it can start at all.
+      - name: Allow bubblewrap to create user namespaces on this runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
       - name: Lint
         run: uv run ruff check .
 
@@ -362,3 +380,35 @@ jobs:
 
       - name: Verify the durable inbox/outbox migration
         run: uv run pytest -m integration tests/test_outbox_migration_integration.py -v
+
+  # ADR-002 C.14 — tests/test_sandbox_integration.py needs a REAL `bwrap` and
+  # actually spawns sandboxed subprocesses (network probes, filesystem-escape
+  # attempts, a memory-limit breach, a killed-at-timeout hang), so it is
+  # `integration`-marked like every other job on this page and gets its own
+  # job rather than relying on the main `ci` job's install step alone -- a
+  # missing or broken sandbox here fails loudly, never a silent skip.
+  sandbox-integration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Install bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      # See the same step in the `ci` job above for why this is needed and
+      # why it is safe: an ephemeral runner-only relaxation, not a change to
+      # what the sandbox itself allows once it can start.
+      - name: Allow bubblewrap to create user namespaces on this runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Verify the bubblewrap sandbox for real
+        run: uv run pytest -m integration tests/test_sandbox_integration.py -v
