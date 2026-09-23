@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, Index, Text, Uuid, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,9 +33,8 @@ class InboundMessage(Base):
 class OutboxWork(Base):
     """A recoverable work record created atomically with its inbound message.
 
-    W1 only stores work. W2 will claim rows through ``lease_expires_at`` and
-    eventually set ``completed_at`` after processing; neither workflow is
-    wired here.
+    W2a persists claim, retry, terminal-failure, and outbound replay state;
+    it deliberately does not run a worker or call a provider.
     """
 
     __tablename__ = "outbox_work"
@@ -60,6 +59,18 @@ class OutboxWork(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    lease_owner: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(
+        server_default=text("0"),
+        nullable=False,
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    outbound_body: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    outbound_send_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
@@ -77,6 +88,26 @@ class OutboxWork(Base):
             "lease_expires_at",
             "id",
             postgresql_where=(completed_at.is_(None) & lease_expires_at.is_not(None)),
+        ),
+        Index(
+            "ix_outbox_work_ready_recoverable",
+            "available_at",
+            "id",
+            postgresql_where=(
+                completed_at.is_(None)
+                & failed_at.is_(None)
+                & lease_expires_at.is_(None)
+            ),
+        ),
+        Index(
+            "ix_outbox_work_expired_recoverable",
+            "lease_expires_at",
+            "id",
+            postgresql_where=(
+                completed_at.is_(None)
+                & failed_at.is_(None)
+                & lease_expires_at.is_not(None)
+            ),
         ),
         {"info": {ALEMBIC_OWNED: True}},
     )

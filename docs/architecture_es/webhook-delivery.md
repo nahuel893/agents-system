@@ -31,15 +31,34 @@ Ejecutar la prueba de migración solo contra una base PostgreSQL nueva y desecha
 
 ```bash
 OUTBOX_TEST_DATABASE_URL="$ISOLATED_OUTBOX_DATABASE_URL" \
-  PYTHONPATH=/home/nh/wt-43-webhook-outbox/src \
+  PYTHONPATH=/home/nh/wt-44-webhook-worker/src \
   /home/nh/agents-system/.venv/bin/python -m pytest -q -m integration tests/test_outbox_migration_integration.py
 ```
 
 El operador debe crear primero la base desechable, definir `ISOLATED_OUTBOX_DATABASE_URL` con su URL asyncpg y eliminar la base al terminar.
 
-## Lo que W1 explícitamente no implementa
+## Estado recuperable del outbox en W2a (solo almacenamiento)
 
-El webhook activo continúa siendo sincrónico y respaldado por Redis. W1 **no** implementa un worker activo, reconocimiento HTTP temprano, comportamiento HTTP 503, reintentos ni control de admisión. La consulta de selección de trabajo almacenada prepara W2; no toma, procesa ni envía trabajo.
+La migración `003` agrega estado recuperable sin cambiar la ruta activa del webhook:
+
+| Campo | Responsabilidad |
+|---|---|
+| `lease_owner`, `lease_expires_at` | Identidad del worker y su claim acotado ya confirmado. |
+| `attempt_count`, `last_error`, `available_at` | Historial de intentos y momento del próximo reintento. |
+| `failed_at` | Falla terminal y visible que ya no puede ser reclamada. |
+| `outbound_body`, `outbound_send_key` | Respuesta generada y clave estable **interna** de replay, confirmadas antes de un futuro envío al proveedor. |
+
+`claim_available_outbox_work` selecciona filas listas con `FOR UPDATE SKIP LOCKED`, escribe un lease e incrementa el contador de intentos, y hace commit antes de devolver cualquier fila. Por eso un worker concurrente saltea un lease activo; un lease vencido queda habilitado para recuperación. W2a no procesa filas, no llama a Meta ni ejecuta un loop de workers.
+
+Ante una falla no terminal, se limpia el lease y se confirma un backoff exponencial acotado con full jitter. Se conservan la respuesta saliente y la clave interna: un resultado ambiguo del proveedor debe reintentarse, no deduplicarse con esa clave. Esto es entrega al-menos-una-vez, no exactamente-una-vez. La clave no es un campo ni header de idempotencia de Meta Graph API.
+
+Al llegar a `MAX_OUTBOX_ATTEMPTS`, W2a limpia el lease, fija `failed_at`, conserva el error e inserta un `audit_event` en el **mismo commit de la sesión de base de datos**. `audit_event` tiene una partición DEFAULT, por lo que esta inserción directa sigue siendo segura más allá de las particiones mensuales iniciales. El evento durable incluye `operator_action: required`; su resultado `alert_required` es una señal accionable, no una afirmación de que una persona haya sido notificada. W2b debe conectar esa señal con el puerto de escalamiento humano propio del deployment o con monitoreo.
+
+La migración `003` es aditiva: agrega columnas e índices de recuperabilidad y conserva los índices de W1. Su downgrade se niega si existe cualquier estado W2a, en vez de descartar datos de recuperación o una respuesta persistida. Como en W1, su prueba de integración solo debe ejecutarse con `OUTBOX_TEST_DATABASE_URL` apuntando a una base PostgreSQL aislada y descartable.
+
+## Diferido explícitamente a W2b
+
+El webhook activo continúa siendo sincrónico y respaldado por Redis. W2a **no** implementa un worker activo, reconocimiento HTTP temprano, comportamiento HTTP 503, envíos al proveedor ni control de admisión. Solo persiste estado de claim y reintento; W2b debe procesar el claim, persistir una respuesta saliente generada antes de enviar, reintentar resultados ambiguos del proveedor al-menos-una-vez y conectar señales terminales `alert_required` con el escalamiento propio del deployment.
 
 ## Relación con ADR-002 G.4/G.22
 
@@ -47,4 +66,4 @@ Este documento usa la abreviatura G.4/G.22 solicitada. En el ADR actual, G.22 tr
 
 ## Límite de reversión
 
-La migración `002` se niega a eliminar trabajo incompleto. Una vez completado todo el trabajo, su downgrade quita las dos tablas nuevas y el historial completado; la tabla `audit_event` existente permanece intacta.
+La migración `003` se niega a eliminar estado W2a no predeterminado. La migración `002` todavía se niega a eliminar trabajo incompleto. Una vez completado todo el trabajo y sin estado W2a, los downgrades quitan las tablas nuevas y el historial completado; la tabla `audit_event` existente permanece intacta.
