@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Iterable
 
 import structlog
 
-from agentsys.harness.injector import _emit, resolve_tool_surface
+from agentsys.harness.injector import _emit, resolve_command_tool_surface, resolve_tool_surface
 from agentsys.harness.loader import (
     AgentDefinition,
     RootConfig,
@@ -224,33 +224,42 @@ def build_runtime(
     if roots is None:
         roots = RootConfig()
 
+    # Materialised once: an `Iterable` may be a one-shot generator, and it is
+    # now consumed by TWO surface resolutions below (registry tools, then
+    # ADR-002 C.12 command tools) rather than one.
+    granted = list(granted_permissions)
+
     definition = resolve(role_type, client=client, roots=roots)
-    surface = resolve_tool_surface(definition, registry, granted_permissions)
+    surface = resolve_tool_surface(definition, registry, granted)
+    command_surface = resolve_command_tool_surface(definition, granted)
     skills = _load_skills(definition, client, roots)
     system_prompt = _compose_prompt(definition, skills)
+
+    granted_tools = surface.granted + command_surface.granted
+    denied_tools = surface.denied + command_surface.denied
 
     logger.info(
         "factory.runtime_built",
         role=definition.role_name,
         deployment=definition.deployment,
-        tools=len(surface.granted),
-        denied=len(surface.denied),
+        tools=len(granted_tools),
+        denied=len(denied_tools),
         skills=len(skills),
     )
     # D-007: record runtime_built event
     _emit(
         "record_runtime_built",
         definition=definition,
-        tools_count=len(surface.granted),
-        denied_count=len(surface.denied),
+        tools_count=len(granted_tools),
+        denied_count=len(denied_tools),
         skills_count=len(skills),
     )
 
     return EquippedRuntime(
         definition=definition,
         system_prompt=system_prompt,
-        tools=surface.granted,
-        denied_tools=surface.denied,
+        tools=granted_tools,
+        denied_tools=denied_tools,
         skills=skills,
         session_provider=session_provider,
     )

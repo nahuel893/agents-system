@@ -56,6 +56,109 @@ De tier se derivan dos consecuencias deterministas, ambas reemplazando (como sup
 
 ---
 
+## Herramientas de comando declarativas (`command_tools`)
+
+ADR-002 C.12. Antes de esto, la única forma de exponer un comando del host
+era el conector genérico único `use_term`, controlado enteramente por una
+lista blanca de nombres de programa (`TerminalPolicy.allowed_commands`) — un
+rol obtenía acceso sin restricciones dentro de la lista blanca, o ninguno, y
+esa lista no decía nada sobre la *forma de los argumentos* que hace
+explotable a un comando permitido (`git -c core.sshCommand=...`, `find . -exec
+rm {} \;`, `psql -c "DROP TABLE..."`, `curl -d @/etc/secret` son ejemplos
+reales de un comando permitido por nombre vuelto peligroso por sus
+argumentos).
+
+`command_tools` cierra esa brecha: el `manifest.md` de un rol puede declarar
+una o más herramientas de comando con `argv` fijo, cada una con marcadores de
+posición de parámetro tipados y validados por patrón. No hay `argv` libre ni
+shell — solo varían los parámetros declarados, y solo dentro de las
+restricciones que el autor del manifiesto escribió para ellos.
+
+```yaml
+command_tools:
+  - name: check_stock
+    argv: ["/usr/bin/inventory-cli", "--sku", "{sku}", "--format", "json"]
+    params:
+      sku:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{1,32}$"
+        max_length: 32
+    tier: T2
+    permission: run:check_stock
+```
+
+### Esquema
+
+| Campo | Tipo | Obligatorio | Descripción |
+|---|---|---|---|
+| `name` | `string` | obligatorio | Identificador único para esta herramienta de comando dentro del rol. |
+| `argv` | `list[string]` | obligatorio | Plantilla `argv` fija. Cada elemento es un literal (controlado por el autor, nunca varía) o un marcador de posición `{param}` que debe ocupar el elemento COMPLETO — `--flag={param}` es inválido. `argv[0]` es la ruta del programa; nunca puede ser en sí mismo un marcador de posición. |
+| `params` | `object` | opcional | Validación tipada por parámetro. Cada clave es un nombre de parámetro referenciado por un marcador `{param}` en `argv`; cada valor declara `type` (`string` o `integer`) y — **obligatorio para todo parámetro `string`** — `pattern` (expresión regular) o `enum` (lista de valores permitidos); `max_length` (entero, para parámetros de tipo string, acotado) sigue siendo opcional. |
+| `tier` | `T0 \| T1 \| T2 \| T3` | obligatorio | Nivel de capacidad (ver "Niveles de capacidad" arriba) — declarado por el autor en cada entrada, no fijo, pero **aplicado con un piso: solo `T2` o `T3`.** `T0`/`T1` se rechazan en tiempo de carga. `check_stock` arriba es `T2` — el mínimo, y el nivel que ADR-002 C.12 permite deliberadamente que un rol `untrusted_input` sostenga, precisamente *porque* el `argv` fijo más un `pattern`/`enum` obligatorio en cada parámetro string lo mantienen acotado. Use `T3` para cualquier cosa que mute el estado del host o pueda alcanzar rutas arbitrarias (más amplio que una sola lectura/acción estrechamente delimitada). |
+| `permission` | `string` | obligatorio | Debe comenzar con `run:` — una familia de permisos distinta de `exec:*`. Esto es lo que permite que un rol `untrusted_input` (ADR-002 C.11) sostenga con seguridad una herramienta de comando acotada sin activar el invariante de exclusión mutua `untrusted_input`/`exec:*` de C.11: ese invariante bloquea específicamente la familia `exec:*`, y una herramienta de comando nunca pertenece a ella. |
+
+### El piso de nivel aplicado
+
+Un permiso `run:*` (la familia de toda herramienta de comando) exige `tier` en `{T2, T3}` — aplicado dos veces, de forma independiente: `ToolSpec.__post_init__` (`harness/registry.py`) lanza `ValueError` al construirse, y el cargador (`harness/loader.py`) rechaza una herramienta de comando `T0`/`T1` en tiempo de carga con un `DefinitionError` que nombra la herramienta, de modo que un rol mal configurado nunca llega a resolverse. La razón es mecánica, no de estilo: `interceptor._is_sensitive` solo revalida una herramienta en tiempo de llamada cuando su tier es `T2`/`T3` (o cuando opta explícitamente con `always_revalidate`) — una herramienta de comando `T0`/`T1` quedaría equipada para un rol `untrusted_input` Y nunca se revalidaría, exactamente la combinación que la segunda barrera de ADR-002 C.10 existe para prevenir en `use_term`/`read_file` y que debe prevenir aquí igualmente.
+
+`T2` en un rol `untrusted_input` sigue permitido — ese es el objetivo completo de ADR-002 C.12, y su propio ejemplo trabajado (`check_stock` arriba) lo usa. Lo que hace segura a una herramienta de comando `T2` para entrada no confiable no es el tier por sí solo; es la combinación de una plantilla `argv` fija (sin argumentos libres en absoluto) y un `pattern`/`enum` obligatorio en cada parámetro string (ver "La acotación es obligatoria" abajo). `T3` es para una herramienta de comando más amplia que eso — una que mute el estado del host o pueda alcanzar rutas arbitrarias.
+
+### La acotación es obligatoria, no opcional
+
+Todo parámetro `string` **debe** declarar `pattern` o `enum` — el cargador rechaza un parámetro `string` sin ninguno de los dos en tiempo de carga. Un parámetro `type: string` sin restricciones, sin `pattern`, no es en absoluto una herramienta de comando acotada: es una forma de contrabandear un valor arbitrario dentro del `argv` del comando, exactamente lo que un tier `T2` en un rol `untrusted_input` se supone que descarta por construcción. `max_length` sigue siendo opcional, pero cuando se declara está acotado (4096 caracteres) — un `max_length` un orden de magnitud más allá de lo que necesita cualquier parámetro real tampoco es una restricción de acotación significativa.
+
+### Reglas de seguridad en tiempo de carga
+
+Aplicadas por el cargador (`harness/loader.py`) antes de que un rol pueda siquiera resolverse, de modo que una declaración mal formada falla al desplegar, no en la primera llamada:
+
+- Un marcador de posición debe ocupar un **elemento completo de argv**. Un marcador de posición parcial (`--flag={x}`) se rechaza, porque esa forma es exactamente cómo se cuela la inyección de opciones — `--flag=--evil-flag` de otro modo contrabandearía una segunda bandera a través de lo que parece un valor ordinario.
+- Todo marcador de posición en `argv` debe referenciar un parámetro declarado, y todo parámetro declarado debe usarse en al menos un marcador de posición.
+- `argv[0]` se resuelve a una **ruta absoluta una sola vez, en tiempo de carga** — un nombre relativo se busca en `$PATH` aquí y solo aquí; nada lo vuelve a resolver contra `$PATH` en tiempo de llamada, lo que elimina el vector de manipulación de `$PATH`.
+- `permission` debe pertenecer a la familia `run:*`.
+- `tier` debe ser `T2` o `T3` — ver "El piso de nivel aplicado" arriba.
+- Todo parámetro `string` debe declarar `pattern` o `enum`, y cualquier `max_length` declarado no puede exceder el tope de la plataforma (4096) — ver "La acotación es obligatoria" arriba.
+- Un override de despliegue solo puede **quitar** herramientas de comando de las que declara el rol, reflejando la regla sustractiva que ya sigue el resto del manifiesto (ver `docs/platform_es/deployment.md`) — nunca puede agregar una que el rol no haya declarado, ni redefinir el `argv`/`params`/`tier` de una entrada.
+
+### Validación en tiempo de llamada y ejecución
+
+El conector construido para una herramienta de comando declarada
+(`connectors/command_tools.py`) rechaza, antes de sustituir cualquier valor
+en la plantilla: un nombre de parámetro desconocido, un parámetro requerido
+faltante, un valor del tipo declarado incorrecto, un valor que no cumple su
+`pattern`/`max_length`/`enum` y — de forma independiente a todo lo anterior —
+cualquier valor cuyo primer carácter sea `-` (U+002D) **o un carácter
+Unicode similar a un guion** (guion medio `–`, guion largo `—`, cualquier
+otro guion de la categoría Unicode Pd, o específicamente U+2212 SIGNO MENOS,
+ya que ese pertenece a la categoría Sm y de otro modo se colaría ante una
+verificación basada solo en la categoría). Esa protección es el cierre
+directo de la clase de inyección de opciones de la tabla de ataques
+anterior: ninguno de `-c core.sshCommand=...`, `-exec rm`, `-c "DROP
+TABLE..."` ni `-d @/etc/secret` — ni una variante con guion similar de
+cualquiera de ellos — puede llegar jamás al `argv` de una herramienta de
+comando como valor de parámetro, sin importar qué `pattern` haya escrito o
+no el autor del parámetro.
+
+**Consecuencia, por diseño:** un valor entero negativo (p. ej. `-1`) nunca
+puede pasarse a través de un parámetro de herramienta de comando — no hay
+una forma acotada de distinguir "un número negativo" de "una bandera de
+opción" en esta capa, así que ambos se rechazan. Una herramienta de comando
+que realmente necesite un valor con signo debe aceptarlo como `string` con
+un `pattern` que exprese su propio manejo del signo (por ejemplo, una
+palabra de signo explícita, o un parámetro que en la práctica nunca sea
+negativo).
+
+Una vez que todos los valores son válidos, el conector los sustituye en la
+plantilla y ejecuta el resultado a través del MISMO motor de subprocesos sin
+shell que usa `use_term` (`create_subprocess_exec`, nunca un shell; el mismo
+mecanismo de tiempo límite y límite de salida) — una herramienta de comando
+no es un segundo ejecutor de comandos, es un frente declarativo sobre el
+único mecanismo de ejecución que la plataforma ya reforzó. Ese único
+mecanismo compartido es también lo que permitirá que el futuro sandbox de
+ADR-002 C.14 envuelva `use_term` y cada herramienta de comando de forma
+idéntica.
+
+---
+
 ## Cómo se registran las herramientas
 
 Las herramientas se definen en el registro de herramientas de la plataforma. Cada definición de herramienta es un registro estructurado (según el esquema anterior) que el Capability Injector consulta al momento de construir el runtime de un agente.

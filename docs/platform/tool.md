@@ -56,6 +56,78 @@ Two deterministic consequences follow from tier, both replacing (as a superset o
 
 ---
 
+## Declarative command tools (`command_tools`)
+
+ADR-002 C.12. The only way to expose a host command before this was the
+single generic `use_term` connector, gated entirely by an allowlist of bare
+program names (`TerminalPolicy.allowed_commands`) — a role got
+unrestricted-within-allowlist access or none, and the allowlist said nothing
+about the *argument shape* that makes an allowlisted command exploitable
+(`git -c core.sshCommand=...`, `find . -exec rm {} \;`, `psql -c "DROP
+TABLE..."`, `curl -d @/etc/secret` are all real examples of a
+name-allowlisted command turned dangerous by its arguments).
+
+`command_tools` closes that gap: a role's `manifest.md` may declare one or
+more fixed-`argv` command tools, each with typed, pattern-validated
+parameter placeholders. There is no free-form argv and no shell — only the
+declared parameters vary, and only within the constraints the manifest
+author wrote for them.
+
+```yaml
+command_tools:
+  - name: check_stock
+    argv: ["/usr/bin/inventory-cli", "--sku", "{sku}", "--format", "json"]
+    params:
+      sku:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{1,32}$"
+        max_length: 32
+    tier: T2
+    permission: run:check_stock
+```
+
+### Schema
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | `string` | required | Unique identifier for this command tool within the role. |
+| `argv` | `list[string]` | required | Fixed argv template. Each element is either a literal (author-controlled, never varies) or a `{param}` placeholder that must occupy the WHOLE element — `--flag={param}` is invalid. `argv[0]` is the program path; it may never itself be a placeholder. |
+| `params` | `object` | optional | Typed, per-parameter validation. Each key is a param name referenced by a `{param}` placeholder in `argv`; each value declares `type` (`string` or `integer`), and — **required for every `string` param** — `pattern` (regex) or `enum` (list of allowed values); `max_length` (integer, string params, capped) stays optional. |
+| `tier` | `T0 \| T1 \| T2 \| T3` | required | Capability tier (see "Capability tiers" above) — author-declared per entry, not fixed, but **enforced with a floor: `T2` or `T3` only.** `T0`/`T1` are rejected at load. `check_stock` above is `T2` — the minimum, and the tier ADR-002 C.12 deliberately allows an `untrusted_input` role to hold, precisely *because* the fixed `argv` plus a mandatory `pattern`/`enum` on every string param keep it narrow. Use `T3` for anything that mutates host state or can reach arbitrary paths (broader than a single narrowly-shaped read/action). |
+| `permission` | `string` | required | Must start with `run:` — a permission family distinct from `exec:*`. This is what lets an `untrusted_input` role (ADR-002 C.11) safely hold a narrow command tool without tripping C.11's `untrusted_input`/`exec:*` mutual-exclusion invariant: the invariant blocks the `exec:*` family specifically, and a command tool is never in it. |
+
+### The enforced tier floor
+
+A `run:*` permission (every command tool's permission family) requires `tier` in `{T2, T3}` — enforced twice, independently: `ToolSpec.__post_init__` (`harness/registry.py`) raises `ValueError` at construction, and the loader (`harness/loader.py`) rejects a `T0`/`T1` command tool at manifest load with a `DefinitionError` naming the tool, so a misconfigured role never even resolves. The reason is mechanical, not stylistic: `interceptor._is_sensitive` only revalidates a tool at call time when its tier is `T2`/`T3` (or it opts in via `always_revalidate`) — a `T0`/`T1` command tool would be equipped for an `untrusted_input` role AND never revalidated, which is exactly the combination ADR-002 C.10's second barrier exists to prevent for `use_term`/`read_file` and must equally prevent here.
+
+`T2` on an `untrusted_input` role stays allowed — that is ADR-002 C.12's whole point, and its own worked example (`check_stock` above) uses it. What makes a `T2` command tool safe for untrusted input is not the tier alone; it is the combination of a fixed `argv` template (no free-form arguments at all) and a mandatory `pattern`/`enum` on every string param (see "Narrowness is required" below). `T3` is for a command tool broader than that — one that mutates host state or can reach arbitrary paths.
+
+### Narrowness is required, not opt-in
+
+Every `string` param **must** declare `pattern` or `enum` — the loader rejects a `string` param with neither at load time. An unconstrained `type: string` param with no `pattern` is not a narrow command tool at all: it is a way to smuggle an arbitrary value into the command's argv, which is exactly what a `T2` tier on an `untrusted_input` role is supposed to rule out by construction. `max_length` stays optional, but when given it is capped (4096 characters) — a `max_length` an order of magnitude beyond what any real parameter needs is not a meaningful narrowing constraint either.
+
+### Load-time safety rules
+
+Enforced by the loader (`harness/loader.py`) before a role can even resolve, so a malformed declaration fails at deploy time, not at the first call:
+
+- A placeholder must occupy a **whole argv element**. A partial-element placeholder (`--flag={x}`) is rejected, because that shape is exactly how option injection sneaks in — `--flag=--evil-flag` would otherwise smuggle a second flag through what looks like an ordinary value.
+- Every placeholder in `argv` must reference a declared param, and every declared param must be used by at least one placeholder.
+- `argv[0]` is resolved to an **absolute path once, at load time** — a bare name is looked up on `$PATH` here and only here; nothing re-resolves it against `$PATH` at call time, which removes the `$PATH`-manipulation vector.
+- `permission` must be in the `run:*` family.
+- `tier` must be `T2` or `T3` — see "The enforced tier floor" above.
+- Every `string` param must declare `pattern` or `enum`, and any declared `max_length` may not exceed the platform cap (4096) — see "Narrowness is required" above.
+- A deployment override may only **remove** command tools from what the role declares, mirroring the subtractive rule the rest of the manifest already follows (see `docs/platform/deployment.md`) — it can never add one the role did not declare, and it never redefines an entry's `argv`/`params`/`tier`.
+
+### Call-time validation and execution
+
+The connector built for a declared command tool (`connectors/command_tools.py`) rejects, before ever substituting a value into the template: an unknown parameter name, a missing required parameter, a value of the wrong declared type, a value that fails its `pattern`/`max_length`/`enum`, and — independent of all of the above — any value whose first character is `-` (U+002D) **or a Unicode dash lookalike** (en dash `–`, em dash `—`, any other Unicode category-Pd dash, or U+2212 MINUS SIGN specifically, since that one is category Sm and would otherwise slip past a category-only check). That guard is the direct closure of the option-injection class in the attack table above: none of `-c core.sshCommand=...`, `-exec rm`, `-c "DROP TABLE..."`, or `-d @/etc/secret` — nor a lookalike-dash variant of any of them — can ever reach a command tool's argv as a parameter value, regardless of what `pattern` a param author did or did not write.
+
+**Consequence, by design:** a negative integer value (e.g. `-1`) can never be passed through a command tool param — there is no narrow way to distinguish "a negative number" from "an option flag" at this layer, so both are refused. A command tool that genuinely needs a signed value must accept it as a `string` with a `pattern` that spells out its own sign-handling (e.g. an explicit sign word, or a param that is never negative in practice).
+
+Once every value validates, the connector substitutes them into the template and executes the result through the SAME no-shell subprocess engine `use_term` uses (`create_subprocess_exec`, never a shell; the same timeout and output-cap machinery) — a command tool is not a second command runner, it is a declarative front end over the one execution seam the platform already hardened. That single shared seam is also what lets ADR-002 C.14's future sandbox wrap both `use_term` and every command tool identically.
+
+---
+
 ## How tools are registered
 
 Tools are defined in the platform's tool registry. Each tool definition is a structured record (schema above) that the Capability Injector consults when building an agent runtime.

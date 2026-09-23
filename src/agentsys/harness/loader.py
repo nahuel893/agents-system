@@ -47,10 +47,13 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 import re
+import shutil
 from typing import Any, Mapping
 
 import structlog
 import yaml
+
+from agentsys.harness.registry import Tier
 
 logger = structlog.get_logger()
 
@@ -209,6 +212,49 @@ class AgentDefinition:
     #: ADR-002 C.11. Always a concrete bool on a resolved AgentDefinition —
     #: defaults to False when no role in the chain declared it.
     untrusted_input: bool = False
+    #: ADR-002 C.12. Fully resolved declarative command tools this role may
+    #: build a `ToolSpec` for — see `CommandToolDeclaration`. Empty for every
+    #: role that declares none, which is the overwhelming majority.
+    command_tools: tuple["CommandToolDeclaration", ...] = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class CommandToolParam:
+    """One typed, pattern-validated placeholder in a command tool's `argv`
+    template (ADR-002 C.12).
+
+    `type` is the only field every param must declare; `pattern`,
+    `max_length` and `enum` are optional call-time constraints layered on
+    top of it. Validated against an actual call value by
+    `connectors.command_tools`, never here — this dataclass is pure data.
+    """
+
+    type: str
+    pattern: str | None = None
+    max_length: int | None = None
+    enum: tuple[str, ...] | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class CommandToolDeclaration:
+    """One declarative command tool from a manifest's `command_tools:` list
+    (ADR-002 C.12).
+
+    Fully validated at LOAD time by `_parse_command_tools` below: `argv[0]`
+    is always an absolute path (resolved once at load, never re-looked-up on
+    `$PATH` at call time) and every `{param}` placeholder in `argv` occupies
+    a WHOLE element — never a fragment of one, which is exactly how option
+    injection (`--flag={x}` → `--flag=--evil`) sneaks past a naive template.
+    `permission` always starts with `run:` — a family distinct from
+    `exec:*`, so an `untrusted_input` role can hold one without tripping
+    C.11's mutual-exclusion invariant.
+    """
+
+    name: str
+    argv: tuple[str, ...]
+    params: Mapping[str, CommandToolParam]
+    tier: Tier
+    permission: str
 
 
 @dataclasses.dataclass
@@ -235,6 +281,17 @@ class RawDefinition:
     #: role or, on an override, from the resolved generic definition. Only
     #: an explicit `True`/`False` is a declaration.
     untrusted_input: bool | None = None
+    #: ADR-002 C.12. NAMES only (same shape as `tools`) — a role's manifest
+    #: names its own command tools here (`command_tool_declarations` below
+    #: carries the full entries); a deployment override names the SUBSET it
+    #: keeps. Absent means `[]`, exactly like `tools` — see `merge()`.
+    command_tools: list[str] = dataclasses.field(default_factory=list)
+    #: ADR-002 C.12. `{name: full declaration}`, populated ONLY by a platform
+    #: role's own manifest (`_load_role_files`) — a deployment override never
+    #: originates a new declaration, it only narrows `command_tools` above.
+    command_tool_declarations: dict[str, CommandToolDeclaration] = (
+        dataclasses.field(default_factory=dict)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +342,297 @@ def _as_str_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
     return [str(value)]
+
+
+# ---------------------------------------------------------------------------
+# ADR-002 C.12 — declarative `command_tools`
+# ---------------------------------------------------------------------------
+#: A `{name}` placeholder — the ENTIRE element must match this, never a
+#: fragment of it (see `_validate_argv_template`).
+_PLACEHOLDER_WHOLE = re.compile(r"^\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+#: Any `{...}`-shaped fragment anywhere in an element, used only to detect a
+#: PARTIAL placeholder (`--flag={x}`) so the error names the attempt.
+_PLACEHOLDER_ANY = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+_COMMAND_TOOL_PARAM_TYPES = ("string", "integer")
+#: ADR-002 C.12 deliberately allows an untrusted_input role to hold a NARROW
+#: T2 command tool — "narrow" is enforced, not aspirational: a run:* tool
+#: below this floor is never revalidated at call time
+#: (`interceptor._is_sensitive` only checks tier in {T2, T3} or
+#: `always_revalidate`), so a T0/T1 command tool would reach an
+#: untrusted_input role with no Layer-2 check at all (PR #147 review
+#: follow-up: a T0 command tool was proven to run unrevalidated).
+_COMMAND_TOOL_MIN_TIER = (Tier.T2, Tier.T3)
+#: A `max_length` beyond this is not "narrow" — it stops being a meaningful
+#: constraint on what an untrusted model can smuggle through the param, so
+#: it is capped rather than left to an author's judgement (PR #147 review
+#: follow-up).
+_COMMAND_TOOL_PARAM_MAX_LENGTH_CAP = 4096
+
+
+def _resolve_argv0(raw: str, *, tool_name: str, source: pathlib.Path) -> str:
+    """Resolve `argv[0]` to an absolute path ONCE, at load time (ADR-002 C.12).
+
+    An already-absolute path is trusted as given. A bare name is looked up
+    on `$PATH` here and only here — the resolved absolute path is what gets
+    stored and, later, what gets executed; nothing re-resolves it against
+    `$PATH` at call time, which removes the `$PATH`-manipulation vector
+    `operator.py`'s own `_child_env` already closes for `use_term`.
+    """
+    candidate = pathlib.Path(raw)
+    if candidate.is_absolute():
+        return str(candidate)
+    resolved = shutil.which(raw)
+    if resolved is None:
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' with argv[0]={raw!r}, which is not an "
+            f"absolute path and could not be resolved on $PATH at load "
+            f"time. ADR-002 C.12 requires argv[0] to resolve to an absolute "
+            f"path at load time, not $PATH lookup at call time — give an "
+            f"absolute path or make the binary available on $PATH now."
+        )
+    return resolved
+
+
+def _validate_argv_template(
+    raw_argv: Any,
+    params: Mapping[str, CommandToolParam],
+    *,
+    tool_name: str,
+    source: pathlib.Path,
+) -> tuple[str, ...]:
+    """Validate and resolve one command tool's `argv` template.
+
+    Enforces, at LOAD time: `argv` is a non-empty list of strings; `argv[0]`
+    is literal (never a placeholder) and gets resolved to an absolute path;
+    every OTHER element is either a literal or a placeholder that occupies
+    the WHOLE element — `--flag={x}` is rejected here, because a
+    partial-element placeholder is how option injection sneaks in
+    (`--flag=--evil-flag` smuggling a second flag through what looks like a
+    value); every placeholder names a declared param, and every declared
+    param is used by at least one placeholder.
+    """
+    if (
+        not isinstance(raw_argv, list)
+        or not raw_argv
+        or not all(isinstance(element, str) for element in raw_argv)
+    ):
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' with argv={raw_argv!r}, which must be a "
+            f"non-empty list of strings."
+        )
+
+    program, *rest = raw_argv
+    if _PLACEHOLDER_ANY.search(program):
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' with a placeholder in argv[0] ({program!r}). "
+            f"The program path is fixed by the manifest author and may never "
+            f"vary by param."
+        )
+    resolved: list[str] = [_resolve_argv0(program, tool_name=tool_name, source=source)]
+
+    used: set[str] = set()
+    for element in rest:
+        whole_match = _PLACEHOLDER_WHOLE.match(element)
+        if whole_match is not None:
+            name = whole_match.group(1)
+            if name not in params:
+                raise DefinitionError(
+                    f"Invariant violation — command_tools: {source} declares "
+                    f"command tool '{tool_name}' with placeholder "
+                    f"'{{{name}}}' in argv, but no matching param is "
+                    f"declared. Declared params: {sorted(params)}."
+                )
+            used.add(name)
+            resolved.append(element)
+            continue
+
+        if _PLACEHOLDER_ANY.search(element):
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {source} declares "
+                f"command tool '{tool_name}' with argv element {element!r}, "
+                f"which embeds a placeholder inside a larger string. A "
+                f"placeholder must occupy a WHOLE argv element (e.g. "
+                f"'{{sku}}', never '--flag={{sku}}') — a partial-element "
+                f"placeholder is how option injection sneaks in (ADR-002 "
+                f"C.12)."
+            )
+        resolved.append(element)
+
+    unused = set(params) - used
+    if unused:
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' with param(s) {sorted(unused)} that never "
+            f"appear as a placeholder in argv. Every declared param must be "
+            f"used."
+        )
+    return tuple(resolved)
+
+
+def _parse_command_tool_param(
+    raw: Any, *, tool_name: str, param_name: str, source: pathlib.Path
+) -> CommandToolParam:
+    if not isinstance(raw, dict):
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' param '{param_name}' as {raw!r}, which must "
+            f"be a mapping with at least a 'type' key."
+        )
+    ptype = raw.get("type")
+    if ptype not in _COMMAND_TOOL_PARAM_TYPES:
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' param '{param_name}' with type={ptype!r}. "
+            f"Valid types: {list(_COMMAND_TOOL_PARAM_TYPES)}."
+        )
+    pattern = raw.get("pattern")
+    if pattern is not None and not isinstance(pattern, str):
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' param '{param_name}' with a non-string "
+            f"pattern."
+        )
+    max_length = raw.get("max_length")
+    if max_length is not None and (
+        isinstance(max_length, bool) or not isinstance(max_length, int)
+    ):
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' param '{param_name}' with a non-integer "
+            f"max_length."
+        )
+    if max_length is not None and max_length > _COMMAND_TOOL_PARAM_MAX_LENGTH_CAP:
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' param '{param_name}' with "
+            f"max_length={max_length}, which exceeds the platform cap of "
+            f"{_COMMAND_TOOL_PARAM_MAX_LENGTH_CAP} (ADR-002 C.12 — a command "
+            f"tool's params must stay narrow; max_length is optional but not "
+            f"unbounded)."
+        )
+    enum_raw = raw.get("enum")
+    enum = tuple(str(v) for v in enum_raw) if enum_raw is not None else None
+
+    # ADR-002 C.12 deliberately lets an untrusted_input role hold a narrow T2
+    # command tool — "narrow" is what makes that safe, and is enforced here,
+    # not left to an author's judgement (PR #147 review follow-up: a
+    # `type: string` param with no `pattern` let a value read `/etc/hostname`
+    # straight through). `enum` is an equally valid narrowing — either is
+    # accepted, but at least one is required for every string param.
+    if ptype == "string" and pattern is None and enum is None:
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares command "
+            f"tool '{tool_name}' param '{param_name}' with type=string but no "
+            f"'pattern' or 'enum'. An unconstrained string param can carry "
+            f"arbitrary text into the command's argv — declare 'pattern' or "
+            f"'enum' to narrow what it may contain (ADR-002 C.12)."
+        )
+
+    return CommandToolParam(
+        type=ptype, pattern=pattern, max_length=max_length, enum=enum
+    )
+
+
+def _parse_command_tools(
+    manifest_fm: dict[str, Any], *, source: pathlib.Path
+) -> list[CommandToolDeclaration]:
+    """Parse and fully validate a role manifest's `command_tools:` list.
+
+    Only a platform ROLE's own `manifest.md` calls this — a deployment
+    override's `command_tools:` is a bare list of NAMES (parsed with
+    `_as_str_list`, like `tools:`), never full entries; see `merge()`.
+    """
+    raw_list = manifest_fm.get("command_tools")
+    if raw_list is None:
+        return []
+    if not isinstance(raw_list, list):
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares "
+            f"command_tools={raw_list!r}, which must be a list."
+        )
+
+    declarations: list[CommandToolDeclaration] = []
+    seen_names: set[str] = set()
+    for entry in raw_list:
+        if not isinstance(entry, dict):
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {source} declares a "
+                f"command_tools entry {entry!r}, which must be a mapping."
+            )
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {source} declares a "
+                f"command_tools entry with a missing or invalid 'name'."
+            )
+        if name in seen_names:
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {source} declares "
+                f"command tool '{name}' more than once."
+            )
+        seen_names.add(name)
+
+        params_raw = entry.get("params") or {}
+        if not isinstance(params_raw, dict):
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {source} declares "
+                f"command tool '{name}' with a non-mapping 'params'."
+            )
+        params = {
+            pname: _parse_command_tool_param(
+                praw, tool_name=name, param_name=pname, source=source
+            )
+            for pname, praw in params_raw.items()
+        }
+
+        argv = _validate_argv_template(
+            entry.get("argv"), params, tool_name=name, source=source
+        )
+
+        tier_raw = entry.get("tier")
+        try:
+            tier = Tier(tier_raw)
+        except ValueError:
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {source} declares "
+                f"command tool '{name}' with tier={tier_raw!r}. Valid "
+                f"tiers: {[t.value for t in Tier]}."
+            ) from None
+
+        if tier not in _COMMAND_TOOL_MIN_TIER:
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {source} declares "
+                f"command tool '{name}' with tier={tier.value}, which is "
+                f"below the ADR-002 C.12 floor. A command tool's permission "
+                f"is always in the run:* family, which requires tier in "
+                f"{{T2, T3}} — a T0/T1 tool is never revalidated at call "
+                f"time (interceptor._is_sensitive) and would let an "
+                f"untrusted_input role reach an unrevalidated host command. "
+                f"Use tier: T2 for a narrow, pattern-constrained command "
+                f"tool, or tier: T3 for one that mutates host state or "
+                f"reads arbitrary paths."
+            )
+
+        permission = entry.get("permission")
+        if not isinstance(permission, str) or not permission.startswith("run:"):
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {source} declares "
+                f"command tool '{name}' with permission={permission!r}, "
+                f"which must start with 'run:' — command tools are a "
+                f"distinct permission family from exec:*, so an "
+                f"untrusted_input role can safely hold one without "
+                f"tripping C.11's invariant (ADR-002 C.12)."
+            )
+
+        declarations.append(
+            CommandToolDeclaration(
+                name=name, argv=argv, params=params, tier=tier, permission=permission
+            )
+        )
+    return declarations
 
 
 # A role or client name is a single directory name, nothing else. Anything
@@ -556,6 +904,15 @@ def _load_role_files(
     parent = _extends_target(parent_raw) if parent_raw else None
     is_abstract = bool(manifest_fm.get("abstract", False))
 
+    # ADR-002 C.12. Only a platform role's own manifest.md ORIGINATES command
+    # tool declarations; the resulting dict is keyed by name so a deployment
+    # override (which never originates one, see `load_override`) can narrow
+    # `command_tools` by name without needing to restate argv/params/tier.
+    command_tool_declarations = {
+        decl.name: decl
+        for decl in _parse_command_tools(manifest_fm, source=folder / "manifest.md")
+    }
+
     definition = RawDefinition(
         role_name=role_name,
         version=version,
@@ -583,6 +940,9 @@ def _load_role_files(
         # monotonicity invariant needs. `_parse_untrusted_input` type-checks
         # whatever was actually written on disk.
         untrusted_input=_parse_untrusted_input(policy_fm, source=folder / "policy.md"),
+        # ADR-002 C.12. Dict preserves manifest declaration order.
+        command_tools=list(command_tool_declarations),
+        command_tool_declarations=command_tool_declarations,
     )
     return definition, parent, is_abstract
 
@@ -696,6 +1056,21 @@ def _fold_parent_into_child(
         merged.update(b)
         return merged
 
+    # ADR-002 C.12. Additive, like `tools`/`permissions` above -- but unlike
+    # those plain string lists, a NAME collision between two platform roles
+    # is a real ambiguity (which entry's argv/params/tier wins?), so it is
+    # rejected rather than silently deduplicated.
+    merged_declarations = dict(parent.command_tool_declarations)
+    for name, declaration in child.command_tool_declarations.items():
+        if name in merged_declarations:
+            raise DefinitionError(
+                f"Invariant violation — command_tools: role "
+                f"'{child.role_name}' redeclares command tool '{name}', "
+                f"already declared by an ancestor role. A descendant may "
+                f"not redeclare a command tool; give it a different name."
+            )
+        merged_declarations[name] = declaration
+
     prompts = [p for p in (parent.system_prompt, child.system_prompt) if p.strip()]
 
     return RawDefinition(
@@ -719,6 +1094,10 @@ def _fold_parent_into_child(
         audit_policy=_merge_mapping(parent.audit_policy, child.audit_policy),
         execution_limits=resolved_limits,
         untrusted_input=resolved_untrusted_input,
+        command_tools=_union_preserving_order(
+            parent.command_tools, child.command_tools
+        ),
+        command_tool_declarations=merged_declarations,
     )
 
 
@@ -920,6 +1299,11 @@ def load_override(
         # the resolved role's value — see `_validate_untrusted_input_monotonic`.
         # `_parse_untrusted_input` type-checks whatever was actually written.
         untrusted_input=_parse_untrusted_input(policy_fm, source=folder / "policy.md"),
+        # ADR-002 C.12. NAMES only, same shape as `tools` above — a
+        # deployment never originates a full declaration (`command_tool_
+        # declarations` stays empty), it only narrows the role's set by
+        # name. `_validate_command_tools` enforces the subset below.
+        command_tools=_as_str_list(manifest_fm.get("command_tools")),
     )
 
 
@@ -1049,6 +1433,23 @@ def _validate_tools(parent: RawDefinition, override: RawDefinition) -> None:
             f"Invariant violation — tools: override requests tools not present in "
             f"the parent surface: {sorted(extra)}.  "
             f"Parent tools: {sorted(parent_set)}"
+        )
+
+
+def _validate_command_tools(parent: RawDefinition, override: RawDefinition) -> None:
+    """ADR-002 C.12 — a deployment may only REMOVE declared command_tools,
+    never add one the role did not already declare. Mirrors `_validate_tools`
+    exactly, on the NAME set (`command_tool_declarations` carries the full
+    entries, which a deployment never redefines)."""
+    parent_set = set(parent.command_tools)
+    override_set = set(override.command_tools)
+    extra = override_set - parent_set
+    if extra:
+        raise DefinitionError(
+            f"Invariant violation — command_tools: override requests command "
+            f"tools not declared by the role: {sorted(extra)}. A deployment "
+            f"may only remove declared command_tools, never add new ones "
+            f"(ADR-002 C.12). Role command_tools: {sorted(parent_set)}"
         )
 
 
@@ -1283,6 +1684,15 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
     resolved_tools = override.tools  # override declares its own tool subset
     _validate_tools(generic, override)
 
+    # --- Resolve command_tools (ADR-002 C.12) --- same subtractive shape as
+    # tools above: the override names the NAME SUBSET it keeps, validated
+    # against the role's own declared set, and the full entries are looked
+    # up from the role's declarations (a deployment never redefines one).
+    _validate_command_tools(generic, override)
+    resolved_command_tools = tuple(
+        generic.command_tool_declarations[name] for name in override.command_tools
+    )
+
     # --- Resolve permissions ---
     parent_perms = (
         list(generic.permissions)
@@ -1395,6 +1805,7 @@ def _merge_validated(generic: RawDefinition, override: RawDefinition) -> AgentDe
         audit_policy=resolved_audit,
         execution_limits=resolved_limits,
         untrusted_input=resolved_untrusted_input,
+        command_tools=resolved_command_tools,
     )
 
 
@@ -1474,4 +1885,7 @@ def resolve(
         audit_policy=dict(generic.audit_policy),
         execution_limits=exec_limits,
         untrusted_input=resolved_untrusted_input,
+        command_tools=tuple(
+            generic.command_tool_declarations[name] for name in generic.command_tools
+        ),
     )
