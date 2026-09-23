@@ -38,7 +38,9 @@ from agentsys.harness.injector import _emit, resolve_tool_surface
 from agentsys.harness.loader import (
     AgentDefinition,
     RootConfig,
+    _BASE_PROMPT_CONTRACT,
     _require_deployments_root,
+    _strip_base_contract,
     resolve,
 )
 from agentsys.harness.registry import ToolRegistry, ToolSpec
@@ -162,9 +164,34 @@ def _compose_prompt(
     definition: AgentDefinition,
     skills: tuple[LoadedSkill, ...],
 ) -> str:
-    """Compose the final system prompt: role body + skill bodies, in order."""
-    parts = [definition.system_prompt.strip()]
+    """Compose the final system prompt: role body + skill bodies + base contract.
+
+    ADR-002 B.9's six-clause base contract must be the LAST block of the
+    prompt the model actually receives: the Agent Runtime sends THIS
+    function's return value (``EquippedRuntime.system_prompt``) to the
+    model, not ``definition.system_prompt`` (`agent/graph.py`'s
+    `_call_model` uses ``equipped.system_prompt``). ``resolve()`` already
+    appends the contract to ``definition.system_prompt`` so that value
+    alone still satisfies B.9 for a caller reading it directly, but if this
+    function simply appended skill content after it (as it used to), the
+    contract would end up in the middle rather than last whenever a role
+    had skills.
+
+    When there is no skill content to insert, ``definition.system_prompt``
+    is already correct as-is (the contract is already its final block) and
+    is returned unchanged. When skills exist, the contract is stripped back
+    off (``loader._strip_base_contract``, the exact inverse of
+    ``loader._append_base_contract``), skill content is inserted, and the
+    contract is appended once more — so it still appears exactly once
+    overall, now genuinely last.
+    """
+    if not skills:
+        return definition.system_prompt.strip()
+
+    role_prompt = _strip_base_contract(definition.system_prompt).strip()
+    parts = [role_prompt]
     parts.extend(skill.content for skill in skills)
+    parts.append(_BASE_PROMPT_CONTRACT.strip())
     return _SKILL_SEPARATOR.join(p for p in parts if p)
 
 

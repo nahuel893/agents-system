@@ -13,8 +13,8 @@
 | 5 | `memory_policy` folded but unenforced | A. Agent model | ⏳ pending | Depends on 3, 25 — #120 |
 | 6 | Delegation declared, not executable | A. Agent model | ⏳ pending | Issue #53 |
 | 7 | `agent.md` as reference definition | A. Agent model | ✅ done (this change) | — |
-| 8 | BUG: role.md prose leaks as system prompt / design notes leak to users | B. Prompts | ⏳ pending | PR0 (recommended before B.9 and any live eval) — #107 |
-| 9 | Universal base prompt contract | B. Prompts | ⏳ pending | Same PR as 8 — #107 |
+| 8 | BUG: role.md prose leaks as system prompt / design notes leak to users | B. Prompts | ✅ done | PR0 (recommended before B.9 and any live eval) — #107 |
+| 9 | Universal base prompt contract | B. Prompts | ✅ done | Same PR as 8 — #107 |
 | 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ⏳ pending | PR2 — #109 |
 | 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ⏳ pending | PR1 — #108 |
 | 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ⏳ pending | PR3 — #110 |
@@ -505,10 +505,13 @@ the model not to repeat what it was handed.
 its rationale (Option 1) or add the heading (Option 2). No permission,
 tool, or policy semantics change — this is prompt-composition only.
 
-**Status.** ⏳ pending. **Planned slice:** land before B.9 (same PR is
-reasonable, since B.9 needs a clean prompt to be appended to) and before any
-live evaluation work (E.18) — evaluating role behavior against a prompt that
-still contains internal rationale would contaminate results.
+**Status.** ✅ done — landed together with B.9 in #107. Option 2 was the
+option implemented: `role.md` bodies now carry a `## design notes` heading,
+and the loader (`harness/loader.py`'s `_split_design_notes`) strips
+everything at/after it from `system_prompt` before composition, raising
+loudly on a near-miss heading rather than silently passing rationale
+through. `resolve('sales-agent').system_prompt` dropped from 2698 to 1721
+characters and no longer contains the taxonomy rationale.
 
 ---
 
@@ -568,7 +571,11 @@ instruction not to fabricate data does not stop a compromised or confused
 model from calling a real, permitted tool it should not have called in that
 moment; only the permission/tier/revalidation machinery in C does that.
 
-**Status.** ⏳ pending. **Planned slice:** same PR as B.8.
+**Status.** ✅ done — landed together with B.8 in #107. The loader
+(`harness/loader.py`'s `_append_base_contract`) appends the six clauses to
+every prompt `resolve()` returns, exactly once regardless of `extends:`
+chain depth, so no `role.md` or deployment override declares or can
+contradict them.
 
 ---
 

@@ -13,8 +13,8 @@
 | 5 | `memory_policy` mezclada pero sin aplicarse | A. Modelo de agentes | ⏳ pendiente | Depende de 3, 25 — #120 |
 | 6 | Delegación declarada, no ejecutable | A. Modelo de agentes | ⏳ pendiente | Issue #53 |
 | 7 | `agent.md` como definición de referencia | A. Modelo de agentes | ✅ hecho (este cambio) | — |
-| 8 | BUG: el prosa de role.md se filtra como prompt de sistema / notas de diseño se filtran a usuarios | B. Prompts | ⏳ pendiente | PR0 (recomendado antes de B.9 y de cualquier evaluación en vivo) — #107 |
-| 9 | Contrato universal del prompt base | B. Prompts | ⏳ pendiente | Mismo PR que 8 — #107 |
+| 8 | BUG: el prosa de role.md se filtra como prompt de sistema / notas de diseño se filtran a usuarios | B. Prompts | ✅ hecho | PR0 (recomendado antes de B.9 y de cualquier evaluación en vivo) — #107 |
+| 9 | Contrato universal del prompt base | B. Prompts | ✅ hecho | Mismo PR que 8 — #107 |
 | 10 | Niveles de capacidad (T0–T3) en `ToolSpec` | C. Herramientas y permisos | ⏳ pendiente | PR2 — #109 |
 | 11 | Bandera `untrusted_input` + invariante vs. `exec:*` | C. Herramientas y permisos | ⏳ pendiente | PR1 — #108 |
 | 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ⏳ pendiente | PR3 — #110 |
@@ -561,11 +561,14 @@ reubicar su justificación (Opción 1) o agregar el encabezado (Opción 2).
 Ningún cambio de semántica de permisos, herramientas o política — esto es
 solo composición de prompt.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** aterrizar antes de B.9
-(el mismo PR es razonable, ya que B.9 necesita un prompt limpio al cual
-anexarse) y antes de cualquier trabajo de evaluación en vivo (E.18) —
-evaluar el comportamiento de un rol contra un prompt que todavía contiene
-justificación interna contaminaría los resultados.
+**Estado.** ✅ hecho — implementado junto con B.9 en #107. La Opción 2 fue
+la implementada: los cuerpos de `role.md` ahora llevan un encabezado
+`## design notes`, y el loader (`_split_design_notes` en
+`harness/loader.py`) elimina todo lo que está en el encabezado o después de
+él de `system_prompt` antes de componerlo, generando un error explícito
+ante un encabezado casi correcto en vez de dejar pasar la justificación en
+silencio. `resolve('sales-agent').system_prompt` bajó de 2698 a 1721
+caracteres y ya no contiene la justificación de la taxonomía.
 
 ---
 
@@ -635,7 +638,11 @@ confundido invoque una herramienta real y permitida que no debería haber
 invocado en ese momento; solo la maquinaria de permisos/niveles/revalidación
 de C hace eso.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** mismo PR que B.8.
+**Estado.** ✅ hecho — implementado junto con B.8 en #107. El loader
+(`_append_base_contract` en `harness/loader.py`) agrega las seis cláusulas
+a todo prompt que devuelve `resolve()`, exactamente una vez sin importar la
+profundidad de la cadena `extends:`, de modo que ningún `role.md` ni
+sobreescritura de despliegue las declara ni puede contradecirlas.
 
 ---
 

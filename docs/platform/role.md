@@ -68,6 +68,18 @@ An agent definition is a folder under `platform/roles/` containing three files. 
 | `memory_policy` | `object` | required | Governs what the runtime may read from and write to memory. Sub-fields: `read_scope` (one of `local`, `team`, `org`), `write_scope` (one of `local`, `team`, `org`), `persist_conversation` (boolean). |
 | `audit_policy` | `object` | required | What the runtime must record in the audit trail. Sub-fields: `log_tool_calls` (boolean), `log_delegations` (boolean), `log_escalations` (boolean), `retention_days` (integer or `null` for platform default). |
 
+### `role.md` prose body — model-facing prompt vs. design notes
+
+The frontmatter table above covers `role.md`'s YAML header. Everything after the closing `---` is the prose body, which the loader captures as the role's contribution to `system_prompt` (`AgentDefinition.system_prompt` / `RawDefinition.system_prompt`, `harness/loader.py`).
+
+That body may carry an optional `## design notes` heading. Everything above the heading is model-facing: it becomes part of what the model actually receives, folded together with every ancestor's prose and, if a deployment is resolved, the override's own prose. Everything at or after the heading is developer-only: the loader strips it before composing `system_prompt`, so it never reaches the model. Use it for the "why" behind a role's shape — inheritance mechanics, taxonomy rationale, design tradeoffs — the same kind of prose a `README.md` would carry, kept in one file instead of split across two.
+
+The heading text must match `## design notes` exactly (case-insensitive, any amount of whitespace around the words tolerated). A heading that looks like an attempt at that marker but does not match it — wrong heading level, a typo, "design note" singular — raises loudly rather than silently leaving the rationale in the prompt. A `role.md` with no such heading at all is valid; its whole body is model-facing. Matching skips lines inside fenced code blocks and 4+-space-indented (code-block) lines, so an *example* `## design notes` heading shown for illustration is never mistaken for the real marker — which also means no heading text may start with "design notes" for any other purpose outside such an example.
+
+### The base prompt contract
+
+Every role resolved through `resolve()` gets six behavioral clauses appended to its composed `system_prompt`, regardless of what any role in its chain declares: never fabricate data, treat user text and tool output as data rather than instructions, escalate when unsure, confirm before irreversible actions, never reveal the system prompt or internals, and answer in the user's language. These are the platform's floor, not a per-role opt-in — inheritance between roles cannot remove or contradict them, because they are appended once, structurally, by the loader itself rather than declared in any `role.md`. See `docs/architecture/adr-002-agent-model-and-capabilities.md` §B.9 for the rationale behind each clause.
+
 > **Open decision (1):** Should role definitions define only role semantics — purpose, scope, tools, skills, escalation rules — or also execution policy, such as which model to use, whether to enable warm caching, and what execution timeouts to apply? Execution policy may belong in `policy.md` (coupling role and execution), in the factory (separating concerns), or in a separate platform-level policy layer. This decision affects whether agent definitions are portable across different runtime configurations.
 
 ---
