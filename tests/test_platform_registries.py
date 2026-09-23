@@ -309,13 +309,14 @@ def test_test_registry_fakes_are_neutral_and_free_of_client_prose() -> None:
 
 def test_test_registry_custom_policy_and_bindings(tmp_path: Any) -> None:
     import pathlib
-    from agentsys.connectors.operator import TerminalPolicy
+    from agentsys.connectors.operator import SandboxPolicy, TerminalPolicy
     from agentsys.services.reports import ReportSpec
     from conftest import build_test_registry
 
     policy = TerminalPolicy(
         root=pathlib.Path(tmp_path),
         allowed_commands=frozenset({"echo"}),
+        sandbox=SandboxPolicy(),
         timeout_s=2.0,
     )
     import importlib

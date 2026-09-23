@@ -14,15 +14,17 @@ class ADR-002 C.12's table names: `git -c core.sshCommand=...`,
 The connector this module builds does exactly that check, substitutes the
 validated values into the template, and executes the result through
 `operator._run_argv` — the SAME no-shell subprocess seam `use_term` uses,
-not a second command runner. Reusing that one seam is also what lets C.14's
-future bubblewrap sandbox wrap command tools and `use_term` identically,
-with a single change in one place.
+not a second command runner. Reusing that one seam is also what lets
+ADR-002 C.14's bubblewrap sandbox wrap command tools and `use_term`
+identically, with a single change in one place.
 """
 
 from __future__ import annotations
 
 import pathlib
 import re
+import shutil
+import tempfile
 import unicodedata
 from typing import Any, Awaitable, Callable
 
@@ -30,10 +32,12 @@ import structlog
 
 from agentsys.connectors.operator import (
     ConnectorOutput,
+    SandboxPolicy,
     TerminalPolicy,
     _refuse,
     _reject_null_bytes,
     _run_argv,
+    log_sandbox_availability_at_boot,
 )
 from agentsys.harness.loader import CommandToolDeclaration, CommandToolParam
 from agentsys.harness.registry import ToolSpec
@@ -42,12 +46,16 @@ _logger = structlog.get_logger()
 
 AsyncConnector = Callable[..., Awaitable[ConnectorOutput]]
 
-#: A command tool has no deployment-configured root or limits (unlike
-#: `use_term`, which is deliberately unconfigured-by-default and refuses
-#: everything until a deployment supplies a `TerminalPolicy`) — these are
-#: fixed, conservative platform defaults, matching `TerminalPolicy`'s own
-#: dataclass defaults. C.14's sandbox work is the natural place to revisit
-#: whether a command tool should carry its own configurable root/limits.
+#: A command tool has no deployment-configured limits (unlike `use_term`,
+#: which is deliberately unconfigured-by-default and refuses everything
+#: until a deployment supplies a `TerminalPolicy`) — these are fixed,
+#: conservative platform defaults, matching `TerminalPolicy`'s own
+#: dataclass defaults. `root` is NOT here: every call gets its own fresh
+#: scratch workspace (`tempfile.mkdtemp`), created and torn down inside
+#: `run_command_tool` itself, never a fixed or configurable path (ADR-002
+#: C.14 review follow-up, PR #148 -- see `run_command_tool`'s own comment
+#: for why a shared `Path.cwd()` root was a real vulnerability, not a
+#: theoretical one).
 _DEFAULT_TIMEOUT_S = 10.0
 _DEFAULT_MAX_OUTPUT_BYTES = 8192
 
@@ -135,6 +143,7 @@ def _validate_param_value(
 
 def build_command_tool_connector(declaration: CommandToolDeclaration) -> AsyncConnector:
     """Build the async connector for one declared command tool."""
+    log_sandbox_availability_at_boot(context=f"command_tools:{declaration.name}")
 
     async def run_command_tool(
         inputs: dict[str, Any], *, session: Any = None
@@ -171,13 +180,37 @@ def build_command_tool_connector(declaration: CommandToolDeclaration) -> AsyncCo
         if rejected is not None:
             return rejected
 
-        policy = TerminalPolicy(
-            root=pathlib.Path.cwd(),
-            allowed_commands=frozenset({declaration.argv[0]}),
-            timeout_s=_DEFAULT_TIMEOUT_S,
-            max_output_bytes=_DEFAULT_MAX_OUTPUT_BYTES,
-        )
-        return await _run_argv(argv, policy=policy)
+        # A FRESH scratch workspace per call, never the process's own `cwd`
+        # (ADR-002 C.14 review follow-up, PR #148): `root=Path.cwd()` here
+        # used to mean the platform's own working directory -- typically
+        # the deployment's repository checkout -- was bound READ-WRITE
+        # inside the sandbox, so a declared command tool could read AND
+        # overwrite the real `.env` and `.git/config`. `TerminalPolicy.
+        # __post_init__` now also refuses a `root` that resolves to `cwd`
+        # (or `$HOME`, `/root`, `/`, ...) as a second, independent barrier,
+        # but the real fix is that a command tool never had any business
+        # touching the platform's own files: it needs somewhere to run,
+        # not the repository. Removed unconditionally in `finally`, so a
+        # timeout (`_run_argv` returns a normal refusal, not an exception)
+        # and any unexpected exception both still clean it up.
+        workdir = pathlib.Path(tempfile.mkdtemp(prefix="agentsys-command-tool-"))
+        try:
+            policy = TerminalPolicy(
+                root=workdir,
+                allowed_commands=frozenset({declaration.argv[0]}),
+                # A command tool's `argv[0]` is already resolved to an
+                # absolute path at load time (ADR-002 C.12), so the fixed
+                # system paths plus `_bwrap_argv`'s automatic bind of that
+                # resolved path's own install directory (ADR-002 C.14) are
+                # enough here -- no extra binds and no network by default,
+                # same as `use_term`.
+                sandbox=SandboxPolicy(),
+                timeout_s=_DEFAULT_TIMEOUT_S,
+                max_output_bytes=_DEFAULT_MAX_OUTPUT_BYTES,
+            )
+            return await _run_argv(argv, policy=policy)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
 
     return run_command_tool
 

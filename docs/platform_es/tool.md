@@ -153,9 +153,23 @@ shell que usa `use_term` (`create_subprocess_exec`, nunca un shell; el mismo
 mecanismo de tiempo límite y límite de salida) — una herramienta de comando
 no es un segundo ejecutor de comandos, es un frente declarativo sobre el
 único mecanismo de ejecución que la plataforma ya reforzó. Ese único
-mecanismo compartido es también lo que permitirá que el futuro sandbox de
-ADR-002 C.14 envuelva `use_term` y cada herramienta de comando de forma
-idéntica.
+mecanismo compartido es también lo que permite que el sandbox de bubblewrap
+de ADR-002 C.14 envuelva `use_term` y cada herramienta de comando de forma
+idéntica — ver "Sandbox T3 (bubblewrap)" más abajo.
+
+### Sandbox T3 (bubblewrap)
+
+ADR-002 C.14. `TerminalPolicy.sandbox` es un campo `SandboxPolicy`
+obligatorio — sin valor por defecto, la misma postura que ya tenían `root`
+y `allowed_commands`. Todo comando que pasa por el mecanismo compartido de
+arriba (`use_term` y cada entrada de `command_tools`) corre dentro de
+`bwrap`: sin red salvo que la política de la herramienta la declare
+explícitamente, las rutas fijas del sistema (`/usr`, `/bin`, `/sbin`,
+`/lib`, `/lib64`, `/etc`) de solo lectura, un `/tmp` privado, `policy.root`
+de lectura-escritura, un entorno limpio, y un techo de memoria/CPU impuesto
+vía `RLIMIT_AS`/`RLIMIT_CPU` (bubblewrap en sí no tiene banderas de límite
+de recursos). Si `bwrap` no está presente en el host, el comando se niega
+en vez de recaer en ejecutar sin sandbox.
 
 ---
 
