@@ -203,3 +203,162 @@ jobs:
 
       - name: Run the portable reports against it
         run: uv run pytest -m integration tests/test_sales_reports_integration.py -v
+
+  # test_db_integration.py was collected by no CI job at all (issue #42): the
+  # `integration` marker made `addopts = "-m 'not integration'"` deselect it
+  # everywhere, and nothing re-ran it with the marker re-enabled. It asserts
+  # end-to-end connectivity through get_session_factory/get_db against a real
+  # Postgres, so it needs a live database, just not any particular schema.
+  db-integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agentsys
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agentsys"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/agentsys
+      ALLOW_INSECURE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Verify database connectivity end-to-end
+        run: uv run pytest -m integration tests/test_db_integration.py -v
+
+  # test_embeddings_integration.py was also collected by no CI job (issue
+  # #42). Unlike the OpenAI-compatible provider below, BAAI/bge-m3 is a free,
+  # public model download — no paid API, no secret, no rate limit — so there
+  # is no reason to stand in for it: this job runs it for real. `torch` and
+  # `sentence-transformers` are already core dependencies (see pyproject.toml
+  # and main.py's lifespan comment on why the import is lazy elsewhere), so
+  # no extra install step is needed. The cache step just avoids re-downloading
+  # the model on every run.
+  embeddings-integration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Cache the BGE-M3 model weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: bge-m3-${{ runner.os }}
+
+      - name: Run the real local embedding provider
+        run: uv run pytest -m integration tests/test_embeddings_integration.py -v
+
+  # test_openai_compatible_integration.py was also collected by no CI job
+  # (issue #42). It is verified against MiniMax in production, but MiniMax is
+  # a paid, rate-limited remote service (see the test file's docstring) — not
+  # something CI should depend on or need a secret for. What actually needs
+  # proving here is `ReasoningSanitizedChatOpenAI`: that it strips a leading
+  # <think> block from a REAL HTTP response without disturbing tool_calls.
+  # That only needs an OpenAI-compatible endpoint, not MiniMax specifically,
+  # so this job stands one up locally (scripts/fake_openai_compatible_server.py)
+  # and points the tests at it — a real round trip, against a local stand-in
+  # for the paid remote one.
+  openai-compatible-integration:
+    runs-on: ubuntu-latest
+
+    env:
+      OPENAI_COMPATIBLE_BASE_URL: http://127.0.0.1:8811/v1
+      OPENAI_COMPATIBLE_MODEL: fake-integration-model
+      OPENAI_COMPATIBLE_API_KEY: fake-key-not-checked
+      ALLOW_INSECURE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Verify the reasoning sanitizer against the local stand-in
+        run: |
+          uv run python scripts/fake_openai_compatible_server.py --port 8811 &
+          server_pid=$!
+          trap "kill $server_pid 2>/dev/null || true" EXIT
+
+          for _ in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8811/health > /dev/null && break
+            sleep 0.5
+          done
+
+          uv run pytest -m integration tests/test_openai_compatible_integration.py -v
+
+  # test_outbox_migration_integration.py (added by #131, tracked alongside
+  # #42) was also collected by no CI job. It runs `alembic upgrade head` and
+  # then `alembic downgrade base` / `downgrade 001` for real against
+  # OUTBOX_TEST_DATABASE_URL, so — like audit-migration above — it needs its
+  # own disposable database and no schema setup step: the tests own the full
+  # migration cycle themselves, and this job's Postgres service container
+  # exists for no other purpose, so nothing else can collide with the
+  # downgrade dropping tables.
+  outbox-migration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: outbox_migration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d outbox_migration_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      OUTBOX_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/outbox_migration_test
+      ALLOW_INSECURE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Verify the durable inbox/outbox migration
+        run: uv run pytest -m integration tests/test_outbox_migration_integration.py -v
