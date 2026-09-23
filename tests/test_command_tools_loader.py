@@ -77,7 +77,10 @@ def test_unknown_placeholder_has_no_matching_param_raises() -> None:
 
 
 def test_unused_declared_param_raises() -> None:
-    params = {"sku": CommandToolParam(type="string"), "unused": CommandToolParam(type="string")}
+    params = {
+        "sku": CommandToolParam(type="string"),
+        "unused": CommandToolParam(type="string"),
+    }
 
     with pytest.raises(DefinitionError, match="never appear"):
         _validate_argv_template(
@@ -131,7 +134,9 @@ def test_parse_command_tools_valid_entry() -> None:
             {
                 "name": "check_stock",
                 "argv": ["/usr/bin/echo", "--sku", "{sku}"],
-                "params": {"sku": _string_param(pattern="^[A-Za-z0-9_-]{1,32}$", max_length=32)},
+                "params": {
+                    "sku": _string_param(pattern="^[A-Za-z0-9_-]{1,32}$", max_length=32)
+                },
                 "tier": "T2",
                 "permission": "run:check_stock",
             }
@@ -295,9 +300,7 @@ def test_max_length_beyond_platform_cap_rejected() -> None:
                 "name": "too_long",
                 "argv": ["/usr/bin/echo", "{sku}"],
                 "params": {
-                    "sku": _string_param(
-                        pattern="^[A-Za-z0-9_-]+$", max_length=100_000
-                    )
+                    "sku": _string_param(pattern="^[A-Za-z0-9_-]+$", max_length=100_000)
                 },
                 "tier": "T2",
                 "permission": "run:too_long",
@@ -329,7 +332,9 @@ def test_max_length_within_platform_cap_is_accepted() -> None:
     assert declarations[0].params["sku"].max_length == 64
 
 
-@pytest.mark.parametrize("permission", ["exec:bad_tool", "read:bad_tool", "write:bad_tool"])
+@pytest.mark.parametrize(
+    "permission", ["exec:bad_tool", "read:bad_tool", "write:bad_tool"]
+)
 def test_parse_command_tools_permission_must_start_with_run(permission: str) -> None:
     """The permission family is what keeps `command_tools` out of C.11's
     `exec:*` mutual-exclusion invariant — enforced at load time, not left to
@@ -403,9 +408,7 @@ def test_untrusted_input_role_with_only_command_tools_resolves_cleanly() -> None
 def test_deployment_override_may_keep_a_declared_command_tool() -> None:
     from agentsys.harness.loader import resolve
 
-    definition = resolve(
-        "cmdtool-role", client="keep-subset", roots=_cmdtool_roots()
-    )
+    definition = resolve("cmdtool-role", client="keep-subset", roots=_cmdtool_roots())
 
     assert {d.name for d in definition.command_tools} == {"check_stock"}
 

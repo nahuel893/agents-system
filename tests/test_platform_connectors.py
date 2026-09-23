@@ -20,6 +20,7 @@ channel, so the only honest answer is that the tool is not configured. These
 tests hold that line for each of the three, in both directions: unbound must
 refuse, and bound must delegate rather than answer on its own.
 """
+
 from __future__ import annotations
 
 import re
@@ -118,8 +119,9 @@ async def test_an_unbound_tool_refuses_instead_of_fabricating(
         assert fabricated not in result
 
 
-async def test_an_unbound_escalation_tells_the_agent_to_escalate_by_other_means(
-) -> None:
+async def test_an_unbound_escalation_tells_the_agent_to_escalate_by_other_means() -> (
+    None
+):
     """A failed escalation is the one case where saying nothing is worst.
 
     The customer asked for a human. If the tool merely reports an error the
@@ -235,9 +237,10 @@ async def test_a_port_returning_a_non_dict_never_reaches_the_model(
     """
     result = await builder(_RecordingPort(returned)).connector(inputs)
 
-    assert result["error_kind"].endswith("_failed") or result[
-        "error_kind"
-    ] == "escalation_unconfirmed"
+    assert (
+        result["error_kind"].endswith("_failed")
+        or result["error_kind"] == "escalation_unconfirmed"
+    )
     assert "error" in result
 
 
@@ -260,7 +263,9 @@ async def test_an_unbound_tool_names_no_environment_variable(
 
 
 async def test_a_bound_knowledge_base_is_asked_and_its_answer_returned() -> None:
-    port = _RecordingPort({"results": [{"id": "real-1", "title": "Real", "snippet": "x"}]})
+    port = _RecordingPort(
+        {"results": [{"id": "real-1", "title": "Real", "snippet": "x"}]}
+    )
 
     result = await build_knowledge_retrieval_tool_spec(port).connector(
         {"q": "return policy"}, session="the-session"

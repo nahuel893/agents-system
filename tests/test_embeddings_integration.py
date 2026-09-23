@@ -30,13 +30,9 @@ def _cosine(a: list[float], b: list[float]) -> float:
 @pytest.mark.integration
 async def test_local_provider_real_bge_m3_truncates() -> None:
     """REAL BGE-M3: confirms 1024-dim native output gets truncated to 512."""
-    provider = LocalBGEEmbeddingProvider(
-        model_name="BAAI/bge-m3", dimensions=512
-    )
+    provider = LocalBGEEmbeddingProvider(model_name="BAAI/bge-m3", dimensions=512)
 
-    vectors = await provider.embed(
-        ["BrandA Cristal 1L retornable", "Coca-Cola 2.25L"]
-    )
+    vectors = await provider.embed(["BrandA Cristal 1L retornable", "Coca-Cola 2.25L"])
 
     assert len(vectors) == 2
     assert len(vectors[0]) == 512
@@ -52,9 +48,7 @@ async def test_local_provider_real_bge_m3_semantic() -> None:
     Validates the model produces semantically meaningful vectors — proves the
     integration is not just shape-correct but BEHAVIORALLY correct.
     """
-    provider = LocalBGEEmbeddingProvider(
-        model_name="BAAI/bge-m3", dimensions=512
-    )
+    provider = LocalBGEEmbeddingProvider(model_name="BAAI/bge-m3", dimensions=512)
 
     branda, branda_variant, unrelated = await provider.embed(
         [

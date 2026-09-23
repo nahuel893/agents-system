@@ -2,6 +2,7 @@
 
 No real network calls: httpx.MockTransport backs the AsyncClient in every test.
 """
+
 from __future__ import annotations
 
 import httpx

@@ -10,10 +10,17 @@ import phonenumbers
 
 
 # Phone-related key names that are always added to pii_keys when redacted
-_PHONE_KEYS: frozenset[str] = frozenset({
-    "phone", "tel", "telephone", "phone_number",
-    "mobile", "cell", "contact_phone",
-})
+_PHONE_KEYS: frozenset[str] = frozenset(
+    {
+        "phone",
+        "tel",
+        "telephone",
+        "phone_number",
+        "mobile",
+        "cell",
+        "contact_phone",
+    }
+)
 
 
 class Redactor:
@@ -28,7 +35,9 @@ class Redactor:
     """
 
     # Keys whose free-text values are redacted by default
-    DEFAULT_SENSITIVE_KEYS: frozenset[str] = frozenset({"message", "body", "text", "email"})
+    DEFAULT_SENSITIVE_KEYS: frozenset[str] = frozenset(
+        {"message", "body", "text", "email"}
+    )
 
     # Regex for email detection
     EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")

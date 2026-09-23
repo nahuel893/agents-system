@@ -9,6 +9,7 @@ those views over whatever its own tables are called; the reports never change.
 These tests are what keeps that promise honest: the moment a report reaches for
 a real table name, it stops being portable, and the failure has to be loud.
 """
+
 from __future__ import annotations
 
 import re

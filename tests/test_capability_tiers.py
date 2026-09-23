@@ -13,6 +13,7 @@ Strict TDD: written before `Tier`/`ToolSpec.tier` exist in
    prefix — the exact gap C.10 closes (a T3 tool named under a `read:*`
    permission was previously invisible to the write:/send: heuristic).
 """
+
 from __future__ import annotations
 
 from typing import Any

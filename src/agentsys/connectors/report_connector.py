@@ -17,6 +17,7 @@ holds even if every layer above it has a bug. So `session` is accepted
 Connectors MUST NOT commit or rollback - `run_report` only ever executes a
 SELECT and never calls either.
 """
+
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
@@ -127,9 +128,7 @@ def build_report_connector(
         if report_name not in catalog:
             valid = ", ".join(sorted(catalog.keys()))
             return {
-                "error": (
-                    f"Unknown report '{report_name}'. Valid reports: {valid}."
-                )
+                "error": (f"Unknown report '{report_name}'. Valid reports: {valid}.")
             }
 
         spec = catalog[report_name]

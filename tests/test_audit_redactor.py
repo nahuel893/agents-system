@@ -105,7 +105,9 @@ class TestRedactorPhone:
         A redactor blind to that format is blind to the dominant real case.
         """
         result, _ = Redactor().redact({"phone": raw})
-        assert result["phone"] == "[REDACTED:phone]", f"national-format phone leaked: {raw!r}"
+        assert result["phone"] == "[REDACTED:phone]", (
+            f"national-format phone leaked: {raw!r}"
+        )
 
     @pytest.mark.xfail(strict=True, reason=NON_STR_VALUES)
     def test_phone_stored_as_int_redacted(self) -> None:
@@ -171,7 +173,11 @@ class TestRedactorDefaultKeys:
 
     def test_message_preserved_when_capture_tool_input(self) -> None:
         """capture_tool_input=True keeps free text but never disables phone redaction."""
-        payload = {"message": "Hello world", "body": "Body text", "phone": "+5491123456789"}
+        payload = {
+            "message": "Hello world",
+            "body": "Body text",
+            "phone": "+5491123456789",
+        }
         result, pii_keys = Redactor().redact(payload, {"capture_tool_input": True})
         assert result["message"] == "Hello world"
         assert result["body"] == "Body text"
@@ -216,7 +222,9 @@ class TestRedactorAuditPolicy:
     def test_extra_redact_keys(self) -> None:
         """Given audit_policy.redact_keys, those values are redacted."""
         payload = {"customer_name": "John Doe", "ssn": "123-45-6789"}
-        result, pii_keys = Redactor().redact(payload, {"redact_keys": ["customer_name", "ssn"]})
+        result, pii_keys = Redactor().redact(
+            payload, {"redact_keys": ["customer_name", "ssn"]}
+        )
         assert result["customer_name"] == "[REDACTED:custom]"
         assert result["ssn"] == "[REDACTED:custom]"
         assert "customer_name" in pii_keys
@@ -311,7 +319,9 @@ class TestRedactorDeepCopy:
         payload = {"message": "call +5491123456789", "args": {"sku": "A-1"}}
         result, _ = Redactor().redact(payload)
         assert result is not payload
-        assert result["args"] is not payload["args"], "nested containers must be copied too"
+        assert result["args"] is not payload["args"], (
+            "nested containers must be copied too"
+        )
         assert payload["message"] == "call +5491123456789", "input must not be mutated"
         assert result["message"] == "[REDACTED:phone]"
 
@@ -385,5 +395,7 @@ class TestRedactorPiiKeys:
 
     def test_pii_keys_includes_extra_redact_keys(self) -> None:
         """Extra redact_keys appear in pii_keys when redacted."""
-        _, pii_keys = Redactor().redact({"ssn": "123-45-6789"}, {"redact_keys": ["ssn"]})
+        _, pii_keys = Redactor().redact(
+            {"ssn": "123-45-6789"}, {"redact_keys": ["ssn"]}
+        )
         assert "ssn" in pii_keys

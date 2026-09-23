@@ -257,8 +257,12 @@ async def test_missing_directory_retries_instead_of_discarding_accepted_work(
     _install_claim(monkeypatch, _work(inbound))
     failure = AsyncMock(return_value=OutboxFailureOutcome(False, False))
     completion = AsyncMock()
-    monkeypatch.setattr("agentsys.services.webhook_worker.record_outbox_failure", failure)
-    monkeypatch.setattr("agentsys.services.webhook_worker.complete_outbox_work", completion)
+    monkeypatch.setattr(
+        "agentsys.services.webhook_worker.record_outbox_failure", failure
+    )
+    monkeypatch.setattr(
+        "agentsys.services.webhook_worker.complete_outbox_work", completion
+    )
     worker = DeferredWebhookWorker(
         session_factory=_SessionFactory(inbound),
         worker_id="worker-a",
@@ -282,8 +286,12 @@ async def test_normalize_failure_retries_unless_it_is_invalid_input(
     _install_claim(monkeypatch, _work(inbound))
     failure = AsyncMock(return_value=OutboxFailureOutcome(False, False))
     completion = AsyncMock()
-    monkeypatch.setattr("agentsys.services.webhook_worker.record_outbox_failure", failure)
-    monkeypatch.setattr("agentsys.services.webhook_worker.complete_outbox_work", completion)
+    monkeypatch.setattr(
+        "agentsys.services.webhook_worker.record_outbox_failure", failure
+    )
+    monkeypatch.setattr(
+        "agentsys.services.webhook_worker.complete_outbox_work", completion
+    )
     directory = _Directory(_Participant())
     directory.normalize_address.side_effect = RuntimeError("directory unavailable")
     worker = DeferredWebhookWorker(
@@ -1083,9 +1091,7 @@ async def test_non_text_message_is_durably_completed_without_a_turn_or_reply(
     runtime.run_turn.assert_not_awaited()
     whatsapp.send_text.assert_not_awaited()
     complete.assert_awaited_once()
-    non_text_logs = [
-        e for e in logs if e["event"] == "webhook_worker.non_text_message"
-    ]
+    non_text_logs = [e for e in logs if e["event"] == "webhook_worker.non_text_message"]
     assert len(non_text_logs) == 1
     assert non_text_logs[0]["message_type"] == "image"
 
@@ -1236,9 +1242,7 @@ async def test_process_claimed_work_admitted_never_waits_for_a_slot(
     assert limiter.try_acquire() is True  # simulate process_available's reservation
 
     async def forbidden_acquire() -> None:
-        raise AssertionError(
-            "_process_claimed_work_admitted must not wait for a slot"
-        )
+        raise AssertionError("_process_claimed_work_admitted must not wait for a slot")
 
     monkeypatch.setattr(limiter, "acquire", forbidden_acquire)
 

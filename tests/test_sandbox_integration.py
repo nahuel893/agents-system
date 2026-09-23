@@ -206,7 +206,9 @@ def _read_dotenv_declaration(target: pathlib.Path) -> CommandToolDeclaration:
     )
 
 
-def _write_dotenv_declaration(target: pathlib.Path, payload: str) -> CommandToolDeclaration:
+def _write_dotenv_declaration(
+    target: pathlib.Path, payload: str
+) -> CommandToolDeclaration:
     return CommandToolDeclaration(
         name="write_dotenv",
         argv=(
@@ -249,7 +251,9 @@ async def test_command_tool_cannot_write_a_sentinel_dotenv_in_the_process_cwd(
     dotenv.write_text("API_TOKEN=untouched\n", encoding="utf-8")
     monkeypatch.chdir(repo_dir)
 
-    connector = build_command_tool_connector(_write_dotenv_declaration(dotenv, "OVERWRITTEN"))
+    connector = build_command_tool_connector(
+        _write_dotenv_declaration(dotenv, "OVERWRITTEN")
+    )
     result = await connector({})
 
     assert result["exit_code"] != 0
@@ -287,7 +291,11 @@ async def test_command_tool_scratch_workspace_is_writable_and_cleaned_up(
 
     declaration = CommandToolDeclaration(
         name="touch_marker",
-        argv=(sys.executable, "-c", "open('marker.txt', 'w').write('x'); print('wrote')"),
+        argv=(
+            sys.executable,
+            "-c",
+            "open('marker.txt', 'w').write('x'); print('wrote')",
+        ),
         params={},
         tier=Tier.T2,
         permission="run:touch_marker",
@@ -323,4 +331,6 @@ async def test_command_tool_scratch_workspace_is_cleaned_up_after_a_timeout(
 
     after = set(glob.glob(prefix))
     assert result["error_kind"] == "timeout"
-    assert after == before, f"scratch workspace(s) leaked after timeout: {after - before}"
+    assert after == before, (
+        f"scratch workspace(s) leaked after timeout: {after - before}"
+    )

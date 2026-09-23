@@ -58,9 +58,7 @@ def test_command_tool_granted_when_permission_present() -> None:
     from agentsys.harness.injector import resolve_command_tool_surface
 
     decl = _declaration(name="check_stock", tier=Tier.T2, permission="run:check_stock")
-    definition = _definition(
-        command_tools=(decl,), permissions=("run:check_stock",)
-    )
+    definition = _definition(command_tools=(decl,), permissions=("run:check_stock",))
 
     result = resolve_command_tool_surface(
         definition, granted_permissions=("run:check_stock",)
@@ -74,9 +72,7 @@ def test_command_tool_denied_when_permission_missing() -> None:
     from agentsys.harness.injector import resolve_command_tool_surface
 
     decl = _declaration(name="check_stock", tier=Tier.T2, permission="run:check_stock")
-    definition = _definition(
-        command_tools=(decl,), permissions=("run:check_stock",)
-    )
+    definition = _definition(command_tools=(decl,), permissions=("run:check_stock",))
 
     result = resolve_command_tool_surface(definition, granted_permissions=())
 
@@ -112,7 +108,9 @@ def test_untrusted_input_role_denied_t3_command_tool() -> None:
     receives a T3-tiered tool, regardless of its permission family."""
     from agentsys.harness.injector import resolve_command_tool_surface
 
-    decl = _declaration(name="dangerous_tool", tier=Tier.T3, permission="run:dangerous_tool")
+    decl = _declaration(
+        name="dangerous_tool", tier=Tier.T3, permission="run:dangerous_tool"
+    )
     definition = _definition(
         command_tools=(decl,),
         permissions=("run:dangerous_tool",),
@@ -137,7 +135,9 @@ def test_trusted_role_still_receives_t3_command_tool() -> None:
     `untrusted_input`."""
     from agentsys.harness.injector import resolve_command_tool_surface
 
-    decl = _declaration(name="dangerous_tool", tier=Tier.T3, permission="run:dangerous_tool")
+    decl = _declaration(
+        name="dangerous_tool", tier=Tier.T3, permission="run:dangerous_tool"
+    )
     definition = _definition(
         command_tools=(decl,),
         permissions=("run:dangerous_tool",),

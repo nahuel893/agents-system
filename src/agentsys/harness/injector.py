@@ -35,6 +35,7 @@ async def _emit_async(recorder_name: str, **kwargs: Any) -> None:
     except Exception:
         logger.debug("audit.emit_failed", recorder=recorder_name, exc_info=True)
 
+
 _pending_emits: set["asyncio.Task[None]"] = set()
 
 
@@ -64,7 +65,6 @@ def _emit(recorder_name: str, **kwargs: Any) -> None:
     task.add_done_callback(_pending_emits.discard)
 
 
-
 class InjectionError(Exception):
     pass
 
@@ -92,8 +92,7 @@ def _deny_reason(
         # prefix (i.e. even where the permission-name heuristic alone would
         # have missed it).
         return (
-            "tier T3 tools are never granted to an untrusted_input role "
-            "(ADR-002 C.10)"
+            "tier T3 tools are never granted to an untrusted_input role (ADR-002 C.10)"
         )
     if set(spec.required_permissions) <= effective:
         return None

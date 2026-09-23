@@ -21,9 +21,6 @@
 #   slow -- the hook only sees staged files while mypy needs the whole project
 #   to be correct, so it would be slow AND wrong. It runs in CI over src/.
 #
-# - ruff format. It would reformat 74 of 117 files on first run. See the note
-#   at the bottom.
-#
 # REQUIREMENTS
 #
 # pre-commit >= 3.2.0. Several hooks below declare `minimum_pre_commit_version:
@@ -159,6 +156,10 @@ repos:
         # pre-commit already fails any run in which a hook modified a file, so
         # the flag changes nothing here.
         args: [--fix]
+      # The tree was formatted in one format-only commit (ADR-002 H.28), so
+      # the hook only ever touches what the change itself touched. CI runs
+      # `ruff format --check .` to catch anyone who bypasses the hook.
+      - id: ruff-format
 
 # ---------------------------------------------------------------------------
 # KNOWN GAPS -- filed, not silently ignored
@@ -184,14 +185,6 @@ repos:
 #   and dissolve the rev-sync problem above.
 #
 # NOT ENABLED, ON PURPOSE
-#
-# ruff-format: `ruff format --check .` reports 74 of 117 files would be
-#   reformatted. Enabling the hook reformats files gradually as they are
-#   touched, inflating the diff of every unrelated change. If you want it, do
-#   it as its own commit:
-#       uv run ruff format .
-#       git commit -m "style: adopt ruff format across the tree"
-#   then add the hook and `ruff format --check .` to CI in the same PR.
 #
 # bandit: static security analysis for Python. It would not have caught either
 #   incident this repo has had -- an exposed port in docker-compose, and a

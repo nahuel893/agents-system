@@ -10,6 +10,7 @@ Strict TDD: written before `__init__.py` is populated. Two of these tests
 *naive* eager-import implementation failing them — see the D-024 report for
 the RED run captured against that naive draft.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -43,9 +44,13 @@ _EXPECTED_EXPORTS: dict[str, str] = {
 # __all__ reachability — every declared export resolves to the real object
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    "name,module_path", sorted(_EXPECTED_EXPORTS.items()), ids=lambda v: v if isinstance(v, str) else None
+    "name,module_path",
+    sorted(_EXPECTED_EXPORTS.items()),
+    ids=lambda v: v if isinstance(v, str) else None,
 )
-def test_export_is_reachable_and_is_the_real_object(name: str, module_path: str) -> None:
+def test_export_is_reachable_and_is_the_real_object(
+    name: str, module_path: str
+) -> None:
     import agentsys
 
     real_module = importlib.import_module(module_path)

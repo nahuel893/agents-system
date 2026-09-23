@@ -179,9 +179,7 @@ class LLMConversationSummarizer:
     cannot read the conversation must raise rather than summarize nothing.
     """
 
-    def __init__(
-        self, model: BaseChatModel, *, default_max_messages: int = 20
-    ) -> None:
+    def __init__(self, model: BaseChatModel, *, default_max_messages: int = 20) -> None:
         self._model = model
         self._default_max_messages = default_max_messages
         self._sessions: dict[str, list[TranscriptTurn]] = {}
@@ -194,9 +192,7 @@ class LLMConversationSummarizer:
     ) -> dict[str, Any]:
         turns = self._sessions.get(session_id)
         if not turns:
-            raise LookupError(
-                f"no conversation recorded for session_id={session_id!r}"
-            )
+            raise LookupError(f"no conversation recorded for session_id={session_id!r}")
 
         cap = max_messages if max_messages is not None else self._default_max_messages
         bounded = turns[-cap:] if cap and cap > 0 else turns

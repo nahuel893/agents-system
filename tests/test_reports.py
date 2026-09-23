@@ -5,6 +5,7 @@ Strict TDD: written BEFORE agentsys.services.reports exists. Pure logic only
 bi_readonly-scoped connection is covered by tests/test_reports_integration.py
 (@pytest.mark.integration).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -31,7 +32,9 @@ def _spec(**overrides: Any) -> ReportSpec:
         (
             ParamSpec(name="months_back", type=int, default=12, minimum=1, maximum=24),
             ParamSpec(name="limit", type=int, default=10, minimum=1, maximum=50),
-            ParamSpec(name="status", type=str, default="all", allowed=("all", "confirmed")),
+            ParamSpec(
+                name="status", type=str, default="all", allowed=("all", "confirmed")
+            ),
         ),
     )
     defaults: dict[str, Any] = dict(
@@ -105,7 +108,9 @@ def test_validate_params_rejects_disallowed_value() -> None:
 
 def test_validate_params_accepts_explicit_valid_override() -> None:
     spec = _spec()
-    validated = validate_params(spec, {"months_back": 3, "limit": 5, "status": "confirmed"})
+    validated = validate_params(
+        spec, {"months_back": 3, "limit": 5, "status": "confirmed"}
+    )
     assert validated == {"months_back": 3, "limit": 5, "status": "confirmed"}
 
 
@@ -234,7 +239,9 @@ async def test_run_report_clamps_limit_and_attaches_metadata(monkeypatch: Any) -
             ParamSpec(name="limit", type=int, default=10),
             ParamSpec(name="status", type=str, default="all"),
         ),
-        filter_metadata=lambda validated, _bound: {"statuses_included": [validated["status"]]},
+        filter_metadata=lambda validated, _bound: {
+            "statuses_included": [validated["status"]]
+        },
     )
 
     captured: dict[str, Any] = {}
@@ -358,7 +365,9 @@ def test_validate_params_explicit_null_is_still_range_checked() -> None:
     the validation loop instead of feeding it back through the checks.
     """
     spec = _spec(
-        params=(ParamSpec(name="limit", type=int, default=9_999, minimum=1, maximum=50),)
+        params=(
+            ParamSpec(name="limit", type=int, default=9_999, minimum=1, maximum=50),
+        )
     )
 
     with pytest.raises(ReportValidationError, match="limit"):

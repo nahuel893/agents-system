@@ -34,8 +34,7 @@ if TYPE_CHECKING:
 class EmbeddingProvider(Protocol):
     """Embeds a batch of texts into fixed-dimension vectors."""
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        ...
+    async def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
 class OpenAIEmbeddingProvider:

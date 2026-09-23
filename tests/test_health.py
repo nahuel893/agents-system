@@ -27,13 +27,16 @@ def app():
 
 @pytest.fixture
 async def client(app):
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
         yield ac
 
 
 # ---------------------------------------------------------------------------
 # Task 3.1 — Health all ok
 # ---------------------------------------------------------------------------
+
 
 async def test_health_all_ok(app):
     """Both postgres and redis healthy → status: ok."""
@@ -52,7 +55,9 @@ async def test_health_all_ok(app):
     app.state.engine = mock_engine
 
     with patch("agentsys.main.get_redis_client", return_value=mock_redis):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
             response = await ac.get("/health")
 
     assert response.status_code == 200
@@ -65,6 +70,7 @@ async def test_health_all_ok(app):
 # ---------------------------------------------------------------------------
 # Task 3.2 — Postgres degraded
 # ---------------------------------------------------------------------------
+
 
 async def test_health_postgres_degraded(app):
     """Postgres raises → status: degraded, postgres: error."""
@@ -82,7 +88,9 @@ async def test_health_postgres_degraded(app):
     app.state.engine = mock_engine
 
     with patch("agentsys.main.get_redis_client", return_value=mock_redis):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
             response = await ac.get("/health")
 
     assert response.status_code == 200
@@ -95,6 +103,7 @@ async def test_health_postgres_degraded(app):
 # ---------------------------------------------------------------------------
 # Task 3.3 — Redis degraded
 # ---------------------------------------------------------------------------
+
 
 async def test_health_redis_degraded(app):
     """Redis raises → status: degraded, redis: error."""
@@ -113,7 +122,9 @@ async def test_health_redis_degraded(app):
     app.state.engine = mock_engine
 
     with patch("agentsys.main.get_redis_client", return_value=mock_redis):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
             response = await ac.get("/health")
 
     assert response.status_code == 200
@@ -126,6 +137,7 @@ async def test_health_redis_degraded(app):
 # ---------------------------------------------------------------------------
 # Both dependencies degraded
 # ---------------------------------------------------------------------------
+
 
 async def test_health_both_degraded(app):
     """Both postgres and redis down → status: degraded, both: error."""
@@ -143,7 +155,9 @@ async def test_health_both_degraded(app):
     app.state.engine = mock_engine
 
     with patch("agentsys.main.get_redis_client", return_value=mock_redis):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
             response = await ac.get("/health")
 
     assert response.status_code == 200
@@ -156,6 +170,7 @@ async def test_health_both_degraded(app):
 # ---------------------------------------------------------------------------
 # Task 3.4 — Middleware adds request_id to logs
 # ---------------------------------------------------------------------------
+
 
 async def test_middleware_adds_request_id(app):
     """RequestIdMiddleware binds request_id (8-char) to structlog contextvars."""
@@ -195,7 +210,9 @@ async def test_middleware_adds_request_id(app):
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("agentsys.main.get_redis_client", return_value=mock_redis):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
             await ac.get("/health")
 
     # At least one log line must have a request_id with 8 chars

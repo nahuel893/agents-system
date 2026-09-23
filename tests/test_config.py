@@ -256,6 +256,8 @@ def test_bi_database_url_defaults_to_empty_and_is_env_overridable(
 
     monkeypatch.setenv("BI_DATABASE_URL", "postgresql+asyncpg://ro@localhost/x")
     assert Settings(_env_file=None).bi_database_url.endswith("/x")
+
+
 # D-014 S5 — fail-CLOSED security guards (BLOCKER 1: no empty-secret boot)
 # ---------------------------------------------------------------------------
 
@@ -525,6 +527,7 @@ def test_a_consumer_can_extend_settings_without_editing_the_library() -> None:
 # message -- the two were adjacent, and one rewrite took both. Deleting a
 # failing security test is the loudest possible way to close a security
 # gap without fixing it.
+
 
 @pytest.mark.xfail(
     strict=True,

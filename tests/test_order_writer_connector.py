@@ -5,6 +5,7 @@ without writing a row anywhere. That is the failure mode this file exists to
 prevent: a connector that cannot do its job must SAY SO, the way `run_report`
 does, instead of reporting success.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -60,7 +61,9 @@ async def test_an_unbound_order_writer_refuses_instead_of_fabricating() -> None:
 
 async def test_a_bound_order_writer_persists_through_the_injected_writer() -> None:
     """Bound -> the connector delegates; it does not compute the order itself."""
-    writer = _RecordingWriter({"order_id": "real-77", "status": "created", "total": 1700.0})
+    writer = _RecordingWriter(
+        {"order_id": "real-77", "status": "created", "total": 1700.0}
+    )
     spec = build_order_writer_tool_spec(writer)
 
     result = await spec.connector(_AN_ORDER, session="the-session")
@@ -84,7 +87,9 @@ class _FailingWriter:
         raise RuntimeError("connection refused: host=db.internal password=hunter2")
 
 
-async def test_a_writer_that_raises_becomes_an_honest_failure_not_an_exception() -> None:
+async def test_a_writer_that_raises_becomes_an_honest_failure_not_an_exception() -> (
+    None
+):
     """A raised write must come back as a RESULT saying the order does not exist.
 
     `_execute_tools` catches only TimeoutError and PolicyViolation, so anything

@@ -165,7 +165,9 @@ def test_no_override_branch_rejects_untrusted_input_with_exec_permission(
     (`loader.py`'s no-override branch of `resolve()`), bypassing `merge()`
     and everything it validates. The invariant must be checked here too.
     """
-    _write_role(tmp_path, "rogue-agent", permissions=["exec:shell"], untrusted_input=True)
+    _write_role(
+        tmp_path, "rogue-agent", permissions=["exec:shell"], untrusted_input=True
+    )
 
     with pytest.raises(DefinitionError, match="untrusted_input"):
         resolve("rogue-agent", roots=RootConfig(platform_root=tmp_path))
@@ -333,7 +335,9 @@ def test_every_concrete_platform_role_explicitly_declares_untrusted_input() -> N
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("permission", ["EXEC:shell", "Exec:Shell", "  exec:shell"])
 def test_exec_prefix_check_is_case_and_whitespace_insensitive(permission: str) -> None:
-    generic = _raw(role_name="case-role", permissions=[permission], untrusted_input=False)
+    generic = _raw(
+        role_name="case-role", permissions=[permission], untrusted_input=False
+    )
     override = _raw(
         role_name="case-role",
         deployment="case-deployment",

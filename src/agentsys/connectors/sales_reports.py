@@ -194,8 +194,7 @@ def _limit_param(default: int) -> ParamSpec:
         default=default,
         minimum=1,
         description=(
-            "Maximum rows to return (hard-capped at 500 regardless of this "
-            "value)."
+            "Maximum rows to return (hard-capped at 500 regardless of this value)."
         ),
     )
 

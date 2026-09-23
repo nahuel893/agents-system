@@ -175,5 +175,4 @@ class RegistryFactory(Protocol):
         settings: Any,
         embedder: Any = None,
         bi_engine: Any = None,
-    ) -> ToolRegistry:
-        ...
+    ) -> ToolRegistry: ...

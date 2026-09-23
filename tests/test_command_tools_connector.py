@@ -196,9 +196,7 @@ async def test_enum_constrained_param_rejects_value_outside_enum() -> None:
     declaration = CommandToolDeclaration(
         name="set_status",
         argv=(sys.executable, "-c", "import sys; print(sys.argv[1])", "{status}"),
-        params={
-            "status": CommandToolParam(type="string", enum=("open", "closed"))
-        },
+        params={"status": CommandToolParam(type="string", enum=("open", "closed"))},
         tier=Tier.T2,
         permission="run:set_status",
     )

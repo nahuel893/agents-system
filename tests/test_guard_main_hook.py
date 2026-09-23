@@ -16,7 +16,9 @@ from pathlib import Path
 
 import pytest
 
-HOOK_SCRIPT = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "guard-main.sh"
+HOOK_SCRIPT = (
+    Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "guard-main.sh"
+)
 
 
 def run_hook(command: str, cwd: str) -> subprocess.CompletedProcess[str]:
@@ -49,7 +51,9 @@ def assert_allowed(result: subprocess.CompletedProcess[str]) -> None:
 def _init_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
-    subprocess.run(["git", "-C", str(path), "config", "user.email", "t@example.com"], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "t@example.com"], check=True
+    )
     subprocess.run(["git", "-C", str(path), "config", "user.name", "Test"], check=True)
     (path / "README.md").write_text("hi\n")
     subprocess.run(["git", "-C", str(path), "add", "."], check=True)
@@ -272,7 +276,9 @@ def test_env_assignment_prefix_still_allowed_on_feature_branch(
         "eval 'git commit -m x'",
     ],
 )
-def test_wrapper_commands_around_git_are_denied(repo: Path, wrapped_command: str) -> None:
+def test_wrapper_commands_around_git_are_denied(
+    repo: Path, wrapped_command: str
+) -> None:
     # None of these wrappers are named explicitly by the hook — they are
     # caught because the segment's first word isn't `git`/`cd`/`pushd`
     # (so it can never reach the precise check) and the segment's raw
@@ -352,7 +358,9 @@ def test_git_work_tree_env_prefix_from_feature_worktree_is_denied(
     assert reason
 
 
-def test_pushd_into_main_then_commit_is_denied(repo: Path, feature_worktree: Path) -> None:
+def test_pushd_into_main_then_commit_is_denied(
+    repo: Path, feature_worktree: Path
+) -> None:
     result = run_hook(f"pushd {repo} && git commit", cwd=str(feature_worktree))
     reason = deny_reason(result)
     assert str(repo) in reason

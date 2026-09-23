@@ -19,6 +19,7 @@ must not be used concurrently — do not convert the loop to asyncio.gather.
 State is NOT persisted internally. The caller supplies the full message history
 per turn and owns cross-turn durability.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -134,7 +135,9 @@ async def _execute_tools(
 
     result_messages: list[ToolMessage] = []
 
-    session_cm = equipped.session_provider() if equipped.session_provider else nullcontext()
+    session_cm = (
+        equipped.session_provider() if equipped.session_provider else nullcontext()
+    )
     async with session_cm as session:
         for call in tool_calls:
             tool_name: str = call["name"]
@@ -152,7 +155,9 @@ async def _execute_tools(
                     )
                 output = outcome.output
                 content = (
-                    json.dumps(output) if isinstance(output, (dict, list)) else str(output)
+                    json.dumps(output)
+                    if isinstance(output, (dict, list))
+                    else str(output)
                 )
                 result_messages.append(
                     ToolMessage(content=content, tool_call_id=call_id)
@@ -502,9 +507,7 @@ class AgentRuntime:
             )
             return all_messages + [
                 AIMessage(
-                    content=(
-                        "This is taking longer than expected. Please try again."
-                    )
+                    content=("This is taking longer than expected. Please try again.")
                 )
             ]
         return list(result["messages"])

@@ -109,7 +109,9 @@ def main() -> None:
     args = parser.parse_args()
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"fake-openai-compatible-server listening on 127.0.0.1:{args.port}", flush=True)
+    print(
+        f"fake-openai-compatible-server listening on 127.0.0.1:{args.port}", flush=True
+    )
     server.serve_forever()
 
 

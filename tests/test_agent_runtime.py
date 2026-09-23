@@ -3,6 +3,7 @@
 These tests exercise the LangGraph-based runtime without real LLM providers:
 all model responses come from FakeMessagesListChatModel (sequential responses).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -298,9 +299,7 @@ async def test_stateless_run_turn_caller_owns_history() -> None:
     assert result_2[-1].content == "Second turn reply"
 
     # No messages from turn 1 appear in turn 2's result
-    turn_2_human_contents = [
-        m.content for m in result_2 if isinstance(m, HumanMessage)
-    ]
+    turn_2_human_contents = [m.content for m in result_2 if isinstance(m, HumanMessage)]
     assert all("Turn 1" not in c for c in turn_2_human_contents)
 
 
@@ -318,7 +317,9 @@ async def test_session_passed_to_async_connector() -> None:
 
     received_sessions: list[Any] = []
 
-    async def async_catalog(inputs: dict[str, Any], *, session: Any = None) -> dict[str, Any]:
+    async def async_catalog(
+        inputs: dict[str, Any], *, session: Any = None
+    ) -> dict[str, Any]:
         received_sessions.append(session)
         return {"results": []}
 
@@ -381,7 +382,9 @@ async def test_no_session_provider_backward_compatible() -> None:
 
     received_sessions: list[Any] = []
 
-    async def async_catalog(inputs: dict[str, Any], *, session: Any = None) -> dict[str, Any]:
+    async def async_catalog(
+        inputs: dict[str, Any], *, session: Any = None
+    ) -> dict[str, Any]:
         received_sessions.append(session)
         return {"results": []}
 
@@ -550,7 +553,9 @@ async def test_max_tool_calls_breach_terminates_gracefully() -> None:
     assert isinstance(result[-1], AIMessage)
     assert not result[-1].tool_calls
     assert result[-1].content
-    assert "allowed" in result[-1].content.lower() or "limit" in result[-1].content.lower()
+    assert (
+        "allowed" in result[-1].content.lower() or "limit" in result[-1].content.lower()
+    )
     # Exactly one tool call executed (budget honored, not the 2nd requested one).
     tool_messages = [m for m in result if isinstance(m, ToolMessage)]
     assert len(tool_messages) == 1
@@ -694,9 +699,7 @@ async def test_total_execution_timeout_returns_fallback_message() -> None:
     agent = AgentRuntime(runtime, model)
 
     result = await asyncio.wait_for(
-        agent.run_turn(
-            [HumanMessage(content="Hi")], session_id="s1", permissions=()
-        ),
+        agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=()),
         timeout=2.0,
     )
 
@@ -756,9 +759,7 @@ async def test_system_prompt_injected_at_model_call_time() -> None:
     runtime = _make_runtime()
     agent = AgentRuntime(runtime, model)
 
-    await agent.run_turn(
-        [HumanMessage(content="Hi")], session_id="s1", permissions=()
-    )
+    await agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=())
 
     assert len(model.captured_inputs) == 1
     first_call_input = model.captured_inputs[0]
@@ -798,7 +799,9 @@ async def test_thread_id_none_compiles_without_checkpointer() -> None:
     # stateless adapter path.
     assert result_1[-1].content == "First"
     assert result_2[-1].content == "Second"
-    assert not any("Turn 1" in m.content for m in result_2 if isinstance(m, HumanMessage))
+    assert not any(
+        "Turn 1" in m.content for m in result_2 if isinstance(m, HumanMessage)
+    )
 
 
 @pytest.mark.asyncio
@@ -946,9 +949,7 @@ async def test_checkpointer_failure_degrades_without_crashing_the_turn() -> None
     assert result[-1].content == "Still here."
     # Caller-supplied message is present — the fallback ran over it, not an
     # empty/lost history.
-    assert any(
-        isinstance(m, HumanMessage) and m.content == "Hello" for m in result
-    )
+    assert any(isinstance(m, HumanMessage) and m.content == "Hello" for m in result)
 
 
 @pytest.mark.asyncio

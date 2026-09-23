@@ -62,11 +62,7 @@ def _spec(name: str, perms: list[str]) -> Any:
 
     # Mirror the pre-tier write:/send: heuristic so fixtures keep their
     # original sensitivity classification (ADR-002 C.10).
-    tier = (
-        Tier.T2
-        if any(p.startswith(("write:", "send:")) for p in perms)
-        else Tier.T1
-    )
+    tier = Tier.T2 if any(p.startswith(("write:", "send:")) for p in perms) else Tier.T1
     return ToolSpec(
         name=name,
         required_permissions=tuple(perms),

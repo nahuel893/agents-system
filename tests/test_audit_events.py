@@ -127,7 +127,9 @@ class TestAllEventFamilies:
     def test_tool_denied(self) -> None:
         from agentsys.audit.events import AuditEvent, ToolDenied
 
-        payload = self._full_payload("tool_denied", tool_name="order_writer", reason="no_permission")
+        payload = self._full_payload(
+            "tool_denied", tool_name="order_writer", reason="no_permission"
+        )
         event = AuditEvent.model_validate(payload)
         assert isinstance(event, ToolDenied)
         assert event.tool_name == "order_writer"
@@ -152,7 +154,9 @@ class TestAllEventFamilies:
     def test_skill_missing(self) -> None:
         from agentsys.audit.events import AuditEvent, SkillMissing
 
-        payload = self._full_payload("skill_missing", skill="missing-skill", path="/skills/missing-skill.py")
+        payload = self._full_payload(
+            "skill_missing", skill="missing-skill", path="/skills/missing-skill.py"
+        )
         event = AuditEvent.model_validate(payload)
         assert isinstance(event, SkillMissing)
         assert event.skill == "missing-skill"

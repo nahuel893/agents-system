@@ -254,7 +254,9 @@ def test_sanitize_passes_clean_content_through() -> None:
 async def test_agenerate_sanitizes_the_result() -> None:
     """The async path is what graph.py uses (ainvoke -> _agenerate)."""
     canned = ChatResult(
-        generations=[ChatGeneration(message=AIMessage(content="<think>r</think>\n\nPONG"))]
+        generations=[
+            ChatGeneration(message=AIMessage(content="<think>r</think>\n\nPONG"))
+        ]
     )
     with patch(
         "langchain_openai.chat_models.base.BaseChatOpenAI._agenerate",
@@ -269,7 +271,9 @@ async def test_agenerate_sanitizes_the_result() -> None:
 def test_generate_sanitizes_the_result() -> None:
     """The sync path must not be a bypass around sanitization."""
     canned = ChatResult(
-        generations=[ChatGeneration(message=AIMessage(content="<think>r</think>\n\nPONG"))]
+        generations=[
+            ChatGeneration(message=AIMessage(content="<think>r</think>\n\nPONG"))
+        ]
     )
     with patch(
         "langchain_openai.chat_models.base.BaseChatOpenAI._generate",

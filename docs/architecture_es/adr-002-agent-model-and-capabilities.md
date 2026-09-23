@@ -33,7 +33,7 @@
 | 25 | Memoria propia del agente (`remember`/`recall`) | G. Persistencia y memoria | ⏳ pendiente | Depende de 2, 3 — #123 |
 | 26 | Razonamiento — decisión explícita sobre persistirlo | G. Persistencia y memoria | ⏳ pendiente | PR nuevo — #124 |
 | 27 | Tests de integración que nunca se ejecutan | H. CI | ✅ hecho | PR de CI 1 (issue #42) |
-| 28 | El formato no se exige (`ruff format`) | H. CI | ⏳ pendiente | PR de CI 2 — #105 |
+| 28 | El formato no se exige (`ruff format`) | H. CI | ✅ hecho | PR de CI 2 — #105 |
 | 29 | No se revisan vulnerabilidades en dependencias | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
 | 30 | Detección de secretos solo local | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
 | 31 | Cada ejecución corre dos veces; sin cancelación | H. CI | ✅ hecho | PR de CI 1 — #104 |
@@ -2002,7 +2002,7 @@ espacios distintos, y lo pagan las revisiones y los merges.
 descartado, porque la deriva nunca converge y cada PR ajeno arrastra ruido
 de formato.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 2.
+**Estado.** ✅ hecho (#105). **Etapa planificada:** PR de CI 2.
 
 #### H.29 — No se revisan vulnerabilidades en las dependencias
 

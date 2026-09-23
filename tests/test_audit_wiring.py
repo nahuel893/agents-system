@@ -11,6 +11,7 @@ Every other audit test asserts on the recorder or the sink in isolation, so all
 of them stayed green while the path between them was severed. These tests
 assert delivery end to end: a synchronous caller emits, and the event arrives.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +36,9 @@ class CapturingSink(AuditSink):
         self.captured.extend(batch)
 
 
-def _definition(*, tools: tuple[str, ...], permissions: tuple[str, ...]) -> AgentDefinition:
+def _definition(
+    *, tools: tuple[str, ...], permissions: tuple[str, ...]
+) -> AgentDefinition:
     return AgentDefinition(
         role_name="sales-agent",
         version="1.0",
@@ -92,7 +95,9 @@ async def sink() -> Any:
 
 
 @pytest.mark.asyncio
-async def test_a_synchronous_caller_delivers_an_event_to_the_sink(sink: CapturingSink) -> None:
+async def test_a_synchronous_caller_delivers_an_event_to_the_sink(
+    sink: CapturingSink,
+) -> None:
     """resolve_tool_surface is sync. Its audit events must still arrive.
 
     This is the regression: with a bare `_emit_async(...)` call the coroutine is
@@ -145,7 +150,11 @@ async def test_emitting_without_a_running_loop_is_not_an_error() -> None:
     from agentsys.harness.injector import _emit
 
     def no_loop_here() -> None:
-        _emit("record_skill_loaded", definition=_definition(tools=(), permissions=()), skill="s")
+        _emit(
+            "record_skill_loaded",
+            definition=_definition(tools=(), permissions=()),
+            skill="s",
+        )
 
     await asyncio.get_running_loop().run_in_executor(None, no_loop_here)
 

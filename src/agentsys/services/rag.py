@@ -106,13 +106,9 @@ async def search_catalog(
         vectors = await embedder.embed([trimmed_query])
         query_vector = vectors[0] if vectors else []
         if not query_vector:
-            return await _keyword_fallback(
-                session, trimmed_query, settings, source
-            )
+            return await _keyword_fallback(session, trimmed_query, settings, source)
     except Exception:
-        return await _keyword_fallback(
-            session, trimmed_query, settings, source
-        )
+        return await _keyword_fallback(session, trimmed_query, settings, source)
 
     vector_candidates = await source.search_vector(
         session,
