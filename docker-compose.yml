@@ -11,7 +11,7 @@
 # `tailscale serve`); do not widen the binding.
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16
     environment:
       POSTGRES_USER: postgres
       # Local-only credential. It is weak on purpose (dev ergonomics) and that

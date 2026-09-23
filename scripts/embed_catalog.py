@@ -1,4 +1,4 @@
-"""Embed product catalog into pgvector for RAG retrieval.
+"""Embed product catalog for RAG retrieval.
 
 This script reads the product catalog and generates vector embeddings
 for semantic search. Implementation will be added in a later paso.

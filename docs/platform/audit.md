@@ -184,9 +184,9 @@ class AuditEvent(Base):
 bulk-created from ORM metadata if it appears there. Discovery is by flag, not
 by a name list, so a second partitioned table inherits the behaviour without a
 code change. `audit_event` is currently the platform's only ORM-declared
-table (#70 removed the client-owned ones), so there is nothing left for the
-ORM to create at all — `scripts/init_db.py` only provisions the `pgvector`
-extension now, and `alembic upgrade head` owns every table.
+table (#70 removed the client-owned ones and the pgvector stack), so there is
+nothing left for the ORM to create at all — `alembic upgrade head` owns
+every table.
 
 ### The `DEFAULT` partition is an availability guard, not a convenience
 

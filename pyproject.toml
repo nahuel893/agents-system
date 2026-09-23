@@ -16,7 +16,6 @@ dependencies = [
     "langchain-openai>=0.3,<1.0",
     "sqlalchemy[asyncio]>=2.0,<3.0",
     "asyncpg>=0.30",
-    "pgvector>=0.3",
     "redis>=5.0,<6.0",
     "httpx>=0.28",
     "pydantic-settings>=2.0,<3.0",
@@ -79,7 +78,6 @@ strict = true
 
 [[tool.mypy.overrides]]
 module = [
-    "pgvector.*",
     "sentence_transformers.*",
     "yaml",
 ]

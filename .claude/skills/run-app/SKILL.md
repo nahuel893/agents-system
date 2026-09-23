@@ -10,11 +10,16 @@ metadata:
 ## Infra (Postgres + Redis via Docker)
 
 ```bash
-docker compose up -d          # postgres (pgvector/pgvector:pg16, db=acme) + redis:7
+docker compose up -d          # postgres (postgres:16, db=acme) + redis:7
 docker compose ps             # wait for postgres healthcheck = healthy
 uv sync --group dev           # install deps into .venv (uv manages the venv)
-uv run python scripts/init_db.py   # create tables / pgvector extension
+uv run alembic upgrade head   # create tables
 ```
+
+A `pgdata` volume created under the old `pgvector/pgvector:pg16` image still
+starts under `postgres:16`, but anything touching the leftover `vector`
+extension fails (`could not access file "$libdir/vector"`). Recreate it once:
+`docker compose down -v` (destroys local data).
 
 `uv` lives in `~/.local/bin` on this machine — if `uv` is not found, add it to PATH.
 
