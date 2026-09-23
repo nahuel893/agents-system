@@ -215,4 +215,5 @@ so you know to check `AgentDefinition.deployment is not None` (or log
 - Generic role vs. deployment override semantics: `docs/platform/deployment.md`
 - Role/manifest/policy file schema: `docs/platform/role.md`, `docs/platform/policy.md`
 - Tool contract (`ToolSpec`, connector signature): `docs/platform/tool.md`
+- Reference backends for the four platform-generic ports (knowledge, summarizer, escalation, order writer): `docs/platform/reference-backends.md`
 - Source: `src/agentsys/harness/{registry,loader,injector,factory}.py`, `src/agentsys/agent/graph.py`, `src/agentsys/__init__.py`
