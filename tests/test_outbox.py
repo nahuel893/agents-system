@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agentsys.models.outbox import InboundMessage, OutboxWork
 from agentsys.services.outbox import accept_inbound_message, pending_outbox_statement
@@ -71,9 +73,20 @@ class TestInboxOutboxSchema:
         sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
 
         assert "completed_at IS NULL" in sql
+        assert "failed_at IS NULL" in sql
         assert "lease_expires_at IS NULL" in sql
         assert "lease_expires_at <" in sql
         assert "FOR UPDATE" in sql
+
+    def test_outbox_records_recoverable_delivery_and_replay_state(self) -> None:
+        table = OutboxWork.__table__
+
+        assert table.c.attempt_count.server_default is not None
+        assert table.c.lease_owner.nullable is True
+        assert table.c.failed_at.nullable is True
+        assert table.c.last_error.nullable is True
+        assert table.c.outbound_body.nullable is True
+        assert table.c.outbound_send_key.nullable is True
 
 
 class TestAcceptInboundMessage:
@@ -81,7 +94,7 @@ class TestAcceptInboundMessage:
         session = _Session()
 
         result = await accept_inbound_message(
-            session,
+            cast(AsyncSession, session),
             meta_message_id="wamid.new-message",
             payload={"text": "hello"},
         )
@@ -107,7 +120,7 @@ class TestAcceptInboundMessage:
         session.existing_inbound = existing
 
         result = await accept_inbound_message(
-            session,
+            cast(AsyncSession, session),
             meta_message_id="wamid.duplicate",
             payload={"text": "retry"},
         )
@@ -134,7 +147,7 @@ class TestAcceptInboundMessage:
 
         with pytest.raises(IntegrityError) as raised:
             await accept_inbound_message(
-                session,
+                cast(AsyncSession, session),
                 meta_message_id="wamid.unrelated-error",
                 payload={"text": "retry"},
             )
@@ -150,7 +163,7 @@ class TestAcceptInboundMessage:
 
         with pytest.raises(RuntimeError, match="database unavailable"):
             await accept_inbound_message(
-                session,
+                cast(AsyncSession, session),
                 meta_message_id="wamid.commit-failure",
                 payload={"text": "hello"},
             )

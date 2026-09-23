@@ -31,15 +31,34 @@ Run the migration test only against a newly created, disposable PostgreSQL datab
 
 ```bash
 OUTBOX_TEST_DATABASE_URL="$ISOLATED_OUTBOX_DATABASE_URL" \
-  PYTHONPATH=/home/nh/wt-43-webhook-outbox/src \
+  PYTHONPATH=/home/nh/wt-44-webhook-worker/src \
   /home/nh/agents-system/.venv/bin/python -m pytest -q -m integration tests/test_outbox_migration_integration.py
 ```
 
 The operator must first create the disposable database, set `ISOLATED_OUTBOX_DATABASE_URL` to its asyncpg URL, and remove the database after the test.
 
-## Explicitly not implemented in W1
+## W2a recoverable outbox state (storage only)
 
-The live webhook is still synchronous and Redis-backed. W1 does **not** implement a live worker, early HTTP acknowledgement, HTTP 503 behavior, retries, or admission control. The stored work-selection query is preparation for W2; it does not claim, process, or send work.
+Migration `003` adds recoverable state without changing the live webhook route:
+
+| Field | Responsibility |
+|---|---|
+| `lease_owner`, `lease_expires_at` | A worker identity and its committed, bounded claim. |
+| `attempt_count`, `last_error`, `available_at` | Attempt history and the next retry time. |
+| `failed_at` | A terminal, visible failure that is no longer claimable. |
+| `outbound_body`, `outbound_send_key` | A generated reply and stable **internal** replay key, committed before a later provider send. |
+
+`claim_available_outbox_work` reads PostgreSQL's `clock_timestamp()`, selects ready rows with `FOR UPDATE SKIP LOCKED`, sets a lease and increments the attempt count, then commits before returning any row. A concurrent worker therefore skips a live lease; a lease whose expiry has passed is eligible for recovery. An expired row already at `MAX_OUTBOX_ATTEMPTS` is terminalized with its audit event under that claim lock and is never returned for an extra attempt. W2a does not process a row, call Meta, or run a worker loop.
+
+Before persisting outbound intent or recording a failure, W2a reloads and locks the row with a predicate requiring the caller's worker identity, non-terminal state, and an unexpired lease according to PostgreSQL's `clock_timestamp()`. A stale worker receives an explicit lease-lost error and cannot clear a recovered lease or overwrite reply state. A non-terminal failure clears its verified lease and commits a bounded exponential backoff with full jitter. It retains the outbound reply and internal send key: an ambiguous provider outcome must be retried, not deduplicated by that key. This is explicitly at-least-once delivery, not exactly-once delivery. The key is not a Meta Graph API idempotency field or header.
+
+At `MAX_OUTBOX_ATTEMPTS`, W2a clears the lease, sets `failed_at`, preserves the error, and inserts an `audit_event` in the **same database session commit**. `audit_event` has a DEFAULT partition, so this direct insert remains partition-safe beyond the initially created monthly partitions. The durable event includes `operator_action: required`; its `alert_required` result is an actionable signal, not a claim that a human has been notified. W2b must connect that signal to the deployment-owned human escalation port or monitoring path.
+
+Migration `003` is additive: it adds columns and recoverability indexes transactionally while retaining W1 indexes. W1 does not yet enqueue production work, so these indexes do not need a nontransactional concurrent build. Its downgrade acquires `ACCESS EXCLUSIVE` on `outbox_work` before checking W2a state and keeps that lock through index and column removal; it therefore refuses rather than racing to discard recoverability or persisted reply data. Like W1, execute its integration test only with `OUTBOX_TEST_DATABASE_URL` set to an isolated disposable PostgreSQL database.
+
+## Explicitly deferred to W2b
+
+The live webhook is still synchronous and Redis-backed. W2a does **not** implement a live worker, early HTTP acknowledgement, HTTP 503 behavior, provider sends, or admission control. It persists claim and retry state only; W2b must process the claim, persist a generated outbound reply before a send, retry ambiguous provider outcomes at least once, and connect terminal `alert_required` signals to deployment-owned escalation.
 
 ## Relation to ADR-002 G.4/G.22
 
@@ -47,4 +66,4 @@ This document uses the requested G.4/G.22 shorthand. In the current ADR, G.22 co
 
 ## Rollback boundary
 
-Migration `002` refuses to remove incomplete work. Once all work is completed, its downgrade removes the two new tables and completed history; the existing `audit_event` table remains untouched.
+Migration `003` refuses to remove non-default W2a state. Migration `002` still refuses to remove incomplete work. Once all work is completed and W2a state is absent, the downgrades remove the new tables and completed history; the existing `audit_event` table remains untouched.
