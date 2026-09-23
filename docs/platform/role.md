@@ -4,7 +4,7 @@
 
 A role is a declarative behavioral identity. It defines what an agent is allowed to be and do within the platform — not a Python class, not a service, and not a prompt string.
 
-A role is defined by a folder under `agents/`. The folder contains three files: `role.md` (identity), `manifest.md` (capabilities), and `policy.md` (behavior), plus an optional `skills/` subdirectory. The harness reads the agent definition folder at instantiation time and assembles the agent's capabilities from it.
+A role is defined by a folder under `platform/roles/`. The folder contains three files: `role.md` (identity), `manifest.md` (capabilities), and `policy.md` (behavior), plus an optional `skills/` subdirectory. The harness reads the agent definition folder at instantiation time and assembles the agent's capabilities from it.
 
 **A role is not:**
 - A live process or a thread
@@ -38,7 +38,7 @@ The agent definition declares capabilities, permissions, and constraints. The ru
 
 ## Agent definition schema
 
-An agent definition is a folder under `agents/` containing three files. Fields marked **required** must be present for the definition to be valid.
+An agent definition is a folder under `platform/roles/` containing three files. Fields marked **required** must be present for the definition to be valid.
 
 ### `role.md` fields
 
@@ -74,9 +74,9 @@ An agent definition is a folder under `agents/` containing three files. Fields m
 
 ## Example agent definition: Preventa Agent
 
-The Preventa Agent definition lives at `agents/preventa/` and consists of three files.
+The Preventa Agent definition lives at `platform/roles/preventa/` and consists of three files.
 
-**`agents/preventa/role.md`**
+**`platform/roles/preventa/role.md`**
 
 ```markdown
 # Role: preventa_agent
@@ -93,7 +93,7 @@ product catalog and price list.
   and persist orders
 ```
 
-**`agents/preventa/manifest.md`**
+**`platform/roles/preventa/manifest.md`**
 
 ```markdown
 ## tools
@@ -125,7 +125,7 @@ product catalog and price list.
   - send:whatsapp
 ```
 
-**`agents/preventa/policy.md`**
+**`platform/roles/preventa/policy.md`**
 
 ```markdown
 ## autonomy

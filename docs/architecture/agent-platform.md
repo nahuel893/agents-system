@@ -54,7 +54,7 @@ The following capabilities are considered platform capabilities or future module
 ## Design principles
 
 1. **Declarative first**
-   - Agent roles are defined as folders under `agents/`, each containing `role.md`, `manifest.md`, and `policy.md`.
+   - Agent roles are defined as folders under `platform/roles/`, each containing `role.md`, `manifest.md`, and `policy.md`.
    - Runtime behavior is assembled from those agent definitions, not hardcoded per case.
 
 2. **Instantiate on demand**
@@ -222,7 +222,7 @@ Defines domain-specific orchestration behavior:
 
 ## Agent definitions (folder-based)
 
-Each role is defined as a folder under `agents/` with three Markdown files: `role.md`, `manifest.md`, and `policy.md`.
+Each role is defined as a folder under `platform/roles/` with three Markdown files: `role.md`, `manifest.md`, and `policy.md`.
 
 At minimum, the agent definition should define:
 
@@ -433,4 +433,4 @@ The following decisions are still intentionally open:
 4. `docs/architecture/tool-permission-model.md`
    - RBAC and injection rules per connector
 5. `docs/architecture/adr-002-agent-model-and-capabilities.md`
-   - architecture corrections to the agent model, prompts, tool permissions, and persistence described in this document — includes the formal "agent" definition (`docs/platform/agent.md`) and notes where this document's `agents/` folder path is stale (real path: `platform/roles/`)
+   - architecture corrections to the agent model, prompts, tool permissions, and persistence described in this document — includes the formal "agent" definition (`docs/platform/agent.md`) and records the correction of this document's folder-path references from `agents/` to `platform/roles/` (ADR-002 F.19)

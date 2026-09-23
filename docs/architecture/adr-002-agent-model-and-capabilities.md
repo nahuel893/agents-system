@@ -24,9 +24,9 @@
 | 16 | Rejected: `operator-agent` as parent of `data-agent`; composition over multi-inheritance | D. Role composition | ✅ decision recorded (no code change) | Issue #53 |
 | 17 | Inherited role contract test suite | D. Role composition | ⚠️ partial (templates exist, not a formal suite) | New PR — #114 |
 | 18 | Live evaluation pipeline | E. Verification | ⏳ pending | New PR, after 8/9 land — #52 |
-| 19 | Stale: `role.md`/`manifesto.md` say `agents/`, real path is `platform/roles/` | F. Stale docs | ⏳ pending | Doc-only fix — #106 |
-| 20 | Stale: `tool.md` `sensitive:` description, pgvector RAG description | F. Stale docs | ⏳ pending | Doc-only fix — #106 |
-| 21 | Stale: `permission-model.md` open decision (resolved by 10) + pgvector | F. Stale docs | ⏳ pending | Doc-only fix — #106 |
+| 19 | Stale: `role.md`/`manifesto.md` say `agents/`, real path is `platform/roles/` | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
+| 20 | Stale: `tool.md` `sensitive:` description, pgvector RAG description | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
+| 21 | Stale: `permission-model.md` open decision (resolved by 10) + pgvector | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
 | 22 | Durable chat history | G. Persistence & memory | ⚠️ partial (same as 4) | Same PR as 4 — #118 |
 | 23 | `ConversationRecorder` reference implementation | G. Persistence & memory | ⚠️ partial (port + test fake only, no production impl) | New PR — #121 |
 | 24 | Context-size control (trimming/compaction) | G. Persistence & memory | ⏳ pending | New PR — #122 |
@@ -1232,8 +1232,8 @@ that fix. The fix in this item is therefore English-only.
 **Decision.** Fix the path in both files; no other content in either file
 was found to be inaccurate about the *shape* of a role definition (three
 files, `role.md`/`manifest.md`/`policy.md`) — only the containing directory
-name is wrong. **Status:** ⏳ pending. **Slice:** doc-only fix, no code
-change; safe to do in the same PR as this ADR's other doc corrections.
+name is wrong. **Status:** ✅ done (#106). **Slice:** doc-only fix, no code
+change; landed in the same PR as this ADR's other doc corrections.
 
 ---
 
@@ -1269,7 +1269,19 @@ dependency and `scripts/init_db.py`. This ADR records the documentation
 fix (remove the pgvector/`catalog_embeddings` description from both files)
 as the correct end state; the code side is handled by #98, not by this ADR.
 
-**Status.** ⏳ pending. **Slice:** doc-only fix; the `sensitive:`/`tier`
+**Correction (#106).** By the time #106 picked this item up, `refactor:
+close the remaining platform boundary gaps` (#101) had already replaced
+`rag_catalog_search`/pgvector with the deployment-supplied `catalog_search`/
+`CatalogSource` design in both `docs/platform/tool.md` and
+`docs/architecture/permission-model.md` — #101 landed after this ADR's base
+commit (`e9d37e3`) but before #106 started. Re-verified against
+`/home/nh/wt-106-docs`: neither file mentions `pgvector`, `rag_catalog_search`,
+or `catalog_embeddings` any more. #106's actual work for this item was
+therefore only the `sensitive:`/`always_revalidate` fix — adding the missing
+`always_revalidate` mention to `tool.md`'s injection-sequence step 4
+alongside the existing `write:`/`send:` heuristic.
+
+**Status.** ✅ done (#106). **Slice:** doc-only fix; the `sensitive:`/`tier`
 wording should be revisited again once C.10 actually ships (`tier` becomes
 the accurate vocabulary), so consider a light second pass on `tool.md` at
 that time rather than only now.
@@ -1287,12 +1299,21 @@ this resolution, formalized. The same file's connector table
 (`permission-model.md:89`) repeats the stale `rag_catalog_search`/pgvector
 description covered in F.20.
 
+**Correction (#106).** As with F.20, `permission-model.md:89`'s connector
+table no longer describes `rag_catalog_search`/pgvector — #101 already
+replaced that row with the deployment-supplied `catalog_search` description
+before #106 started. C.10 (#109, capability tiers) has **not** landed as of
+#106 (issue #109 is still open, and `ToolSpec` in `registry.py` has no
+`tier` field), so the "Open decision (3)" callout cannot yet be replaced
+with a real resolution. Per this item's own acceptance criteria, #106
+instead adds a forward pointer from the callout to C.10 (#109) and C.9,
+without claiming a resolution that has not shipped.
+
 **Decision.** Once C.10 ships, replace the "Open decision (3)" callout with
 a reference to this ADR's C.10 (tiers) and C.9's four-layer enforcement
-description, and remove the stale pgvector row per F.20. **Status:** ⏳
-pending. **Slice:** doc-only fix, sequenced after C.10 actually lands (the
-open decision should be closed with a real answer, not just deleted ahead
-of the code that resolves it).
+description. **Status:** ✅ done (#106) — forward pointer added; the callout
+itself stays open until C.10 (#109) actually lands, at which point it should
+be replaced outright rather than just re-pointed.
 
 ---
 

@@ -36,7 +36,7 @@ For sensitive actions — those that write records, send messages, or modify org
 
 The revalidation check is performed on the same RBAC source that was consulted at injection time. If the revalidation fails, the tool call is aborted and the situation is treated as an escalation trigger.
 
-> **Open decision (3):** The threshold for what constitutes a "sensitive action" requiring revalidation has not been formally defined. Candidates include: any write operation, any outbound communication, any operation above a configured financial threshold, or any operation that is irreversible. The definition affects latency (revalidation is a round-trip) and operational complexity. A tiered approach (write = always revalidate, read = injection-time only) is a likely resolution, but it has not been decided.
+> **Open decision (3):** The threshold for what constitutes a "sensitive action" requiring revalidation has not been formally defined. Candidates include: any write operation, any outbound communication, any operation above a configured financial threshold, or any operation that is irreversible. The definition affects latency (revalidation is a round-trip) and operational complexity. A tiered approach (write = always revalidate, read = injection-time only) is a likely resolution, but it has not been decided. Formal resolution is tracked by this platform's ADR-002, item C.10 (capability tiers — issue #109) together with C.9 (four-layer enforcement); this callout stays open until C.10 ships.
 
 ---
 
