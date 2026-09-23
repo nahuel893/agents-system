@@ -16,10 +16,17 @@ truth instead of each carrying its own hardcoded role tuple:
     against itself: dropping a tool from a manifest leaves that assertion
     green. These literals are the independent expectation, so a manifest edit
     has to be a deliberate, reviewed change to this file too.
+
+A third thing lives here for the same reason (ADR-002 D.17): ``role_chain``
+and the ``check_*`` functions below it are the reusable, inherited-contract
+checks the formalized suite in ``tests/test_role_contract_suite.py`` applies
+to every role ``discover_concrete_platform_roles`` finds — one definition per
+invariant, shared instead of re-asserted per role or copied per test file.
 """
 from __future__ import annotations
 
 import pathlib
+from typing import Any
 
 
 def platform_roles_dir() -> pathlib.Path:
@@ -141,3 +148,113 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
 }
 
 PINNED_ROLES: tuple[str, ...] = tuple(sorted(EXPECTED_ROLE_TOOLS))
+
+
+def role_chain(role: str) -> tuple[str, ...]:
+    """The ``extends:`` chain from *role* to its root, leaf-first.
+
+    Walks ``_load_role_files`` the same way ``_resolve_role_chain`` (the
+    loader's own fold) does, so a role's ancestry here can never drift from
+    what actually gets resolved -- never a hardcoded map.
+    """
+    from agentsys.harness.loader import RootConfig, _load_role_files
+
+    roots = RootConfig()
+    chain: list[str] = []
+    seen: set[str] = set()
+    current: str | None = role
+    while current is not None and current not in seen:
+        chain.append(current)
+        seen.add(current)
+        _, parent, _ = _load_role_files(current, roots)
+        current = parent
+    return tuple(chain)
+
+
+# ---------------------------------------------------------------------------
+# ADR-002 D.17 -- reusable inherited-contract checks.
+#
+# Each function asserts ONE invariant against an already-RESOLVED value (an
+# ``AgentDefinition``, or a computed tool-name set) -- never against disk.
+# That is what makes each one independently mutation-testable: a synthetic,
+# deliberately broken value can be built with ``dataclasses.replace`` on a
+# real resolution -- no on-disk fixture role needed -- and handed straight
+# to the check. See ``tests/test_role_contract_suite.py`` for both the
+# tree-wide pass proof (every concrete role) and the synthetic-fixture fail
+# proof (one deliberately broken value per check) for each one.
+# ---------------------------------------------------------------------------
+
+_DESIGN_NOTES_MARKER = "## design notes"
+_BASE_CONTRACT_CLAUSE_MARKER = "never fabricate data"
+_BASE_CONTRACT_LAST_CLAUSE = "Answer in the user's language."
+_EXEC_PERMISSION_PREFIX = "exec:"
+
+
+def check_no_design_notes_leak(definition: Any) -> None:
+    """ADR-002 B.8: a ``## design notes`` heading must never reach a
+    resolved prompt."""
+    assert _DESIGN_NOTES_MARKER not in definition.system_prompt.lower(), (
+        f"'{definition.role_name}': design-notes marker leaked into its "
+        "resolved system prompt"
+    )
+
+
+def check_base_contract_present_once_and_last(definition: Any) -> None:
+    """ADR-002 B.9: the six-clause base contract, exactly once, last block."""
+    prompt = definition.system_prompt
+    count = prompt.lower().count(_BASE_CONTRACT_CLAUSE_MARKER)
+    assert count == 1, (
+        f"'{definition.role_name}': base-contract clause appears {count} "
+        "times in the resolved prompt, expected exactly 1"
+    )
+    assert prompt.rstrip().endswith(_BASE_CONTRACT_LAST_CLAUSE), (
+        f"'{definition.role_name}': base contract is not the final block "
+        "of the resolved system prompt"
+    )
+
+
+def check_untrusted_input_exec_exclusion(definition: Any) -> None:
+    """ADR-002 C.11: ``untrusted_input=true`` and any ``exec:*`` permission
+    are mutually exclusive."""
+    if not definition.untrusted_input:
+        return
+    exec_perms = sorted(
+        p
+        for p in definition.permissions
+        if p.strip().lower().startswith(_EXEC_PERMISSION_PREFIX)
+    )
+    assert not exec_perms, (
+        f"'{definition.role_name}': untrusted_input=true but holds exec:* "
+        f"permissions {exec_perms}"
+    )
+
+
+def check_permissions_and_tools_survive_inheritance(leaf: Any, ancestor: Any) -> None:
+    """Role-to-role composition is additive (ADR-002 D): nothing a resolved
+    ancestor grants may be missing from a resolved descendant."""
+    missing_perms = set(ancestor.permissions) - set(leaf.permissions)
+    missing_tools = set(ancestor.tools) - set(leaf.tools)
+    assert not missing_perms, (
+        f"'{leaf.role_name}': lost permissions {sorted(missing_perms)} that "
+        f"its ancestor '{ancestor.role_name}' grants"
+    )
+    assert not missing_tools, (
+        f"'{leaf.role_name}': lost tools {sorted(missing_tools)} that its "
+        f"ancestor '{ancestor.role_name}' grants"
+    )
+
+
+def check_ungranted_tools_are_not_injected(
+    definition: Any, registry: Any, granted_tool_names: frozenset[str]
+) -> None:
+    """A tool whose registry spec requires a permission must never appear
+    in *granted_tool_names* when that permission was not granted (D-009's
+    Layer-1 RBAC)."""
+    for name in definition.tools:
+        spec = registry.get(name)
+        if spec.required_permissions:
+            assert name not in granted_tool_names, (
+                f"'{definition.role_name}': tool '{name}' requires "
+                f"permissions {spec.required_permissions} but was granted "
+                "with an empty permission set"
+            )

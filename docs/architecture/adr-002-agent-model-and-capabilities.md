@@ -22,7 +22,7 @@
 | 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ⏳ pending | PR5 — #112 |
 | 15 | Reference backends for platform-generic ports | C. Tools & permissions | ✅ done (this change) | — #113 |
 | 16 | Rejected: `operator-agent` as parent of `data-agent`; composition over multi-inheritance | D. Role composition | ✅ decision recorded (no code change) | Issue #53 |
-| 17 | Inherited role contract test suite | D. Role composition | ⚠️ partial (templates exist, not a formal suite) | New PR — #114 |
+| 17 | Inherited role contract test suite | D. Role composition | ✅ done (this change) | — #114 |
 | 18 | Live evaluation pipeline | E. Verification | ⏳ pending | New PR, after 8/9 land — #52 |
 | 19 | Stale: `role.md`/`manifesto.md` say `agents/`, real path is `platform/roles/` | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
 | 20 | Stale: `tool.md` `sensitive:` description, pgvector RAG description | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
@@ -1155,10 +1155,28 @@ independently for each new role as it is added — rejected: this is how an
 invariant silently stops being checked for a role nobody remembered to add a
 test for; a suite that automatically walks the tree cannot have that gap.
 
-**Status.** ⚠️ partial (two working templates exist; not yet formalized as
-a documented, generalized suite). **Planned slice:** new PR, most useful
-landed alongside or shortly after C.11/C.10 so the new invariants get
-tree-wide coverage from day one.
+**Status.** ✅ done (this change) — `tests/platform_role_contract.py` gained
+an "ADR-002 D.17" section (`role_chain`, plus five pure `check_*` functions
+that each assert one invariant against an already-resolved
+`AgentDefinition`), and `tests/test_role_contract_suite.py` is the
+formalized, documented suite: it walks `discover_concrete_platform_roles()`
+and applies every check to each role automatically, so an invariant
+asserted once here covers every current and future concrete role with no
+per-role test to add. Two properties this item names explicitly were
+already tree-walked before this change and are reused rather than
+duplicated —
+`test_role_resolution_pinned.py::test_no_role_outside_the_operator_branch_can_reach_the_host`
+(host access) and
+`test_platform_tools_integration.py::test_every_platform_role_boots_end_to_end`
+(every manifest tool registrable and equippable). New tree-wide coverage
+this change adds: design-notes leakage, the base contract's "present
+exactly once, last block" shape, permissions/tools surviving the whole
+`extends:` chain, and a tool never being injected without the permission
+it requires. Strict TDD: each new check is proven able to fail against a
+deliberately broken synthetic value (`dataclasses.replace` on a real
+resolution) before being trusted against the real tree. Docs:
+`docs/platform/role.md` / `docs/platform_es/role.md`'s new "Testing the
+role contract" section.
 
 ---
 

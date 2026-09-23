@@ -172,6 +172,36 @@ Esta carpeta de definición del agente establece la frontera de comportamiento d
 
 ---
 
+## Cómo probar el contrato del rol
+
+La herencia aditiva, el contrato base del prompt, la exclusión de
+`untrusted_input` frente a `exec:*` y que una herramienta nunca sea
+equipable sin el permiso que requiere, están todos aplicados por
+`harness/loader.py` y se vuelven a verificar automáticamente contra cada
+rol concreto bajo `platform/roles/` — actual y futuro — mediante
+`tests/test_role_contract_suite.py` (ADR-002 D.17). Un rol nuevo no
+necesita una prueba nueva: `platform_role_contract.discover_concrete_platform_roles()`
+recorre `platform/roles/` en disco, de modo que una carpeta de rol agregada
+mañana queda cubierta la próxima vez que corra la suite.
+
+Se ejecuta (o toda la suite) con:
+
+```bash
+PYTHONPATH=src pytest tests/test_role_contract_suite.py -v
+```
+
+Un invariante nuevo se agrega escribiendo una función `check_*` pequeña y
+pura en `tests/platform_role_contract.py` (recibe un `AgentDefinition` ya
+resuelto, nunca toca el disco) y una prueba parametrizada en
+`tests/test_role_contract_suite.py` que la aplica sobre
+`discover_concrete_platform_roles()`. TDD estricto para una verificación
+así implica probar primero que puede efectivamente fallar: construir un
+valor deliberadamente roto con `dataclasses.replace(resolve(...), ...)` y
+afirmar que la verificación lanza una excepción, antes de confiar en ella
+contra el árbol real.
+
+---
+
 ## Referencias cruzadas
 
 - Definición formal de "agente" (como algo distinto de "rol") y su estado de implementación actual: `docs/platform_es/agent.md`

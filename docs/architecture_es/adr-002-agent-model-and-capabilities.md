@@ -22,7 +22,7 @@
 | 14 | Sandbox T3 (bubblewrap) | C. Herramientas y permisos | ⏳ pendiente | PR5 — #112 |
 | 15 | Backends de referencia para los puertos genéricos de la plataforma | C. Herramientas y permisos | ✅ hecho (este cambio) | — #113 |
 | 16 | Rechazado: `operator-agent` como padre de `data-agent`; composición en vez de herencia múltiple | D. Composición de roles | ✅ decisión registrada (sin cambio de código) | Issue #53 |
-| 17 | Suite de pruebas de contrato heredado por rol | D. Composición de roles | ⚠️ parcial (existen plantillas, no una suite formal) | PR nuevo — #114 |
+| 17 | Suite de pruebas de contrato heredado por rol | D. Composición de roles | ✅ hecho (este cambio) | — #114 |
 | 18 | Pipeline de evaluación en vivo | E. Verificación | ⏳ pendiente | PR nuevo, después de que aterricen 8/9 — #52 |
 | 19 | Desactualizado: `role.md`/`manifesto.md` dicen `agents/`, la ruta real es `platform/roles/` | F. Documentación desactualizada | ✅ hecho (#106) | Corrección solo de documentación — #106 |
 | 20 | Desactualizado: descripción de `sensitive:` en `tool.md`, descripción de RAG con pgvector | F. Documentación desactualizada | ✅ hecho (#106) | Corrección solo de documentación — #106 |
@@ -1284,11 +1284,29 @@ escritas de forma independiente para cada rol nuevo a medida que se agrega
 para un rol al que nadie se acordó de agregarle una prueba; una suite que
 recorre el árbol automáticamente no puede tener esa brecha.
 
-**Estado.** ⚠️ parcial (existen dos plantillas funcionales; todavía no
-formalizada como una suite generalizada y documentada). **Etapa
-planificada:** PR nuevo, más útil si aterriza junto con C.11/C.10 o poco
-después, para que los nuevos invariantes tengan cobertura de todo el árbol
-desde el primer día.
+**Estado.** ✅ hecho (este cambio) — `tests/platform_role_contract.py` ganó
+una sección "ADR-002 D.17" (`role_chain`, más cinco funciones `check_*`
+puras que afirman cada una un invariante contra un `AgentDefinition` ya
+resuelto), y `tests/test_role_contract_suite.py` es la suite formalizada y
+documentada: recorre `discover_concrete_platform_roles()` y aplica cada
+verificación a cada rol automáticamente, de modo que un invariante afirmado
+una sola vez aquí cubre a todo rol concreto actual y futuro sin agregar una
+prueba por rol. Dos propiedades que este ítem nombra explícitamente ya
+recorrían todo el árbol antes de este cambio y se reutilizan en vez de
+duplicarse —
+`test_role_resolution_pinned.py::test_no_role_outside_the_operator_branch_can_reach_the_host`
+(acceso al host) y
+`test_platform_tools_integration.py::test_every_platform_role_boots_end_to_end`
+(toda herramienta del manifiesto registrable y equipable). Cobertura nueva
+de todo el árbol que agrega este cambio: filtración de notas de diseño, la
+forma "presente exactamente una vez, como bloque final" del contrato base,
+que los permisos y herramientas sobrevivan toda la cadena `extends:`, y que
+una herramienta nunca se inyecte sin el permiso que requiere. TDD estricto:
+cada verificación nueva se prueba capaz de fallar contra un valor sintético
+deliberadamente roto (`dataclasses.replace` sobre una resolución real)
+antes de confiar en ella contra el árbol real. Documentación:
+`docs/platform/role.md` / `docs/platform_es/role.md`, nueva sección "Cómo
+probar el contrato del rol".
 
 ---
 
