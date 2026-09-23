@@ -32,6 +32,14 @@
 | 24 | Context-size control (trimming/compaction) | G. Persistence & memory | ⏳ pending | New PR |
 | 25 | Agent-own memory (`remember`/`recall`) | G. Persistence & memory | ⏳ pending | Depends on 2, 3 |
 | 26 | Reasoning persistence — explicit decision | G. Persistence & memory | ⏳ pending | New PR |
+| 27 | Integration tests that never run | H. CI | ⏳ pending | CI PR 1 (issue #42) |
+| 28 | Formatting not enforced (`ruff format`) | H. CI | ⏳ pending | CI PR 2 |
+| 29 | No dependency vulnerability checks | H. CI | ⏳ pending | CI PR 3 |
+| 30 | Secret scanning only local | H. CI | ⏳ pending | CI PR 3 |
+| 31 | Every run executes twice; no cancellation | H. CI | ⏳ pending | CI PR 1 |
+| 32 | No coverage measurement | H. CI | ⏳ pending | CI PR 4 |
+| 33 | Shell scripts not linted in CI | H. CI | ⏳ pending | CI PR 4 |
+| 34 | Green CI does not gate a merge | H. CI | ⏳ pending | Settings, issue #61 |
 
 ## Context
 
@@ -53,7 +61,7 @@ only of *what a role is allowed to do* — two different questions the
 `exec:*` permission family currently conflates.
 
 This ADR is the first consolidated architecture document for the agent model
-since `agent-platform.md`. It does five things: (A) defines what "agent"
+since `agent-platform.md`. It covers eight groups: (A) defines what "agent"
 means on this platform precisely enough to build against, and states clearly
 what part of that definition is implemented versus aspirational; (B) fixes
 the prompt-composition bug and states the universal behavioral contract every
@@ -65,7 +73,9 @@ deterministic per-PR CI; (F) corrects three now-stale documents; (G) states
 the persistence and memory gaps plainly, because "the runtime resends the
 whole context every call, like Claude Code does" is a working principle
 today only for the *system prompt* — chat history, tool results, and model
-reasoning each have a different, partial answer.
+reasoning each have a different, partial answer; (H) lists what continuous
+integration does not yet verify or enforce (added 2026-09-22, after the
+first version merged in #100).
 
 Every claim about current code below is cited as `path:line` and was
 verified against `/home/nh/wt-adr-002` (branch `docs/adr-002-agent-model`,
@@ -1472,6 +1482,196 @@ the concrete tradeoff the implementing PR must resolve.
 A/B/C/G's other items, but should not remain an un-decided default
 indefinitely once any audit/debugging workflow starts to depend on
 reasoning being either present or absent.
+
+---
+
+### H. Continuous integration
+
+**What CI verifies today.** One workflow, `.github/workflows/ci.yml`, with
+four jobs:
+
+| Job | Lines | What it proves |
+|---|---|---|
+| `ci` | `ci.yml:9-30` | `ruff check .` (lint), `mypy src/` (types), `pytest` — the unit suite, which excludes every `integration`-marked test (`pyproject.toml:73`, `addopts = "-m 'not integration'"`) |
+| `bi-readonly` | `ci.yml:44-92` | On real PostgreSQL, provisions the `bi_readonly` role and tries to write through it — the last barrier if parameter validation and the Layer-2 interceptor both fail |
+| `audit-migration` | `ci.yml:105-144` | Runs the Alembic upgrade/downgrade cycle for real and lands rows in the RANGE-partitioned `audit_event` table — something SQLite and the ORM cannot express |
+| `demo-reports` | `ci.yml:158-199` | Loads the demo company (a foreign schema: `facturas`, `padron_clientes`) and runs the portable sales reports against it unchanged |
+
+The three PostgreSQL jobs are well chosen: each verifies a property no unit
+test can see. The gaps below are about what is *not* verified, what runs
+twice, and what does not gate a merge.
+
+#### H.27 — Integration tests that never run
+
+**Current state.** Eight test files carry the `integration` marker; CI runs
+three of them (`ci.yml:92`, `:144`, `:199`). Never executed anywhere:
+`tests/test_db_integration.py` (live database connectivity),
+`tests/test_platform_tools_integration.py` (platform tools end to end), the
+`integration`-marked test in `tests/test_reports.py`,
+`tests/test_embeddings_integration.py` (downloads a model) and
+`tests/test_openai_compatible_integration.py` (needs a real LLM endpoint).
+Tracked as issue #42.
+
+**Decision.** Every `integration`-marked test runs somewhere. The first
+three join a PostgreSQL-backed job. The last two, which need a model
+download or a live LLM, move to a manually triggered workflow
+(`workflow_dispatch`) that shares infrastructure with the live evaluation
+pipeline (E.18).
+
+**Rationale.** A marker that deselects a test is not coverage. A test that
+never runs reads as protection while providing none — the same failure the
+`bi-readonly` job's own comment records (`ci.yml:31-35`).
+
+**Alternatives considered.** Deleting the unrun tests — rejected: they
+encode behaviour worth checking; the defect is the missing job, not the
+test. Running the model-dependent tests on every PR — rejected: network
+downloads and paid or GPU-bound calls make the per-PR run slow, flaky and
+costly.
+
+**Status.** ⏳ pending. **Planned slice:** CI PR 1, together with H.31.
+
+#### H.28 — Formatting is not enforced
+
+**Current state.** `ruff format --check` is not in CI. The pre-commit
+config records why (`.pre-commit-config.yaml:24`, `:188-194`): about 74 of
+117 files would be reformatted on first run, so the hook was deferred until
+a one-shot reformat. The drift is visible today: an editor that runs
+`ruff format` on save produces purely cosmetic diffs, and those diffs
+conflict with incoming changes on pull (the primary checkout's uncommitted
+`tests/test_main.py` is exactly this).
+
+**Decision.** One PR runs `ruff format .` across the tree, adds the
+`ruff-format` pre-commit hook and adds `ruff format --check .` to the `ci`
+job, as the pre-commit note prescribes. Nothing else goes in that PR, so the
+review is purely mechanical.
+
+**Rationale.** Without an enforced format, every editor and every agent
+produces different whitespace, and reviews and merges pay for it.
+
+**Alternatives considered.** Formatting only touched files — rejected: the
+drift never converges, and each unrelated PR carries formatting noise.
+
+**Status.** ⏳ pending. **Planned slice:** CI PR 2.
+
+#### H.29 — No dependency vulnerability checks
+
+**Current state.** Nothing checks whether a dependency has a known
+vulnerability, and nothing proposes updates. The dependency tree is large
+(`pyproject.toml` `[project].dependencies`: FastAPI, LangGraph, four LLM
+providers, `torch`, `sentence-transformers`, among others).
+
+**Decision.** Add a `pip-audit` step (or `uv`'s equivalent once stable)
+against the locked dependency set, failing on known vulnerabilities, and
+enable Dependabot for `pip`/`uv` and for GitHub Actions versions.
+
+**Rationale.** A platform that runs agents with tool access sits exactly
+where a compromised or vulnerable dependency does the most damage.
+
+**Alternatives considered.** Periodic manual review — rejected: it does not
+happen reliably, and the advisory databases change daily.
+
+**Status.** ⏳ pending. **Planned slice:** CI PR 3, together with H.30.
+
+#### H.30 — Secret scanning only on the developer's machine
+
+**Current state.** `detect-private-key` runs as a pre-commit hook
+(`.pre-commit-config.yaml:112`). Pre-commit runs only where it is
+installed, can be skipped with `--no-verify`, and never looks at history.
+The repository has a documented incident involving exposed services
+(`docs/operations/dev-environment-security.md`).
+
+**Decision.** Run `gitleaks` in CI on every PR, over the PR's commits, with
+a one-time full-history scan when it is introduced.
+
+**Rationale.** A secret check that the author can skip is advisory; one in
+CI is a gate.
+
+**Alternatives considered.** GitHub's native secret scanning — acceptable
+where available and complementary, but it does not cover every token shape
+a custom rule can, and its availability depends on the repository plan.
+
+**Status.** ⏳ pending. **Planned slice:** CI PR 3.
+
+#### H.31 — Every run executes twice, and stale runs are not cancelled
+
+**Current state.** The workflow triggers on `push` to every branch
+(`ci.yml:4-5`, `branches: ["**"]`) **and** on `pull_request`
+(`ci.yml:6`). A push to a branch with an open PR therefore runs all four
+jobs twice (observed on #101: two runs per job). There is no `concurrency`
+group, so a newer push does not cancel the run of the previous one.
+
+**Decision.** Trigger on `push` to `main` only, plus `pull_request`; add a
+`concurrency` group keyed on the ref with `cancel-in-progress: true` for PR
+runs.
+
+**Rationale.** Half the minutes spent today buy nothing, and a slow
+duplicate delays the signal the author is waiting for.
+
+**Alternatives considered.** Keeping `push` on all branches for branches
+without a PR — rejected: work here always goes through a PR; a branch
+without one does not need CI until it has one.
+
+**Status.** ⏳ pending. **Planned slice:** CI PR 1.
+
+#### H.32 — No coverage measurement
+
+**Current state.** No job measures which code the tests exercise.
+
+**Decision.** Run the unit suite with `pytest --cov=agentsys` and publish
+the report as a job artifact. Set the minimum at the measured baseline and
+ratchet it upward; never set it above the baseline on day one.
+
+**Rationale.** Coverage does not prove tests are good, but a drop flags new
+code that nothing exercises — which is exactly the kind of gap H.27 found by
+hand.
+
+**Alternatives considered.** A fixed high threshold (e.g. 90 %) — rejected:
+it breaks the build on day one and pushes people towards tests written for
+the number instead of the behaviour.
+
+**Status.** ⏳ pending. **Planned slice:** CI PR 4.
+
+#### H.33 — Shell scripts are not linted in CI
+
+**Current state.** `.claude/hooks/guard-main.sh` (#99) is a security control
+written in bash. Its behaviour is covered by `tests/test_guard_main_hook.py`
+(runs in the `ci` job), but `shellcheck` and `bash -n` ran only locally.
+`scripts/preflight_local_embeddings.sh` has no check at all.
+
+**Decision.** Add a `shellcheck` step over every tracked `*.sh`.
+
+**Rationale.** Bash fails silently in ways Python does not (unquoted
+expansion, word splitting); a linter catches those classes statically.
+
+**Alternatives considered.** Rewriting the hook in Python — possible later,
+but the hook must start fast and depend on nothing outside the base system.
+
+**Status.** ⏳ pending. **Planned slice:** CI PR 4.
+
+#### H.34 — Green CI does not gate a merge
+
+**Current state.** Nothing requires the CI jobs to pass before a PR merges
+into `main`, and repository settings live outside version control (issues
+#59 and #61). The checks are informative only.
+
+**Decision.** Branch protection (or a repository ruleset) on `main` that
+requires `ci`, `bi-readonly`, `audit-migration` and `demo-reports`, plus the
+jobs added by H.27–H.33 once they are stable; the configuration is kept as
+code per #61.
+
+**Rationale.** A gate that can be bypassed silently is not a gate. The
+stacked-PR incident on 2026-09-22 (#97 merged into an already squash-merged
+branch and never reached `main`) is the same class of failure: nothing
+verified what actually landed.
+
+**Alternatives considered.** Relying on reviewer discipline — rejected: the
+project has a single reviewer today (#59).
+
+**Status.** ⏳ pending. **Planned slice:** after CI PRs 1–4, as a settings
+change tracked by #61.
+
+**Later, not part of this group:** the live agent evaluation pipeline (E.18)
+lands as a separate manually triggered workflow, not as a per-PR job.
 
 ---
 
