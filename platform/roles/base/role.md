@@ -4,6 +4,8 @@ version: "1.0"
 abstract: true
 ---
 
+## design notes
+
 # Role: base
 
 The root of the role taxonomy. It is **abstract**: `resolve("base")` raises,
