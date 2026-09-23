@@ -1670,17 +1670,19 @@ condiciona un merge.
 
 #### H.27 — Tests de integración que nunca se ejecutan
 
-**Estado actual.** Ocho archivos de tests llevan el marcador `integration`;
-CI ejecuta tres (`ci.yml:92`, `:144`, `:199`). Nunca se ejecutan en ningún
-lado: `tests/test_db_integration.py` (conectividad con una base real),
-`tests/test_platform_tools_integration.py` (tools de la plataforma de punta
-a punta), el test marcado `integration` de `tests/test_reports.py`,
-`tests/test_embeddings_integration.py` (descarga un modelo) y
-`tests/test_openai_compatible_integration.py` (necesita un endpoint de LLM
-real). Se sigue en la issue #42.
+**Estado actual.** Seis archivos de tests recolectan tests con el marcador
+`integration` (verificado con `pytest --collect-only -m integration`); CI
+ejecuta tres (`ci.yml:92`, `:144`, `:199`). Nunca se ejecutan en ningún
+lado: `tests/test_db_integration.py` (conectividad con una base real, 1
+test), `tests/test_embeddings_integration.py` (descarga un modelo, 2 tests)
+y `tests/test_openai_compatible_integration.py` (necesita un endpoint de LLM
+real, 2 tests). `tests/test_platform_tools_integration.py` y
+`tests/test_reports.py` mencionan el marcador solo en docstrings y no están
+marcados; el primero a propósito, para que corra en la suite por defecto. Se
+sigue en la issue #42.
 
-**Decisión.** Todo test marcado `integration` se ejecuta en algún lado. Los
-tres primeros se suman a un job con PostgreSQL. Los dos últimos, que
+**Decisión.** Todo test marcado `integration` se ejecuta en algún lado.
+`test_db_integration.py` se suma a un job con PostgreSQL. Los otros dos, que
 necesitan descargar un modelo o un LLM real, pasan a un workflow de
 ejecución manual (`workflow_dispatch`) que comparte infraestructura con el
 pipeline de evaluación en vivo (E.18).

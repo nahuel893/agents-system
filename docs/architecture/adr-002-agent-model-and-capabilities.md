@@ -1503,18 +1503,20 @@ twice, and what does not gate a merge.
 
 #### H.27 — Integration tests that never run
 
-**Current state.** Eight test files carry the `integration` marker; CI runs
-three of them (`ci.yml:92`, `:144`, `:199`). Never executed anywhere:
-`tests/test_db_integration.py` (live database connectivity),
-`tests/test_platform_tools_integration.py` (platform tools end to end), the
-`integration`-marked test in `tests/test_reports.py`,
-`tests/test_embeddings_integration.py` (downloads a model) and
-`tests/test_openai_compatible_integration.py` (needs a real LLM endpoint).
-Tracked as issue #42.
+**Current state.** Six test files collect tests under the `integration`
+marker (verified with `pytest --collect-only -m integration`); CI runs three
+of them (`ci.yml:92`, `:144`, `:199`). Never executed anywhere:
+`tests/test_db_integration.py` (live database connectivity, 1 test),
+`tests/test_embeddings_integration.py` (downloads a model, 2 tests) and
+`tests/test_openai_compatible_integration.py` (needs a real LLM endpoint,
+2 tests). `tests/test_platform_tools_integration.py` and
+`tests/test_reports.py` mention the marker only in docstrings and are not
+marked — the first deliberately, so it runs in the default suite. Tracked as
+issue #42.
 
-**Decision.** Every `integration`-marked test runs somewhere. The first
-three join a PostgreSQL-backed job. The last two, which need a model
-download or a live LLM, move to a manually triggered workflow
+**Decision.** Every `integration`-marked test runs somewhere.
+`test_db_integration.py` joins a PostgreSQL-backed job. The other two,
+which need a model download or a live LLM, move to a manually triggered workflow
 (`workflow_dispatch`) that shares infrastructure with the live evaluation
 pipeline (E.18).
 
