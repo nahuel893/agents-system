@@ -157,6 +157,67 @@ async def _read_capped(stream: Any, limit: int) -> tuple[bytes, bool]:
     return bytes(kept), truncated
 
 
+async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutput:
+    """Spawn *argv* under *policy* with no shell — the shared execution seam.
+
+    Extracted out of `use_term` (ADR-002 C.12) so `connectors.command_tools`
+    reuses the exact same `create_subprocess_exec` + timeout + output-cap
+    machinery instead of a second command runner, and so C.14's future
+    bubblewrap sandbox has exactly ONE seam to wrap: whatever runs `argv`
+    under `policy` for either caller runs through here.
+
+    Callers are responsible for everything upstream of "this argv is safe to
+    spawn" — allowlist/typed-param validation, null-byte rejection. This
+    function only spawns, drains bounded output, and enforces the timeout.
+    """
+    program = argv[0]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(policy.root),
+            env=_child_env(policy),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            # Its own process group, so the timeout below can kill the
+            # whole tree rather than only the direct child.
+            start_new_session=True,
+        )
+    except (OSError, ValueError) as error:
+        return _refuse(
+            "spawn_failed",
+            f"could not start '{program}': {error}",
+            program=program,
+        )
+
+    async def _drain() -> tuple[tuple[bytes, bool], tuple[bytes, bool]]:
+        out, err = await asyncio.gather(
+            _read_capped(process.stdout, policy.max_output_bytes),
+            _read_capped(process.stderr, policy.max_output_bytes),
+        )
+        await process.wait()
+        return out, err
+
+    try:
+        (stdout, out_cut), (stderr, err_cut) = await asyncio.wait_for(
+            _drain(), timeout=policy.timeout_s
+        )
+    except TimeoutError:
+        _kill_group(process)
+        return _refuse(
+            "timeout",
+            f"'{program}' exceeded {policy.timeout_s}s and was killed.",
+            program=program,
+        )
+
+    return {
+        "exit_code": process.returncode,
+        "stdout": stdout.decode("utf-8", errors="replace"),
+        "stderr": stderr.decode("utf-8", errors="replace"),
+        "truncated": out_cut or err_cut,
+    }
+
+
 def build_terminal_connector(policy: TerminalPolicy) -> AsyncConnector:
     """Build `use_term` over *policy*."""
 
@@ -189,51 +250,7 @@ def build_terminal_connector(policy: TerminalPolicy) -> AsyncConnector:
                 program=program,
             )
 
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=str(policy.root),
-                env=_child_env(policy),
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                # Its own process group, so the timeout below can kill the
-                # whole tree rather than only the direct child.
-                start_new_session=True,
-            )
-        except (OSError, ValueError) as error:
-            return _refuse(
-                "spawn_failed",
-                f"could not start '{program}': {error}",
-                program=program,
-            )
-
-        async def _drain() -> tuple[tuple[bytes, bool], tuple[bytes, bool]]:
-            out, err = await asyncio.gather(
-                _read_capped(process.stdout, policy.max_output_bytes),
-                _read_capped(process.stderr, policy.max_output_bytes),
-            )
-            await process.wait()
-            return out, err
-
-        try:
-            (stdout, out_cut), (stderr, err_cut) = await asyncio.wait_for(
-                _drain(), timeout=policy.timeout_s
-            )
-        except TimeoutError:
-            _kill_group(process)
-            return _refuse(
-                "timeout",
-                f"'{program}' exceeded {policy.timeout_s}s and was killed.",
-                program=program,
-            )
-
-        return {
-            "exit_code": process.returncode,
-            "stdout": stdout.decode("utf-8", errors="replace"),
-            "stderr": stderr.decode("utf-8", errors="replace"),
-            "truncated": out_cut or err_cut,
-        }
+        return await _run_argv(argv, policy=policy)
 
     return use_term
 

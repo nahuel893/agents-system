@@ -17,7 +17,7 @@
 | 9 | Universal base prompt contract | B. Prompts | ✅ done | Same PR as 8 — #107 |
 | 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ✅ done | PR2 — #109 |
 | 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ✅ done | PR1 — #108 |
-| 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ⏳ pending | PR3 — #110 |
+| 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ✅ done | PR3 — #110 |
 | 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ✅ done | PR4 — #111 |
 | 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ⏳ pending | PR5 — #112 |
 | 15 | Reference backends for platform-generic ports | C. Tools & permissions | ✅ done (this change) | — #113 |
@@ -871,7 +871,40 @@ for the shell case; a fixed argv template with typed slots is strictly
 safer because there is structurally no room for an extra flag, not just a
 regex that is supposed to reject one.
 
-**Status.** ⏳ pending. **Planned slice:** PR3.
+**Status.** ✅ done — `command_tools:` parsed and fully validated at load
+time in `harness/loader.py` (`CommandToolDeclaration`/`CommandToolParam`,
+`_parse_command_tools`): a placeholder must occupy a whole argv element,
+every placeholder has a matching declared param and every declared param is
+used, `argv[0]` is resolved to an absolute path once (bare names via
+`shutil.which`, never re-resolved at call time), and `permission` must be in
+the `run:*` family (never `exec:*`). A deployment override may only narrow
+`command_tools` by name (`_validate_command_tools`, mirroring `_validate_
+tools`'s subset check) — never add one the role did not declare. Call-time
+enforcement (`connectors/command_tools.py`) rejects an unknown or missing
+param, a value of the wrong type, a value failing its `pattern`/`max_length`/
+`enum`, and — independent of all of those — any value starting with `-`
+(the option-injection guard the attack table above exists for), then
+substitutes the validated values into the template and executes it through
+`operator._run_argv`, the exact subprocess/timeout/output-cap seam
+`build_terminal_connector`'s `use_term` already used (extracted out of
+`use_term` so both share one execution path — and so C.14's future sandbox
+has exactly one seam to wrap). `harness/injector.py` gained
+`resolve_command_tool_surface`, sharing the untrusted_input+T3 second
+barrier (`_deny_reason`, ADR-002 C.10) with the registry-backed
+`resolve_tool_surface` rather than duplicating it, and `harness/factory.py`
+merges both surfaces into one `EquippedRuntime`. An `untrusted_input` role
+holding only `command_tools`-declared tools passes C.11's invariant check by
+construction, since their permission family is `run:*`, never `exec:*` — #110.
+**Review follow-up (same PR):** the enforced floor is `tier` ∈ {T2, T3} for
+every `run:*` permission — checked independently at `ToolSpec.__post_init__`
+(`harness/registry.py`) and at manifest load (`harness/loader.py`, naming
+the offending tool) — because `interceptor._is_sensitive` only revalidates
+T2/T3, so a T0/T1 command tool would reach an `untrusted_input` role fully
+equipped and never revalidated; every `string` param must additionally
+declare `pattern` or `enum` (the load-time enforcement of "narrow" that
+makes `T2` on `untrusted_input` safe), `max_length` is capped, and the
+leading-character option-injection guard now also rejects Unicode dash
+lookalikes (en dash, em dash, U+2212 MINUS SIGN), not only ASCII `-`.
 
 ---
 

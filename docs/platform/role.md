@@ -54,6 +54,7 @@ An agent definition is a folder under `platform/roles/` containing three files. 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `tools` | `list[string]` | required | Names of tools this role is permitted to use. The platform injects only tools listed here. Any tool not listed is unavailable to this runtime, even if it exists in the registry. |
+| `command_tools` | `list[object]` | optional | Declarative, fixed-`argv` command tools this role owns (ADR-002 C.12) — a distinct capability from `tools` above, since each entry is turned into its own `ToolSpec` rather than referencing one already in the shared registry. See "Declarative command tools" in `docs/platform/tool.md` for the full schema and safety rules. |
 | `skills` | `list[string]` | optional | Names of skill packs this role accepts. Skills shape how the agent reasons and responds. See `docs/platform/skill.md`. |
 | `context` | `object` | required | Context requirements. Specifies what context the runtime must receive at injection time. Sub-fields: `session` (boolean), `user_identity` (boolean), `org_context` (boolean), `private_wiki` (boolean), `tool_derived` (list of tool names whose outputs are required as context). |
 | `permissions` | `list[string]` | required | RBAC permission identifiers required for this role to operate. The platform evaluates these at injection time against the requesting user's permission set. See `docs/architecture/permission-model.md`. |

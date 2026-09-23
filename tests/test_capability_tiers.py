@@ -315,3 +315,79 @@ async def test_always_revalidate_t1_tool_still_revalidated() -> None:
         await intercept("run_report", {}, runtime)
 
     assert exc_info.value.reason == "revalidation_required"
+
+
+# ---------------------------------------------------------------------------
+# 5. Fail-closed at construction: a run:* permission (ADR-002 C.12 command
+#    tools) cannot be paired with a tier below T2 — PR #147 review follow-up.
+#    A T0/T1 `run:*` tool is never revalidated by `interceptor._is_sensitive`
+#    (which only checks tier in {T2, T3} or `always_revalidate`), so it would
+#    reach an untrusted_input role with no Layer-2 check at all — the exact
+#    gap the reviewer proved live with a T0 command tool running
+#    `/usr/bin/id` unrevalidated. Mirrors the write:/send:/exec: guards above.
+# ---------------------------------------------------------------------------
+
+
+def test_run_permission_with_t0_tier_raises() -> None:
+    from agentsys.harness.registry import Tier, ToolSpec
+
+    with pytest.raises(ValueError, match="run:check_stock"):
+        ToolSpec(
+            name="bad_run_tool_t0",
+            required_permissions=("run:check_stock",),
+            connector=_connector,
+            tier=Tier.T0,
+        )
+
+
+def test_run_permission_with_t1_tier_raises() -> None:
+    from agentsys.harness.registry import Tier, ToolSpec
+
+    with pytest.raises(ValueError, match="run:check_stock"):
+        ToolSpec(
+            name="bad_run_tool_t1",
+            required_permissions=("run:check_stock",),
+            connector=_connector,
+            tier=Tier.T1,
+        )
+
+
+def test_run_permission_with_t2_tier_is_accepted() -> None:
+    """T2 stays allowed — ADR-002 C.12 deliberately lets an untrusted_input
+    role hold a narrow T2 command tool; only the room BELOW T2 is closed."""
+    from agentsys.harness.registry import Tier, ToolSpec
+
+    spec = ToolSpec(
+        name="ok_run_tool_t2",
+        required_permissions=("run:check_stock",),
+        connector=_connector,
+        tier=Tier.T2,
+    )
+
+    assert spec.tier is Tier.T2
+
+
+def test_run_permission_with_t3_tier_is_accepted() -> None:
+    from agentsys.harness.registry import Tier, ToolSpec
+
+    spec = ToolSpec(
+        name="ok_run_tool_t3",
+        required_permissions=("run:dangerous_tool",),
+        connector=_connector,
+        tier=Tier.T3,
+    )
+
+    assert spec.tier is Tier.T3
+
+
+def test_run_permission_case_and_whitespace_variant_still_caught() -> None:
+    """Mirrors the write:/send:/exec: guards' own case/whitespace tolerance."""
+    from agentsys.harness.registry import Tier, ToolSpec
+
+    with pytest.raises(ValueError):
+        ToolSpec(
+            name="bad_run_whitespace",
+            required_permissions=(" RUN:Check_Stock ",),
+            connector=_connector,
+            tier=Tier.T0,
+        )

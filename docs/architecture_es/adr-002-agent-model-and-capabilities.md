@@ -17,7 +17,7 @@
 | 9 | Contrato universal del prompt base | B. Prompts | ✅ hecho | Mismo PR que 8 — #107 |
 | 10 | Niveles de capacidad (T0–T3) en `ToolSpec` | C. Herramientas y permisos | ✅ hecho | PR2 — #109 |
 | 11 | Bandera `untrusted_input` + invariante vs. `exec:*` | C. Herramientas y permisos | ✅ hecho | PR1 — #108 |
-| 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ⏳ pendiente | PR3 — #110 |
+| 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ✅ hecho | PR3 — #110 |
 | 13 | Aplicación por canal (falla al arrancar, no por mensaje) | C. Herramientas y permisos | ✅ hecho | PR4 — #111 |
 | 14 | Sandbox T3 (bubblewrap) | C. Herramientas y permisos | ⏳ pendiente | PR5 — #112 |
 | 15 | Backends de referencia para los puertos genéricos de la plataforma | C. Herramientas y permisos | ✅ hecho (este cambio) | — #113 |
@@ -974,7 +974,47 @@ estrictamente más segura porque no hay estructuralmente ningún lugar para
 una bandera extra, no solo una expresión regular que se supone debe
 rechazarla.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR3.
+**Estado.** ✅ hecho — `command_tools:` se analiza y valida por completo en
+tiempo de carga en `harness/loader.py` (`CommandToolDeclaration`/
+`CommandToolParam`, `_parse_command_tools`): un marcador de posición debe
+ocupar un elemento completo de `argv`, cada marcador de posición tiene un
+parámetro declarado correspondiente y cada parámetro declarado se usa,
+`argv[0]` se resuelve a una ruta absoluta una sola vez (los nombres
+relativos vía `shutil.which`, nunca se vuelve a resolver en tiempo de
+llamada), y `permission` debe pertenecer a la familia `run:*` (nunca
+`exec:*`). Un override de despliegue solo puede acotar `command_tools` por
+nombre (`_validate_command_tools`, que refleja la verificación de subconjunto
+de `_validate_tools`) — nunca agregar uno que el rol no haya declarado. La
+validación en tiempo de llamada (`connectors/command_tools.py`) rechaza un
+parámetro desconocido o faltante, un valor de tipo incorrecto, un valor que
+no cumple su `pattern`/`max_length`/`enum` y — de forma independiente a todo
+eso — cualquier valor que empiece con `-` (la protección contra inyección de
+opciones para la que existe la tabla de ataques anterior); luego sustituye
+los valores validados en la plantilla y la ejecuta a través de
+`operator._run_argv`, exactamente el mismo mecanismo de
+subproceso/tiempo-límite/límite-de-salida que ya usaba `use_term` de
+`build_terminal_connector` (extraído de `use_term` para que ambos compartan
+una sola ruta de ejecución — y para que el futuro sandbox de C.14 tenga
+exactamente un mecanismo que envolver). `harness/injector.py` incorporó
+`resolve_command_tool_surface`, que comparte la segunda barrera
+untrusted_input+T3 (`_deny_reason`, ADR-002 C.10) con `resolve_tool_surface`
+en lugar de duplicarla, y `harness/factory.py` combina ambas superficies en
+un solo `EquippedRuntime`. Un rol `untrusted_input` que solo posea
+herramientas declaradas en `command_tools` pasa la verificación del
+invariante de C.11 por construcción, ya que su familia de permisos es
+`run:*`, nunca `exec:*` — #110. **Seguimiento de revisión (mismo PR):** el
+piso aplicado es `tier` ∈ {T2, T3} para todo permiso `run:*` — verificado de
+forma independiente en `ToolSpec.__post_init__` (`harness/registry.py`) y en
+tiempo de carga del manifiesto (`harness/loader.py`, nombrando la
+herramienta infractora) — porque `interceptor._is_sensitive` solo revalida
+T2/T3, así que una herramienta de comando T0/T1 llegaría a un rol
+`untrusted_input` completamente equipada y nunca revalidada; todo parámetro
+`string` debe además declarar `pattern` o `enum` (la aplicación en tiempo de
+carga de "acotado" que es lo que hace seguro a `T2` en un rol
+`untrusted_input`), `max_length` queda acotado, y la protección contra
+inyección de opciones por carácter inicial ahora también rechaza guiones
+Unicode similares (guion medio, guion largo, U+2212 SIGNO MENOS), no solo el
+`-` ASCII.
 
 ---
 
