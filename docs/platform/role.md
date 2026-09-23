@@ -172,6 +172,34 @@ This agent definition folder defines the Preventa Agent's behavioral boundary. A
 
 ---
 
+## Testing the role contract
+
+Additive inheritance, the base prompt contract, `untrusted_input`'s
+exec:* exclusion, and a tool never being equippable without its required
+permission are all enforced by `harness/loader.py` and re-checked
+automatically against every concrete role under `platform/roles/` — current
+and future — by `tests/test_role_contract_suite.py` (ADR-002 D.17). A new
+role needs no new test: `platform_role_contract.discover_concrete_platform_roles()`
+walks `platform/roles/` on disk, so a role folder added tomorrow is covered
+the next time the suite runs.
+
+Run it (or the whole suite) with:
+
+```bash
+PYTHONPATH=src pytest tests/test_role_contract_suite.py -v
+```
+
+A new invariant is added by writing one small, pure `check_*` function in
+`tests/platform_role_contract.py` (it takes an already-resolved
+`AgentDefinition`, never touches disk) and one parametrized test in
+`tests/test_role_contract_suite.py` that applies it across
+`discover_concrete_platform_roles()`. Strict TDD for a check like this means
+proving it can actually fail first: build a deliberately broken value with
+`dataclasses.replace(resolve(...), ...)` and assert the check raises, before
+relying on it against the real tree.
+
+---
+
 ## Cross-references
 
 - Formal definition of "agent" (as distinct from "role") and its current implementation status: `docs/platform/agent.md`
