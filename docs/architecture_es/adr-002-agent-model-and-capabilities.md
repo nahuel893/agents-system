@@ -18,7 +18,7 @@
 | 10 | Niveles de capacidad (T0–T3) en `ToolSpec` | C. Herramientas y permisos | ✅ hecho | PR2 — #109 |
 | 11 | Bandera `untrusted_input` + invariante vs. `exec:*` | C. Herramientas y permisos | ✅ hecho | PR1 — #108 |
 | 12 | `command_tools` declarativos en manifiestos | C. Herramientas y permisos | ⏳ pendiente | PR3 — #110 |
-| 13 | Aplicación por canal (falla al arrancar, no por mensaje) | C. Herramientas y permisos | ⏳ pendiente | PR4 — #111 |
+| 13 | Aplicación por canal (falla al arrancar, no por mensaje) | C. Herramientas y permisos | ✅ hecho | PR4 — #111 |
 | 14 | Sandbox T3 (bubblewrap) | C. Herramientas y permisos | ⏳ pendiente | PR5 — #112 |
 | 15 | Backends de referencia para los puertos genéricos de la plataforma | C. Herramientas y permisos | ✅ hecho (este cambio) | — #113 |
 | 16 | Rechazado: `operator-agent` como padre de `data-agent`; composición en vez de herencia múltiple | D. Composición de roles | ✅ decisión registrada (sin cambio de código) | Issue #53 |
@@ -980,40 +980,56 @@ rechazarla.
 
 #### C.13 — Aplicación por canal
 
-**Estado actual.** No existe hoy ningún control en tiempo de arranque que
-vincule el runtime de un canal con `untrusted_input` (que todavía no
-existe, C.11). El webhook de WhatsApp hoy resuelve su runtime desde
-`app.state.runtimes` y, si no se resuelve, registra el evento y devuelve
-200 sin ningún otro control (`webhook.py:221-230`) — no hay ningún punto en
-el `lifespan` de `main.py` (`main.py:260-340`, el bucle que construye cada
-`AgentRuntime`) que valide que el rol que está por vincularse a ese canal
-sea seguro para él.
+**Estado actual (a partir de #111).** `AgentRuntime` expone una propiedad
+`untrusted_input` (`agent/graph.py`, junto a la propiedad `permissions` ya
+existente) que lee directamente `AgentDefinition.untrusted_input` de la
+`definition` resuelta (C.11). El `lifespan` de `create_app` se niega a
+arrancar cuando el rol vinculado a `whatsapp_runtime_id` resuelve
+`untrusted_input=False`: el control corre dentro del bucle que resuelve y
+construye cada runtime (`main.py`, inmediatamente después de `resolve()`,
+antes de `build_runtime` y de la construcción de `AgentRuntime(...)` para
+ese `model_id`), acotado exactamente al `model_id` igual a
+`settings.whatsapp_runtime_id` — el resto de los runtimes del mismo bucle
+(incluido cualquiera publicado solo vía `adapter_runtimes`) no se ve
+afectado. La negativa es un `DefinitionError` que nombra tanto el rol como
+el canal, lanzado antes de que `app.state.runtimes` sea asignado, de modo
+que una mala configuración sea una falla de arranque, no una sorpresa en
+tiempo de ejecución.
 
-**Decisión.** Agregar una propiedad `AgentRuntime.untrusted_input` (que lea
-el campo de política de la `definition` resuelta, una vez que exista C.11),
-y hacer que `create_app` se niegue a arrancar si el rol vinculado al
-runtime de WhatsApp carece de `untrusted_input=true` — en el punto donde
-`main.py:326-336` construye cada runtime, antes de que `app.state.runtimes`
-se popule siquiera, de modo que una mala configuración sea una falla de
-arranque, no una sorpresa en tiempo de ejecución. Esto reemplaza cualquier
-control por mensaje en `webhook.py:223-230` — una negativa en tiempo de
-arranque es estrictamente más temprana y no puede ser esquivada por una
-solicitud que llegue antes de que el control corriera.
+**Control por mensaje — confirmado redundante, no eliminado (no había
+ninguno que eliminar).** Las referencias a líneas del issue original
+(`webhook.py:221-230`/`223-230`, `main.py:260-340`) son anteriores a
+#43/#44, que sacaron la ejecución del turno por completo del camino de la
+solicitud: `integration/webhook.py` hoy solo verifica la firma HMAC y
+persiste de forma durable cada mensaje entrante (`accept_inbound_message`)
+antes de devolver 200 — ya no resuelve ningún runtime, no referencia
+`app.state.runtimes` ni lee `untrusted_input` en absoluto. El turno real
+corre después, fuera de banda, en el `DeferredWebhookWorker` de
+`services/webhook_worker.py`, contra el único runtime que el `lifespan`
+resolvió una sola vez al arrancar y le inyectó
+(`webhook_runtime = app.state.runtimes.get(settings.whatsapp_runtime_id)`
+en `main.py`). Por lo tanto no existe hoy ningún control por mensaje de
+`untrusted_input` en el código actual para que este control de arranque
+reemplace; el control de arranque de arriba queda confirmado como el único
+punto de aplicación, que es el criterio de aceptación que satisface esta
+sección.
 
 **Adaptador de OpenAI — riesgo aceptado, no controlado.** El adaptador
-queda excluido de este control por ahora. Está detrás de `adapter_api_key`
-(`config.py:106`; aplicado vía `HTTPBearer` en
-`openai_adapter.py:80-99`, "toda solicitud `/v1/*` debe llevar
-`Authorization: Bearer <key>`" según el propio comentario del módulo en
-las líneas 8-9), alcanzable solo por usuarios internos que tengan esa
-clave. Esto se registra aquí como un **riesgo aceptado**, no como una
-brecha que cierre este ADR: pegar un documento externo en una sesión de
-OpenWebUI frente a uno de estos roles es entrada no confiable llegando a un
-rol que podría no estar marcado `untrusted_input=true`, y la única defensa
-actual de la plataforma es "hacía falta la clave de API para estar en esa
-conversación siquiera". Si los patrones de uso de OpenWebUI cambian (p. ej.
-un flujo que canaliza contenido externo raspado a través de él), esta
-aceptación debería revisarse.
+queda excluido de este control. Está detrás de `adapter_api_key`
+(`config.py`; aplicado vía `HTTPBearer` en
+`openai_adapter.py`, "toda solicitud `/v1/*` debe llevar
+`Authorization: Bearer <key>`" según el propio comentario del módulo),
+alcanzable solo por usuarios internos que tengan esa clave. Esto se
+registra aquí como un **riesgo aceptado**, no como una brecha que cierre
+este ADR: pegar un documento externo en una sesión de OpenWebUI frente a
+uno de estos roles es entrada no confiable llegando a un rol que podría no
+estar marcado `untrusted_input=true`, y la única defensa actual de la
+plataforma es "hacía falta la clave de API para estar en esa conversación
+siquiera". Si los patrones de uso de OpenWebUI cambian (p. ej. un flujo que
+canaliza contenido externo raspado a través de él), esta aceptación debería
+revisarse. Ver también #71 (extracción del puerto de canal) — relacionado
+con cómo se resuelve el runtime de un canal, pero distinto de este
+invariante de arranque; #111 no depende de la forma del puerto de #71.
 
 **Justificación.** Fallar al arrancar, no por mensaje, porque un control
 por mensaje que se puede saltear o que tiene un bug falla de forma abierta
@@ -1022,14 +1038,22 @@ negativa en tiempo de arranque hace fallar todo el despliegue de forma
 ruidosa, que es la dirección de falla correcta para "esta configuración
 expondría ejecución en el host a entrada no confiable".
 
-**Alternativas consideradas.** Aplicar el control por mensaje en
-`webhook.py:223-230` en su lugar — rechazada por ser estrictamente más
-débil: repite el mismo control en cada mensaje para una configuración que
-no puede cambiar entre mensajes (el rol vinculado a un runtime queda fijo
-al arrancar), sin ningún beneficio sobre controlarlo una sola vez.
+**Alternativas consideradas.** Aplicar el control por mensaje en el camino
+del webhook en su lugar — rechazada por ser estrictamente más débil:
+repetiría el mismo control en cada mensaje para una configuración que no
+puede cambiar entre mensajes (el rol vinculado a un runtime queda fijo al
+arrancar), sin ningún beneficio sobre controlarlo una sola vez, y — después
+de #43/#44 — ya no existe siquiera un punto de resolución de runtime por
+mensaje al cual engancharlo.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR4, después de que
-existan C.10/C.11 contra las cuales controlar.
+**Estado.** ✅ hecho — #111. **Tests:**
+`tests/test_agent_runtime.py::test_agent_runtime_untrusted_input_property_reflects_false`/`_true`
+(la propiedad), y
+`tests/test_main.py::test_create_app_refuses_to_boot_when_whatsapp_role_is_not_untrusted_input`
+/ `test_create_app_boots_when_whatsapp_role_is_untrusted_input_true` /
+`test_boot_check_does_not_apply_to_adapter_only_runtimes` (el control de
+arranque, su contraparte de regresión, y la regresión de acotamiento al
+adaptador).
 
 ---
 

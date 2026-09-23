@@ -391,6 +391,17 @@ class AgentRuntime:
         """The runtime's own resolved permission grants (design AD-4)."""
         return self._equipped.definition.permissions
 
+    @property
+    def untrusted_input(self) -> bool:
+        """Whether the resolved definition treats this runtime's input as
+        untrusted (ADR-002 C.11). Sourced from the same `AgentDefinition`
+        `permissions` reads above — a live projection, not a copy taken at
+        construction time. `create_app`'s boot-time channel check (ADR-002
+        C.13) reads this to refuse booting a channel bound to a role that is
+        not marked safe for untrusted external input.
+        """
+        return self._equipped.definition.untrusted_input
+
     async def run_turn(
         self,
         messages: list[AnyMessage],
