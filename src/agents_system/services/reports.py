@@ -18,7 +18,7 @@ run it.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -97,6 +97,16 @@ class ReportSpec:
     rather than recomputed: a value produced by a `transform` (a time window
     from a clock read, say) exists only after `build_bind_params`, and
     recomputing it in the disclosure describes a query that was never run.
+
+    `order_by_param` + `order_by_sql` let a report offer more than one fixed
+    ranking (issue #44) without ever building SQL from caller input: both
+    remain closed, pre-built `TextClause` values, selected only by `name`
+    lookup after `order_by_param` has already gone through the SAME
+    `ParamSpec.allowed` validation as any other parameter. `order_by_param`
+    names the caller-facing `ParamSpec` whose *validated* value selects a key
+    in `order_by_sql`; a value that key does not hold (including the
+    report's own default) leaves `sql` unchanged. A report that declares
+    neither field always uses `sql`, exactly as before this feature existed.
     """
 
     name: str
@@ -107,6 +117,8 @@ class ReportSpec:
     filter_metadata: Callable[
         [Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]
     ] = _no_metadata
+    order_by_param: str | None = None
+    order_by_sql: Mapping[str, TextClause] | None = None
 
     def param_names(self) -> tuple[str, ...]:
         return tuple(p.name for p in self.params)
@@ -211,6 +223,23 @@ def build_bind_params(spec: ReportSpec, validated: Mapping[str, Any]) -> dict[st
     return bind_params
 
 
+def select_sql(spec: ReportSpec, validated: Mapping[str, Any]) -> TextClause:
+    """Return the `TextClause` *validated* selects, or `spec.sql` unchanged.
+
+    Never builds SQL: it looks up `validated[spec.order_by_param]` (already
+    passed through `validate_params`'s `allowed` check) in the report's own
+    closed `order_by_sql` mapping and returns the matching pre-built
+    statement, or `spec.sql` when the report declares neither field, or the
+    lookup misses (the default value, e.g. 'revenue', is deliberately never
+    added to `order_by_sql` - `sql` already IS that variant).
+    """
+    order_by_param = spec.order_by_param
+    if order_by_param is None or not spec.order_by_sql:
+        return spec.sql
+    selected = validated.get(order_by_param, "")
+    return spec.order_by_sql.get(selected, spec.sql)
+
+
 def json_safe(value: Any) -> Any:
     """Convert DB-native values into something `json.dumps` accepts.
 
@@ -274,7 +303,12 @@ async def run_report(
         )
 
     bind_params = build_bind_params(spec, validated)
-    rows = await fetch_rows(engine, spec, bind_params)
+    sql = select_sql(spec, validated)
+    # `fetch_rows` still takes a ReportSpec (unchanged signature, unchanged
+    # tests): swap in the resolved statement only when it actually differs,
+    # so the common no-order_by-param report never even allocates a copy.
+    effective_spec = spec if sql is spec.sql else replace(spec, sql=sql)
+    rows = await fetch_rows(engine, effective_spec, bind_params)
 
     return {
         "report": spec.name,

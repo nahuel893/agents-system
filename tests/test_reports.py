@@ -275,6 +275,87 @@ async def test_run_report_propagates_validation_error_before_touching_engine() -
 
 
 # ---------------------------------------------------------------------------
+# order_by_param / order_by_sql — a closed, pre-built SQL variant selected by
+# a validated ParamSpec value (issue #44). Never a template hole: both
+# statements are fixed module-level TextClause objects: run_report only
+# picks between them via `is`, exactly like it already picks among a
+# ParamSpec's `allowed` values.
+# ---------------------------------------------------------------------------
+
+
+def test_report_spec_defaults_order_by_fields_to_none() -> None:
+    """An ordinary report declares neither field - fully backward compatible."""
+    spec = _spec()
+    assert spec.order_by_param is None
+    assert spec.order_by_sql is None
+
+
+async def test_run_report_uses_the_order_by_sql_variant_when_selected() -> None:
+    default_sql = text("SELECT 1 AS one LIMIT :limit")
+    units_sql = text("SELECT 2 AS two LIMIT :limit")
+    spec = _spec(
+        sql=default_sql,
+        params=(
+            ParamSpec(name="limit", type=int, default=10),
+            ParamSpec(
+                name="order_by",
+                type=str,
+                default="revenue",
+                allowed=("revenue", "units"),
+            ),
+        ),
+        order_by_param="order_by",
+        order_by_sql={"units": units_sql},
+    )
+    engine: Any = _FakeEngine([{"one": 1}])
+
+    await run_report(engine, spec, {"order_by": "units"})
+
+    stmt, _bound = engine.connection.executed_with
+    assert stmt is units_sql
+
+
+async def test_run_report_falls_back_to_spec_sql_when_order_by_is_the_default() -> None:
+    """The exact bug this closes: the default ranking must stay unchanged."""
+    default_sql = text("SELECT 1 AS one LIMIT :limit")
+    units_sql = text("SELECT 2 AS two LIMIT :limit")
+    spec = _spec(
+        sql=default_sql,
+        params=(
+            ParamSpec(name="limit", type=int, default=10),
+            ParamSpec(
+                name="order_by",
+                type=str,
+                default="revenue",
+                allowed=("revenue", "units"),
+            ),
+        ),
+        order_by_param="order_by",
+        order_by_sql={"units": units_sql},
+    )
+    engine: Any = _FakeEngine([{"one": 1}])
+
+    await run_report(engine, spec, {})  # no explicit order_by
+
+    stmt, _bound = engine.connection.executed_with
+    assert stmt is default_sql
+
+
+async def test_run_report_falls_back_to_spec_sql_when_no_order_by_sql_declared() -> (
+    None
+):
+    """A report with no order_by_sql mapping never looks up order_by_param."""
+    default_sql = text("SELECT 1 AS one LIMIT :limit")
+    spec = _spec(sql=default_sql)
+    engine: Any = _FakeEngine([{"one": 1}])
+
+    await run_report(engine, spec, {})
+
+    stmt, _bound = engine.connection.executed_with
+    assert stmt is default_sql
+
+
+# ---------------------------------------------------------------------------
 # D-023 — tool output must survive plain JSON serialization
 # ---------------------------------------------------------------------------
 
