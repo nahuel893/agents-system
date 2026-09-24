@@ -1,0 +1,34 @@
+change: permission-model
+phase: tasks
+artifact_store: hybrid
+artifacts:
+  exploration: true
+  proposal: true
+  specs: true
+  design: true
+  tasks: true
+tasks_progress:
+  completed:
+    - PR1-T1
+    - PR1-T2
+    - PR1-T3
+    - PR1-T4
+    - PR1-T5
+    - PR1-T6
+  pending:
+    - PR2-T1
+    - PR2-T2
+    - PR2-T3
+    - PR2-T4
+    - PR2-T5
+    - PR2-T6
+    - PR3-T1
+    - PR3-T2
+    - PR3-T3
+    - PR3-T4
+    - PR3-T5
+    - PR4-T1
+    - PR4-T2
+    - PR4-T3
+    - PR4-T4
+last_updated: 2026-09-24T22:28:36Z
