@@ -320,6 +320,115 @@ async def test_top_customers_ranks_by_revenue_and_covers_the_padron(
     assert revenues == sorted(revenues, reverse=True)
 
 
+# --- top_products ranking (issue #44) ---------------------------------------
+#
+# The bug: `top_products` always ran revenue-ranked SQL, truncated to `limit`
+# server-side, and a caller wanting a units ranking could only re-sort what
+# already came back — never see a product LIMIT had already discarded. A
+# fixture product makes that concrete: huge total_quantity (so it always
+# leads a units ranking), negligible revenue (so it never reaches a
+# revenue-ranked top-10). Cleaned up afterward so it cannot skew the fixed
+# SEEDED_* totals or the header/line revenue reconciliation above.
+
+_UNITS_FIXTURE_SKU = "ART-UNITS-FIXTURE"
+_UNITS_FIXTURE_INVOICE = 900001
+_UNITS_FIXTURE_QUANTITY = 1_000_000
+_UNITS_FIXTURE_UNIT_PRICE = "0.01"
+
+
+@pytest.fixture
+async def high_units_low_revenue_product(engine: Any) -> Any:
+    amount_expr = text(f"{_UNITS_FIXTURE_QUANTITY} * {_UNITS_FIXTURE_UNIT_PRICE}")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO articulos (codigo_articulo, detalle, precio_lista) "
+                "VALUES (:sku, :detalle, :precio)"
+            ),
+            {
+                "sku": _UNITS_FIXTURE_SKU,
+                "detalle": "issue #44 units-ranking regression fixture",
+                "precio": _UNITS_FIXTURE_UNIT_PRICE,
+            },
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO facturas "
+                "(nro_factura, nro_cliente, fecha_emision, estado, importe_total) "
+                "VALUES (:nro, 1, now(), 'facturada', " + str(amount_expr) + ")"
+            ),
+            {"nro": _UNITS_FIXTURE_INVOICE},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO factura_lineas "
+                "(nro_factura, codigo_articulo, cantidad, precio_unitario) "
+                "VALUES (:nro, :sku, :cantidad, :precio)"
+            ),
+            {
+                "nro": _UNITS_FIXTURE_INVOICE,
+                "sku": _UNITS_FIXTURE_SKU,
+                "cantidad": _UNITS_FIXTURE_QUANTITY,
+                "precio": _UNITS_FIXTURE_UNIT_PRICE,
+            },
+        )
+    try:
+        yield
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("DELETE FROM factura_lineas WHERE nro_factura = :nro"),
+                {"nro": _UNITS_FIXTURE_INVOICE},
+            )
+            await conn.execute(
+                text("DELETE FROM facturas WHERE nro_factura = :nro"),
+                {"nro": _UNITS_FIXTURE_INVOICE},
+            )
+            await conn.execute(
+                text("DELETE FROM articulos WHERE codigo_articulo = :sku"),
+                {"sku": _UNITS_FIXTURE_SKU},
+            )
+
+
+async def test_top_products_default_revenue_ranking_misses_the_high_unit_product(
+    engine: Any, high_units_low_revenue_product: None
+) -> None:
+    """Reproduces the bug directly: the fixture's revenue (~$10k) sits far
+    below the seeded catalogue's real per-product revenue over 360 invoices,
+    so it never reaches a revenue-ranked top-10 — exactly the product a
+    'top by units' question must not miss.
+    """
+    result = await _report(engine, "top_products", limit=10)
+
+    skus = {row["sku"] for row in result["rows"]}
+    assert _UNITS_FIXTURE_SKU not in skus
+
+
+async def test_top_products_order_by_units_surfaces_the_high_unit_product(
+    engine: Any, high_units_low_revenue_product: None
+) -> None:
+    """The fix: `order_by='units'` ranks (and truncates) by total_quantity
+    in SQL, so the fixture's 1,000,000 units — dwarfing every seeded
+    article's — puts it first, not merely present.
+    """
+    result = await _report(engine, "top_products", limit=10, order_by="units")
+
+    assert result["rows"], "expected at least the fixture row"
+    assert result["rows"][0]["sku"] == _UNITS_FIXTURE_SKU
+
+
+async def test_top_products_ranks_by_revenue_when_order_by_is_unset(
+    engine: Any,
+) -> None:
+    """Backward compatibility: omitting order_by must keep ranking by
+    revenue, exactly like before this parameter existed."""
+    result = await _report(engine, "top_products", months_back=WHOLE_HISTORY, limit=100)
+
+    revenues = [Decimalish(row["revenue"]) for row in result["rows"]]
+
+    assert revenues == sorted(revenues, reverse=True)
+
+
 # --- Stock -----------------------------------------------------------------
 
 

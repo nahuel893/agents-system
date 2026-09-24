@@ -330,6 +330,37 @@ _TOP_PRODUCTS_SQL = text(
     bindparam("limit", type_=Integer()),
 )
 
+#: Same rows, ranking, and truncation point as `_TOP_PRODUCTS_SQL` - only the
+#: `ORDER BY` column differs. Issue #44: `run_report` used to always execute
+#: `_TOP_PRODUCTS_SQL`, so a caller asking for "top products by units" got the
+#: revenue-ranked top-N already truncated by `LIMIT`, then re-sorted it by
+#: `total_quantity` client-side - a high-volume, low-price product outside
+#: that revenue-ranked top-N could never appear, no matter how many units it
+#: sold. This variant does the units ranking, and the truncation, IN the same
+#: query, so `LIMIT` can never discard a row before the requested ordering
+#: has seen it. Selected only via `ReportSpec.order_by_sql` - a closed,
+#: pre-built statement, never a caller-composed one (AD-2).
+_TOP_PRODUCTS_BY_UNITS_SQL = text(
+    """
+    SELECT
+        i.sku AS sku,
+        MAX(i.description) AS description,
+        SUM(i.quantity) AS total_quantity,
+        COALESCE(SUM(i.amount), 0) AS revenue
+    FROM agents_system_sale_items i
+    JOIN agents_system_sales s ON s.sale_id = i.sale_id
+    WHERE s.status IN :statuses
+      AND s.sold_at >= :since
+    GROUP BY i.sku
+    ORDER BY total_quantity DESC
+    LIMIT :limit
+    """
+).bindparams(
+    bindparam("statuses", expanding=True),
+    bindparam("since", type_=DateTime(timezone=True)),
+    bindparam("limit", type_=Integer()),
+)
+
 _STATUS_SUMMARY_SQL = text(
     """
     SELECT
@@ -364,6 +395,24 @@ _LOW_STOCK_SQL = text(
     bindparam("threshold_ratio", type_=Integer()),
     bindparam("limit", type_=Integer()),
 )
+
+
+def _order_by_param() -> ParamSpec:
+    return ParamSpec(
+        name="order_by",
+        type=str,
+        default="revenue",
+        allowed=("revenue", "units"),
+        description=(
+            "Ranking applied BEFORE truncating to `limit`: 'revenue' "
+            "(default, backward compatible) or 'units' (total quantity "
+            "sold). Use 'units' for a \"top products by units/volume\" "
+            "question - re-sorting the default revenue-ranked rows "
+            "client-side is wrong, because a high-volume, low-price "
+            "product outside the revenue top-N is never in those rows to "
+            "begin with."
+        ),
+    )
 
 
 def _threshold_ratio_param() -> ParamSpec:
@@ -436,12 +485,24 @@ CATALOG: dict[str, ReportSpec] = {
     "top_products": ReportSpec(
         name="top_products",
         description=(
-            "Best-selling products by revenue over a trailing window, with "
-            "units sold. Use for 'what sells most'."
+            "Best-selling products over a trailing window, with revenue and "
+            "units sold. Ranked by revenue by default; pass "
+            "order_by='units' to rank by units sold instead - do not "
+            "re-sort the default (revenue) rows client-side for a 'top by "
+            "units' question, they are already truncated to the wrong top-N. "
+            "Use for 'what sells most' (revenue) or 'what sells the most "
+            "units/volume' (order_by='units')."
         ),
         sql=_TOP_PRODUCTS_SQL,
-        params=(_months_back_param(), _limit_param(10), _status_param()),
+        params=(
+            _months_back_param(),
+            _limit_param(10),
+            _status_param(),
+            _order_by_param(),
+        ),
         filter_metadata=_status_filter_metadata,
+        order_by_param="order_by",
+        order_by_sql={"units": _TOP_PRODUCTS_BY_UNITS_SQL},
     ),
     "status_summary": ReportSpec(
         name="status_summary",
