@@ -49,7 +49,8 @@ import dataclasses
 import pathlib
 import re
 import shutil
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import structlog
 import yaml
@@ -216,7 +217,7 @@ class AgentDefinition:
     #: ADR-002 C.12. Fully resolved declarative command tools this role may
     #: build a `ToolSpec` for — see `CommandToolDeclaration`. Empty for every
     #: role that declares none, which is the overwhelming majority.
-    command_tools: tuple["CommandToolDeclaration", ...] = ()
+    command_tools: tuple[CommandToolDeclaration, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)

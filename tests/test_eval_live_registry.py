@@ -16,7 +16,7 @@ that a stateful backend's own counter/store resets rather than continuing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
@@ -46,7 +46,7 @@ class _Result:
     def __iter__(self) -> Any:
         return iter(_Row(row) for row in self.rows)
 
-    def mappings(self) -> "_Result":
+    def mappings(self) -> _Result:
         return self
 
     def all(self) -> list[dict[str, Any]]:
@@ -55,9 +55,9 @@ class _Result:
 
 @dataclass
 class _ReadOnlyConnection:
-    engine: "_ReadOnlyEngine"
+    engine: _ReadOnlyEngine
 
-    async def __aenter__(self) -> "_ReadOnlyConnection":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: object) -> None:

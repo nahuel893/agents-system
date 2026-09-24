@@ -12,26 +12,26 @@ integration tests point alembic at a throwaway database.
 # Make `agents_system` importable before any agents_system import below. This block must
 # run at module level, above those imports, so E402/E401 are silenced there
 # rather than reordered away.
-import sys  # noqa: I001
+import sys
 from pathlib import Path
 
 SRC_PATH = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
-import os  # noqa: E402
-from logging.config import fileConfig  # noqa: E402
+import os
+from logging.config import fileConfig
 
-from alembic import context  # noqa: E402
-from sqlalchemy import pool  # noqa: E402
-from sqlalchemy.engine import Connection  # noqa: E402
-from sqlalchemy.ext.asyncio import async_engine_from_config  # noqa: E402
+from alembic import context
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Importing the package (not a submodule) registers EVERY table in
 # Base.metadata. Autogenerate diffs against this metadata, so a partial
 # inventory would make it propose dropping the tables it could not see.
-from agents_system.config import get_settings  # noqa: E402
-from agents_system.models import Base  # noqa: E402
+from agents_system.config import get_settings
+from agents_system.models import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

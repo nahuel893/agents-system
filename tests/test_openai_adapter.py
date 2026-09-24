@@ -18,18 +18,18 @@ Isolation strategy:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
-from typing import Any, Sequence
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from conftest import create_test_app
 from fastapi.testclient import TestClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
 from agents_system.config import Settings, get_settings
-from conftest import create_test_app
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -425,7 +425,7 @@ class _ToolAwareFakeModel(FakeMessagesListChatModel):
 
     def bind_tools(  # type: ignore[override]
         self, tools: Sequence[Any], **kwargs: Any
-    ) -> "_ToolAwareFakeModel":
+    ) -> _ToolAwareFakeModel:
         return self
 
 

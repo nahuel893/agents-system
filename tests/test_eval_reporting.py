@@ -9,7 +9,7 @@ import pathlib
 from agents_system.evals.reporting import DEFAULT_RESULTS_DIR, write_results
 from agents_system.evals.runner import AssertionFailure, RunOutcome, ScenarioResult
 
-_FIXED_NOW = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+_FIXED_NOW = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
 
 
 def _result(

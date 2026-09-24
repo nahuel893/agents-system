@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import struct
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from openai import AsyncOpenAI
 
@@ -26,9 +26,6 @@ from agents_system.config import Settings
 # Real import is lazy inside ``LocalBGEEmbeddingProvider.__init__`` to avoid
 # loading torch (~500MB) when the local provider is never used.
 SentenceTransformer: Any = None
-
-if TYPE_CHECKING:
-    pass
 
 
 class EmbeddingProvider(Protocol):

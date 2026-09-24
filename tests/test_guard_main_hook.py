@@ -30,6 +30,7 @@ def run_hook(command: str, cwd: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         timeout=10,
+        check=False,
     )
 
 

@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from contextlib import nullcontext
 from functools import partial
-from typing import Any, Mapping
+from typing import Any
 
 import redis.exceptions
 import structlog

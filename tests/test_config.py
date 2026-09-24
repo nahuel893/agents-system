@@ -342,12 +342,12 @@ def test_settings_boots_when_adapter_api_key_set() -> None:
     back — it survives deleting the validator outright. Pinning the pair
     instead makes the assertion about what the validator DECIDED.
     """
-    common: dict[str, object] = dict(
-        _env_file=None,
-        adapter_runtimes=["acme__sales-agent"],
-        meta_webhook_secret="s",
-        allow_insecure=False,
-    )
+    common: dict[str, object] = {
+        "_env_file": None,
+        "adapter_runtimes": ["acme__sales-agent"],
+        "meta_webhook_secret": "s",
+        "allow_insecure": False,
+    }
 
     with pytest.raises(ValidationError):
         Settings(adapter_api_key="", **common)  # type: ignore[arg-type]
@@ -362,12 +362,12 @@ def test_settings_boots_when_adapter_runtimes_empty_and_key_empty() -> None:
     The guard is ``adapter_runtimes and not adapter_api_key`` — this pins both
     halves of the conjunction, so dropping either one goes red.
     """
-    common: dict[str, object] = dict(
-        _env_file=None,
-        adapter_api_key="",
-        meta_webhook_secret="s",
-        allow_insecure=False,
-    )
+    common: dict[str, object] = {
+        "_env_file": None,
+        "adapter_api_key": "",
+        "meta_webhook_secret": "s",
+        "allow_insecure": False,
+    }
 
     with pytest.raises(ValidationError):
         Settings(adapter_runtimes=["acme__sales-agent"], **common)  # type: ignore[arg-type]
@@ -380,10 +380,10 @@ def test_settings_boots_when_adapter_runtimes_empty_and_key_empty() -> None:
     ("insecure_kwargs", "guard"),
     [
         (
-            dict(adapter_runtimes=["acme__sales-agent"], adapter_api_key=""),
+            {"adapter_runtimes": ["acme__sales-agent"], "adapter_api_key": ""},
             "adapter_api_key",
         ),
-        (dict(adapter_runtimes=[], meta_webhook_secret=""), "meta_webhook_secret"),
+        ({"adapter_runtimes": [], "meta_webhook_secret": ""}, "meta_webhook_secret"),
     ],
     ids=["adapter-key-guard", "webhook-secret-guard"],
 )
@@ -397,12 +397,12 @@ def test_allow_insecure_is_the_only_thing_that_bypasses_a_guard(
     ``if self.allow_insecure: return self`` early-out is what lets it through.
     Deleting either the guard or the early-out turns one leg red.
     """
-    base: dict[str, object] = dict(
-        _env_file=None,
-        adapter_runtimes=[],
-        adapter_api_key="",
-        meta_webhook_secret="s",
-    )
+    base: dict[str, object] = {
+        "_env_file": None,
+        "adapter_runtimes": [],
+        "adapter_api_key": "",
+        "meta_webhook_secret": "s",
+    }
     base.update(insecure_kwargs)
 
     with pytest.raises(ValidationError) as excinfo:
@@ -431,11 +431,11 @@ def test_settings_boots_when_meta_webhook_secret_set() -> None:
     (The ``allow_insecure=True`` bypass for this guard is covered by
     ``test_allow_insecure_is_the_only_thing_that_bypasses_a_guard``.)
     """
-    common: dict[str, object] = dict(
-        _env_file=None,
-        adapter_runtimes=[],
-        allow_insecure=False,
-    )
+    common: dict[str, object] = {
+        "_env_file": None,
+        "adapter_runtimes": [],
+        "allow_insecure": False,
+    }
 
     with pytest.raises(ValidationError):
         Settings(meta_webhook_secret="", **common)  # type: ignore[arg-type]

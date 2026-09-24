@@ -24,11 +24,12 @@ pass ``allow_insecure=False`` as an init kwarg, which outranks the env var.
 ``tests/test_conftest_contract.py`` pins this.
 """
 
-from dataclasses import dataclass
 import inspect
 import itertools
 import os
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 os.environ["ALLOW_INSECURE"] = "true"
 

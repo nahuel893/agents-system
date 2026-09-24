@@ -20,11 +20,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import create_test_app
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from agents_system.config import Settings, get_settings
 from agents_system.services.outbox import InboundAcceptance
-from conftest import create_test_app
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,13 +48,13 @@ def sign_payload(body: bytes, secret: str) -> str:
 
 def make_settings(**overrides: str) -> Settings:
     """Build a Settings instance with sensible test defaults."""
-    defaults = dict(
-        meta_webhook_secret=TEST_SECRET,
-        whatsapp_verify_token=TEST_VERIFY_TOKEN,
-        whatsapp_runtime_id="acme__sales-agent",
-        database_url="postgresql+asyncpg://localhost:5432/agents_system_test",
-        redis_url="redis://localhost:6379/0",
-    )
+    defaults = {
+        "meta_webhook_secret": TEST_SECRET,
+        "whatsapp_verify_token": TEST_VERIFY_TOKEN,
+        "whatsapp_runtime_id": "acme__sales-agent",
+        "database_url": "postgresql+asyncpg://localhost:5432/agents_system_test",
+        "redis_url": "redis://localhost:6379/0",
+    }
     defaults.update(overrides)
     return Settings(**defaults)
 
@@ -194,7 +195,6 @@ def test_verify_signature_valid() -> None:
 
 def test_verify_signature_invalid() -> None:
     """Wrong HMAC digest raises HTTPException(403)."""
-    from fastapi import HTTPException
     from starlette.datastructures import Headers
 
     from agents_system.integration.meta_signature import verify_signature
@@ -208,7 +208,6 @@ def test_verify_signature_invalid() -> None:
 
 def test_verify_signature_missing_header() -> None:
     """Missing X-Hub-Signature-256 header raises HTTPException(403)."""
-    from fastapi import HTTPException
     from starlette.datastructures import Headers
 
     from agents_system.integration.meta_signature import verify_signature
@@ -817,18 +816,21 @@ def test_webhook_module_does_not_import_client_domain_at_runtime() -> None:
         [
             sys.executable,
             "-c",
-            "import sys\n"
-            "import agents_system.integration.webhook\n"
-            "leaked = [m for m in sys.modules if m in {\n"
-            "    'agents_system.services.clients',\n"
-            "    'agents_system.services.conversation_log',\n"
-            "}]\n"
-            "assert not leaked, leaked\n",
+            (
+                "import sys\n"
+                "import agents_system.integration.webhook\n"
+                "leaked = [m for m in sys.modules if m in {\n"
+                "    'agents_system.services.clients',\n"
+                "    'agents_system.services.conversation_log',\n"
+                "}]\n"
+                "assert not leaked, leaked\n"
+            ),
         ],
         capture_output=True,
         text=True,
         timeout=60,
         cwd=str(Path(__file__).resolve().parents[1]),
+        check=False,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -884,14 +886,17 @@ def test_webhook_does_not_pull_in_client_orm_models() -> None:
         [
             sys.executable,
             "-c",
-            "import sys\n"
-            "import agents_system.integration.webhook\n"
-            "assert 'agents_system.models.tables' not in sys.modules\n",
+            (
+                "import sys\n"
+                "import agents_system.integration.webhook\n"
+                "assert 'agents_system.models.tables' not in sys.modules\n"
+            ),
         ],
         capture_output=True,
         text=True,
         timeout=60,
         cwd=str(Path(__file__).resolve().parents[1]),
+        check=False,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
