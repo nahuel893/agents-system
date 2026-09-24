@@ -321,7 +321,7 @@ _TOP_PRODUCTS_SQL = text(
     WHERE s.status IN :statuses
       AND s.sold_at >= :since
     GROUP BY i.sku
-    ORDER BY revenue DESC
+    ORDER BY revenue DESC, sku ASC
     LIMIT :limit
     """
 ).bindparams(
@@ -352,7 +352,7 @@ _TOP_PRODUCTS_BY_UNITS_SQL = text(
     WHERE s.status IN :statuses
       AND s.sold_at >= :since
     GROUP BY i.sku
-    ORDER BY total_quantity DESC
+    ORDER BY total_quantity DESC, sku ASC
     LIMIT :limit
     """
 ).bindparams(

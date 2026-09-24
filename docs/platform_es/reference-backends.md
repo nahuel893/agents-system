@@ -125,9 +125,11 @@ registry.register(backends.message_sender_tool_spec())
   resultado tiene `similarity: null`; no afirma búsqueda vectorial ni
   semántica. Una consulta vacía o sin coincidencias devuelve `results: []` con
   `classification: "no_match"`.
-- `run_report` expone el `CATALOG` portátil y cerrado de ventas; un reporte
-  válido sin filas devuelve una respuesta vacía (`rows: []`,
-  `empty_result: true`).
+- `run_report` expone el `CATALOG` portátil y cerrado de ventas; su esquema
+  de herramienta documenta directamente el tipo, los valores permitidos y el
+  valor por defecto de cada parámetro desde las definiciones `ReportSpec` /
+  `ParamSpec` del catálogo. Un reporte válido sin filas devuelve una respuesta
+  vacía (`rows: []`, `empty_result: true`).
 
 ## Qué NO son
 
