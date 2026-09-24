@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from agentsys.config import Settings, get_settings
@@ -83,6 +84,29 @@ def make_batch_payload(*message_ids: str) -> bytes:
             ]
         }
     ).encode()
+
+
+def _pad_json_envelope_to_exact_size(envelope: dict, target_bytes: int) -> bytes:
+    """Serialize ``envelope`` with an added ``padding`` field sized to hit
+    ``target_bytes`` exactly.
+
+    Measures the envelope's serialized size with an empty padding value
+    first, then fills padding with plain ASCII ``x`` characters (which
+    JSON-encode byte-for-byte, no escaping) to make up the exact
+    difference. Used to build boundary-exact request bodies without
+    guessing at padding lengths.
+    """
+    envelope = dict(envelope)
+    envelope["padding"] = ""
+    base = json.dumps(envelope).encode()
+    if len(base) > target_bytes:
+        raise ValueError(
+            f"envelope already {len(base)} bytes, larger than target {target_bytes}"
+        )
+    envelope["padding"] = "x" * (target_bytes - len(base))
+    body = json.dumps(envelope).encode()
+    assert len(body) == target_bytes
+    return body
 
 
 def _dummy_session_factory() -> MagicMock:
@@ -279,6 +303,212 @@ async def test_post_missing_signature_never_touches_persistence(
 
     assert response.status_code == 403
     accept.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# POST /webhook -- request body size ceiling (#140), enforced before HMAC
+# ---------------------------------------------------------------------------
+
+
+async def test_post_oversized_body_rejected_413_never_touches_persistence() -> None:
+    """A body over the configured ceiling is rejected with 413.
+
+    Enforced before signature verification and before any persistence call.
+    The oversized body is built from a VALID Meta envelope (a real message
+    id reachable at entry[].changes[].value.messages[]) padded past the
+    ceiling with an unrelated extra field, and it carries a valid signature
+    for its own (oversized) bytes. A payload without an 'entry' key would
+    make this test vacuous: ``_extract_meta_messages`` would return ``[]``
+    regardless of size, so ``accept.assert_not_awaited()`` would pass even
+    with the size guard removed. With a real extractable message id here,
+    removing the guard would let ``accept_inbound_message`` actually run,
+    so this test fails if the guard is removed (verified manually).
+    """
+    envelope = json.loads(make_batch_payload("wamid.OVERSIZED"))
+    test_settings = make_settings(webhook_max_body_bytes=200)
+    oversized_body = _pad_json_envelope_to_exact_size(
+        envelope, test_settings.webhook_max_body_bytes + 1
+    )
+    application = create_test_app()
+    application.dependency_overrides[get_settings] = lambda: test_settings
+    mock_engine = MagicMock()
+    mock_engine.dispose = MagicMock(return_value=None)
+    application.state.engine = mock_engine
+
+    accept = AsyncMock(
+        return_value=InboundAcceptance(inbound_message_id=uuid.uuid4(), duplicate=False)
+    )
+    sig = sign_payload(oversized_body, TEST_SECRET)
+    p1, p2 = _patch_persistence(accept)
+    with p1, p2:
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                "/webhook",
+                content=oversized_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Hub-Signature-256": sig,
+                },
+            )
+
+    assert response.status_code == 413
+    accept.assert_not_awaited()
+
+
+async def test_post_body_boundary_exact_limit_accepted_over_limit_rejected() -> None:
+    """Boundary of the ceiling: exactly ``webhook_max_body_bytes`` is accepted
+    (200, persisted), and one byte more is rejected (413, never persisted).
+
+    Both bodies are built from the same valid Meta envelope so the only
+    variable is size, isolating the ``> max_bytes`` boundary in both
+    ``_read_bounded_body``'s fast Content-Length path and its stream path.
+    """
+    limit = 500
+    test_settings = make_settings(webhook_max_body_bytes=limit)
+    application = create_test_app()
+    application.dependency_overrides[get_settings] = lambda: test_settings
+    mock_engine = MagicMock()
+    mock_engine.dispose = MagicMock(return_value=None)
+    application.state.engine = mock_engine
+
+    envelope = json.loads(make_batch_payload("wamid.BOUNDARY"))
+    exact_body = _pad_json_envelope_to_exact_size(envelope, limit)
+    over_body = _pad_json_envelope_to_exact_size(envelope, limit + 1)
+
+    accept = AsyncMock(
+        return_value=InboundAcceptance(inbound_message_id=uuid.uuid4(), duplicate=False)
+    )
+    p1, p2 = _patch_persistence(accept)
+    with p1, p2:
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as ac:
+            exact_response = await ac.post(
+                "/webhook",
+                content=exact_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Hub-Signature-256": sign_payload(exact_body, TEST_SECRET),
+                },
+            )
+            over_response = await ac.post(
+                "/webhook",
+                content=over_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Hub-Signature-256": sign_payload(over_body, TEST_SECRET),
+                },
+            )
+
+    assert exact_response.status_code == 200
+    assert over_response.status_code == 413
+    accept.assert_awaited_once()
+
+
+async def test_post_body_within_limit_still_accepted(
+    client: AsyncClient, text_payload: bytes
+) -> None:
+    """A body at or under the configured ceiling is unaffected by the guard."""
+    sig = sign_payload(text_payload, TEST_SECRET)
+    accept = AsyncMock(
+        return_value=InboundAcceptance(inbound_message_id=uuid.uuid4(), duplicate=False)
+    )
+
+    p1, p2 = _patch_persistence(accept)
+    with p1, p2:
+        response = await client.post(
+            "/webhook",
+            content=text_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert response.status_code == 200
+    accept.assert_awaited_once()
+
+
+def _make_streaming_request(headers: dict[str, str], chunks: list[bytes]):
+    """A minimal Starlette ``Request`` fed body chunks via raw ASGI messages.
+
+    Used to exercise ``_read_bounded_body``'s stream-enforcement branch
+    directly, independent of whether a test client normalizes
+    Content-Length -- a missing or malformed header must not let an
+    oversized body slip past the ceiling.
+    """
+    from starlette.requests import Request as StarletteRequest
+
+    header_list = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+    scope = {"type": "http", "headers": header_list, "method": "POST"}
+    remaining = list(chunks)
+
+    async def receive() -> dict:
+        if remaining:
+            chunk = remaining.pop(0)
+            return {"type": "http.request", "body": chunk, "more_body": bool(remaining)}
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return StarletteRequest(scope, receive)
+
+
+async def test_read_bounded_body_malformed_content_length_falls_back_to_stream() -> (
+    None
+):
+    """A non-integer Content-Length does not bypass the ceiling.
+
+    The fast-path check can't trust it, so enforcement falls through to the
+    streamed byte count, which still catches an oversized body.
+    """
+    from agentsys.integration.webhook import _read_bounded_body
+
+    request = _make_streaming_request(
+        {"content-length": "not-a-number"}, [b"x" * 60, b"x" * 60]
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await _read_bounded_body(request, max_bytes=100)
+    assert exc_info.value.status_code == 413
+
+
+async def test_read_bounded_body_missing_content_length_enforced_by_stream() -> None:
+    """No Content-Length header at all is still bounded by the streamed count."""
+    from agentsys.integration.webhook import _read_bounded_body
+
+    request = _make_streaming_request({}, [b"x" * 60, b"x" * 60])
+    with pytest.raises(HTTPException) as exc_info:
+        await _read_bounded_body(request, max_bytes=100)
+    assert exc_info.value.status_code == 413
+
+
+async def test_read_bounded_body_lying_content_length_understates_stream_enforced() -> (
+    None
+):
+    """A numerically VALID Content-Length that understates the real body must
+    not bypass the ceiling.
+
+    Distinct from the malformed-header case above: this header parses fine
+    and is well under ``max_bytes``, so the fast Content-Length path lets it
+    through -- but the actual streamed bytes exceed the ceiling, and
+    enforcement must catch that against the real byte count, not the
+    (lying) declared header.
+    """
+    from agentsys.integration.webhook import _read_bounded_body
+
+    request = _make_streaming_request({"content-length": "10"}, [b"x" * 60, b"x" * 60])
+    with pytest.raises(HTTPException) as exc_info:
+        await _read_bounded_body(request, max_bytes=100)
+    assert exc_info.value.status_code == 413
+
+
+async def test_read_bounded_body_within_limit_returns_full_body() -> None:
+    """A body under the ceiling is read and reassembled unchanged."""
+    from agentsys.integration.webhook import _read_bounded_body
+
+    request = _make_streaming_request({}, [b"abc", b"def"])
+    result = await _read_bounded_body(request, max_bytes=100)
+    assert result == b"abcdef"
 
 
 # ---------------------------------------------------------------------------

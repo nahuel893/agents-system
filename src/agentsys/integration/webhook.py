@@ -99,6 +99,36 @@ def _extract_meta_messages(payload: Any) -> list[tuple[str, str]]:
     return messages_out
 
 
+async def _read_bounded_body(request: Request, max_bytes: int) -> bytes:
+    """Read the raw request body while enforcing a byte ceiling (#140).
+
+    Rejects with 413 as soon as the ceiling is crossed -- before HMAC
+    verification and before anything is persisted -- so an oversized request
+    costs neither the CPU of hashing the whole body nor the memory of
+    holding it. A client-supplied Content-Length is checked first as a fast
+    path that can reject without reading anything, but the ceiling is
+    enforced against actual bytes read from the stream regardless: a
+    missing, wrong, or chunked-transfer-encoded body cannot bypass it.
+    """
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError:
+            declared_length = None
+        if declared_length is not None and declared_length > max_bytes:
+            raise HTTPException(status_code=413, detail="Payload too large")
+
+    total = 0
+    chunks: list[bytes] = []
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=413, detail="Payload too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @webhook_router.post("")
 async def receive_message(
     request: Request,
@@ -106,9 +136,10 @@ async def receive_message(
 ) -> dict[str, str]:
     """Durably persist every valid Meta message, then acknowledge.
 
-    Body reading order: raw bytes -> HMAC verify -> json.loads. Never uses
-    request.json() before HMAC verification, and never persists anything
-    before it.
+    Body reading order: size ceiling -> raw bytes -> HMAC verify ->
+    json.loads. Never uses request.json() before HMAC verification, and
+    never persists anything before it. An oversized body (#140) is rejected
+    with 413 before HMAC verification even runs.
 
     Once a message is accepted here, everything else -- the agent turn and
     the outbound send -- happens entirely OUT of this request, in
@@ -122,7 +153,7 @@ async def receive_message(
     retry -- its Meta message id is the durable inbox's uniqueness key
     (``accept_inbound_message``), not this handler's job to deduplicate.
     """
-    body = await request.body()
+    body = await _read_bounded_body(request, settings.webhook_max_body_bytes)
     verify_signature(body, request.headers, settings.meta_webhook_secret)
 
     try:
