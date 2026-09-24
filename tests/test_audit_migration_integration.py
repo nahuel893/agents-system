@@ -25,11 +25,12 @@ sat behind the marker and never ran anywhere. It is wired into the
 from __future__ import annotations
 
 import os
-import uuid
 import subprocess
+import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from sqlalchemy import text
@@ -65,6 +66,7 @@ def _run_alembic(command: str, url: str) -> None:
         env={**os.environ, "DATABASE_URL": url},
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -254,7 +256,10 @@ class TestOrmMatchesTheMigration:
     # Only the UNBOUNDED form is normalised: `VARCHAR(50)` compiles to
     # "VARCHAR(50)", never matches these keys, and stays a real difference --
     # which it is, since it would truncate where TEXT does not.
-    _EQUIVALENT_TYPES = {"VARCHAR": "TEXT", "VARCHAR[]": "TEXT[]"}
+    _EQUIVALENT_TYPES: ClassVar[dict[str, str]] = {
+        "VARCHAR": "TEXT",
+        "VARCHAR[]": "TEXT[]",
+    }
 
     @classmethod
     def _normalise(cls, compiled_type: str) -> str:
@@ -351,7 +356,7 @@ class TestAuditSinkWritesThroughTheProductionPath:
 
         from agents_system.models.audit_event import map_to_audit_event
 
-        occurred = datetime.now(timezone.utc)
+        occurred = datetime.now(UTC)
         event_id = uuid.uuid4()
 
         # Shaped exactly like the dict sink.py hands the mapper.

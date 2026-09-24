@@ -300,11 +300,15 @@ it: the caller supplies what the mechanism needs.
 ```python
 # Before: the ranking strategy knows one deployment's tables.
 from myapp.storage import product_table
+
+
 async def rank(session, query, *, settings): ...
+
 
 # After: it receives them.
 class RecordSource(Protocol):
     async def fetch(self, session, *, query, limit) -> list[Record]: ...
+
 
 async def rank(session, query, *, settings, source: RecordSource): ...
 ```
@@ -337,8 +341,8 @@ remove it from the package. Sequence accordingly.
 The most easily missed contamination is not a field; it is a value.
 
 ```python
-db_name: str = "acme"                     # every consumer inherits this
-runtime_id: str = "acme__sales-agent"     # and this
+db_name: str = "acme"  # every consumer inherits this
+runtime_id: str = "acme__sales-agent"  # and this
 ```
 
 Those work for everyone, which is exactly the problem: they are quietly

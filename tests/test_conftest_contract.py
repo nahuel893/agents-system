@@ -55,24 +55,27 @@ def test_conftest_fixture_assembly_does_not_load_client_services() -> None:
         [
             sys.executable,
             "-c",
-            "import sys\n"
-            "from pathlib import Path\n"
-            "sys.path.insert(0, str(Path('tests').resolve()))\n"
-            "import conftest\n"
-            "assert 'agents_system.services.clients' not in sys.modules\n"
-            "assert 'agents_system.services.conversation_log' not in sys.modules\n"
-            "assert 'agents_system.models.tables' not in sys.modules\n"
-            "app = conftest.create_test_app()\n"
-            "leaked = [m for m in sys.modules if m in {\n"
-            "    'agents_system.services.clients',\n"
-            "    'agents_system.services.conversation_log',\n"
-            "}]\n"
-            "assert not leaked, f'Leaked modules: {leaked}'\n",
+            (
+                "import sys\n"
+                "from pathlib import Path\n"
+                "sys.path.insert(0, str(Path('tests').resolve()))\n"
+                "import conftest\n"
+                "assert 'agents_system.services.clients' not in sys.modules\n"
+                "assert 'agents_system.services.conversation_log' not in sys.modules\n"
+                "assert 'agents_system.models.tables' not in sys.modules\n"
+                "app = conftest.create_test_app()\n"
+                "leaked = [m for m in sys.modules if m in {\n"
+                "    'agents_system.services.clients',\n"
+                "    'agents_system.services.conversation_log',\n"
+                "}]\n"
+                "assert not leaked, f'Leaked modules: {leaked}'\n"
+            ),
         ],
         capture_output=True,
         text=True,
         timeout=60,
         cwd=str(Path(__file__).resolve().parents[1]),
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 

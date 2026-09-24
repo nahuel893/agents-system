@@ -25,7 +25,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-
 from platform_role_contract import (
     EXPECTED_ROLE_TOOLS,
     PINNED_ROLES,
@@ -271,8 +270,10 @@ async def test_order_writer_in_every_registry_refuses_instead_of_fabricating(
 
 def test_test_registry_satisfies_registry_factory_protocol() -> None:
     import inspect
-    from agents_system.harness.registry import ToolRegistry
+
     from conftest import TestRegistryFactory, build_test_registry
+
+    from agents_system.harness.registry import ToolRegistry
 
     # RegistryFactory protocol requires: (settings, embedder=None, bi_engine=None) -> ToolRegistry
     for target in (build_test_registry, TestRegistryFactory()):
@@ -309,9 +310,11 @@ def test_test_registry_fakes_are_neutral_and_free_of_client_prose() -> None:
 
 def test_test_registry_custom_policy_and_bindings(tmp_path: Any) -> None:
     import pathlib
+
+    from conftest import build_test_registry
+
     from agents_system.connectors.operator import SandboxPolicy, TerminalPolicy
     from agents_system.services.reports import ReportSpec
-    from conftest import build_test_registry
 
     policy = TerminalPolicy(
         root=pathlib.Path(tmp_path),

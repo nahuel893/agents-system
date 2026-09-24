@@ -37,7 +37,8 @@ import pathlib
 import shutil
 import signal
 import threading
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import structlog
 

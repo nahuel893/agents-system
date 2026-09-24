@@ -70,11 +70,12 @@ def demo_database() -> str:
     self-contained: the seed is deterministic, so a reload is idempotent as
     far as every assertion below is concerned.
     """
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [sys.executable, str(_REPO_ROOT / "demo" / "load_demo_company.py")],
         capture_output=True,
         text=True,
         cwd=_REPO_ROOT,
+        check=False,
     )
     if result.returncode != 0:
         pytest.skip(f"demo company unavailable: {result.stderr.strip()[:300]}")

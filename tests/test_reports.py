@@ -8,7 +8,7 @@ bi_readonly-scoped connection is covered by tests/test_reports_integration.py
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 import pytest
 from sqlalchemy import text
@@ -37,12 +37,12 @@ def _spec(**overrides: Any) -> ReportSpec:
             ),
         ),
     )
-    defaults: dict[str, Any] = dict(
-        name="fake_report",
-        description="A fake report for unit tests.",
-        sql=text("SELECT 1 AS one LIMIT :limit"),
-        params=params,
-    )
+    defaults: dict[str, Any] = {
+        "name": "fake_report",
+        "description": "A fake report for unit tests.",
+        "sql": text("SELECT 1 AS one LIMIT :limit"),
+        "params": params,
+    }
     defaults.update(overrides)
     return ReportSpec(**defaults)
 
@@ -199,10 +199,10 @@ class _FakeConnection:
         self.executed_with = (stmt, params)
         return _FakeResult(self._rows)
 
-    async def __aenter__(self) -> "_FakeConnection":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *exc: Any) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         return None
 
 

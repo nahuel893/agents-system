@@ -2,16 +2,16 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-
 from datetime import datetime
+from typing import ClassVar
 
 from sqlalchemy import DateTime, Table
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import DeclarativeBase
 
 #: Key a model sets in its ``Table.info`` to declare that Alembic — not the
@@ -46,7 +46,11 @@ class Base(DeclarativeBase):
     correct and removing them is churn, not because they are needed.
     """
 
-    type_annotation_map = {datetime: DateTime(timezone=True)}
+    # ClassVar: this is SQLAlchemy's own class-level configuration attribute,
+    # not a per-instance mutable default.
+    type_annotation_map: ClassVar[dict[type, DateTime]] = {
+        datetime: DateTime(timezone=True)
+    }
 
 
 def alembic_owned_tables() -> tuple[Table, ...]:

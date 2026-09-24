@@ -8,7 +8,6 @@ from typing import Any
 
 import phonenumbers
 
-
 # Phone-related key names that are always added to pii_keys when redacted
 _PHONE_KEYS: frozenset[str] = frozenset(
     {
@@ -112,13 +111,16 @@ class Redactor:
             # Use possible-number check (format-valid) not valid-number (assigned-valid)
             if phonenumbers.is_possible_number(parsed):
                 return True
-        except Exception:
+        except Exception:  # noqa: S110 -- expected: try the next detection
+            # strategy below; a failed parse of an arbitrary string is the
+            # common case here, not an error worth logging per call.
             pass
         # Fall back to matcher for embedded phones in free text
         try:
             for match in phonenumbers.PhoneNumberMatcher(value, None):
                 if match.raw_string:
                     return True
-        except Exception:
+        except Exception:  # noqa: S110 -- expected: no phone found, not an
+            # error; logging every miss would flood logs on ordinary text.
             pass
         return False

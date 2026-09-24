@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import ExitStack, asynccontextmanager
 from datetime import timedelta
-from typing import Any
+from typing import Any, Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -50,11 +50,11 @@ def _make_settings(**overrides: object) -> Settings:
     # WhatsApp at all; a test that needs WhatsApp actually configured sets
     # its own whatsapp_token/whatsapp_phone_number_id alongside a
     # well-formed whatsapp_runtime_id.
-    defaults: dict[str, object] = dict(
-        database_url="postgresql+asyncpg://localhost:5432/agentsys_test",
-        redis_url="redis://localhost:6379/0",
-        adapter_runtimes=["_generic__sales-agent"],
-    )
+    defaults: dict[str, object] = {
+        "database_url": "postgresql+asyncpg://localhost:5432/agentsys_test",
+        "redis_url": "redis://localhost:6379/0",
+        "adapter_runtimes": ["_generic__sales-agent"],
+    }
     defaults.update(overrides)
     return Settings(**defaults)  # type: ignore[arg-type]
 
@@ -301,11 +301,11 @@ async def test_lifespan_resource_teardown_survives_engine_dispose_failure() -> N
 
 
 def _openai_compatible_settings(**overrides: object) -> Settings:
-    values: dict[str, object] = dict(
-        openai_compatible_base_url="https://example.test/v1",
-        openai_compatible_model="test-model",
-        openai_compatible_api_key="test-key",
-    )
+    values: dict[str, object] = {
+        "openai_compatible_base_url": "https://example.test/v1",
+        "openai_compatible_model": "test-model",
+        "openai_compatible_api_key": "test-key",
+    }
     values.update(overrides)
     return _make_settings(**values)
 
@@ -369,9 +369,11 @@ def test_build_chat_model_requires_base_url_and_model(
     API — wrong vendor, wrong credential, opaque auth error later.
     """
     settings = _openai_compatible_settings(**{missing_field: ""})
-    with patch("agents_system.main.get_settings", return_value=settings):
-        with pytest.raises(ValueError, match=expected_env_var) as excinfo:
-            _build_chat_model("openai_compatible")
+    with (
+        patch("agents_system.main.get_settings", return_value=settings),
+        pytest.raises(ValueError, match=expected_env_var) as excinfo,
+    ):
+        _build_chat_model("openai_compatible")
 
     # The message names the variable, never a credential value.
     assert "test-key" not in str(excinfo.value)
@@ -619,11 +621,13 @@ async def test_lifespan_does_not_apply_webhook_lease_to_adapter_only_runtime() -
 
     _, worker, patches = _runtime_lease_invariant_patches(fake_definition)
 
-    with patch("agents_system.main.get_settings", return_value=test_settings):
-        with _stack(patches):
-            app = create_test_app()
-            async with lifespan(app):
-                assert app.state.runtimes
+    with (
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        _stack(patches),
+    ):
+        app = create_test_app()
+        async with lifespan(app):
+            assert app.state.runtimes
 
     worker.start.assert_not_awaited()
 
@@ -662,11 +666,11 @@ async def test_lifespan_uses_full_lease_duration_when_it_exceeds_one_day() -> No
 
 
 def _bi_settings(**overrides: object) -> Settings:
-    values: dict[str, object] = dict(
-        adapter_runtimes=["_generic__sales-agent"],
-        whatsapp_checkpointer_enabled=False,
-        bi_database_url="postgresql+asyncpg://bi_readonly:pw@localhost:5432/acme",
-    )
+    values: dict[str, object] = {
+        "adapter_runtimes": ["_generic__sales-agent"],
+        "whatsapp_checkpointer_enabled": False,
+        "bi_database_url": "postgresql+asyncpg://bi_readonly:pw@localhost:5432/acme",
+    }
     values.update(overrides)
     return _make_settings(**values)
 
@@ -684,7 +688,7 @@ def _fake_bi_engine(value: str | None, *, raises: Exception | None = None) -> An
                 raise raises
             return _Result()
 
-        async def __aenter__(self) -> _Conn:
+        async def __aenter__(self) -> Self:
             return self
 
         async def __aexit__(self, *exc: object) -> None:
@@ -974,7 +978,7 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
         try:
             async with lifespan(application):
                 pass
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Narrow enough to stay useful: the lifespan builds far more than
             # the registry, and a later failure does not un-call the factory —
             # but a swallowed cause that leaves `calls` empty would otherwise

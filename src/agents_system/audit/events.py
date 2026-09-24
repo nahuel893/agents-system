@@ -159,7 +159,7 @@ class AuditEvent:
             for subcls in _EVENT_DISPATCH.values():
                 try:
                     subcls.model_validate(data)
-                except Exception as exc:  # noqa: PERF203
+                except Exception as exc:
                     errors.append(exc)
             if errors:
                 # Re-raise the first one as a pydantic.ValidationError if it's one

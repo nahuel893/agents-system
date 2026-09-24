@@ -90,9 +90,10 @@ def test_every_data_agent_manifest_tool_can_be_equipped() -> None:
     platform's own registry to equip it. Any tool the manifest names and the
     registry lacks raises InjectionError here.
     """
+    from conftest import build_test_registry
+
     from agents_system.harness import loader
     from agents_system.harness.injector import resolve_tool_surface
-    from conftest import build_test_registry
 
     definition = loader.resolve("data-agent", client=None)
     result = resolve_tool_surface(

@@ -8,7 +8,8 @@ turn-scoped session and its transaction (per D-009).
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from agents_system.config import Settings
 from agents_system.services.embeddings import EmbeddingProvider

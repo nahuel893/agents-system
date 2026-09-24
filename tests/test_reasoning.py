@@ -71,7 +71,7 @@ def test_strip_reasoning_handles_an_empty_block() -> None:
 def test_strip_reasoning_anchor_survives_zero_width_whitespace() -> None:
     """A zero-width space is invisible to str.lstrip() and would bypass the
     anchor entirely, letting a whole reasoning block through untouched."""
-    assert strip_reasoning("​<think>r</think>\n\nPONG") == "PONG"
+    assert strip_reasoning("\u200b<think>r</think>\n\nPONG") == "PONG"
     assert strip_reasoning("﻿ <think>r</think>PONG") == "PONG"
 
 

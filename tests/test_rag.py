@@ -443,25 +443,28 @@ def test_rag_module_does_not_import_client_domain() -> None:
         [
             sys.executable,
             "-c",
-            "import sys\n"
-            "import agents_system.services.rag\n"
-            "client_owned = {\n"
-            "    'agents_system.services.catalog',\n"
-            "    'agents_system.services.clients',\n"
-            "    'agents_system.services.conversation_log',\n"
-            "    'agents_system.services.seed_data',\n"
-            "    'agents_system.services.sync_articles',\n"
-            "    'agents_system.services.sync_clients',\n"
-            "    'agents_system.services.medallion',\n"
-            "    'agents_system.models.tables',\n"
-            "}\n"
-            "leaked = sorted(client_owned & set(sys.modules))\n"
-            "assert not leaked, leaked\n",
+            (
+                "import sys\n"
+                "import agents_system.services.rag\n"
+                "client_owned = {\n"
+                "    'agents_system.services.catalog',\n"
+                "    'agents_system.services.clients',\n"
+                "    'agents_system.services.conversation_log',\n"
+                "    'agents_system.services.seed_data',\n"
+                "    'agents_system.services.sync_articles',\n"
+                "    'agents_system.services.sync_clients',\n"
+                "    'agents_system.services.medallion',\n"
+                "    'agents_system.models.tables',\n"
+                "}\n"
+                "leaked = sorted(client_owned & set(sys.modules))\n"
+                "assert not leaked, leaked\n"
+            ),
         ],
         capture_output=True,
         text=True,
         timeout=60,
         cwd=str(pathlib.Path(rag.__file__).resolve().parents[3]),
+        check=False,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -517,16 +520,19 @@ def test_importing_rag_does_not_load_the_embeddings_stack() -> None:
         [
             sys.executable,
             "-c",
-            "import sys\n"
-            "import agents_system.services.rag\n"
-            "heavy = sorted({'openai', 'torch', 'sentence_transformers'} "
-            "& set(sys.modules))\n"
-            "assert not heavy, heavy\n",
+            (
+                "import sys\n"
+                "import agents_system.services.rag\n"
+                "heavy = sorted({'openai', 'torch', 'sentence_transformers'} "
+                "& set(sys.modules))\n"
+                "assert not heavy, heavy\n"
+            ),
         ],
         capture_output=True,
         text=True,
         timeout=60,
         cwd=str(pathlib.Path(rag.__file__).resolve().parents[3]),
+        check=False,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr

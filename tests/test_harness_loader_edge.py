@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-
 from agents_system.harness.loader import (
     DefinitionError,
     RawDefinition,
@@ -26,7 +25,6 @@ from agents_system.harness.loader import (
     merge,
     resolve,
 )
-
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _CLIENT_A_DEPLOYMENTS = (
@@ -45,22 +43,22 @@ def _client_a_roots() -> Any:
 
 def _raw(**overrides: Any) -> RawDefinition:
     """Build a RawDefinition with sensible defaults, overriding chosen fields."""
-    base: dict[str, Any] = dict(
-        role_name="role",
-        version="1.0",
-        deployment=None,
-        system_prompt="",
-        tools=[],
-        skills=[],
-        context={},
-        permissions=[],
-        autonomy="supervised",
-        escalation_rules={},
-        delegation_policy={},
-        memory_policy={},
-        audit_policy={},
-        execution_limits=None,
-    )
+    base: dict[str, Any] = {
+        "role_name": "role",
+        "version": "1.0",
+        "deployment": None,
+        "system_prompt": "",
+        "tools": [],
+        "skills": [],
+        "context": {},
+        "permissions": [],
+        "autonomy": "supervised",
+        "escalation_rules": {},
+        "delegation_policy": {},
+        "memory_policy": {},
+        "audit_policy": {},
+        "execution_limits": None,
+    }
     base.update(overrides)
     return RawDefinition(**base)
 
@@ -75,7 +73,7 @@ def test_split_frontmatter_no_fence_returns_empty() -> None:
 
 
 def test_split_frontmatter_unterminated_fence_returns_empty() -> None:
-    fm, body = _split_frontmatter("---\nkey: value\nnever closes")
+    fm, _body = _split_frontmatter("---\nkey: value\nnever closes")
     assert fm == {}
 
 

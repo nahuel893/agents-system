@@ -44,7 +44,7 @@ class MedallionSettings(Settings):
     medallion_database_url: str = "postgresql+asyncpg://localhost:5432/medallion"
 
     @model_validator(mode="after")
-    def compose_medallion_url(self) -> "MedallionSettings":
+    def compose_medallion_url(self) -> MedallionSettings:
         if self.db_user is None and self.db_host is None:
             return self
 

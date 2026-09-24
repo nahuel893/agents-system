@@ -129,7 +129,7 @@ repos:
 
   # ------------------------------------------------------------------- ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Kept in step with the ruff that uv.lock resolves (0.15.9), NOT with
+    # Kept in step with the ruff that uv.lock resolves (0.16.8), NOT with
     # latest. pre-commit runs each hook in its own isolated environment, so
     # this rev alone decides which ruff runs here.
     #
@@ -139,13 +139,13 @@ repos:
     # --no-verify.
     #
     # Note that pyproject declares FLOORS, not pins: `ruff>=0.8` in
-    # optional-dependencies and `ruff>=0.15.9` in dependency-groups. The only
+    # optional-dependencies and `ruff>=0.16.8` in dependency-groups. The only
     # thing fixing a version is uv.lock, which CI installs via
     # `uv sync --group dev`. So `uv lock --upgrade` can move CI to 0.16.x while
     # this rev stays behind -- the same divergence, inverted. When you upgrade
     # ruff, bump this rev to match uv.lock and re-run `pre-commit run
     # --all-files` in the same change.
-    rev: v0.15.9
+    rev: v0.16.8
     hooks:
       # `ruff-check` is the canonical id; the bare `ruff` id still resolves but
       # reports itself as "ruff (legacy alias)".

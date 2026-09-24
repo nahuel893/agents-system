@@ -1,7 +1,7 @@
 """Tests for the audit_event SQLAlchemy model and schema."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 class TestAuditEventModelImports:
@@ -143,7 +143,7 @@ class TestMapToAuditEventMapper:
 
         event_data = {
             "event_id": uuid.uuid4(),
-            "occurred_at": datetime.now(timezone.utc),
+            "occurred_at": datetime.now(UTC),
             "correlation_id": "test-correlation-123",
             "sequence": 1,
             "event_type": "tool_call_attempted",
@@ -216,7 +216,7 @@ class TestOccurredAtMatchesTheMigration:
         # `datetime.now().replace(tzinfo=timezone.utc)` -- local wall clock
         # stamped as UTC. That is aware, offset zero, and wrong by hours, so
         # events near a month boundary land in the wrong partition.
-        assert value.tzinfo is timezone.utc, (
+        assert value.tzinfo is UTC, (
             "the default must be UTC itself, not merely an aware datetime "
             "whose offset happens to be zero"
         )

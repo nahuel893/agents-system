@@ -23,7 +23,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from platform_role_contract import (
     EXPECTED_ROLE_TOOLS,
     PINNED_ROLES,
@@ -294,8 +293,9 @@ def test_every_abstract_role_refuses_to_be_built() -> None:
     name — that filter would be hiding a failure instead of describing a
     design. This is what makes the exclusion legitimate.
     """
-    from agents_system.harness.loader import DefinitionError, resolve
     from platform_role_contract import discover_platform_roles, is_abstract
+
+    from agents_system.harness.loader import DefinitionError, resolve
 
     abstract = [r for r in discover_platform_roles() if is_abstract(r)]
     assert abstract, "the taxonomy has a root; if that changed, say so here"
@@ -313,9 +313,13 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
     with no effect — the same class of problem as `extends:` being inert. This
     catches it the moment it appears rather than years later.
     """
-    from agents_system.harness.loader import _extends_target, _load_role_files
-    from agents_system.harness.loader import RootConfig
     from platform_role_contract import discover_platform_roles, is_abstract
+
+    from agents_system.harness.loader import (
+        RootConfig,
+        _extends_target,
+        _load_role_files,
+    )
 
     roots = RootConfig()
     parents: set[str] = set()

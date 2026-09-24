@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog.contextvars
@@ -54,7 +54,7 @@ async def _allocate_sequence(correlation_id: str) -> int:
 
 
 def _now_utc() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 def _correlation_id_from_context() -> str:
@@ -106,7 +106,7 @@ async def record_tool_call_attempted(
     revalidated: bool = False,
     error: str | None = None,
     tool_input: dict[str, Any] | None = None,
-) -> "ToolCallAttempted":
+) -> ToolCallAttempted:
     """Build a ToolCallAttempted event."""
     from agents_system.audit.events import ToolCallAttempted
 
@@ -150,7 +150,7 @@ async def record_tool_call_blocked(
     definition: Any,
     tool_name: str,
     reason: str,
-) -> "ToolCallBlocked":
+) -> ToolCallBlocked:
     """Build a ToolCallBlocked event."""
     from agents_system.audit.events import ToolCallBlocked
 
@@ -179,7 +179,7 @@ async def record_tool_call_blocked(
 async def record_tool_granted(
     definition: Any,
     tool_name: str,
-) -> "ToolGranted":
+) -> ToolGranted:
     """Build a ToolGranted event."""
     from agents_system.audit.events import ToolGranted
 
@@ -208,7 +208,7 @@ async def record_tool_denied(
     definition: Any,
     tool_name: str,
     reason: str,
-) -> "ToolDenied":
+) -> ToolDenied:
     """Build a ToolDenied event."""
     from agents_system.audit.events import ToolDenied
 
@@ -237,7 +237,7 @@ async def record_tool_denied(
 async def record_unknown_tool(
     definition: Any,
     tool_name: str,
-) -> "UnknownTool":
+) -> UnknownTool:
     """Build an UnknownTool event."""
     from agents_system.audit.events import UnknownTool
 
@@ -265,7 +265,7 @@ async def record_unknown_tool(
 async def record_skill_loaded(
     definition: Any,
     skill: str,
-) -> "SkillLoaded":
+) -> SkillLoaded:
     """Build a SkillLoaded event."""
     from agents_system.audit.events import SkillLoaded
 
@@ -294,7 +294,7 @@ async def record_skill_missing(
     definition: Any,
     skill: str,
     path: str,
-) -> "SkillMissing":
+) -> SkillMissing:
     """Build a SkillMissing event."""
     from agents_system.audit.events import SkillMissing
 
@@ -325,7 +325,7 @@ async def record_runtime_built(
     tools_count: int,
     denied_count: int,
     skills_count: int,
-) -> "RuntimeBuilt":
+) -> RuntimeBuilt:
     """Build a RuntimeBuilt event."""
     from agents_system.audit.events import RuntimeBuilt
 
@@ -356,7 +356,7 @@ async def record_runtime_initialized(
     definition: Any,
     tools_count: int,
     model_type: str,
-) -> "RuntimeInitialized":
+) -> RuntimeInitialized:
     """Build a RuntimeInitialized event."""
     from agents_system.audit.events import RuntimeInitialized
 
@@ -385,7 +385,7 @@ async def record_runtime_initialized(
 async def record_runtime_timeout(
     definition: Any,
     total_execution_timeout_s: float,
-) -> "RuntimeTimeout":
+) -> RuntimeTimeout:
     """Build a RuntimeTimeout event."""
     from agents_system.audit.events import RuntimeTimeout
 

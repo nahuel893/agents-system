@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agents_system.connectors.sales_reports import (  # noqa: E402
+from agents_system.connectors.sales_reports import (
     CONTRACT_VIEWS,
     UNMAPPED_STATUS,
 )
@@ -217,7 +217,7 @@ async def _summarize(conn: AsyncConnection) -> None:
             raise ValueError(
                 f"refusing to interpolate non-identifier view name: {view!r}"
             )
-        result = await conn.execute(text(f"SELECT COUNT(*) FROM {view}"))  # noqa: S608
+        result = await conn.execute(text(f"SELECT COUNT(*) FROM {view}"))
         print(f"  {view:<22} {result.scalar_one():>6} rows")
 
 

@@ -16,7 +16,7 @@ unconfigured is unchanged.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
@@ -203,7 +203,7 @@ class _Result:
 class _ReadOnlyConnection:
     engine: _ReadOnlyEngine
 
-    async def __aenter__(self) -> _ReadOnlyConnection:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: object) -> None:

@@ -15,7 +15,6 @@ from agents_system.services.embeddings import (
     get_embedding_provider,
 )
 
-
 # ---------------------------------------------------------------------------
 # FakeEmbeddingProvider — used in tests to avoid real API calls
 # ---------------------------------------------------------------------------

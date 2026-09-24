@@ -17,7 +17,6 @@ from typing import Any
 import pytest
 import structlog
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
@@ -102,9 +101,8 @@ async def test_intercept_logs_call_blocked_when_not_in_surface() -> None:
 
     runtime = _runtime([_spec("session_state", [])])
 
-    with structlog.testing.capture_logs() as logs:
-        with pytest.raises(PolicyViolation):
-            await intercept("ghost_tool", {}, runtime)
+    with structlog.testing.capture_logs() as logs, pytest.raises(PolicyViolation):
+        await intercept("ghost_tool", {}, runtime)
 
     events = [e["event"] for e in logs]
     assert "interceptor.call_blocked" in events
@@ -160,11 +158,10 @@ async def test_intercept_logs_blocked_on_permission_revoked() -> None:
     spec = _spec("order_writer", ["write:orders", "write:order_items"])
     runtime = _runtime([spec])
 
-    with structlog.testing.capture_logs() as logs:
-        with pytest.raises(PolicyViolation):
-            await intercept(
-                "order_writer", {}, runtime, current_permissions=["read:catalog"]
-            )
+    with structlog.testing.capture_logs() as logs, pytest.raises(PolicyViolation):
+        await intercept(
+            "order_writer", {}, runtime, current_permissions=["read:catalog"]
+        )
 
     assert any(e["event"] == "interceptor.call_blocked" for e in logs)
 

@@ -382,8 +382,10 @@ async def test_the_child_does_not_inherit_the_parents_secrets(
                 "argv": [
                     sys.executable,
                     "-c",
-                    "import os; print(os.environ.get('ANTHROPIC_API_KEY', 'ABSENT'));"
-                    " print(os.environ.get('PATH'))",
+                    (
+                        "import os; print(os.environ.get('ANTHROPIC_API_KEY', 'ABSENT'));"
+                        " print(os.environ.get('PATH'))"
+                    ),
                 ]
             }
         )
@@ -422,10 +424,12 @@ async def test_output_arriving_in_several_flushes_comes_back_whole(
                 sys.executable,
                 "-u",
                 "-c",
-                "import sys, time\n"
-                "for i in range(20):\n"
-                "    sys.stdout.write(f'line-{i}\\n'); sys.stdout.flush()\n"
-                "    time.sleep(0.01)\n",
+                (
+                    "import sys, time\n"
+                    "for i in range(20):\n"
+                    "    sys.stdout.write(f'line-{i}\\n'); sys.stdout.flush()\n"
+                    "    time.sleep(0.01)\n"
+                ),
             ]
         }
     )

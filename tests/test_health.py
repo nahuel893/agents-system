@@ -8,11 +8,11 @@ from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import create_test_app
 from httpx import ASGITransport, AsyncClient
 
 from agents_system.config import get_settings
 from agents_system.services.outbox import OutboxBacklogCounts
-from conftest import create_test_app
 
 
 @pytest.fixture(autouse=True)

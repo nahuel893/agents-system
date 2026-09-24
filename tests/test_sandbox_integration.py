@@ -122,8 +122,10 @@ async def test_a_sandboxed_command_does_not_see_host_only_env_vars(
             "argv": [
                 sys.executable,
                 "-c",
-                "import os; "
-                "print(os.environ.get('AGENTS_SYSTEM_SANDBOX_TEST_SECRET', 'ABSENT'))",
+                (
+                    "import os; "
+                    "print(os.environ.get('AGENTS_SYSTEM_SANDBOX_TEST_SECRET', 'ABSENT'))"
+                ),
             ]
         }
     )

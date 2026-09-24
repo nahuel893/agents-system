@@ -48,7 +48,7 @@ _CLOSE = "</think>"
 # ``str.strip()`` covers whitespace but NOT zero-width marks — and a single
 # invisible zero-width space ahead of the tag would defeat the anchor and let
 # an entire reasoning block through untouched.
-_INVISIBLE = " \t\n\r\v\f​‌‍⁠﻿"
+_INVISIBLE = " \t\n\r\v\f\u200b‌‍⁠﻿"
 
 
 def _find_block_end(text: str) -> int:
@@ -112,7 +112,7 @@ def _strip_text(text: str) -> str:
     return result.strip(_INVISIBLE) if removed else text
 
 
-def _strip_block(block: Any) -> Any:  # noqa: ANN401 - block shape is provider-defined
+def _strip_block(block: Any) -> Any:
     """Sanitize one entry of a list-shaped content payload.
 
     Returns a NEW object for text-bearing blocks; the caller's block is never

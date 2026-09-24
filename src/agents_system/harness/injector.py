@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable
-
 import asyncio
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -36,7 +35,7 @@ async def _emit_async(recorder_name: str, **kwargs: Any) -> None:
         logger.debug("audit.emit_failed", recorder=recorder_name, exc_info=True)
 
 
-_pending_emits: set["asyncio.Task[None]"] = set()
+_pending_emits: set[asyncio.Task[None]] = set()
 
 
 def _emit(recorder_name: str, **kwargs: Any) -> None:

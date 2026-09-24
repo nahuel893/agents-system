@@ -119,9 +119,8 @@ def test_injector_logs_unknown_tool() -> None:
     definition = _make_definition(tools=["ghost_tool"], permissions=[])
     registry = _registry_with()  # empty registry
 
-    with structlog.testing.capture_logs() as logs:
-        with pytest.raises(InjectionError):
-            resolve_tool_surface(definition, registry, [])
+    with structlog.testing.capture_logs() as logs, pytest.raises(InjectionError):
+        resolve_tool_surface(definition, registry, [])
 
     events = [e["event"] for e in logs]
     assert "injector.unknown_tool" in events
@@ -133,9 +132,8 @@ def test_injector_logs_unknown_tool() -> None:
 def test_loader_logs_invariant_violation() -> None:
     from agents_system.harness.loader import DefinitionError, resolve
 
-    with structlog.testing.capture_logs() as logs:
-        with pytest.raises(DefinitionError):
-            resolve("simple-role", client="bad-autonomy", roots=_override_roots())
+    with structlog.testing.capture_logs() as logs, pytest.raises(DefinitionError):
+        resolve("simple-role", client="bad-autonomy", roots=_override_roots())
 
     events = [e["event"] for e in logs]
     assert "loader.invariant_violation" in events
