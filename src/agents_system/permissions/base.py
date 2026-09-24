@@ -13,9 +13,20 @@ from agents_system.harness.registry import Tier
 
 from .errors import InvalidPermissionTierError
 
-#: Ordinal rank for each `Tier`, used to compare declared tiers for R1
-#: monotonicity (a subclass's tier must rank >= its parent's).
+#: Ordinal rank for each `Tier`, used to compare declared tiers explicitly
+#: rather than relying on `Tier(str, Enum)`'s inherited `str` ordering,
+#: which happens to sort correctly for T0-T3's single-digit suffixes today
+#: but is not a guarantee the `Tier` enum itself makes.
 _RANK: dict[Tier, int] = {Tier.T0: 0, Tier.T1: 1, Tier.T2: 2, Tier.T3: 3}
+
+
+def tier_rank(tier: Tier) -> int:
+    """Explicit ordinal rank for a `Tier` member -- the single source of
+    truth every tier comparison in this package routes through (R1's own
+    monotonicity check below, and R2a/R2b/R3 in `permission_registry.py`),
+    instead of `<=`/`>=` on the `Tier` enum members directly.
+    """
+    return _RANK[tier]
 
 
 class Permission:
@@ -37,7 +48,7 @@ class Permission:
             cls.tier = parent_tier  # plain inheritance, not an R1 violation
             return
         try:
-            own_rank = _RANK[own_tier]
+            own_rank = tier_rank(own_tier)
         except (KeyError, TypeError) as error:
             raise InvalidPermissionTierError(
                 cls,
@@ -45,5 +56,5 @@ class Permission:
                 parent_tier,
                 reason=f"{own_tier!r} is not a valid Tier member",
             ) from error
-        if parent_tier is not None and own_rank < _RANK[parent_tier]:
+        if parent_tier is not None and own_rank < tier_rank(parent_tier):
             raise InvalidPermissionTierError(cls, own_tier, parent_tier)

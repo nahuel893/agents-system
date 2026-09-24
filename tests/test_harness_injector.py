@@ -4,6 +4,29 @@ import pytest
 
 from agents_system.harness.loader import AgentDefinition
 from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
+from agents_system.permissions import Read, register
+
+
+#: Test-local ancestor/descendant family for the R3 descendant-coverage
+#: scenarios below -- distinct, file-scoped wire names so registration
+#: never collides with another test module's own fixtures.
+class _R3Ancestor(Read):
+    """T0 ancestor, registered under its own wire name."""
+
+
+class _R3SameTierDescendant(_R3Ancestor):
+    """Same-tier (T0) subclass -- a valid R1 equal-tier descendant."""
+
+
+class _R3EscalatedDescendant(_R3Ancestor):
+    """Escalated to T2 -- a valid R1 escalation."""
+
+    tier = Tier.T2
+
+
+register(_R3Ancestor, "read:injector_r3_ancestor")
+register(_R3SameTierDescendant, "read:injector_r3_same_tier_descendant")
+register(_R3EscalatedDescendant, "read:injector_r3_escalated_descendant")
 
 
 def _connector() -> str:
@@ -156,27 +179,29 @@ def test_untrusted_input_role_denied_t3_tool_even_with_permission_granted() -> N
     """The exact scenario C.10 exists for: a T3 tool named under a `read:*`
     permission (no `exec:` prefix) that a hypothetical manifest grants to an
     `untrusted_input` role must still never reach the model's tool surface.
+    `read:files` is the real, registered instance of this shape
+    (`ReadFiles(Read)` at T3, PR1 Resolved Decision 1).
     """
     from agents_system.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     disguised_t3 = ToolSpec(
         name="disguised_t3_tool",
-        required_permissions=("read:innocuous",),  # deliberately not exec:*
+        required_permissions=("read:files",),  # deliberately not exec:*
         connector=_connector,
         tier=Tier.T3,
     )
     registry.register(disguised_t3)
     definition = _definition(
         tools=("disguised_t3_tool",),
-        permissions=("read:innocuous",),
+        permissions=("read:files",),
         untrusted_input=True,
     )
 
     result = resolve_tool_surface(
         definition,
         registry,
-        granted_permissions=("read:innocuous",),  # permission WOULD be satisfied
+        granted_permissions=("read:files",),  # permission WOULD be satisfied
     )
 
     assert result.granted == ()
@@ -325,3 +350,128 @@ def test_real_sales_agent_definition_never_grants_hypothetical_t3_tool() -> None
 
     granted_names = {spec.name for spec in result.granted}
     assert "hypothetical_read_file" not in granted_names
+
+
+# ---------------------------------------------------------------------------
+# R3 — grant coverage of permission descendants
+# ---------------------------------------------------------------------------
+
+
+def test_ancestor_grant_covers_same_tier_descendant() -> None:
+    """A grant of the ancestor covers a required, same-tier registered
+    descendant — `issubclass` holds and tiers are equal (0<=0)."""
+    from agents_system.harness.injector import resolve_tool_surface
+
+    registry = ToolRegistry()
+    spec = ToolSpec(
+        name="descendant_tool",
+        required_permissions=("read:injector_r3_same_tier_descendant",),
+        connector=_connector,
+        tier=Tier.T1,
+    )
+    registry.register(spec)
+    definition = _definition(
+        tools=("descendant_tool",),
+        permissions=("read:injector_r3_ancestor",),
+    )
+
+    result = resolve_tool_surface(
+        definition, registry, granted_permissions=("read:injector_r3_ancestor",)
+    )
+
+    assert result.granted == (spec,)
+    assert result.denied == ()
+
+
+def test_exact_class_grant_covers_itself() -> None:
+    """A grant naming the exact required class always covers it (`D is P`)."""
+    from agents_system.harness.injector import resolve_tool_surface
+
+    registry = ToolRegistry()
+    spec = ToolSpec(
+        name="exact_tool",
+        required_permissions=("read:injector_r3_same_tier_descendant",),
+        connector=_connector,
+        tier=Tier.T1,
+    )
+    registry.register(spec)
+    definition = _definition(
+        tools=("exact_tool",),
+        permissions=("read:injector_r3_same_tier_descendant",),
+    )
+
+    result = resolve_tool_surface(
+        definition,
+        registry,
+        granted_permissions=("read:injector_r3_same_tier_descendant",),
+    )
+
+    assert result.granted == (spec,)
+    assert result.denied == ()
+
+
+def test_ancestor_grant_does_not_cover_escalated_descendant() -> None:
+    """`SensitiveExport`-shaped case: an ancestor grant MUST NOT cover a
+    descendant that escalated its own tier (`2<=0` is false) — the
+    escalated class needs its own explicit grant."""
+    from agents_system.harness.injector import resolve_tool_surface
+
+    registry = ToolRegistry()
+    spec = ToolSpec(
+        name="escalated_tool",
+        required_permissions=("read:injector_r3_escalated_descendant",),
+        connector=_connector,
+        tier=Tier.T2,
+    )
+    registry.register(spec)
+    definition = _definition(
+        tools=("escalated_tool",),
+        permissions=(
+            "read:injector_r3_ancestor",
+            "read:injector_r3_escalated_descendant",
+        ),
+    )
+
+    result = resolve_tool_surface(
+        definition,
+        registry,
+        # Only the ancestor is granted -- the escalated descendant is not.
+        granted_permissions=("read:injector_r3_ancestor",),
+    )
+
+    assert result.granted == ()
+    assert result.denied == (
+        (
+            "escalated_tool",
+            "missing permissions: read:injector_r3_escalated_descendant",
+        ),
+    )
+
+
+def test_unrelated_class_grant_never_covers_by_tier_alone() -> None:
+    """A grant of `Exec` (T3) MUST NOT cover a required `Write` (T2) —
+    `Write` is not a subclass of `Exec`, regardless of tier ordering."""
+    from agents_system.harness.injector import resolve_tool_surface
+
+    registry = ToolRegistry()
+    spec = ToolSpec(
+        name="write_tool",
+        required_permissions=("write:orders",),
+        connector=_connector,
+        tier=Tier.T2,
+    )
+    registry.register(spec)
+    definition = _definition(
+        tools=("write_tool",),
+        permissions=("exec:command", "write:orders"),
+    )
+
+    result = resolve_tool_surface(
+        definition,
+        registry,
+        # Only the unrelated, higher-tier Exec permission is granted.
+        granted_permissions=("exec:command",),
+    )
+
+    assert result.granted == ()
+    assert result.denied == (("write_tool", "missing permissions: write:orders"),)

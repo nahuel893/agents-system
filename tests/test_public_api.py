@@ -171,6 +171,32 @@ def test_touching_agent_runtime_name_then_imports_agent_graph() -> None:
 
 
 # ---------------------------------------------------------------------------
+# `agents_system.permissions` must be importable standalone, with no import
+# order dependency on `agents_system.harness` already being initialized.
+#
+# `permissions.base` imports `Tier` from `harness.registry`; importing
+# `agents_system.harness.registry` first initializes the `agents_system.harness`
+# PACKAGE (`harness/__init__.py`), which imports `harness.loader`. If
+# `loader.py` imported `agents_system.permissions` back at module scope, a
+# fresh interpreter whose FIRST import is `agents_system.permissions` (the
+# documented downstream-consumer pattern, `from agents_system.permissions
+# import ...`) would recurse into the still-initializing `permissions`
+# package and fail with "cannot import name ... from partially initialized
+# module" — permissions/base.py:12 -> harness/__init__.py:3 -> loader.py ->
+# (back to) agents_system.permissions. `pytest tests/test_capability_tiers.py`
+# run ALONE reproduced this for the same reason: that file's own first import
+# is `agents_system.permissions`, and no earlier-collected test file had
+# already primed `agents_system.harness` in `sys.modules`.
+# ---------------------------------------------------------------------------
+def test_import_agents_system_permissions_standalone_succeeds() -> None:
+    """A fresh interpreter importing `agents_system.permissions` as its
+    very first `agents_system`-related import must not fail with a
+    circular-import ImportError."""
+    result = _run_import_probe("import agents_system.permissions\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+# ---------------------------------------------------------------------------
 # End-to-end consumer flow — the actual requirement this task exists for:
 # "el cliente debe poder armar su propia tool registry e inyectarlo al agente"
 # ---------------------------------------------------------------------------

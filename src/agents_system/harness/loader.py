@@ -362,13 +362,45 @@ _COMMAND_TOOL_PARAM_TYPES = ("string", "integer")
 #: (`interceptor._is_sensitive` only checks tier in {T2, T3} or
 #: `always_revalidate`), so a T0/T1 command tool would reach an
 #: untrusted_input role with no Layer-2 check at all (PR #147 review
-#: follow-up: a T0 command tool was proven to run unrevalidated).
-_COMMAND_TOOL_MIN_TIER = (Tier.T2, Tier.T3)
+#: follow-up: a T0 command tool was proven to run unrevalidated). Narrowed
+#: to T2-only by permission-model Resolved Decision 3: `Run` is a single T2
+#: family with no T3-floor sibling, so a T3 command tool would fail R2b's
+#: floor at `ToolSpec` construction anyway (`max(2) >= 3` is false) —
+#: rejecting it here, at load, gives an actionable error instead of a
+#: construction-time crash deep in the injector.
+_COMMAND_TOOL_MIN_TIER = (Tier.T2,)
 #: A `max_length` beyond this is not "narrow" — it stops being a meaningful
 #: constraint on what an untrusted model can smuggle through the param, so
 #: it is capped rather than left to an author's judgement (PR #147 review
 #: follow-up).
 _COMMAND_TOOL_PARAM_MAX_LENGTH_CAP = 4096
+
+
+def _ensure_command_tool_permission_registered(wire_name: str) -> None:
+    """Register one manifest-declared command-tool permission to `Run`, the
+    first time this exact wire name is seen.
+
+    Unlike the 18 shipped wire names `permissions/builtins.py` registers at
+    import time, a command tool's `permission` is authored per-manifest
+    (design.md: "`declaration.permission`, which always resolves to `Run`
+    (T2)") — there is no fixed table to register ahead of time.
+    `ensure_resource_registered` does the get-or-create atomically (one
+    `PermissionRegistry` lock acquisition), so two concurrent loads of the
+    same not-yet-seen manifest can't race each other into a spurious
+    collision or a lost registration.
+
+    Deferred import: `permissions.base` imports `Tier` from
+    `harness.registry`, which initializes the `agents_system.harness`
+    PACKAGE (`harness/__init__.py`) first, which imports `loader.py` — a
+    module-level `from agents_system.permissions import ...` here would
+    recurse into `agents_system.permissions` while it is still
+    initializing, whenever `agents_system.permissions` is the first thing a
+    fresh interpreter imports (see `tests/test_public_api.py::
+    test_import_agents_system_permissions_standalone_succeeds`).
+    """
+    from agents_system.permissions import Run, ensure_resource_registered
+
+    ensure_resource_registered(Run, wire_name)
 
 
 def _resolve_argv0(raw: str, *, tool_name: str, source: pathlib.Path) -> str:
@@ -607,15 +639,15 @@ def _parse_command_tools(
         if tier not in _COMMAND_TOOL_MIN_TIER:
             raise DefinitionError(
                 f"Invariant violation — command_tools: {source} declares "
-                f"command tool '{name}' with tier={tier.value}, which is "
-                f"below the ADR-002 C.12 floor. A command tool's permission "
-                f"is always in the run:* family, which requires tier in "
-                f"{{T2, T3}} — a T0/T1 tool is never revalidated at call "
-                f"time (interceptor._is_sensitive) and would let an "
-                f"untrusted_input role reach an unrevalidated host command. "
-                f"Use tier: T2 for a narrow, pattern-constrained command "
-                f"tool, or tier: T3 for one that mutates host state or "
-                f"reads arbitrary paths."
+                f"command tool '{name}' with tier={tier.value}, but "
+                f"declarative command tools require tier=T2 exactly "
+                f"(permission-model Resolved Decision 3). A T0/T1 tool is "
+                f"never revalidated at call time (interceptor._is_sensitive) "
+                f"and would let an untrusted_input role reach an "
+                f"unrevalidated host command; a T3 tool would fail R2b's "
+                f"floor at ToolSpec construction, since a command tool's "
+                f"permission is always in the run:* family (`Run`, T2), "
+                f"with no T3-floor sibling. Use tier: T2."
             )
 
         permission = entry.get("permission")
@@ -628,6 +660,7 @@ def _parse_command_tools(
                 f"untrusted_input role can safely hold one without "
                 f"tripping C.11's invariant (ADR-002 C.12)."
             )
+        _ensure_command_tool_permission_registered(permission)
 
         declarations.append(
             CommandToolDeclaration(
@@ -1493,21 +1526,8 @@ def _validate_autonomy(parent: RawDefinition, override: RawDefinition) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ADR-002 C.11 — `untrusted_input` flag and `exec:*` mutual-exclusion
+# ADR-002 C.11 / permission-model R4 — `untrusted_input` holds no T3 permission
 # ---------------------------------------------------------------------------
-_EXEC_PERMISSION_PREFIX = "exec:"
-
-
-def _is_exec_permission(permission: str) -> bool:
-    """Whether *permission* is in the `exec:*` family (ADR-002 C.11).
-
-    Case-insensitive and whitespace-tolerant (review follow-up: a plain
-    `p.startswith("exec:")` let `EXEC:shell`/`Exec:Shell`/a leading-space
-    typo through untouched — still, functionally, an exec:* permission, so
-    a case or whitespace variant must not silently disarm the
-    lethal-trifecta guard).
-    """
-    return permission.strip().lower().startswith(_EXEC_PERMISSION_PREFIX)
 
 
 def _validate_untrusted_input_monotonic(
@@ -1563,26 +1583,29 @@ def _validate_untrusted_input_exec(
     *,
     role_name: str,
 ) -> None:
-    """`untrusted_input=true` ⊥ `exec:*` — mutually exclusive (ADR-002 C.11).
+    """`untrusted_input=true` holds no T3-tier permission (R4, generalizing
+    ADR-002 C.11's `exec:*` mutual-exclusion from a wire-name prefix match
+    to any T3 class, regardless of its registered name).
 
     The lethal-trifecta guard: a role whose input can come from an untrusted
-    source may never also hold host-execution permissions. Checked
+    source may never also hold host-execution-tier permissions. Checked
     unconditionally by both callers — the ``merge()`` branch and the
     no-override branch of ``resolve()`` — so a role resolved with no
     deployment override enforces this exactly like one that has one.
+
+    Deferred import: see `_ensure_command_tool_permission_registered`'s
+    docstring for why a module-level `agents_system.permissions` import in
+    this file is a real circular import, not a theoretical one.
     """
     if not untrusted_input:
         return
-    exec_perms = sorted(p for p in permissions if _is_exec_permission(p))
-    if not exec_perms:
-        return
-    raise DefinitionError(
-        f"Invariant violation — untrusted_input: role '{role_name}' declares "
-        f"untrusted_input=true and also holds permission '{exec_perms[0]}'. "
-        "A role whose input can come from an untrusted source may never "
-        "also hold exec:* permissions (lethal-trifecta guard). Split into "
-        "two roles, or remove one side of the conflict."
-    )
+    from agents_system.permissions import UntrustedInputGrantError
+    from agents_system.permissions import resolve as resolve_permission
+
+    for name in sorted(permissions):
+        cls = resolve_permission(name)
+        if cls.tier is Tier.T3:
+            raise UntrustedInputGrantError(name, cls, role_name)
 
 
 def _validate_execution_limits(
@@ -1633,9 +1656,20 @@ def merge(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
     Logs the outcome (invariant violation or successful merge) and delegates
     the actual work to ``_merge_validated``.
     """
+    # Deferred import: see `_ensure_command_tool_permission_registered`'s
+    # docstring for why a module-level `agents_system.permissions` import
+    # in this file is a real circular import, not a theoretical one.
+    from agents_system.permissions import UntrustedInputGrantError
+
     try:
         result = _merge_validated(generic, override)
-    except DefinitionError as exc:
+    except (DefinitionError, UntrustedInputGrantError) as exc:
+        # UntrustedInputGrantError is NOT a DefinitionError subclass (its
+        # root is AgentPermissionError, per spec's own hierarchy; making it
+        # inherit DefinitionError too would need `permissions` to import
+        # from `harness.loader`, a real cycle) — caught alongside it here
+        # so this R4 violation still gets the same invariant-violation log
+        # every other merge-time rejection does.
         logger.error(
             "loader.invariant_violation",
             role=generic.role_name,

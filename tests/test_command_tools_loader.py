@@ -234,6 +234,29 @@ def test_parse_command_tools_t2_tier_is_accepted() -> None:
     assert declarations[0].tier == Tier.T2
 
 
+def test_parse_command_tools_t3_tier_is_now_rejected() -> None:
+    """permission-model Resolved Decision 3: `_COMMAND_TOOL_MIN_TIER`
+    narrows from `{T2, T3}` to `{T2}` only. `Run` is a single T2 family
+    with no T3-floor sibling (design.md), so a T3 command tool would fail
+    R2b's floor at `ToolSpec` construction anyway (`max(2) >= 3` is
+    false) — rejecting it here, at load, gives an actionable error instead
+    of a construction-time crash deep in the injector."""
+    manifest_fm = {
+        "command_tools": [
+            {
+                "name": "dangerous_tool",
+                "argv": ["/usr/bin/echo", "{sku}"],
+                "params": {"sku": _string_param(pattern="^[A-Za-z0-9_-]{1,32}$")},
+                "tier": "T3",
+                "permission": "run:dangerous_tool",
+            }
+        ]
+    }
+
+    with pytest.raises(DefinitionError, match="dangerous_tool"):
+        _parse_command_tools(manifest_fm, source=_SOURCE)
+
+
 # ---------------------------------------------------------------------------
 # Narrowness is required, not opt-in — PR #147 review follow-up. A string
 # param with no `pattern`/`enum` let the reviewer read `/etc/hostname`

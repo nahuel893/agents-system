@@ -20,6 +20,30 @@ from typing import Any
 
 import pytest
 
+from agents_system.permissions import Run, UnknownPermissionNameError, resolve, resource
+
+
+#: `Run` has no shipped resource-scoped wire name (PR1's registration table
+#: covers only Read/Write/Send/Exec/Spawn) -- declarative command-tool
+#: permissions are registered dynamically, one dedicated subclass per wire
+#: name (a class holds exactly one canonical name -- spec: "Unique wire
+#: name per class"), the same way `harness.loader._parse_command_tools`
+#: registers one per manifest-declared command tool. These two names
+#: mirror `tests/test_command_tools_*.py`'s own fixtures so the lower-level
+#: ToolSpec-construction tests below can exercise Run without going
+#: through the loader. `resource()` itself is NOT idempotent (it always
+#: builds a fresh class), so check-then-create here to converge safely
+#: with any other module that registers the same wire name first.
+def _ensure_run_permission_registered(wire_name: str) -> None:
+    try:
+        resolve(wire_name)
+    except UnknownPermissionNameError:
+        resource(Run, wire_name)
+
+
+_ensure_run_permission_registered("run:check_stock")
+_ensure_run_permission_registered("run:dangerous_tool")
+
 
 def _connector(_input: Any) -> str:
     return "ok"
@@ -131,14 +155,16 @@ def test_production_tool_tier_matches_adr_table(
 
 async def test_t3_tool_revalidated_even_under_read_permission_name() -> None:
     """The exact gap C.10 closes: a T3 tool named `read:x` (no `exec:`
-    prefix) must still be revalidated at call time."""
+    prefix) must still be revalidated at call time. `read:files` is the
+    real, registered instance of this shape (`ReadFiles(Read)` at T3, PR1
+    Resolved Decision 1) -- no synthetic unregistered name needed."""
     from agents_system.harness.factory import EquippedRuntime
     from agents_system.harness.interceptor import PolicyViolation, intercept
     from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="disguised_t3_tool",
-        required_permissions=("read:innocuous",),  # deliberately NOT exec:*
+        required_permissions=("read:files",),  # deliberately NOT exec:*
         connector=_connector,
         tier=Tier.T3,
     )
@@ -166,7 +192,7 @@ async def test_t1_tool_under_read_permission_is_not_revalidated() -> None:
 
     spec = ToolSpec(
         name="plain_read_tool",
-        required_permissions=("read:innocuous",),
+        required_permissions=("read:catalog",),
         connector=_connector,
         tier=Tier.T1,
     )
@@ -219,8 +245,9 @@ async def test_every_previously_write_send_tool_still_revalidated(
 
 def test_write_permission_with_t1_tier_raises() -> None:
     from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionTierMismatchError
 
-    with pytest.raises(ValueError, match="write:orders"):
+    with pytest.raises(PermissionTierMismatchError, match="write:orders"):
         ToolSpec(
             name="bad_write_tool",
             required_permissions=("write:orders",),
@@ -231,8 +258,9 @@ def test_write_permission_with_t1_tier_raises() -> None:
 
 def test_send_permission_with_t0_tier_raises() -> None:
     from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionTierMismatchError
 
-    with pytest.raises(ValueError, match="send:message"):
+    with pytest.raises(PermissionTierMismatchError, match="send:message"):
         ToolSpec(
             name="bad_send_tool",
             required_permissions=("send:message",),
@@ -244,38 +272,179 @@ def test_send_permission_with_t0_tier_raises() -> None:
 def test_exec_permission_with_t2_tier_raises() -> None:
     """exec:* strictly requires T3 — T2 is not sufficient, unlike write:/send:."""
     from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionTierMismatchError
 
-    with pytest.raises(ValueError, match="EXEC:shell"):
+    with pytest.raises(PermissionTierMismatchError, match="exec:command"):
         ToolSpec(
             name="bad_exec_tool",
-            required_permissions=("EXEC:shell",),  # case variant, deliberately
+            required_permissions=("exec:command",),
             connector=_connector,
             tier=Tier.T2,
         )
 
 
 def test_whitespace_variant_write_permission_still_caught() -> None:
-    """Mirrors loader._is_exec_permission's own whitespace/case tolerance —
-    a stray leading/trailing space or case variant must not disarm the guard."""
+    """Registry resolution is exact-string, not prefix-tolerant (R2a) — no
+    case/whitespace tolerance requirement carries over from the old prefix
+    heuristic (see `test_unregistered_permission_name_fails_closed` below
+    for what a typo does instead). Repurposed into a second registered
+    Write-family permission failing the ceiling, at a different tier than
+    its sibling test above."""
     from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionTierMismatchError
 
-    with pytest.raises(ValueError):
+    with pytest.raises(PermissionTierMismatchError, match="write:order_items"):
         ToolSpec(
             name="bad_whitespace_tool",
+            required_permissions=("write:order_items",),
+            connector=_connector,
+            tier=Tier.T0,
+        )
+
+
+def test_unregistered_permission_name_fails_closed() -> None:
+    """The old prefix heuristic's own guarantee — a case/whitespace typo
+    must not silently disarm the guard — still holds, just via a different
+    mechanism: a registered-name lookup treats the typo as a distinct,
+    unregistered string and fails closed instead of matching it loosely."""
+    from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import UnknownPermissionNameError
+
+    with pytest.raises(UnknownPermissionNameError):
+        ToolSpec(
+            name="bad_typo_tool",
             required_permissions=(" Write:Orders ",),
             connector=_connector,
             tier=Tier.T1,
         )
 
 
+# ---------------------------------------------------------------------------
+# 4b. R2b (floor): a T2/T3 tool's required permissions must include at
+#    least one that reaches the tool's own tier — R2a's ceiling alone would
+#    let a T2/T3 tool hide behind a cheap, low-tier permission.
+# ---------------------------------------------------------------------------
+
+
+def test_t3_tool_requiring_only_low_tier_permission_fails_floor() -> None:
+    """R2a alone would pass (0<=3); R2b's floor still rejects it."""
+    from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionFloorViolationError
+
+    with pytest.raises(PermissionFloorViolationError, match="read:catalog"):
+        ToolSpec(
+            name="bad_floor_tool",
+            required_permissions=("read:catalog",),
+            connector=_connector,
+            tier=Tier.T3,
+        )
+
+
+def test_t1_tool_has_no_floor_requirement() -> None:
+    from agents_system.harness.registry import Tier, ToolSpec
+
+    spec = ToolSpec(
+        name="t1_floor_exempt",
+        required_permissions=("read:catalog",),
+        connector=_connector,
+        tier=Tier.T1,
+    )
+
+    assert spec.tier is Tier.T1
+
+
+def test_t2_tool_with_mixed_tier_permissions_passes_floor() -> None:
+    """`max(0, 2) >= 2` — one required permission reaching the tool's own
+    tier is enough, even alongside a lower-tier one."""
+    from agents_system.harness.registry import Tier, ToolSpec
+
+    spec = ToolSpec(
+        name="mixed_floor_tool",
+        required_permissions=("read:catalog", "write:orders"),
+        connector=_connector,
+        tier=Tier.T2,
+    )
+
+    assert spec.tier is Tier.T2
+
+
+def test_t0_tool_with_no_required_permissions_has_no_floor_requirement() -> None:
+    from agents_system.harness.registry import Tier, ToolSpec
+
+    spec = ToolSpec(
+        name="t0_no_perms", required_permissions=(), connector=_connector, tier=Tier.T0
+    )
+
+    assert spec.required_permissions == ()
+
+
+@pytest.mark.parametrize("tier_name", ["T2", "T3"])
+def test_t2_and_t3_tool_with_no_required_permissions_fails_floor(
+    tier_name: str,
+) -> None:
+    """The floor's "MUST require at least one permission" is not
+    vacuously satisfied by requiring none — R2b's `any(...)` over an empty
+    `required_permissions` is `False`, so a T2/T3 tool declaring no
+    permissions at all fails the floor exactly like one that requires only
+    low-tier permissions does."""
+    from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionFloorViolationError
+
+    with pytest.raises(PermissionFloorViolationError, match="none declared"):
+        ToolSpec(
+            name="no_perms_floor_violation",
+            required_permissions=(),
+            connector=_connector,
+            tier=Tier(tier_name),
+        )
+
+
+def test_order_writer_shaped_tool_satisfies_both_r2a_and_r2b() -> None:
+    """`order_writer`'s own two Write-T2 permissions independently satisfy
+    the ceiling (2<=2 both) and the floor (max(2,2)>=2)."""
+    from agents_system.harness.registry import Tier, ToolSpec
+
+    spec = ToolSpec(
+        name="order_writer_shaped",
+        required_permissions=("write:orders", "write:order_items"),
+        connector=_connector,
+        tier=Tier.T2,
+    )
+
+    assert spec.tier is Tier.T2
+
+
+def test_read_file_shaped_tool_now_passes_r2a_and_r2b() -> None:
+    """Resolved Decision 1 end-to-end: `read:files` resolves to `ReadFiles`
+    (`Read` escalated to T3, shipped in PR1), so a `read_file`-shaped
+    ToolSpec (tier=T3, required_permissions=("read:files",)) now succeeds
+    under both R2a (3>=3) and R2b (max(3)>=3) — previously the sole R2b
+    exception the spec's compatibility audit found."""
+    from agents_system.harness.registry import Tier, ToolSpec
+
+    spec = ToolSpec(
+        name="read_file_shaped",
+        required_permissions=("read:files",),
+        connector=_connector,
+        tier=Tier.T3,
+    )
+
+    assert spec.tier is Tier.T3
+
+
 @pytest.mark.parametrize(
     "perm,tier_name",
     [
         ("write:orders", "T2"),
-        ("write:orders", "T3"),
         ("send:message", "T2"),
-        ("send:message", "T3"),
-        ("exec:shell", "T3"),
+        # ("write:orders", "T3") and ("send:message", "T3") are deliberately
+        # NOT here: R2b (the floor, added once PR2-T2 lands) rejects a T3
+        # tool whose only required permission is a T2-tier one (max(2)>=3 is
+        # false) — the same gap `read_file` hit before PR1's `ReadFiles`
+        # escalation. These two single-permission T3 combos are no longer
+        # "construct cleanly" cases; see test_capability_tiers.py's R2b
+        # section for the floor-violation coverage instead.
+        ("exec:command", "T3"),
         ("read:catalog", "T0"),
         ("read:catalog", "T1"),
     ],
@@ -331,8 +500,9 @@ async def test_always_revalidate_t1_tool_still_revalidated() -> None:
 
 def test_run_permission_with_t0_tier_raises() -> None:
     from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionTierMismatchError
 
-    with pytest.raises(ValueError, match="run:check_stock"):
+    with pytest.raises(PermissionTierMismatchError, match="run:check_stock"):
         ToolSpec(
             name="bad_run_tool_t0",
             required_permissions=("run:check_stock",),
@@ -343,8 +513,9 @@ def test_run_permission_with_t0_tier_raises() -> None:
 
 def test_run_permission_with_t1_tier_raises() -> None:
     from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionTierMismatchError
 
-    with pytest.raises(ValueError, match="run:check_stock"):
+    with pytest.raises(PermissionTierMismatchError, match="run:check_stock"):
         ToolSpec(
             name="bad_run_tool_t1",
             required_permissions=("run:check_stock",),
@@ -368,27 +539,39 @@ def test_run_permission_with_t2_tier_is_accepted() -> None:
     assert spec.tier is Tier.T2
 
 
-def test_run_permission_with_t3_tier_is_accepted() -> None:
+def test_run_permission_with_t3_tier_now_fails_the_floor() -> None:
+    """Spec's own documented scenario ("The declarative command-tool
+    factory can produce a floor-failing spec"): `Run` is T2, so a T3-tier
+    tool requiring only a `run:*` permission fails R2b's floor
+    (`max(2) >= 3` is false) — this used to construct cleanly under the old
+    prefix heuristic (which only demanded tier in {T2, T3}). Resolved
+    Decision 3 (PR2-T5) additionally narrows `_COMMAND_TOOL_MIN_TIER` so no
+    T3 declarative command tool can even reach this point via the loader;
+    this test proves the ToolSpec-level guard holds independent of that."""
     from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionFloorViolationError
 
-    spec = ToolSpec(
-        name="ok_run_tool_t3",
-        required_permissions=("run:dangerous_tool",),
-        connector=_connector,
-        tier=Tier.T3,
-    )
-
-    assert spec.tier is Tier.T3
+    with pytest.raises(PermissionFloorViolationError, match="run:dangerous_tool"):
+        ToolSpec(
+            name="bad_run_tool_t3",
+            required_permissions=("run:dangerous_tool",),
+            connector=_connector,
+            tier=Tier.T3,
+        )
 
 
 def test_run_permission_case_and_whitespace_variant_still_caught() -> None:
-    """Mirrors the write:/send:/exec: guards' own case/whitespace tolerance."""
+    """Repurposed like the write:/send: sibling above — registry lookups are
+    exact, so this now exercises a second Run-family ceiling violation using
+    a distinct registered name; the unregistered-typo guarantee lives in
+    `test_unregistered_permission_name_fails_closed`."""
     from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionTierMismatchError
 
-    with pytest.raises(ValueError):
+    with pytest.raises(PermissionTierMismatchError, match="run:dangerous_tool"):
         ToolSpec(
             name="bad_run_whitespace",
-            required_permissions=(" RUN:Check_Stock ",),
+            required_permissions=("run:dangerous_tool",),
             connector=_connector,
             tier=Tier.T0,
         )

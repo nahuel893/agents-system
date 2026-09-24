@@ -9,11 +9,16 @@ lookup against explicitly registered entries only.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 
-from .base import Permission
+from agents_system.harness.registry import Tier
+
+from .base import Permission, tier_rank
 from .errors import (
     InvalidPermissionTierError,
+    PermissionFloorViolationError,
     PermissionRegistrationCollisionError,
+    PermissionTierMismatchError,
     UnknownPermissionNameError,
 )
 
@@ -42,20 +47,49 @@ class PermissionRegistry:
                 "cannot be registered as a required or granted permission",
             )
         with self._lock:
-            existing_cls = self._by_name.get(name)
-            existing_name = self._by_class.get(cls)
-            if existing_cls is cls and existing_name == name:
-                return  # exact re-registration -- idempotent, per spec
-            if existing_cls is not None:
-                raise PermissionRegistrationCollisionError(
-                    name, existing_cls=existing_cls, incoming_cls=cls
-                )
-            if existing_name is not None:
-                raise PermissionRegistrationCollisionError(
-                    name, incoming_cls=cls, existing_name=existing_name
-                )
-            self._by_name[name] = cls
-            self._by_class[cls] = name
+            self._register_locked(cls, name)
+
+    def _register_locked(self, cls: type[Permission], name: str) -> None:
+        """Insert `cls`/`name` into both dicts. Caller MUST already hold
+        `self._lock` -- shared by `register()` and `get_or_register()` so
+        neither duplicates the collision/idempotency rules.
+        """
+        existing_cls = self._by_name.get(name)
+        existing_name = self._by_class.get(cls)
+        if existing_cls is cls and existing_name == name:
+            return  # exact re-registration -- idempotent, per spec
+        if existing_cls is not None:
+            raise PermissionRegistrationCollisionError(
+                name, existing_cls=existing_cls, incoming_cls=cls
+            )
+        if existing_name is not None:
+            raise PermissionRegistrationCollisionError(
+                name, incoming_cls=cls, existing_name=existing_name
+            )
+        self._by_name[name] = cls
+        self._by_class[cls] = name
+
+    def get_or_register(
+        self, name: str, factory: Callable[[], type[Permission]]
+    ) -> type[Permission]:
+        """Atomic get-or-create: return the class already registered under
+        `name`, or call `factory()` to build one and register it -- all
+        under a single lock acquisition.
+
+        Closes the TOCTOU window a separate `resolve()`-then-`register()`
+        pair leaves open: two concurrent callers could both see `name` as
+        unregistered, both build a class, and the second registration would
+        then either silently lose the first caller's class or spuriously
+        collide. `factory` is called at most once per call to this method,
+        and only when `name` is genuinely not yet registered.
+        """
+        with self._lock:
+            existing = self._by_name.get(name)
+            if existing is not None:
+                return existing
+            cls = factory()
+            self._register_locked(cls, name)
+            return cls
 
     def resolve(self, name: str) -> type[Permission]:
         """Forward resolution: wire name -> registered class."""
@@ -94,3 +128,48 @@ class PermissionRegistry:
 #: Package-global registry instance every built-in and downstream
 #: permission is registered into.
 permission_registry = PermissionRegistry()
+
+
+def evaluate_tool_spec(
+    name: str, tier: Tier, required_permissions: tuple[str, ...]
+) -> None:
+    """R2a (ceiling) + R2b (floor): validate a `ToolSpec`'s required
+    permissions against its own declared tier. Called from
+    `ToolSpec.__post_init__` via a deferred import (design.md's Cycle
+    Avoidance); never mutates the registry, only resolves and compares.
+
+    R2a: every required permission's tier MUST NOT exceed the tool's own
+    tier (`t >= p.tier`) -- raises `PermissionTierMismatchError`.
+    R2b: a T2/T3 tool MUST require at least one permission whose tier
+    reaches its own (`max(p.tier for p in required) >= t`) -- raises
+    `PermissionFloorViolationError`. Independent predicates; both run and
+    both must pass. Compared via `tier_rank`, not `Tier`'s own `<=`/`>=`
+    (see `base.tier_rank`'s docstring for why).
+    """
+    resolved = [
+        (perm_name, permission_registry.resolve(perm_name))
+        for perm_name in required_permissions
+    ]
+    tool_rank = tier_rank(tier)
+    for perm_name, cls in resolved:
+        if not (tool_rank >= tier_rank(cls.tier)):
+            raise PermissionTierMismatchError(name, tier, perm_name, cls)
+
+    if tier in (Tier.T2, Tier.T3) and not any(
+        tier_rank(cls.tier) >= tool_rank for _, cls in resolved
+    ):
+        raise PermissionFloorViolationError(name, tier, resolved)
+
+
+def covers(granted: type[Permission], required: type[Permission]) -> bool:
+    """R3: does a grant of `granted` cover a required permission `required`?
+
+    True when `required` is `granted` itself or a registered subclass of it,
+    AND `required`'s declared tier does not exceed `granted`'s (`D.tier <=
+    P.tier`) -- a descendant that escalated its own tier needs its own
+    explicit grant. Compared via `tier_rank`, not `Tier`'s own `<=`
+    (see `base.tier_rank`'s docstring for why).
+    """
+    return issubclass(required, granted) and tier_rank(required.tier) <= tier_rank(
+        granted.tier
+    )
