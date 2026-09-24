@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -284,12 +284,12 @@ class TestRecorderAutoFields:
         from agents_system.audit.events import SkillLoaded
         from agents_system.audit.recorder import record_skill_loaded
 
-        before = datetime.now(tz=timezone.utc)
+        before = datetime.now(tz=UTC)
         definition = MockDefinition()
         event = await record_skill_loaded(definition, skill="test-skill")
-        after = datetime.now(tz=timezone.utc)
+        after = datetime.now(tz=UTC)
         assert isinstance(event, SkillLoaded)
-        assert event.occurred_at.tzinfo == timezone.utc
+        assert event.occurred_at.tzinfo == UTC
         assert before <= event.occurred_at <= after
 
 

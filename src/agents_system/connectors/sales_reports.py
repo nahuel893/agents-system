@@ -43,8 +43,9 @@ deleted client-specific catalog used, and it remains open to any consumer.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Any, Mapping
+from typing import Any
 
 from sqlalchemy import DateTime, Integer, bindparam, text
 

@@ -83,7 +83,7 @@ def test_unknown_attribute_raises_attribute_error() -> None:
     with pytest.raises(
         AttributeError, match=r"module 'agents_system' has no attribute 'DoesNotExist'"
     ):
-        agents_system.DoesNotExist  # type: ignore[attr-defined]
+        agents_system.DoesNotExist  # type: ignore[attr-defined]  # noqa: B018
 
 
 def test_unknown_attribute_is_not_key_error_or_import_error() -> None:
@@ -93,7 +93,7 @@ def test_unknown_attribute_is_not_key_error_or_import_error() -> None:
     import agents_system
 
     try:
-        agents_system.TotallyMadeUpName  # type: ignore[attr-defined]
+        agents_system.TotallyMadeUpName  # type: ignore[attr-defined]  # noqa: B018
     except AttributeError:
         pass
     except Exception as exc:  # pragma: no cover - failure path
@@ -125,6 +125,7 @@ def _run_import_probe(probe: str) -> subprocess.CompletedProcess[str]:
         text=True,
         timeout=60,
         cwd=str(REPO_ROOT),
+        check=False,
     )
 
 

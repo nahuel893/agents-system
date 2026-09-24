@@ -16,8 +16,9 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# App-state contextvar for the singleton
-_app_ctx: ContextVar[dict[str, Any]] = ContextVar("audit_sink_ctx", default={})
+# App-state contextvar for the singleton. No shared mutable default: every
+# `.get(...)` call site below supplies its own fresh `{}`.
+_app_ctx: ContextVar[dict[str, Any]] = ContextVar("audit_sink_ctx")
 
 
 class AuditSink:
@@ -39,7 +40,7 @@ class AuditSink:
 
     def __init__(
         self,
-        session_factory: "async_sessionmaker[AsyncSession]",
+        session_factory: async_sessionmaker[AsyncSession],
         maxsize: int = 1000,
     ) -> None:
         self._session_factory = session_factory
@@ -55,7 +56,7 @@ class AuditSink:
     # ---------------------------------------------------------------------------
 
     @classmethod
-    def current(cls) -> "AuditSink":
+    def current(cls) -> AuditSink:
         """Return the current AuditSink from the app context."""
         ctx = _app_ctx.get({})
         sink = ctx.get("audit_sink")
@@ -69,7 +70,7 @@ class AuditSink:
         return sink
 
     @classmethod
-    def set_current(cls, sink: "AuditSink") -> None:
+    def set_current(cls, sink: AuditSink) -> None:
         """Register ``sink`` as the current singleton in the app context."""
         ctx = _app_ctx.get({}).copy()
         ctx["audit_sink"] = sink
@@ -155,7 +156,7 @@ class AuditSink:
                 # Wait up to 100ms for an event
                 event = await asyncio.wait_for(self._queue.get(), timeout=0.1)
                 batch.append(event)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass  # fell through — check flush conditions
 
             now = time.monotonic()
@@ -192,9 +193,8 @@ class AuditSink:
             # `exc` must be bound: `str(Exception())` constructs a fresh empty
             # exception and stringifies THAT, so the only record of a failed
             # audit write carried an empty string.
-            logger.error(
+            logger.exception(
                 "audit.drain_failed",
                 batch_size=len(batch),
                 error=str(exc),
-                exc_info=True,
             )

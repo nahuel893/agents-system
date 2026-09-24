@@ -96,7 +96,7 @@ async def search_catalog(
     query: str,
     *,
     settings: Settings,
-    embedder: "EmbeddingProvider",
+    embedder: EmbeddingProvider,
     source: CatalogSource,
 ) -> CatalogSearchResult:
     """Embed the query once and classify vector candidates by similarity."""

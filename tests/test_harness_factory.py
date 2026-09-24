@@ -306,15 +306,14 @@ def test_build_runtime_logs_skill_missing_before_raising() -> None:
     reg.register(_spec("tool_alpha", ["read:alpha"]))
     reg.register(_spec("tool_beta", ["read:beta"]))
 
-    with structlog.testing.capture_logs() as logs:
-        with pytest.raises(FactoryError):
-            build_runtime(
-                "simple-role",
-                reg,
-                ["read:alpha", "read:beta", "write:gamma"],
-                client="client-a",
-                roots=_fixture_roots(),
-            )
+    with structlog.testing.capture_logs() as logs, pytest.raises(FactoryError):
+        build_runtime(
+            "simple-role",
+            reg,
+            ["read:alpha", "read:beta", "write:gamma"],
+            client="client-a",
+            roots=_fixture_roots(),
+        )
 
     events = [e["event"] for e in logs]
     assert "factory.skill_missing" in events

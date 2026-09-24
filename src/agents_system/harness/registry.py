@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 
 class Tier(str, Enum):
@@ -90,34 +91,37 @@ class ToolSpec:
         """
         for permission in self.required_permissions:
             normalized = permission.strip().lower()
-            if normalized.startswith(_EXEC_PREFIX):
-                if self.tier is not Tier.T3:
-                    raise ValueError(
-                        f"ToolSpec {self.name!r}: permission {permission!r} is "
-                        f"in the exec:* family, which requires tier=T3 (host "
-                        f"execution, ADR-002 C.10) — got tier={self.tier.value}."
-                    )
-            elif normalized.startswith(_WRITE_SEND_PREFIXES):
-                if self.tier not in (Tier.T2, Tier.T3):
-                    raise ValueError(
-                        f"ToolSpec {self.name!r}: permission {permission!r} is "
-                        f"a write:/send: permission, which requires tier in "
-                        f"{{T2, T3}} (ADR-002 C.10) — got tier={self.tier.value}."
-                    )
-            elif normalized.startswith(_RUN_PREFIX):
-                if self.tier not in (Tier.T2, Tier.T3):
-                    raise ValueError(
-                        f"ToolSpec {self.name!r}: permission {permission!r} is "
-                        f"in the run:* family (ADR-002 C.12 command tools), "
-                        f"which requires tier in {{T2, T3}} — a T0/T1 command "
-                        f"tool is never revalidated at call time "
-                        f"(interceptor._is_sensitive only checks T2/T3 or "
-                        f"always_revalidate), which would let an "
-                        f"untrusted_input role reach an unrevalidated host "
-                        f"command. ADR-002 C.12 allows untrusted_input roles "
-                        f"to hold only a NARROW T2 (or T3) command tool, never "
-                        f"an unrevalidated one — got tier={self.tier.value}."
-                    )
+            if normalized.startswith(_EXEC_PREFIX) and self.tier is not Tier.T3:
+                raise ValueError(
+                    f"ToolSpec {self.name!r}: permission {permission!r} is "
+                    f"in the exec:* family, which requires tier=T3 (host "
+                    f"execution, ADR-002 C.10) — got tier={self.tier.value}."
+                )
+            elif normalized.startswith(_WRITE_SEND_PREFIXES) and self.tier not in (
+                Tier.T2,
+                Tier.T3,
+            ):
+                raise ValueError(
+                    f"ToolSpec {self.name!r}: permission {permission!r} is "
+                    f"a write:/send: permission, which requires tier in "
+                    f"{{T2, T3}} (ADR-002 C.10) — got tier={self.tier.value}."
+                )
+            elif normalized.startswith(_RUN_PREFIX) and self.tier not in (
+                Tier.T2,
+                Tier.T3,
+            ):
+                raise ValueError(
+                    f"ToolSpec {self.name!r}: permission {permission!r} is "
+                    f"in the run:* family (ADR-002 C.12 command tools), "
+                    f"which requires tier in {{T2, T3}} — a T0/T1 command "
+                    f"tool is never revalidated at call time "
+                    f"(interceptor._is_sensitive only checks T2/T3 or "
+                    f"always_revalidate), which would let an "
+                    f"untrusted_input role reach an unrevalidated host "
+                    f"command. ADR-002 C.12 allows untrusted_input roles "
+                    f"to hold only a NARROW T2 (or T3) command tool, never "
+                    f"an unrevalidated one — got tier={self.tier.value}."
+                )
 
     def to_langchain_tool_schema(self) -> dict[str, Any]:
         return {

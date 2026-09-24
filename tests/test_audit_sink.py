@@ -4,21 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agents_system.audit.events import ToolCallAttempted
 from agents_system.audit.sink import AuditSink
-import uuid
-from datetime import datetime, timezone
 
 
 def make_event(sequence: int = 1, corr_id: str = "test-corr") -> ToolCallAttempted:
     """Create a real ToolCallAttempted event for testing."""
     return ToolCallAttempted(
         event_id=uuid.uuid4(),
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
         correlation_id=corr_id,
         sequence=sequence,
         role="test-role",
@@ -309,7 +309,7 @@ class TestAuditSinkSequenceAllocation:
     @pytest.mark.asyncio
     async def test_sequence_distinct_per_correlation_id(self):
         """Two events for same correlation_id get distinct sequences."""
-        from agents_system.audit.recorder import _seq_counter, _allocate_sequence
+        from agents_system.audit.recorder import _allocate_sequence, _seq_counter
 
         # Clean slate for this test
         _seq_counter.clear()
@@ -327,7 +327,7 @@ class TestAuditSinkSequenceAllocation:
     @pytest.mark.asyncio
     async def test_sequence_resets_for_new_correlation_id(self):
         """Different correlation_ids get independent sequences (each starts at 1)."""
-        from agents_system.audit.recorder import _seq_counter, _allocate_sequence
+        from agents_system.audit.recorder import _allocate_sequence, _seq_counter
 
         # Clean slate for this test
         _seq_counter.clear()
@@ -345,7 +345,7 @@ class TestAuditSinkSequenceAllocation:
     @pytest.mark.asyncio
     async def test_sequence_allocator_is_async_safe(self):
         """Concurrent sequence allocations are all distinct (async-safe)."""
-        from agents_system.audit.recorder import _seq_counter, _allocate_sequence
+        from agents_system.audit.recorder import _allocate_sequence, _seq_counter
 
         # Clean slate for this test
         _seq_counter.clear()

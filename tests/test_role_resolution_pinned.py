@@ -377,12 +377,13 @@ def test_no_role_outside_the_operator_branch_can_reach_the_host() -> None:
     taken back. Grepping the resolved surface — not the manifests — catches a
     grant that arrives by inheritance rather than declaration.
     """
+    from platform_role_contract import discover_concrete_platform_roles
+
     from agents_system.harness.loader import (
         RootConfig,
         _extends_target,
         _load_role_files,
     )
-    from platform_role_contract import discover_concrete_platform_roles
 
     host_permissions = {"exec:command", "read:files"}
     host_tools = {"use_term", "read_file"}

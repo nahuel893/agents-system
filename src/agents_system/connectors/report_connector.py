@@ -20,7 +20,8 @@ SELECT and never calls either.
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import structlog
 from sqlalchemy.exc import SQLAlchemyError

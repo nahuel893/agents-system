@@ -540,7 +540,7 @@ def _build_chat_model(provider: str) -> Any:
     )
 
 
-async def _outbox_backlog(engine: Any) -> OutboxBacklogCounts | None:  # noqa: ANN401
+async def _outbox_backlog(engine: Any) -> OutboxBacklogCounts | None:
     """Best-effort outbox backlog counts for GET /health (#141).
 
     ``None`` on any failure -- opening a session or querying can fail for

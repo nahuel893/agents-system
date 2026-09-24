@@ -76,6 +76,18 @@ include = [
 src = ["src"]
 target-version = "py312"
 
+[tool.ruff.lint]
+ignore = [
+    # FastAPI's `Depends(...)` in a parameter default is the framework's own
+    # dependency-injection idiom, not an accidental eager call.
+    "B008",
+    # This codebase's error-boundary layers (webhook worker, health probes,
+    # RAG fallback, audit sink) deliberately catch `Exception` broadly and
+    # log-and-continue/log-and-degrade by design, so a crash in one turn/probe
+    # never takes down the process; narrowing each site would fight the design.
+    "BLE001",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
