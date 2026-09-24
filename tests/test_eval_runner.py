@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 from unittest.mock import patch
 
+import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -525,3 +526,142 @@ async def test_run_scenario_restores_the_previously_registered_audit_sink() -> N
         assert AuditSink.current() is previous
     finally:
         await previous.stop()
+
+
+# ---------------------------------------------------------------------------
+# run_scenario -- registry_factory (#171): a fresh registry per run, for a
+# stateful backend that must not leak state across runs (PR #176 review note
+# 1: ReferenceBackends keeps a per-instance message ledger).
+# ---------------------------------------------------------------------------
+
+
+async def test_run_scenario_requires_exactly_one_of_registry_or_registry_factory() -> (
+    None
+):
+    from conftest import build_test_registry
+
+    model = ToolAwareFakeModel(responses=[AIMessage(content="hi")])
+
+    with pytest.raises(ValueError):
+        await run_scenario(
+            _scenario(),
+            model=model,
+            model_name="fake-model",
+            roots=RootConfig(),
+            runs=1,
+        )
+
+    with pytest.raises(ValueError):
+        await run_scenario(
+            _scenario(),
+            model=model,
+            model_name="fake-model",
+            registry=build_test_registry(),
+            registry_factory=build_test_registry,
+            roots=RootConfig(),
+            runs=1,
+        )
+
+
+async def test_run_scenario_registry_factory_is_called_once_per_run() -> None:
+    from conftest import build_test_registry
+
+    factory_calls: list[int] = []
+
+    def factory() -> Any:
+        factory_calls.append(len(factory_calls))
+        return build_test_registry()
+
+    model = ToolAwareFakeModel(
+        responses=[AIMessage(content="hi")] * 3,
+    )
+
+    result = await run_scenario(
+        _scenario(),
+        model=model,
+        model_name="fake-model",
+        registry_factory=factory,
+        roots=RootConfig(),
+        runs=3,
+    )
+
+    assert len(result.runs) == 3
+    assert len(factory_calls) == 3
+
+
+async def test_run_scenario_registry_factory_gives_each_run_an_unshared_backend() -> (
+    None
+):
+    """A stateful connector closed over its OWN counter (rebuilt fresh by
+    `factory` on every call) must observe count == 1 on every run -- if
+    `run_scenario` reused one registry across runs instead of rebuilding it
+    per run, the count would instead climb 1, 2, 3, proving state leaked."""
+    from conftest import build_test_registry
+
+    observed_counts: list[int] = []
+
+    def factory() -> Any:
+        state = {"count": 0}
+
+        def stateful_catalog_search(inputs: dict[str, Any]) -> dict[str, Any]:
+            state["count"] += 1
+            observed_counts.append(state["count"])
+            return {"results": []}
+
+        return build_test_registry(catalog_connector=stateful_catalog_search)
+
+    model = ToolAwareFakeModel(
+        responses=[
+            _tool_call("catalog_search", {"q": "Item Alpha"}),
+            AIMessage(content="ok"),
+        ]
+        * 3
+    )
+
+    result = await run_scenario(
+        _scenario(tools_called=("catalog_search",)),
+        model=model,
+        model_name="fake-model",
+        registry_factory=factory,
+        roots=RootConfig(),
+        runs=3,
+    )
+
+    assert len(result.runs) == 3
+    assert observed_counts == [1, 1, 1]
+
+
+async def test_run_scenario_registry_only_behavior_is_unchanged() -> None:
+    """The original `registry=` path still builds exactly ONE EquippedRuntime
+    up front and reuses it for every run -- proven here the same way state
+    leakage is proven above: a stateful connector's counter climbs across
+    runs when ONE registry (and therefore one closure) is shared."""
+    from conftest import build_test_registry
+
+    state = {"count": 0}
+    observed_counts: list[int] = []
+
+    def stateful_catalog_search(inputs: dict[str, Any]) -> dict[str, Any]:
+        state["count"] += 1
+        observed_counts.append(state["count"])
+        return {"results": []}
+
+    model = ToolAwareFakeModel(
+        responses=[
+            _tool_call("catalog_search", {"q": "Item Alpha"}),
+            AIMessage(content="ok"),
+        ]
+        * 3
+    )
+
+    result = await run_scenario(
+        _scenario(tools_called=("catalog_search",)),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(catalog_connector=stateful_catalog_search),
+        roots=RootConfig(),
+        runs=3,
+    )
+
+    assert len(result.runs) == 3
+    assert observed_counts == [1, 2, 3]

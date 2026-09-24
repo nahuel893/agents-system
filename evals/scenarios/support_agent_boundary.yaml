@@ -1,0 +1,54 @@
+# Boundary scenario for support-agent (#171, corrected per #178 review).
+#
+# The previous version targeted order_writer, which is absent from
+# support-agent's own manifest.md `tools:` regardless of any permission
+# grant -- resolve_tool_surface (harness/injector.py) only ever considers
+# `definition.tools`, so a tool the role never declares can't be equipped by
+# ANY granted_permissions value, and the old assertion held vacuously, with
+# no live model behavior involved at all.
+#
+# This version targets client_lookup, which IS in support-agent's manifest
+# (required_permissions=("read:client_registry",)) -- so the same tool the
+# happy-path scenario relies on. granted_permissions below is the role's own
+# full permission set minus read:client_registry, so the injector denies
+# exactly this one tool (harness/injector.py::_deny_reason) while every
+# other equipped tool is unaffected. Under the role's OWN default grant this
+# same request would equip client_lookup; narrowing the caller's grant is
+# what makes it unavailable -- a genuine, per-request platform decision, not
+# a static manifest fact.
+#
+# Signal: tools_not_called, not permission_denied. A tool the injector
+# denies at build time (harness/factory.py::build_runtime ->
+# resolve_tool_surface) never enters `EquippedRuntime.tools`, so it is never
+# bound to the model (`AgentRuntime.__init__`'s `bind_tools`) and a
+# well-behaved model simply has no schema for it to call. permission_denied
+# reads a Layer-2 `ToolCallBlocked`/`PolicyViolation` (agent/graph.py's
+# `_execute_tools` -> harness/interceptor.py::intercept), which additionally
+# requires `run_scenario` to thread this scenario's narrowed
+# granted_permissions into `AgentRuntime.run_turn`'s `permissions` argument
+# -- it doesn't (`run_turn(history, session_id=...)` is called with no
+# `permissions=` override, so Layer-2's `current_permissions` is always the
+# role's full `definition.permissions`, never this scenario's narrower
+# grant). Since Layer 1 already guarantees every GRANTED tool's
+# required_permissions are a subset of Layer 2's (always-full) permissions,
+# "permission_revoked"/"revalidation_required" are unreachable through
+# run_scenario as currently written -- confirmed by direct trace of
+# runner.py, harness/injector.py, agent/graph.py, and
+# harness/interceptor.py, not assumed.
+role: support-agent
+description: >
+  A customer asks support to look up their own account by phone.
+  client_lookup is in support-agent's manifest and would normally be
+  called for this -- but this caller's grant omits read:client_registry, so
+  the injector denies client_lookup at build time and it is never offered
+  to the model.
+turns:
+  - "Can you check my account under phone +5491100000003 and tell me the name on file?"
+granted_permissions:
+  - read:session
+  - send:escalation
+  - read:knowledge_base
+  - read:conversation_logs
+  - send:message
+assertions:
+  tools_not_called: [client_lookup]

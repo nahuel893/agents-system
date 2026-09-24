@@ -1,0 +1,18 @@
+# Happy path for summary-agent (#171).
+#
+# A request to summarize the pre-seeded demo conversation session.
+# src/agentsys/evals/live_registry.py's build_live_registry seeds
+# session_id "demo-session-1" with a short transcript specifically so this
+# call can plausibly succeed against the real reference
+# LLMConversationSummarizer -- a plain YAML scenario has no other way to
+# seed a transcript, since LLMConversationSummarizer.summarize raises
+# LookupError for an unseeded session_id.
+role: summary-agent
+description: >
+  A request to summarize a real, pre-seeded demo conversation session.
+  summary-agent's own manifest grants conversation_summarizer and
+  read:conversation_logs.
+turns:
+  - "Please summarize the conversation in session demo-session-1 in a couple of sentences."
+assertions:
+  tools_called: [conversation_summarizer]

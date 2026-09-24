@@ -26,7 +26,7 @@ from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMes
 from agentsys.agent.graph import AgentRuntime
 from agentsys.audit.sink import AuditSink
 from agentsys.evals.schema import Scenario, ScenarioAssertions
-from agentsys.harness.factory import build_runtime
+from agentsys.harness.factory import EquippedRuntime, build_runtime
 from agentsys.harness.loader import RootConfig, resolve
 from agentsys.harness.registry import ToolRegistry
 
@@ -282,7 +282,8 @@ async def run_scenario(
     *,
     model: BaseChatModel,
     model_name: str,
-    registry: ToolRegistry,
+    registry: ToolRegistry | None = None,
+    registry_factory: Callable[[], ToolRegistry] | None = None,
     roots: RootConfig | None = None,
     runs: int = 1,
     audit_sink_factory: Callable[[], _CapturingAuditSink] = _CapturingAuditSink,
@@ -298,6 +299,18 @@ async def run_scenario(
     as a failed run with `error` set, rather than propagating and aborting
     every remaining run.
 
+    Exactly one of `registry` / `registry_factory` must be given (#171):
+
+    - `registry`: the original behavior. One `ToolRegistry`, and one
+      `EquippedRuntime` built from it up front, reused for every one of
+      `runs` runs. Correct for a stateless registry -- wrong for one backed
+      by process-local mutable state (e.g. `ReferenceBackends`'s message
+      ledger, PR #176 review note 1), where reusing it across runs leaks
+      that state between them.
+    - `registry_factory`: called once PER RUN, and `build_runtime` re-run
+      against each fresh registry it returns, so every run gets its own,
+      unshared backend instances.
+
     `audit_sink_factory` builds the `AuditSink` registered for the whole
     call (default: an in-memory `_CapturingAuditSink`) so the platform's
     real audit wiring actually delivers during an eval instead of every
@@ -305,6 +318,12 @@ async def run_scenario(
     sink was registered before this call, if any, is restored afterward;
     injectable for tests that want their own handle on what was captured.
     """
+    if (registry is None) == (registry_factory is None):
+        raise ValueError(
+            "run_scenario requires exactly one of `registry` or "
+            "`registry_factory`, not both and not neither."
+        )
+
     roots = roots if roots is not None else RootConfig()
 
     # Registered BEFORE resolve()/build_runtime() below, not just before the
@@ -332,16 +351,26 @@ async def run_scenario(
             granted_permissions = resolve(
                 scenario.role, client=scenario.client, roots=roots
             ).permissions
-        equipped = build_runtime(
-            scenario.role,
-            registry,
-            granted_permissions,
-            client=scenario.client,
-            roots=roots,
-        )
+
+        def _build_equipped(active_registry: ToolRegistry) -> EquippedRuntime:
+            return build_runtime(
+                scenario.role,
+                active_registry,
+                granted_permissions,
+                client=scenario.client,
+                roots=roots,
+            )
+
+        # `registry`: build ONE EquippedRuntime up front, reused below for
+        # every run (original behavior). `registry_factory`: leave it unset
+        # here and rebuild fresh, once per run, inside the loop.
+        equipped = _build_equipped(registry) if registry is not None else None
 
         outcomes: list[RunOutcome] = []
         for index in range(runs):
+            if registry_factory is not None:
+                equipped = _build_equipped(registry_factory())
+            assert equipped is not None  # exactly one branch above set it
             agent = AgentRuntime(equipped, model)
             history: list[AnyMessage] = []
             try:

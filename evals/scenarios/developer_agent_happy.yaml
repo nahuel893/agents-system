@@ -1,0 +1,18 @@
+# Happy path for developer-agent (#171).
+#
+# Asks about a repository convention seeded into the shared knowledge base
+# specifically for this scenario (src/agentsys/evals/live_registry.py seeds
+# a "Repository engineering conventions" document). role.md: "Works on a
+# codebase ... conventions, runbooks, and the decisions a repository made
+# that its source does not explain" -- manifest.md's own rationale for
+# adding knowledge_retrieval on top of what operator-agent already grants.
+# Grounded in real seeded content, so the call can plausibly succeed.
+role: developer-agent
+description: >
+  Asks about a testing convention seeded into the knowledge base.
+  developer-agent's own manifest adds knowledge_retrieval and
+  read:knowledge_base on top of what it inherits from operator-agent.
+turns:
+  - "What's our testing convention in this repo -- do we write tests before or after the implementation code?"
+assertions:
+  tools_called: [knowledge_retrieval]

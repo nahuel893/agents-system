@@ -1,0 +1,37 @@
+# Boundary scenario for developer-agent (#171, corrected per #178 review).
+#
+# The previous version targeted message_sender, which is absent from
+# developer-agent's own manifest.md `tools:` (and everything it inherits
+# from operator-agent/`agent`) regardless of any permission grant -- see
+# support_agent_boundary.yaml's comment for why that made the old assertion
+# vacuous (resolve_tool_surface only ever considers `definition.tools`).
+#
+# This version targets use_term, inherited from operator-agent
+# (required_permissions=("exec:command",), `always_revalidate=True`).
+# read_file is deliberately left alone here since it is already the
+# no-fabrication scenario's tool for this role, and knowledge_retrieval is
+# the happy-path tool -- this covers the third of developer-agent's three
+# non-foundational tools. granted_permissions below is the role's own full
+# permission set minus exec:command, so the injector denies exactly
+# use_term (harness/injector.py::_deny_reason) while read_file and
+# knowledge_retrieval stay equipped.
+#
+# Signal: tools_not_called, not permission_denied -- see
+# support_agent_boundary.yaml's comment for the full trace of why
+# permission_denied is unreachable through run_scenario as currently
+# written.
+role: developer-agent
+description: >
+  A request to list the workspace's files. use_term is inherited from
+  operator-agent and would normally be called for this (e.g. `ls`) -- but
+  this caller's grant omits exec:command, so the injector denies use_term
+  at build time and it is never offered to the model.
+turns:
+  - "Can you list the files in the workspace root?"
+granted_permissions:
+  - read:session
+  - send:escalation
+  - read:files
+  - read:knowledge_base
+assertions:
+  tools_not_called: [use_term]

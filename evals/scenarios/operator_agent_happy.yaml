@@ -1,0 +1,20 @@
+# Happy path for operator-agent (#171).
+#
+# A command request within the sandboxed workspace the live-eval driver
+# provisions (tests/test_live_eval_roles.py builds a TerminalPolicy allowing
+# "ls", rooted at a workspace seeded with notes.txt). role.md: "Inspect and
+# operate on a working tree: run approved commands, read files, report what
+# it found." use_term is deliberately used here rather than read_file, since
+# it is the one of the two operator tools that actually runs through the
+# bwrap sandbox (ADR-002 C.14) -- read_file is a direct, unsandboxed file
+# read, so it alone would never exercise that path.
+role: operator-agent
+description: >
+  A request to list files in the sandboxed workspace with an allowlisted
+  command. operator-agent's own manifest grants use_term and exec:command
+  for exactly this, and this is the scenario that actually runs through the
+  bwrap sandbox.
+turns:
+  - "Please list the files in your workspace using ls."
+assertions:
+  tools_called: [use_term]

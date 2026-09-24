@@ -5,6 +5,10 @@ through the platform's own `resolve()`/`build_runtime()` path, and writes
 JSON + markdown results. See `docs/platform/live-eval.md`.
 """
 
+from agentsys.evals.live_registry import (
+    build_live_registry,
+    build_live_registry_factory,
+)
 from agentsys.evals.provider import build_eval_model, model_display_name
 from agentsys.evals.reporting import DEFAULT_RESULTS_DIR, write_results
 from agentsys.evals.runner import (
@@ -24,6 +28,8 @@ from agentsys.evals.schema import (
 )
 
 __all__ = [
+    "build_live_registry",
+    "build_live_registry_factory",
     "build_eval_model",
     "model_display_name",
     "DEFAULT_RESULTS_DIR",
