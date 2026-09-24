@@ -138,6 +138,16 @@ class Settings(BaseSettings):
     slack_webhook_url: str = ""
 
     # OpenAI-compatible adapter (D-012)
+    # #37 -- maximum accepted POST /v1/chat/completions body size, checked
+    # before JSON parsing (`integration.body_limits.read_bounded_body`, the
+    # same primitive #140's webhook_max_body_bytes guard uses). This route
+    # can be reached with NO authentication at all whenever adapter_api_key
+    # is unset (verify_bearer is a no-op dependency in that mode), so the
+    # size ceiling is the only thing standing between an anonymous caller
+    # and an unbounded read. Same 1 MiB default and rationale as
+    # webhook_max_body_bytes: generous headroom over any real chat-completion
+    # payload, not tuned to the byte.
+    adapter_max_body_bytes: int = Field(default=1_048_576, gt=0)
     adapter_api_key: str = ""
     adapter_provider: Literal["ollama", "groq", "anthropic", "openai_compatible"] = (
         "ollama"
