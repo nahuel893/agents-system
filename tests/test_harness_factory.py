@@ -195,7 +195,7 @@ def test_build_runtime_composes_prompt_from_role_body_and_skills() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Generic role (no client) — no skills, prompt is the role body alone
+# Generic role (no client) — no skills, prompt is the role body + escalation
 # ---------------------------------------------------------------------------
 def test_build_runtime_generic_role_has_no_skills() -> None:
     from agents_system.harness.factory import build_runtime
@@ -204,8 +204,12 @@ def test_build_runtime_generic_role_has_no_skills() -> None:
 
     assert runtime.skills == ()
     assert runtime.definition.deployment is None
-    # With no skills the composed prompt is exactly the role body (stripped).
-    assert runtime.system_prompt == runtime.definition.system_prompt.strip()
+    # With no skills, the composed prompt is the role body plus the rendered
+    # escalation_rules block (issue #36) -- there is no skill content to
+    # insert, but `sales-agent`'s policy.md declares real conditions, so the
+    # composed prompt is no longer byte-identical to the bare role body.
+    assert "customer_not_registered" in runtime.system_prompt
+    assert runtime.system_prompt.rstrip().endswith("Answer in the user's language.")
 
 
 # ---------------------------------------------------------------------------
@@ -366,3 +370,197 @@ def test_loading_skills_with_an_absent_deployments_root_raises_clearly(
         _load_skills(definition, "client-a", roots)
 
     assert "absent" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Issue #36 — resolved escalation_rules must reach the composed prompt
+# ---------------------------------------------------------------------------
+#
+# `policy.md`'s `escalation_rules.conditions` (`escalate_to` + `conditions`)
+# is structured data, parsed by `harness/loader.py::resolve()` into
+# `AgentDefinition.escalation_rules` -- but before this fix, `_compose_prompt`
+# never read it. A role's own `role.md` prose was the only place an
+# escalation condition ever reached the model, and only if someone
+# remembered to restate it there (see `accountant-agent`, which never does).
+
+
+def _fx_definition(escalation_rules: dict[str, Any]) -> Any:
+    """A minimal `AgentDefinition` with a realistic, contract-appended
+    `system_prompt`, so `_compose_prompt`'s strip/reappend logic exercises
+    the exact same base-contract text `resolve()` would produce."""
+    from agents_system.harness.loader import AgentDefinition, _append_base_contract
+
+    return AgentDefinition(
+        role_name="fx-role",
+        version="1.0",
+        deployment=None,
+        system_prompt=_append_base_contract("You are a test role."),
+        tools=(),
+        skills=(),
+        context={},
+        permissions=(),
+        autonomy="supervised",
+        escalation_rules=escalation_rules,
+        delegation_policy={},
+        memory_policy={},
+        audit_policy={},
+        execution_limits=None,
+    )
+
+
+def test_compose_prompt_renders_escalate_to_and_conditions_with_no_skills() -> None:
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition(
+        {
+            "escalate_to": "human",
+            "conditions": [
+                "required_tool_missing",
+                "figure_requested_outside_report_catalog",
+            ],
+        }
+    )
+
+    prompt = _compose_prompt(definition, ())
+
+    assert "human" in prompt
+    assert "required_tool_missing" in prompt
+    assert "figure_requested_outside_report_catalog" in prompt
+
+
+def test_compose_prompt_escalation_block_precedes_base_contract_no_skills() -> None:
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition(
+        {"escalate_to": "human", "conditions": ["confidence_below_threshold"]}
+    )
+
+    prompt = _compose_prompt(definition, ())
+
+    escalation_index = prompt.index("confidence_below_threshold")
+    contract_index = prompt.index("## base contract")
+    assert escalation_index < contract_index
+    # The base contract is still the prompt's LAST block (ADR-002 B.9).
+    assert prompt.rstrip().endswith("Answer in the user's language.")
+
+
+def test_compose_prompt_escalation_block_precedes_base_contract_with_skills() -> None:
+    """Skills insert content too (`_strip_base_contract` / re-append path) --
+    the escalation block must still land before the contract, not after."""
+    from agents_system.harness.factory import LoadedSkill, _compose_prompt
+
+    definition = _fx_definition(
+        {"escalate_to": "human", "conditions": ["no_knowledge_base_match"]}
+    )
+    skills = (LoadedSkill(name="fx-skill", content="Skill content marker."),)
+
+    prompt = _compose_prompt(definition, skills)
+
+    contract_index = prompt.index("## base contract")
+    assert prompt.index("no_knowledge_base_match") < contract_index
+    assert prompt.index("Skill content marker.") < contract_index
+    assert prompt.lower().count("never fabricate data") == 1
+    assert prompt.rstrip().endswith("Answer in the user's language.")
+
+
+def test_compose_prompt_omits_escalation_block_when_rules_are_empty() -> None:
+    """No `escalate_to`, no `conditions` -> nothing rendered. A role that
+    declares no escalation policy at all must see no behavior change."""
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition({})
+
+    prompt = _compose_prompt(definition, ())
+
+    assert prompt == definition.system_prompt.strip()
+
+
+def test_compose_prompt_renders_escalate_to_alone_when_no_conditions_declared() -> None:
+    """`escalate_to` with no `conditions` key at all is a valid, real shape
+    (e.g. `base/policy.md` before any descendant adds conditions) and must
+    still render."""
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition({"escalate_to": "human"})
+
+    prompt = _compose_prompt(definition, ())
+
+    assert "human" in prompt
+    assert prompt != definition.system_prompt.strip()
+
+
+def test_compose_prompt_accountant_agent_conditions_reach_the_model() -> None:
+    """Reproduces the issue's own evidence: `accountant-agent`'s real
+    `role.md` never mentions escalation in prose, so
+    `figure_requested_outside_report_catalog` and `report_returned_no_rows`
+    (both declared only in `policy.md`) were invisible to the model before
+    this fix."""
+    from agents_system.harness.factory import _compose_prompt
+    from agents_system.harness.loader import RootConfig, resolve
+
+    definition = resolve(
+        "accountant-agent", roots=RootConfig(platform_root=REPO_ROOT / "platform")
+    )
+
+    prompt = _compose_prompt(definition, ())
+
+    assert "figure_requested_outside_report_catalog" in prompt
+    assert "report_returned_no_rows" in prompt
+    assert prompt.rstrip().endswith("Answer in the user's language.")
+
+
+def test_compose_prompt_skill_content_precedes_escalation_block() -> None:
+    """Actual composition order is role body -> skills -> escalation block
+    -> base contract. Skill content -- the deployment's own behavioral
+    modules -- must render BEFORE the platform-level escalation block, not
+    after it."""
+    from agents_system.harness.factory import LoadedSkill, _compose_prompt
+
+    definition = _fx_definition(
+        {"escalate_to": "human", "conditions": ["no_knowledge_base_match"]}
+    )
+    skills = (LoadedSkill(name="fx-skill", content="Skill content marker."),)
+
+    prompt = _compose_prompt(definition, skills)
+
+    assert prompt.index("Skill content marker.") < prompt.index(
+        "no_knowledge_base_match"
+    )
+
+
+def test_compose_prompt_renders_conditions_alone_when_escalate_to_absent() -> None:
+    """`conditions` with no `escalate_to` key at all must still render --
+    the two sub-fields are independent of each other."""
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition(
+        {"conditions": ["required_tool_missing", "confidence_below_threshold"]}
+    )
+
+    prompt = _compose_prompt(definition, ())
+
+    assert "required_tool_missing" in prompt
+    assert "confidence_below_threshold" in prompt
+    assert "Escalate to:" not in prompt
+
+
+def test_compose_prompt_treats_a_bare_string_conditions_as_one_condition() -> None:
+    """A bare YAML scalar for `conditions` (not a list) is a real, valid
+    shape -- YAML lets a role.md author write `conditions: single_condition`
+    instead of a one-item list. A naive `for c in escalation_rules["conditions"]`
+    iterates a *string* character-by-character instead of treating it as one
+    condition. `loader._as_str_list` already exists for exactly this
+    coercion (used for this same `conditions` field by
+    `_resolve_list_directive`), so `_render_escalation_block` must use the
+    same convention rather than reinvent it.
+    """
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition(
+        {"escalate_to": "human", "conditions": "single_condition"}
+    )
+
+    prompt = _compose_prompt(definition, ())
+
+    bullet_lines = [line for line in prompt.splitlines() if line.startswith("- ")]
+    assert bullet_lines == ["- single_condition"]
