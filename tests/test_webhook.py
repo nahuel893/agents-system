@@ -20,7 +20,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from agents_system.config import Settings, get_settings
@@ -363,7 +362,7 @@ async def test_post_body_boundary_exact_limit_accepted_over_limit_rejected() -> 
 
     Both bodies are built from the same valid Meta envelope so the only
     variable is size, isolating the ``> max_bytes`` boundary in both
-    ``_read_bounded_body``'s fast Content-Length path and its stream path.
+    ``read_bounded_body``'s fast Content-Length path and its stream path.
     """
     limit = 500
     test_settings = make_settings(webhook_max_body_bytes=limit)
@@ -431,89 +430,15 @@ async def test_post_body_within_limit_still_accepted(
     accept.assert_awaited_once()
 
 
-def _make_streaming_request(headers: dict[str, str], chunks: list[bytes]):
-    """A minimal Starlette ``Request`` fed body chunks via raw ASGI messages.
-
-    Used to exercise ``_read_bounded_body``'s stream-enforcement branch
-    directly, independent of whether a test client normalizes
-    Content-Length -- a missing or malformed header must not let an
-    oversized body slip past the ceiling.
-    """
-    from starlette.requests import Request as StarletteRequest
-
-    header_list = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
-    scope = {"type": "http", "headers": header_list, "method": "POST"}
-    remaining = list(chunks)
-
-    async def receive() -> dict:
-        if remaining:
-            chunk = remaining.pop(0)
-            return {"type": "http.request", "body": chunk, "more_body": bool(remaining)}
-        return {"type": "http.request", "body": b"", "more_body": False}
-
-    return StarletteRequest(scope, receive)
-
-
-async def test_read_bounded_body_malformed_content_length_falls_back_to_stream() -> (
-    None
-):
-    """A non-integer Content-Length does not bypass the ceiling.
-
-    The fast-path check can't trust it, so enforcement falls through to the
-    streamed byte count, which still catches an oversized body.
-    """
-    from agents_system.integration.webhook import _read_bounded_body
-
-    request = _make_streaming_request(
-        {"content-length": "not-a-number"}, [b"x" * 60, b"x" * 60]
-    )
-    with pytest.raises(HTTPException) as exc_info:
-        await _read_bounded_body(request, max_bytes=100)
-    assert exc_info.value.status_code == 413
-
-
-async def test_read_bounded_body_missing_content_length_enforced_by_stream() -> None:
-    """No Content-Length header at all is still bounded by the streamed count."""
-    from agents_system.integration.webhook import _read_bounded_body
-
-    request = _make_streaming_request({}, [b"x" * 60, b"x" * 60])
-    with pytest.raises(HTTPException) as exc_info:
-        await _read_bounded_body(request, max_bytes=100)
-    assert exc_info.value.status_code == 413
-
-
-async def test_read_bounded_body_lying_content_length_understates_stream_enforced() -> (
-    None
-):
-    """A numerically VALID Content-Length that understates the real body must
-    not bypass the ceiling.
-
-    Distinct from the malformed-header case above: this header parses fine
-    and is well under ``max_bytes``, so the fast Content-Length path lets it
-    through -- but the actual streamed bytes exceed the ceiling, and
-    enforcement must catch that against the real byte count, not the
-    (lying) declared header.
-    """
-    from agents_system.integration.webhook import _read_bounded_body
-
-    request = _make_streaming_request({"content-length": "10"}, [b"x" * 60, b"x" * 60])
-    with pytest.raises(HTTPException) as exc_info:
-        await _read_bounded_body(request, max_bytes=100)
-    assert exc_info.value.status_code == 413
-
-
-async def test_read_bounded_body_within_limit_returns_full_body() -> None:
-    """A body under the ceiling is read and reassembled unchanged."""
-    from agents_system.integration.webhook import _read_bounded_body
-
-    request = _make_streaming_request({}, [b"abc", b"def"])
-    result = await _read_bounded_body(request, max_bytes=100)
-    assert result == b"abcdef"
-
-
 # ---------------------------------------------------------------------------
 # POST /webhook -- persist before ack, no turn in-request (behaviour a)
 # ---------------------------------------------------------------------------
+#
+# Direct tests of the bounded-body primitive itself (exact limit, one over,
+# lying/malformed/missing Content-Length) now live in
+# tests/test_body_limits.py -- it moved to integration/body_limits.py (#37)
+# and is shared with the OpenAI adapter's own POST /v1/chat/completions
+# ceiling, so it is tested once, not once per route.
 
 
 async def test_post_persists_the_message_before_ack_and_runs_no_turn(
