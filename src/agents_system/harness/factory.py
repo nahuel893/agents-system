@@ -6,8 +6,8 @@ Combines the three harness primitives into a single, ready-to-run value object:
 2. ``injector.resolve_tool_surface`` → the granted tool surface (Layer 1 RBAC)
 3. skill files on disk           → the deployment's behavioural modules
 
-It then composes the final system prompt (role body + skill bodies) and returns
-a frozen ``EquippedRuntime``.
+It then composes the final system prompt (role body + skill bodies +
+escalation rules) and returns a frozen ``EquippedRuntime``.
 
 Scope boundary
 --------------
@@ -17,22 +17,26 @@ is the Agent Runtime's job — a later slice.
 
 Prompt composition contract
 ---------------------------
-The composed prompt is the role body followed by each skill file's content,
-verbatim, joined by a ``---`` separator, in the order the skills are declared in
-the manifest. Skill files own their own headings; the factory does not rewrite
-them (same principle as the skill-resolver: pass content, preserve author
-intent).
+The composed prompt is the role body, followed by each skill file's content
+verbatim, joined by a ``---`` separator, in the order the skills are declared
+in the manifest, followed by the resolved ``escalation_rules`` rendered as a
+short block (issue #36 — see ``_render_escalation_block``). Skill files own
+their own headings; the factory does not rewrite them (same principle as the
+skill-resolver: pass content, preserve author intent). The ADR-002 B.9 base
+contract (``_BASE_PROMPT_CONTRACT``) is always the LAST block, regardless of
+skills or escalation content — see ``_compose_prompt``.
 
 Skills are deployment-specific: they live in
 ``deployments/{client}/{role_type}/skills/{name}.md``. A generic role (no
-client) has no skills, so its prompt is just the role body.
+client) has no skills, so its prompt is the role body plus its escalation
+block (if any).
 """
 
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -45,6 +49,7 @@ from agents_system.harness.loader import (
     _BASE_PROMPT_CONTRACT,
     AgentDefinition,
     RootConfig,
+    _as_str_list,
     _require_deployments_root,
     _strip_base_contract,
     resolve,
@@ -166,11 +171,65 @@ def _load_skills(
     return tuple(loaded)
 
 
+_ESCALATION_HEADING = "## escalation rules"
+
+
+def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
+    """Render the resolved ``escalation_rules`` into a short, model-facing
+    block, or ``""`` when there is nothing to say (issue #36).
+
+    ``escalation_rules`` (``escalate_to`` + ``conditions``) is structured
+    policy data parsed from ``policy.md`` by ``harness.loader.resolve()`` —
+    but before this function existed, nothing ever read it back out.
+    ``policy.md``'s prose explains WHY a condition exists; role.md was the
+    only place its NAME ever reached the model, and only if a role.md author
+    happened to restate it there. ``accountant-agent`` is the case that
+    proved the gap: its ``role.md`` never mentions escalation, so
+    ``figure_requested_outside_report_catalog`` — declared only in its
+    ``policy.md`` — never influenced the model at all.
+
+    Unknown/empty input renders nothing: a role that declares no escalation
+    policy gets no block, so this is a strict addition for roles that do.
+
+    ``conditions`` is coerced through ``loader._as_str_list`` — the same
+    coercion ``loader._resolve_mapping_directive`` already applies to this
+    exact field for the ``add``/``remove`` deployment directives — rather
+    than iterated directly. YAML permits a bare scalar
+    (``conditions: single_condition``) as well as a list; iterating a bare
+    *string* directly yields one bullet per CHARACTER, not one condition.
+    """
+    escalate_to = str(escalation_rules.get("escalate_to") or "").strip()
+    conditions = [
+        condition
+        for condition in (
+            c.strip() for c in _as_str_list(escalation_rules.get("conditions"))
+        )
+        if condition
+    ]
+
+    if not escalate_to and not conditions:
+        return ""
+
+    lines = [_ESCALATION_HEADING, ""]
+    if escalate_to:
+        lines.append(f"Escalate to: {escalate_to}")
+    if conditions:
+        if escalate_to:
+            lines.append("")
+        lines.append(
+            "Escalate immediately, rather than guess, whenever any of these apply:"
+        )
+        lines.extend(f"- {condition}" for condition in conditions)
+
+    return "\n".join(lines)
+
+
 def _compose_prompt(
     definition: AgentDefinition,
     skills: tuple[LoadedSkill, ...],
 ) -> str:
-    """Compose the final system prompt: role body + skill bodies + base contract.
+    """Compose the final system prompt: role body + skill bodies +
+    escalation rules + base contract.
 
     ADR-002 B.9's six-clause base contract must be the LAST block of the
     prompt the model actually receives: the Agent Runtime sends THIS
@@ -179,24 +238,29 @@ def _compose_prompt(
     `_call_model` uses ``equipped.system_prompt``). ``resolve()`` already
     appends the contract to ``definition.system_prompt`` so that value
     alone still satisfies B.9 for a caller reading it directly, but if this
-    function simply appended skill content after it (as it used to), the
-    contract would end up in the middle rather than last whenever a role
-    had skills.
+    function simply appended skill (or escalation) content after it, the
+    contract would end up in the middle rather than last.
 
-    When there is no skill content to insert, ``definition.system_prompt``
-    is already correct as-is (the contract is already its final block) and
-    is returned unchanged. When skills exist, the contract is stripped back
-    off (``loader._strip_base_contract``, the exact inverse of
-    ``loader._append_base_contract``), skill content is inserted, and the
-    contract is appended once more — so it still appears exactly once
-    overall, now genuinely last.
+    When there is neither skill content nor a resolved escalation policy to
+    insert, ``definition.system_prompt`` is already correct as-is (the
+    contract is already its final block) and is returned unchanged. Whenever
+    either exists, the contract is stripped back off
+    (``loader._strip_base_contract``, the exact inverse of
+    ``loader._append_base_contract``), skill content and then the escalation
+    block (issue #36) are inserted in that order, and the contract is
+    appended once more — so it still appears exactly once overall, now
+    genuinely last.
     """
-    if not skills:
+    escalation_block = _render_escalation_block(definition.escalation_rules)
+
+    if not skills and not escalation_block:
         return definition.system_prompt.strip()
 
     role_prompt = _strip_base_contract(definition.system_prompt).strip()
     parts = [role_prompt]
     parts.extend(skill.content for skill in skills)
+    if escalation_block:
+        parts.append(escalation_block)
     parts.append(_BASE_PROMPT_CONTRACT.strip())
     return _SKILL_SEPARATOR.join(p for p in parts if p)
 

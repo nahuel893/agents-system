@@ -298,6 +298,12 @@ def test_base_contract_is_the_final_block_the_model_actually_receives() -> None:
             f"skill {skill.name!r} was not relocated before the base contract"
         )
 
+    # Issue #36: the DEPLOYMENT-merged escalation_rules (platform sales-agent's
+    # conditions plus client-a's `add: [unresolved_request_after_retries]`)
+    # must also reach this composed prompt, still before the contract.
+    assert "unresolved_request_after_retries" in prompt
+    assert prompt.index("unresolved_request_after_retries") < contract_index
+
 
 def test_design_notes_inside_fenced_code_block_is_not_treated_as_heading(
     tmp_path: pathlib.Path,
