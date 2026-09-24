@@ -254,6 +254,10 @@ jobs:
       # contract, that reports still work through them, and that a second
       # run is a no-op. Reuses this job's live Postgres rather than opening
       # a new one.
+      #
+      # Must stay the last step of this job: it mutates the demo views
+      # (renames them away and back), so any later step in this job would
+      # run against a database in an unexpected intermediate state.
       - name: Run the agentsys_* view rename migration against it
         run: uv run pytest -m integration tests/test_view_rename_migration_integration.py -v
 

@@ -82,6 +82,13 @@ async def _run_migration_script(conn: Any) -> None:
     # execute path sends a PREPARED statement, which Postgres refuses for
     # more than one command at a time. The raw asyncpg connection's simple
     # query protocol accepts the whole script.
+    #
+    # `conn` must come from `engine.connect()`, never `engine.begin()`: the
+    # script itself contains `BEGIN;`/`COMMIT;`, so it is its own transaction
+    # owner. Running it inside a SQLAlchemy-owned transaction would mix two
+    # transaction managers on the same connection -- the script's `COMMIT`
+    # would end SQLAlchemy's transaction out from under it, leaving the
+    # connection's tracked state out of sync with the server.
     raw = await conn.get_raw_connection()
     driver_conn = raw.driver_connection
     assert driver_conn is not None, "no raw asyncpg connection available"
@@ -110,36 +117,56 @@ async def test_the_migration_recreates_the_contract_views_and_reports_still_work
         }
         old_names = set(old_name_by_new.values())
 
-        async with engine.begin() as conn:
-            # Simulate a deployment that created its views before #45: put
-            # them back under the old names.
-            for new_name, old_name in old_name_by_new.items():
-                await conn.execute(text(f"ALTER VIEW {new_name} RENAME TO {old_name}"))
+        try:
+            async with engine.begin() as conn:
+                # Simulate a deployment that created its views before #45:
+                # put them back under the old names.
+                for new_name, old_name in old_name_by_new.items():
+                    await conn.execute(
+                        text(f"ALTER VIEW {new_name} RENAME TO {old_name}")
+                    )
 
-            existing = await _view_names(conn)
-            assert existing >= old_names
-            assert not (existing & set(CONTRACT_VIEWS))
+                existing = await _view_names(conn)
+                assert existing >= old_names
+                assert not (existing & set(CONTRACT_VIEWS))
 
-        async with engine.begin() as conn:
-            await _run_migration_script(conn)
+            # `engine.connect()`, not `engine.begin()`: see the note on
+            # `_run_migration_script`.
+            async with engine.connect() as conn:
+                await _run_migration_script(conn)
 
-            existing = await _view_names(conn)
-            assert existing >= set(CONTRACT_VIEWS)
-            assert not (existing & old_names)
+            async with engine.begin() as conn:
+                existing = await _view_names(conn)
+                assert existing >= set(CONTRACT_VIEWS)
+                assert not (existing & old_names)
 
-        # The renamed-back views are the same objects, so a report through
-        # them must recover the same seeded figures as before the round trip.
-        result = await run_report(
-            engine, CATALOG["status_summary"], {"months_back": 24, "limit": 10}
-        )
-        counts = {row["status"]: row["sale_count"] for row in result["rows"]}
-        assert counts["confirmed"] == SEEDED_CONFIRMED
+            # The renamed-back views are the same objects, so a report
+            # through them must recover the same seeded figures as before
+            # the round trip.
+            result = await run_report(
+                engine, CATALOG["status_summary"], {"months_back": 24, "limit": 10}
+            )
+            counts = {row["status"]: row["sale_count"] for row in result["rows"]}
+            assert counts["confirmed"] == SEEDED_CONFIRMED
 
-        # Idempotency: the old names are already gone, so a second run must
-        # do nothing rather than fail with "relation ... does not exist".
-        async with engine.begin() as conn:
-            await _run_migration_script(conn)
-            existing = await _view_names(conn)
-            assert existing >= set(CONTRACT_VIEWS)
+            # Idempotency: the old names are already gone, so a second run
+            # must do nothing rather than fail with "relation ... does not
+            # exist".
+            async with engine.connect() as conn:
+                await _run_migration_script(conn)
+            async with engine.begin() as conn:
+                existing = await _view_names(conn)
+                assert existing >= set(CONTRACT_VIEWS)
+        finally:
+            # No matter how far the rename-away/migrate/assert sequence
+            # above got -- including a failure right after the views were
+            # renamed to their pre-#45 agentsys_* names -- always re-run the
+            # migration to bring them back under the agents_system_*
+            # contract names. It is idempotent (`IF EXISTS` guards), so this
+            # is a no-op when the sequence already succeeded and a repair
+            # when it didn't. Without this, a failing test leaves the shared
+            # demo database's views broken for the next run.
+            async with engine.connect() as conn:
+                await _run_migration_script(conn)
     finally:
         await engine.dispose()

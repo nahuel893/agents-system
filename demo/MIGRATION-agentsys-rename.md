@@ -61,3 +61,21 @@ WHERE viewname IN (
 should return all four rows. `demo/load_demo_company.py` runs the same kind
 of check against the demo company's own database, if you want a worked
 example of what "the contract is satisfied" looks like in code.
+
+## Troubleshooting
+
+If both an `agentsys_*` view and its `agents_system_*` counterpart already
+exist (for example, a previous partial migration attempt, or someone created
+the new views by hand alongside the old ones), `ALTER VIEW ... RENAME TO`
+fails with:
+
+```
+ERROR:  relation "agents_system_sales" already exists
+```
+
+The whole script runs in one transaction, so this aborts it entirely and
+**none** of the four renames take effect -- the database is left exactly as
+it was before you ran the script. Reconcile by hand which view is
+authoritative (the `agentsys_*` one your deployment has been reading from, or
+a stray `agents_system_*` one), drop or rename away the one that is not, and
+rerun the migration.
