@@ -507,3 +507,60 @@ def test_compose_prompt_accountant_agent_conditions_reach_the_model() -> None:
     assert "figure_requested_outside_report_catalog" in prompt
     assert "report_returned_no_rows" in prompt
     assert prompt.rstrip().endswith("Answer in the user's language.")
+
+
+def test_compose_prompt_skill_content_precedes_escalation_block() -> None:
+    """Actual composition order is role body -> skills -> escalation block
+    -> base contract. Skill content -- the deployment's own behavioral
+    modules -- must render BEFORE the platform-level escalation block, not
+    after it."""
+    from agents_system.harness.factory import LoadedSkill, _compose_prompt
+
+    definition = _fx_definition(
+        {"escalate_to": "human", "conditions": ["no_knowledge_base_match"]}
+    )
+    skills = (LoadedSkill(name="fx-skill", content="Skill content marker."),)
+
+    prompt = _compose_prompt(definition, skills)
+
+    assert prompt.index("Skill content marker.") < prompt.index(
+        "no_knowledge_base_match"
+    )
+
+
+def test_compose_prompt_renders_conditions_alone_when_escalate_to_absent() -> None:
+    """`conditions` with no `escalate_to` key at all must still render --
+    the two sub-fields are independent of each other."""
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition(
+        {"conditions": ["required_tool_missing", "confidence_below_threshold"]}
+    )
+
+    prompt = _compose_prompt(definition, ())
+
+    assert "required_tool_missing" in prompt
+    assert "confidence_below_threshold" in prompt
+    assert "Escalate to:" not in prompt
+
+
+def test_compose_prompt_treats_a_bare_string_conditions_as_one_condition() -> None:
+    """A bare YAML scalar for `conditions` (not a list) is a real, valid
+    shape -- YAML lets a role.md author write `conditions: single_condition`
+    instead of a one-item list. A naive `for c in escalation_rules["conditions"]`
+    iterates a *string* character-by-character instead of treating it as one
+    condition. `loader._as_str_list` already exists for exactly this
+    coercion (used for this same `conditions` field by
+    `_resolve_list_directive`), so `_render_escalation_block` must use the
+    same convention rather than reinvent it.
+    """
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition(
+        {"escalate_to": "human", "conditions": "single_condition"}
+    )
+
+    prompt = _compose_prompt(definition, ())
+
+    bullet_lines = [line for line in prompt.splitlines() if line.startswith("- ")]
+    assert bullet_lines == ["- single_condition"]
