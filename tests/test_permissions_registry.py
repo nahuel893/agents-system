@@ -13,6 +13,7 @@ module) so this file has no dependency on PR1-T2's `builtins.py`.
 
 from __future__ import annotations
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -139,6 +140,45 @@ def test_concurrent_resolves_against_a_pre_registered_registry() -> None:
         results = [future.result() for future in futures]
 
     assert all(results)
+
+
+def test_get_or_register_holds_the_lock_across_lookup_and_create() -> None:
+    """TOCTOU guard: many threads racing to get-or-register the SAME
+    not-yet-registered name must trigger the factory exactly once and all
+    observe the exact same resulting class.
+
+    A naive `resolve()`-then-`register()` two-step (two separate lock
+    acquisitions) leaves a window where two threads can both see "not
+    registered yet", both build a class, and the second registration then
+    either silently loses the first thread's class or spuriously raises
+    `PermissionRegistrationCollisionError` for what the caller intended as
+    an ordinary concurrent get-or-create. `get_or_register` must hold one
+    lock across the whole lookup-then-create-then-insert sequence instead.
+    """
+    registry = PermissionRegistry()
+    name = "test:concurrent_new"
+    build_count = 0
+    build_lock = threading.Lock()
+    worker_count = 32
+    start_barrier = threading.Barrier(worker_count)
+
+    def _factory() -> type[Permission]:
+        nonlocal build_count
+        with build_lock:
+            build_count += 1
+        return type("_ConcurrentNew", (Permission,), {"tier": Tier.T0})
+
+    def _get_or_register() -> type[Permission]:
+        start_barrier.wait()  # maximize contention: all threads start together
+        return registry.get_or_register(name, _factory)
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(_get_or_register) for _ in range(worker_count)]
+        results = [future.result() for future in futures]
+
+    assert build_count == 1
+    assert len(set(results)) == 1
+    assert registry.resolve(name) is results[0]
 
 
 # ---------------------------------------------------------------------------

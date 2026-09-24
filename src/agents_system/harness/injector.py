@@ -10,6 +10,7 @@ import structlog
 from agents_system.connectors.command_tools import build_command_tool_specs
 from agents_system.harness.loader import AgentDefinition
 from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
+from agents_system.permissions import UnknownPermissionNameError, covers, resolve
 
 logger = structlog.get_logger()
 
@@ -81,21 +82,40 @@ def _deny_reason(
 
     Shared by the registry-backed loop in `resolve_tool_surface` and by
     `resolve_command_tool_surface` (ADR-002 C.12), so the untrusted_input+T3
-    second barrier (ADR-002 C.10) and the permission-subset check are ONE
+    second barrier (ADR-002 C.10) and the R3 grant-coverage check are ONE
     tested code path for every tool surface, not two that could drift.
     """
     if definition.untrusted_input and spec.tier == Tier.T3:
-        # ADR-002 C.10 — second barrier, independent of C.11's exec:*
+        # ADR-002 C.10 — second barrier, independent of R4's class-based
         # invariant: an untrusted_input role must never receive a T3 tool,
-        # even if its permission happens to be granted and carries no exec:
-        # prefix (i.e. even where the permission-name heuristic alone would
+        # even if its permission happens to be granted and carries no
+        # T3-sounding name (i.e. even where the permission-name alone would
         # have missed it).
         return (
             "tier T3 tools are never granted to an untrusted_input role (ADR-002 C.10)"
         )
-    if set(spec.required_permissions) <= effective:
+
+    # R3: resolve `effective`'s wire names to classes once. A name that
+    # fails to resolve can never cover anything (required permissions are
+    # always resolvable -- ToolSpec construction already validated them via
+    # R2a/R2b) so it is simply skipped, not fatal -- the same tolerance the
+    # old plain-string check had for a stray/unrecognized entry.
+    granted_classes: set[type] = set()
+    for name in effective:
+        try:
+            granted_classes.add(resolve(name))
+        except UnknownPermissionNameError:
+            continue
+
+    missing = sorted(
+        name
+        for name in spec.required_permissions
+        if not any(
+            covers(granted_cls, resolve(name)) for granted_cls in granted_classes
+        )
+    )
+    if not missing:
         return None
-    missing = sorted(set(spec.required_permissions) - effective)
     return f"missing permissions: {', '.join(missing)}"
 
 
