@@ -869,6 +869,14 @@ async def test_create_app_boots_with_a_caller_supplied_registry() -> None:
     assert len(calls) == 1
 
 
+def test_app_version_matches_package_version() -> None:
+    import agents_system
+
+    app = create_test_app()
+
+    assert app.version == agents_system.__version__
+
+
 def test_create_app_requires_a_registry_factory() -> None:
     """No default registry: an application must say what it boots with.
 

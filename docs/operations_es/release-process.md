@@ -9,6 +9,21 @@ releases, y nadie podía decir con certeza qué estaba desplegado. Esto cierra
 esa brecha: la versión, el tag y `CHANGELOG.md` ahora se derivan del
 historial de commits en lugar de editarse a mano.
 
+## Configuración inicial
+
+Una PR abierta con el `GITHUB_TOKEN` predeterminado no dispara otros
+workflows, por lo que los checks requeridos `ci`, `secret-scan` y
+`dependency-audit` nunca corren y la protección de rama impide mergear la PR
+de release. Creá un Personal Access Token (PAT) fine-grained, o un token de
+GitHub App, limitado a este repositorio y con permisos `Contents: read/write`
+y `Pull requests: read/write`; después guardalo como el secret de repositorio
+`RELEASE_PLEASE_TOKEN`.
+
+Sin ese secret, el fallback `github.token` también requiere habilitar "Allow
+GitHub Actions to create and approve pull requests" en la configuración del
+repositorio. Los checks requeridos deben dispararse a mano; por ejemplo,
+cerrando y reabriendo la PR de release.
+
 ## Qué determina un bump de versión
 
 release-please lee el prefijo Conventional Commit de cada commit
@@ -16,10 +31,13 @@ mergeado a `main` desde el último release:
 
 | Prefijo | Efecto |
 | --- | --- |
-| `fix:` | Bump de patch (`0.1.0` → `0.1.1`). |
-| `feat:` | Bump de minor (`0.1.0` → `0.2.0`). |
-| `feat!:`, `fix!:`, o cualquier tipo con `!` al final, **o** un cuerpo de commit con un footer `BREAKING CHANGE:` | Cambio disruptivo (breaking). |
-| `build:`, `chore:`, `docs:`, `refactor:`, `style:`, `test:`, `ci:` | Sin bump de versión; igual queda listado en el changelog. |
+| `fix:` | Bump de patch (`0.1.0` → `0.1.1`); queda bajo **Bug Fixes**. |
+| `feat:` | Bump de minor (`0.1.0` → `0.2.0`); queda bajo **Features**. |
+| `feat!:`, `fix!:`, o cualquier tipo con `!` al final, **o** un cuerpo de commit con un footer `BREAKING CHANGE:` | Bump disruptivo según `bump-minor-pre-major`. |
+| `perf:` | Sin bump de versión; queda bajo **Performance Improvements**. |
+| `revert:` | Sin bump de versión; queda bajo **Reverts**. |
+| `docs:`, `build:`, `refactor:`, `ci:` | Sin bump de versión; cada uno queda en su propia sección: **Documentation**, **Build System**, **Code Refactoring** o **Continuous Integration**. |
+| `chore:`, `style:`, `test:` | Sin bump de versión; no queda listado en el changelog. |
 
 `release-please-config.json` define `"bump-minor-pre-major": true`. Bajo
 0.x.y, SemVer trata todo cambio como potencialmente disruptivo, así que una
@@ -45,10 +63,10 @@ exactamente una pull request permanente, titulada algo como
 `chore(main): release 0.2.0`, que:
 
 - bumpea `.release-please-manifest.json` y el `version` de `pyproject.toml`;
-- mueve las entradas acumuladas bajo `## [Unreleased]` en `CHANGELOG.md` a
-  un nuevo encabezado con fecha `## [0.2.0]`, agrupadas de la misma forma
-  (`Changed`, `Fixed`, `Added`, …), cada entrada enlazando al commit/PR de
-  origen.
+- escribe los cambios acumulados bajo un nuevo encabezado con fecha
+  `## [0.2.0]` en `CHANGELOG.md`, agrupados en las secciones configuradas
+  (por ejemplo, **Features**, **Bug Fixes** y **Documentation**) y enlazados
+  a sus commits/PRs de origen.
 
 Cada push posterior que califica actualiza esa misma PR en el lugar — no
 abre una segunda. Nada se libera hasta que una persona la mergea.

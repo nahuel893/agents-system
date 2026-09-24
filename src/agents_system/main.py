@@ -16,6 +16,7 @@ from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from agents_system import __version__
 from agents_system.config import Settings, get_settings
 from agents_system.harness.loader import DefinitionError, RootConfig
 from agents_system.harness.registry import RegistryFactory
@@ -612,7 +613,7 @@ def create_app(
     settings = get_settings()
     application = FastAPI(
         title=title,
-        version="0.1.0",
+        version=__version__,
         debug=settings.debug,
         lifespan=lifespan,
     )

@@ -9,6 +9,20 @@ releases, and nobody could say what was actually deployed. This closes that
 gap: the version, the tag, and `CHANGELOG.md` are now derived from commit
 history instead of hand-edited.
 
+## One-time setup
+
+A PR opened with the default `GITHUB_TOKEN` does not trigger other workflows,
+so the required `ci`, `secret-scan`, and `dependency-audit` checks never run
+and branch protection prevents the release PR from merging. Create a
+fine-grained Personal Access Token (PAT), or a GitHub App token, scoped only
+to this repository with `Contents: read/write` and `Pull requests: read/write`
+permissions, then store it as the repository secret `RELEASE_PLEASE_TOKEN`.
+
+Without that secret, the `github.token` fallback also requires enabling
+"Allow GitHub Actions to create and approve pull requests" in the repository
+settings. The required checks must then be triggered by hand, for example by
+closing and reopening the release PR.
+
 ## What drives a version bump
 
 release-please reads the Conventional Commit prefix of every commit merged
@@ -16,10 +30,13 @@ to `main` since the last release:
 
 | Prefix | Effect |
 | --- | --- |
-| `fix:` | Patch bump (`0.1.0` → `0.1.1`). |
-| `feat:` | Minor bump (`0.1.0` → `0.2.0`). |
-| `feat!:`, `fix!:`, or any type with a trailing `!`, **or** a commit body containing a `BREAKING CHANGE:` footer | Breaking change. |
-| `build:`, `chore:`, `docs:`, `refactor:`, `style:`, `test:`, `ci:` | No version bump; still listed in the changelog. |
+| `fix:` | Patch bump (`0.1.0` → `0.1.1`); listed under **Bug Fixes**. |
+| `feat:` | Minor bump (`0.1.0` → `0.2.0`); listed under **Features**. |
+| `feat!:`, `fix!:`, or any type with a trailing `!`, **or** a commit body containing a `BREAKING CHANGE:` footer | Breaking bump according to `bump-minor-pre-major`. |
+| `perf:` | No version bump; listed under **Performance Improvements**. |
+| `revert:` | No version bump; listed under **Reverts**. |
+| `docs:`, `build:`, `refactor:`, `ci:` | No version bump; each is listed in its own **Documentation**, **Build System**, **Code Refactoring**, or **Continuous Integration** section. |
+| `chore:`, `style:`, `test:` | No version bump; hidden from the changelog. |
 
 `release-please-config.json` sets `"bump-minor-pre-major": true`. Under
 0.x.y, SemVer treats every change as potentially breaking, so a strict
@@ -44,9 +61,10 @@ Every push to `main` that changes the release-relevant version, `feat`, or
 pull request open, titled something like `chore(main): release 0.2.0`, that:
 
 - bumps `.release-please-manifest.json` and `pyproject.toml`'s `version`;
-- moves the accumulated `## [Unreleased]` entries in `CHANGELOG.md` under a
-  new dated `## [0.2.0]` heading, grouped the same way (`Changed`, `Fixed`,
-  `Added`, …), each entry linking back to its originating commit/PR.
+- writes the accumulated changes to a new dated `## [0.2.0]` heading in
+  `CHANGELOG.md`, grouped into the configured sections (such as **Features**,
+  **Bug Fixes**, and **Documentation**) and linked to their originating
+  commits/PRs.
 
 Each subsequent qualifying push amends that same PR in place — it does not
 open a second one. Nothing is released until a human merges it.
