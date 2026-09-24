@@ -54,15 +54,18 @@ Three events are emitted via structlog on every call:
 from agents_system.harness.interceptor import intercept, PolicyViolation, CallResult
 
 result: CallResult = intercept(
-    tool_name,        # name of the tool the model requested
-    tool_input,       # dict of arguments to pass to the connector
-    runtime,          # the EquippedRuntime whose surface is authoritative
-    current_permissions=["read:catalog", "write:orders"],  # required for sensitive tools
+    tool_name,  # name of the tool the model requested
+    tool_input,  # dict of arguments to pass to the connector
+    runtime,  # the EquippedRuntime whose surface is authoritative
+    current_permissions=[
+        "read:catalog",
+        "write:orders",
+    ],  # required for sensitive tools
 )
 
-result.tool_name   # str
-result.output      # whatever the connector returned
-result.revalidated # bool — True if sensitive revalidation was performed
+result.tool_name  # str
+result.output  # whatever the connector returned
+result.revalidated  # bool — True if sensitive revalidation was performed
 ```
 
 On any violation:
@@ -72,7 +75,7 @@ try:
     result = intercept(tool_name, tool_input, runtime, current_permissions=perms)
 except PolicyViolation as e:
     print(e.tool_name)  # which tool was blocked
-    print(e.reason)     # not_in_surface | revalidation_required | permission_revoked
+    print(e.reason)  # not_in_surface | revalidation_required | permission_revoked
 ```
 
 ## Position in the harness pipeline
