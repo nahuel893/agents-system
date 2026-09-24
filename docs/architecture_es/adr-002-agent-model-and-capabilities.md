@@ -23,7 +23,7 @@
 | 15 | Backends de referencia para los puertos genéricos de la plataforma | C. Herramientas y permisos | ✅ hecho (este cambio) | — #113 |
 | 16 | Rechazado: `operator-agent` como padre de `data-agent`; composición en vez de herencia múltiple | D. Composición de roles | ✅ decisión registrada (sin cambio de código) | Issue #53 |
 | 17 | Suite de pruebas de contrato heredado por rol | D. Composición de roles | ✅ hecho (este cambio) | — #114 |
-| 18 | Pipeline de evaluación en vivo | E. Verificación | ⏳ pendiente | PR nuevo, después de que aterricen 8/9 — #52 |
+| 18 | Pipeline de evaluación en vivo | E. Verificación | 🚧 en curso | Runner + escenario de humo entregados — #169; escenarios por rol pendientes — #52 |
 | 19 | Desactualizado: `role.md`/`manifesto.md` dicen `agents/`, la ruta real es `platform/roles/` | F. Documentación desactualizada | ✅ hecho (#106) | Corrección solo de documentación — #106 |
 | 20 | Desactualizado: descripción de `sensitive:` en `tool.md`, descripción de RAG con pgvector | F. Documentación desactualizada | ✅ hecho (#106) | Corrección solo de documentación — #106 |
 | 21 | Desactualizado: decisión abierta de `permission-model.md` (resuelta por 10) + pgvector | F. Documentación desactualizada | ✅ hecho (#106) | Corrección solo de documentación — #106 |
@@ -1554,12 +1554,20 @@ el CI por PR — rechazada: las llamadas a modelos reales son lentas,
 cuestan dinero, y no son completamente determinísticas, la forma
 equivocada para un control que bloquea cada PR.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR nuevo, después de que
-aterricen B.8/B.9 (ver la nota de cierre de C — evaluar contra un prompt
-que todavía filtra justificación interna contaminaría los resultados) e
-idealmente después de que existan los backends de referencia de C.15 (de lo
-contrario, toda tarea de conocimiento/resumen/pedido evalúa el camino de
-fallo cerrado, no comportamiento real).
+**Estado.** 🚧 en curso — #169 entrega el runner: `src/agentsys/evals/`
+(el esquema YAML de `schema.py`, la evaluación de aserciones y agregación de
+tasas de éxito en N corridas de `runner.py`, la salida JSON + markdown de
+`reporting.py` hacia el `evals/results/` ignorado por git), el marcador de
+pytest `live` (deseleccionado por defecto, igual que `integration`),
+`ollama_model`/`ollama_base_url` configurables en `Settings`
+(`_build_chat_model` en `src/agentsys/main.py` ya no hardcodea
+`qwen2.5:3b`), y un escenario de humo
+(`evals/scenarios/sales_agent_smoke.yaml`) que prueba el pipeline de punta a
+punta contra un Ollama real. **Todavía pendiente:** la cobertura de
+escenarios por rol (#169 la dejó deliberadamente fuera de alcance, para los
+issues hermanos bajo #52) y cualquier automatización de corrida nocturna —
+este pipeline todavía se corre a mano (`pytest -m live`) únicamente. Ver
+`docs/platform/live-eval.md` / `docs/platform_es/live-eval.md`.
 
 ---
 

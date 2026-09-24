@@ -483,10 +483,19 @@ def _build_chat_model(provider: str) -> Any:
             temperature=0,
         )
 
-    # Default: ollama
+    # Default: ollama. Model + base URL come from Settings (#169, ADR-002
+    # E.18) instead of being hardcoded, so a role can be pointed at a
+    # different local model (e.g. the live-eval pipeline) without a code
+    # change. An empty ollama_base_url becomes None so ChatOllama falls back
+    # to its own default host resolution rather than treating "" as a URL.
     from langchain_ollama import ChatOllama
 
-    return ChatOllama(model="qwen2.5:3b", temperature=0)
+    ollama_settings = get_settings()
+    return ChatOllama(
+        model=ollama_settings.ollama_model,
+        base_url=ollama_settings.ollama_base_url or None,
+        temperature=0,
+    )
 
 
 def create_app(

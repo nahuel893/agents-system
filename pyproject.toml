@@ -58,9 +58,10 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "integration: requires real models / external services (slow, opt-in)",
+    "live: live-eval pipeline against a real local model (#169, ADR-002 E.18; manual/nightly, opt-in)",
 ]
-# Skip integration tests by default (they need models, a GPU, or a live DB).
-# Run them explicitly with: pytest -m integration
+# Skip integration and live tests by default (they need models, a GPU, or a
+# live DB). Run them explicitly with: pytest -m integration / pytest -m live
 #
 # This deselection is UNCONDITIONAL, which is fine for slow opt-in tests and
 # was NOT fine for one of them: test_bi_readonly_engine_refuses_writes is the
@@ -70,7 +71,11 @@ markers = [
 # provisions the role with scripts/provision_bi_readonly.sql and then tries
 # to write through it. If you add another integration test that guarantees a
 # security property, add it to that job too; a marker is not coverage.
-addopts = "-m 'not integration'"
+#
+# `live` is deliberately never added to a CI job (ADR-002 E.18): it calls a
+# real local Ollama model, which is slow, non-deterministic, and unavailable
+# in CI — it runs manually or nightly against a developer's own Ollama.
+addopts = "-m 'not integration and not live'"
 
 [tool.mypy]
 python_version = "3.12"

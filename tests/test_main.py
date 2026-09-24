@@ -413,6 +413,34 @@ def test_openai_compatible_model_still_supports_bind_tools() -> None:
 
 
 # ---------------------------------------------------------------------------
+# #169 (ADR-002 E.18) — Ollama model + base URL read from Settings
+# ---------------------------------------------------------------------------
+
+
+def test_build_chat_model_ollama_uses_configured_model_and_base_url() -> None:
+    settings = _make_settings(
+        ollama_model="qwen3:8b", ollama_base_url="http://localhost:11500"
+    )
+    with patch("agentsys.main.get_settings", return_value=settings):
+        model = _build_chat_model("ollama")
+
+    assert model.model == "qwen3:8b"
+    assert model.base_url == "http://localhost:11500"
+
+
+def test_build_chat_model_ollama_defaults_leave_base_url_unset() -> None:
+    """An empty ollama_base_url must be passed as None, not "" -- ChatOllama
+    treats an empty string base_url differently from "not configured"
+    (it would try to hit http://, not fall back to its own default host).
+    """
+    with patch("agentsys.main.get_settings", return_value=_make_settings()):
+        model = _build_chat_model("ollama")
+
+    assert model.model == "qwen2.5:3b"
+    assert model.base_url is None
+
+
+# ---------------------------------------------------------------------------
 # #139 T1 — WhatsApp runtime timeout must leave 60 seconds before the outbox
 # lease expires. The constraint is only relevant to the runtime bound to the
 # deferred webhook worker; adapter-only runtimes have no webhook lease.
