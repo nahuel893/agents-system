@@ -24,6 +24,7 @@ Surface:
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 import time
 import uuid
@@ -36,6 +37,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 
 from agents_system.config import get_settings
+from agents_system.integration.body_limits import read_bounded_body
 
 logger = structlog.get_logger()
 
@@ -206,8 +208,18 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     Design decisions:
       AD#1 — stream:true → reject with HTTP 400 (honesty over silent coerce)
       AD#6 — client system messages are dropped; runtime prompt wins
+
+    Body reading order: size ceiling -> raw bytes -> json.loads (#37). This
+    route can be reached fully unauthenticated whenever adapter_api_key is
+    unset (verify_bearer is a no-op dependency in that mode), so the size
+    check has to run before any authentication-independent parsing -- never
+    uses request.json() directly, which would buffer the whole body first.
+    The ceiling itself is the shared ``read_bounded_body`` primitive
+    (``body_limits.py``), the same one #140's webhook guard uses.
     """
-    body: dict[str, Any] = await request.json()
+    settings = get_settings()
+    raw_body = await read_bounded_body(request, settings.adapter_max_body_bytes)
+    body: dict[str, Any] = json.loads(raw_body)
 
     # AD#1: reject streaming requests
     if body.get("stream", False):
@@ -256,7 +268,7 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     admission_limiter = getattr(request.app.state, "turn_admission_limiter", None)
     turn_stack = AsyncExitStack()
     if admission_limiter is not None:
-        wait_timeout_s = get_settings().admission_wait_timeout_s
+        wait_timeout_s = settings.admission_wait_timeout_s
         try:
             await asyncio.wait_for(
                 turn_stack.enter_async_context(admission_limiter.slot()),

@@ -315,11 +315,21 @@ async def test_adapter_logs_and_reports_a_failed_turn(monkeypatch: Any) -> None:
     request = MagicMock()
     request.app.state.runtimes = {"acme__sales-agent": _BoomRuntime()}
     request.app.state.adapter_model_ids = frozenset({"acme__sales-agent"})
-    request.json = AsyncMock(
-        return_value={
-            "model": "acme__sales-agent",
-            "messages": [{"role": "user", "content": "hi"}],
-        }
+    # #37 -- chat_completions reads the body through the shared bounded
+    # reader, not request.json() directly; stub that instead of the request
+    # object's own streaming internals (unrelated to this test's failed-turn
+    # focus).
+    monkeypatch.setattr(
+        oa,
+        "read_bounded_body",
+        AsyncMock(
+            return_value=json.dumps(
+                {
+                    "model": "acme__sales-agent",
+                    "messages": [{"role": "user", "content": "hi"}],
+                }
+            ).encode()
+        ),
     )
 
     with pytest.raises(HTTPException) as excinfo:

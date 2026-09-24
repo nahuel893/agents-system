@@ -68,6 +68,9 @@ def _make_client(
 
     fake_settings = MagicMock()
     fake_settings.adapter_api_key = adapter_api_key
+    # #37 -- must be a real int, not the MagicMock default, or
+    # read_bounded_body's `> max_bytes` comparison raises TypeError.
+    fake_settings.adapter_max_body_bytes = 1_048_576
     monkeypatch.setattr(adapter_mod, "get_settings", lambda: fake_settings)
 
     return TestClient(app)
@@ -236,6 +239,83 @@ def test_chat_completion_stream_true_400(monkeypatch: pytest.MonkeyPatch):
     assert "stream" in body["detail"].lower() or "streaming" in body["detail"].lower()
 
 
+# ---------------------------------------------------------------------------
+# Slice 2 — POST /v1/chat/completions body size ceiling (#37)
+# ---------------------------------------------------------------------------
+#
+# The bounded-body primitive itself (exact limit, one over, lying/malformed/
+# missing Content-Length) is exercised exhaustively in
+# tests/test_body_limits.py against agents_system.integration.body_limits
+# .read_bounded_body directly, since #37 shares it with #140's webhook
+# guard rather than duplicating it. These two tests only prove THIS route
+# is wired to its own ``adapter_max_body_bytes`` ceiling.
+
+
+def _padded_chat_payload(total_size: int) -> bytes:
+    """A syntactically valid chat-completion JSON body padded with an unused
+    string field to an EXACT byte size, so exceeding the ceiling is the only
+    variable between the exact-limit and over-limit requests (mirrors
+    webhook's own ``_pad_json_envelope_to_exact_size``).
+    """
+    base: dict[str, Any] = {
+        "model": "unknown__model",
+        "messages": [{"role": "user", "content": "hola"}],
+        "pad": "",
+    }
+    import json as _json
+
+    baseline = len(_json.dumps(base).encode())
+    assert baseline <= total_size, "padding target smaller than the unpadded body"
+    base["pad"] = "x" * (total_size - baseline)
+    result = _json.dumps(base).encode()
+    assert len(result) == total_size
+    return result
+
+
+def test_chat_completion_body_exact_limit_accepted(monkeypatch: pytest.MonkeyPatch):
+    """A body of EXACTLY ``adapter_max_body_bytes`` is read and parsed --
+    it reaches the (unrelated) 404 model-not-found path, not 413."""
+    client = _make_client(
+        runtime_ids=[],
+        adapter_api_key="",
+        monkeypatch=monkeypatch,
+    )
+    import agents_system.integration.openai_adapter as adapter_mod
+
+    limit = 300
+    monkeypatch.setattr(adapter_mod.get_settings(), "adapter_max_body_bytes", limit)
+
+    response = client.post(
+        "/v1/chat/completions",
+        content=_padded_chat_payload(limit),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 404
+
+
+def test_chat_completion_body_one_over_limit_rejected_413(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A body one byte over ``adapter_max_body_bytes`` is rejected with 413
+    before JSON parsing -- never reaches model resolution."""
+    client = _make_client(
+        runtime_ids=[],
+        adapter_api_key="",
+        monkeypatch=monkeypatch,
+    )
+    import agents_system.integration.openai_adapter as adapter_mod
+
+    limit = 300
+    monkeypatch.setattr(adapter_mod.get_settings(), "adapter_max_body_bytes", limit)
+
+    response = client.post(
+        "/v1/chat/completions",
+        content=_padded_chat_payload(limit + 1),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 413
+
+
 def test_chat_completions_uses_the_shared_admission_limiter_around_run_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -272,6 +352,7 @@ def test_chat_completions_uses_the_shared_admission_limiter_around_run_turn(
     fake_settings = MagicMock()
     fake_settings.adapter_api_key = ""
     fake_settings.admission_wait_timeout_s = 5.0
+    fake_settings.adapter_max_body_bytes = 1_048_576
     monkeypatch.setattr(adapter_mod, "get_settings", lambda: fake_settings)
 
     client = TestClient(app_instance)
@@ -301,6 +382,7 @@ def test_system_message_dropped(monkeypatch: pytest.MonkeyPatch):
 
     fake_settings = MagicMock()
     fake_settings.adapter_api_key = ""
+    fake_settings.adapter_max_body_bytes = 1_048_576
     monkeypatch.setattr(adapter_mod, "get_settings", lambda: fake_settings)
 
     client2 = TestClient(app_instance)
@@ -423,6 +505,7 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
 
     fake_settings = MagicMock()
     fake_settings.adapter_api_key = ""
+    fake_settings.adapter_max_body_bytes = 1_048_576
     monkeypatch.setattr(adapter_mod, "get_settings", lambda: fake_settings)
 
     client = TestClient(app_instance)

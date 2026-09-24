@@ -1071,6 +1071,18 @@ revisarse. Ver también #71 (extracción del puerto de canal) — relacionado
 con cómo se resuelve el runtime de un canal, pero distinto de este
 invariante de arranque; #111 no depende de la forma del puerto de #71.
 
+**Lectura de body sin límite — cerrado, no aceptado (#37).** Sobre esta
+misma ruta había un riesgo distinto que NO se aceptó: `POST
+/v1/chat/completions` hacía `body = await request.json()` sin ningún límite
+de tamaño, y como `adapter_api_key` sin definir vuelve a `verify_bearer` un
+no-op, esa lectura era alcanzable completamente sin autenticar. #37 lo
+cierra reutilizando el control de tamaño de body del webhook (#140),
+movido a un `integration/body_limits.py::read_bounded_body` compartido, con
+su propio límite `settings.adapter_max_body_bytes` (mismo valor por
+defecto de 1 MiB). El límite se controla antes de `json.loads`, así que un
+body sobredimensionado nunca llega al parseo, sin importar si la clave está
+definida.
+
 **Justificación.** Fallar al arrancar, no por mensaje, porque un control
 por mensaje que se puede saltear o que tiene un bug falla de forma abierta
 exactamente una vez de más para un control relevante a seguridad; una
