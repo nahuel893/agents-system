@@ -39,6 +39,10 @@ contract carries the difference.
 A deployment that cannot create views is not stuck: `run_report` takes any
 `ReportSpec` catalog, so it supplies its own. That is the escape hatch the
 deleted client-specific catalog used, and it remains open to any consumer.
+
+These view names were `agentsys_*` before the package rename (issue #45,
+`CHANGELOG.md`). A deployment that created its views under those names
+before that rename runs `demo/MIGRATION-agentsys-rename.md` once.
 """
 
 from __future__ import annotations
