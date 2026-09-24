@@ -31,6 +31,12 @@ from four view names and nothing else:
 A deployment writes those views once over whatever its own tables are called.
 The reports never change.
 
+> **Migrating from `agentsys_*`?** These views were renamed from
+> `agentsys_customers`/`agentsys_sales`/`agentsys_sale_items`/`agentsys_stock`
+> as part of the package rename (breaking change, see `CHANGELOG.md`). A
+> deployment that created its views under the old names needs to run
+> [`MIGRATION-agentsys-rename.md`](MIGRATION-agentsys-rename.md) once.
+
 The views normalize three things, and the third is the one people forget:
 
 1. **Names** — `facturas.fecha_emision` becomes `agents_system_sales.sold_at`.

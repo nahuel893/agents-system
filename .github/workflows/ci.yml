@@ -249,6 +249,14 @@ jobs:
       - name: Run the portable reports against it
         run: uv run pytest -m integration tests/test_sales_reports_integration.py -v
 
+      # Issue #45: proves demo/migrations/0001_rename_agentsys_to_agents_system_views.sql
+      # actually renames a pre-rename deployment's views back onto the
+      # contract, that reports still work through them, and that a second
+      # run is a no-op. Reuses this job's live Postgres rather than opening
+      # a new one.
+      - name: Run the agentsys_* view rename migration against it
+        run: uv run pytest -m integration tests/test_view_rename_migration_integration.py -v
+
   # test_db_integration.py was collected by no CI job at all (issue #42): the
   # `integration` marker made `addopts = "-m 'not integration'"` deselect it
   # everywhere, and nothing re-ran it with the marker re-enabled. It asserts
