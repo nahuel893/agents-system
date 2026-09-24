@@ -73,7 +73,7 @@ Testing Strategy table).
   parent's declared tier (`cls.__dict__.get("tier")` distinguishes this
   from an explicit lower tier, per `design.md`'s Class API).
   GREEN: create `src/agents_system/permissions/errors.py` with
-  `PermissionError` root and `InvalidPermissionTierError` (only this one
+  `AgentPermissionError` root and `InvalidPermissionTierError` (only this one
   subclass needed for this task; the rest of the tree lands in later PR1
   tasks). Create `src/agents_system/permissions/base.py` with the
   `Permission` class exactly per `design.md`'s Class API section
@@ -176,7 +176,7 @@ Testing Strategy table).
   PermissionRegistry, Read, Write, Send, Exec, Run, Spawn` succeeds, that a
   module-level `resolve()` and `register()` are importable and delegate to
   the package-global `permission_registry` instance, and that
-  `PermissionError` plus every error subclass defined so far
+  `AgentPermissionError` plus every error subclass defined so far
   (`InvalidPermissionTierError`, `UnknownPermissionNameError`,
   `PermissionRegistrationCollisionError`) are importable from
   `agents_system.permissions`.

@@ -482,11 +482,13 @@ ingress; it MUST NOT require any change to an external string format.
 
 ### Requirement: Permission error type hierarchy
 
-The system MUST define exception types rooted at a common `PermissionError`
-base:
+The system MUST define exception types rooted at a common
+`AgentPermissionError` base (named to avoid shadowing the built-in
+`PermissionError`, an `OSError` subclass already caught elsewhere in this
+codebase, e.g. `connectors/operator.py`'s process-group cleanup):
 
 ```
-PermissionError
+AgentPermissionError
 ├── UnknownPermissionNameError        # registry lookup failure (forward or reverse)
 ├── PermissionRegistrationCollisionError  # name↔class collision
 ├── InvalidPermissionTierError        # R1 violation at class creation

@@ -18,8 +18,9 @@ it would be an unforced breaking change outside this proposal's scope.
 src/agents_system/permissions/
 ├── __init__.py            # re-exports: Permission, PermissionRegistry, Read,
 │                           #   Write, Send, Exec, Run, Spawn, resolve(),
-│                           #   register(), the PermissionError tree
-├── errors.py               # PermissionError hierarchy (mirrors spec's tree)
+│                           #   register(), the AgentPermissionError tree
+├── errors.py               # AgentPermissionError hierarchy (mirrors spec's tree;
+│                           #   named to avoid shadowing the built-in PermissionError)
 ├── base.py                 # Permission root + __init_subclass__ (R1)
 ├── builtins.py              # 5 action families + resource() factory +
 │                            #   registration of all 18 shipped wire names
