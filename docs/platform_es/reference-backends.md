@@ -11,24 +11,28 @@ ninguna prueba en este repositorio ejercitó jamás a un rol recuperando de
 verdad datos de una base de conocimiento, resumiendo una conversación real,
 registrando un escalamiento o escribiendo un pedido.
 
-`src/agentsys/services/reference.py` entrega cuatro implementaciones de
-referencia pequeñas que cierran esa brecha. Son **opcionales** (opt-in):
-nada las conecta por defecto, así que una aplicación que no configura
-ninguna sigue recibiendo los mismos rechazos en modo cerrado que antes.
-Tampoco son integraciones de grado productivo — ver "Qué NO son" más abajo.
+`src/agentsys/services/reference.py` entrega ocho backends de referencia
+pequeños que cierran esa brecha. Son **opcionales** (opt-in): nada conecta
+ninguno por defecto, así que una aplicación que no selecciona ninguno sigue
+recibiendo los mismos rechazos en modo cerrado que antes. Tampoco son
+integraciones de grado productivo — ver "Qué NO son" más abajo.
 
 ---
 
-## Las cuatro clases
+## Los ocho backends opcionales
 
-| Clase | Implementa | Almacenamiento |
+| Backend | Implementa o expone | Almacenamiento / fuente |
 |---|---|---|
 | `InMemoryKnowledgeBase` | `KnowledgeBase` | Documentos markdown en memoria, sembrados por vos |
 | `LLMConversationSummarizer` | `ConversationSummarizer` | Transcripción en memoria, sembrada por vos; resume con un `BaseChatModel` que ya tenés |
 | `LoggingEscalationChannel` | `EscalationChannel` | Ninguno — escribe una entrada de log estructurado |
 | `InMemoryOrderWriter` | `OrderWriter` | En memoria, durante la vida del proceso |
+| `ReferenceBackends.catalog_search_tool_spec()` | `ToolSpec` `catalog_search` | Búsqueda léxica sobre `articulos` |
+| `ReferenceBackends.client_lookup_tool_spec()` | `ToolSpec` `client_lookup` | Registro existente de `padron_clientes`, resuelto por teléfono sintético |
+| `ReferenceBackends.run_report_tool_spec()` | `ToolSpec` `run_report` | `CATALOG` portátil de ventas sobre un motor BI dedicado de solo lectura |
+| `ReferenceBackends.message_sender_tool_spec()` | `ToolSpec` `message_sender` | Registro solo en proceso; sin proveedor de entrega |
 
-## Cómo conectar una
+## Cómo conectar las cuatro originales
 
 Cada función `build_*_tool_spec` en `platform_connectors.py` /
 `order_connector.py` ya acepta `None` (modo cerrado, el valor por defecto) o
@@ -71,6 +75,59 @@ registry.register(build_order_writer_tool_spec(order_writer))
 siembres antes de tener algo con qué responder — ver sus docstrings
 (`seed_session` / `add_document` / el argumento `documents` del
 constructor).
+
+## Cómo conectar las herramientas demo/de compañía
+
+Antes de iniciar la aplicación, cargá solo una base demo/de compañía
+descartable con el cargador existente y protegido. Acepta una base vacía o
+una que haya marcado en una ejecución anterior, y rechaza cualquier otro
+destino no vacío porque la carga reemplaza sus propias tablas:
+
+```bash
+DEMO_DATABASE_URL=postgresql+asyncpg://... uv run python demo/load_demo_company.py
+```
+
+Apuntá `BI_DATABASE_URL` a esa base cargada usando credenciales de solo
+lectura. Mantené este motor BI separado del motor transaccional de la
+aplicación; la herramienta `run_report` delega al `CATALOG` portátil de ventas
+a través de ese motor dedicado. `ReferenceBackends` no registra nada por sí
+mismo y ningún registry productivo selecciona estas herramientas por defecto.
+
+```python
+import os
+
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from agentsys.services.reference import ReferenceBackends
+
+# BI_DATABASE_URL apunta a la base descartable del cargador protegido.
+# Sus credenciales de base de datos deben ser de solo lectura.
+readonly_engine = create_async_engine(os.environ["BI_DATABASE_URL"])
+backends = ReferenceBackends(readonly_engine)
+
+registry.register(backends.catalog_search_tool_spec())
+registry.register(backends.client_lookup_tool_spec())
+registry.register(backends.run_report_tool_spec())
+registry.register(backends.message_sender_tool_spec())
+```
+
+### Comportamiento observable de la demo
+
+- `client_lookup` toma `{"phone": ...}`. Su única forma válida de teléfono es
+  `+549110000` seguida de un `padron_clientes.nro_cliente` existente, completado
+  a cuatro dígitos con ceros: el cliente `1` es `+5491100000001`. Un teléfono
+  desconocido o malformado devuelve `client_id: None` y `name: None`.
+- `message_sender` toma `{"to": ..., "text": ...}` y valida `to` de la misma
+  forma. Un destinatario existente devuelve `status: "recorded"`; nunca se
+  envía ni se entrega, y su registro en memoria se pierde al terminar el
+  proceso. Un destinatario desconocido devuelve `status: "not_found"`.
+- `catalog_search` es solo léxica (subcadenas en SKU o descripción). Cada
+  resultado tiene `similarity: null`; no afirma búsqueda vectorial ni
+  semántica. Una consulta vacía o sin coincidencias devuelve `results: []` con
+  `classification: "no_match"`.
+- `run_report` expone el `CATALOG` portátil y cerrado de ventas; un reporte
+  válido sin filas devuelve una respuesta vacía (`rows: []`,
+  `empty_result: true`).
 
 ## Qué NO son
 

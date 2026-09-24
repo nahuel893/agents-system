@@ -1,37 +1,34 @@
-"""Reference backends for the platform-generic ports (issue #113 / ADR-002 C.15).
+"""Opt-in reference backends for platform tools (issues #113 and #170).
 
-`services.knowledge.KnowledgeBase`, `services.summaries.ConversationSummarizer`,
-`services.escalation.EscalationChannel`, and `services.orders.OrderWriter` are
-`Protocol` ports whose own modules deliberately ship no implementation — a
-consuming business's content, transcript store, human channel, and order
-system are never the library's to guess (see each module's docstring).
+The original four implementations exercise the `KnowledgeBase`,
+`ConversationSummarizer`, `EscalationChannel`, and `OrderWriter` ports without
+making them production defaults. `ReferenceBackends` adds explicit ToolSpecs
+for catalog, client, report, and message tools over the existing disposable
+PostgreSQL demo company. None are registered unless a consumer opts in.
 
-That left every one of those ports with literally nothing behind it, in any
-environment, including tests: every test in this repository that exercises a
-knowledge/summary/escalation/order tool necessarily exercised only the
-fail-closed path in `connectors/platform_connectors.py` and
-`connectors/order_connector.py`. This module closes that gap with reference
-implementations the library ships, that a consumer opts INTO — nothing here
-is wired by default, so the fail-closed behaviour those connectors already
-implement is unchanged unless a consumer explicitly passes one of these
-classes to a `build_*_tool_spec` call. See `docs/platform/reference-backends.md`
-for wiring examples.
-
-These are reference backends, not production integrations: in-memory storage
-that does not survive a process restart, and no external system behind any of
-them (`manifesto.md`'s platform/client boundary is why a real paging service
-or vector database is a client delivery's job, not the library's).
+The demo source is read-only and its message ledger is process-local: no
+reference sender contacts a provider or claims delivery. These are reference
+implementations, not production integrations; see
+`docs/platform/reference-backends.md` for their contracts and wiring.
 """
 
 from __future__ import annotations
 
 import itertools
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from agentsys.connectors.report_connector import build_report_tool_spec
+from agentsys.connectors.sales_reports import CATALOG
+from agentsys.harness.registry import Tier, ToolSpec
 
 _logger = structlog.get_logger(__name__)
 
@@ -216,3 +213,221 @@ class LLMConversationSummarizer:
             "summary": summary,
             "message_count": len(bounded),
         }
+
+
+# ---------------------------------------------------------------------------
+# DemoReferenceBackends -> portable demo/company data (issue #170)
+# ---------------------------------------------------------------------------
+
+
+_CATALOG_SEARCH_SQL = text(
+    """
+    SELECT codigo_articulo AS sku, detalle AS description
+    FROM articulos
+    WHERE strpos(lower(codigo_articulo), lower(:query)) > 0
+       OR strpos(lower(detalle), lower(:query)) > 0
+    ORDER BY codigo_articulo
+    LIMIT :limit
+    """
+)
+_CLIENT_LOOKUP_SQL = text(
+    """
+    SELECT nro_cliente AS client_id, razon_social AS name
+    FROM padron_clientes
+    WHERE nro_cliente = :client_id
+    """
+)
+_SYNTHETIC_PHONE = re.compile(r"^\+549110000(\d{4})$")
+_REFERENCE_DATA_NOT_CONFIGURED = (
+    "Reference demo data is not configured, so this lookup cannot be run."
+)
+
+
+class ReferenceBackends:
+    """Explicitly opt-in tools over the existing demo database and reports.
+
+    This class never registers tools itself. A deployment explicitly selects the
+    individual :class:`ToolSpec` values it needs, and supplies a read-only engine
+    for the existing demo/company PostgreSQL schema. Messages are retained only
+    in this process; no message provider is configured or called.
+    """
+
+    def __init__(self, readonly_engine: AsyncEngine | None) -> None:
+        self._readonly_engine = readonly_engine
+        self._message_counter = itertools.count(1)
+        self._recorded_messages: list[dict[str, str]] = []
+
+    @property
+    def recorded_messages(self) -> list[dict[str, str]]:
+        """Return copies of the messages recorded during this process."""
+        return [dict(message) for message in self._recorded_messages]
+
+    @staticmethod
+    def _not_configured() -> dict[str, str]:
+        return {
+            "error": _REFERENCE_DATA_NOT_CONFIGURED,
+            "error_kind": "reference_data_not_configured",
+        }
+
+    async def _fetch_rows(
+        self, statement: Any, params: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        assert self._readonly_engine is not None
+        async with self._readonly_engine.connect() as connection:
+            result = await connection.execute(statement, params)
+            return [dict(row) for row in result.mappings().all()]
+
+    async def _lookup_client(self, phone: Any) -> dict[str, Any]:
+        if self._readonly_engine is None:
+            return self._not_configured()
+        match = _SYNTHETIC_PHONE.fullmatch(phone) if isinstance(phone, str) else None
+        if match is None:
+            return {"client_id": None, "name": None, "phone": phone}
+
+        try:
+            client_id = int(match.group(1))
+        except ValueError:
+            return {"client_id": None, "name": None, "phone": phone}
+        rows = await self._fetch_rows(_CLIENT_LOOKUP_SQL, {"client_id": client_id})
+        if not rows:
+            return {"client_id": None, "name": None, "phone": phone}
+
+        row = rows[0]
+        resolved_id = str(row["client_id"])
+        try:
+            derived_phone = f"+549110000{int(resolved_id):04d}"
+        except (TypeError, ValueError):
+            return {"client_id": None, "name": None, "phone": phone}
+        if derived_phone != phone:
+            return {"client_id": None, "name": None, "phone": phone}
+        return {"client_id": resolved_id, "name": row["name"], "phone": phone}
+
+    def catalog_search_tool_spec(self) -> ToolSpec:
+        """Return the lexical catalog lookup tool over ``articulos``."""
+
+        async def catalog_search(
+            inputs: dict[str, Any], *, session: Any = None
+        ) -> dict[str, Any]:
+            query = str(inputs.get("q") or "").strip()
+            if not query:
+                return {"results": [], "classification": "no_match"}
+            limit = inputs.get("limit", 10)
+            if not isinstance(limit, int) or isinstance(limit, bool):
+                limit = 10
+            if self._readonly_engine is None:
+                return self._not_configured()
+            rows = await self._fetch_rows(
+                _CATALOG_SEARCH_SQL,
+                {"query": query, "limit": max(1, min(limit, 50))},
+            )
+            return {
+                "results": [
+                    {
+                        "sku": str(row["sku"]),
+                        "description": row["description"],
+                        "similarity": None,
+                    }
+                    for row in rows
+                ],
+                "classification": "ambiguous" if rows else "no_match",
+            }
+
+        return ToolSpec(
+            name="catalog_search",
+            description="Lexically search the existing demo catalog by SKU or description.",
+            required_permissions=("read:catalog",),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "q": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+                "required": ["q"],
+            },
+            connector=catalog_search,
+            tier=Tier.T1,
+        )
+
+    def client_lookup_tool_spec(self) -> ToolSpec:
+        """Return the client lookup tool over ``padron_clientes``."""
+
+        async def client_lookup(
+            inputs: dict[str, Any], *, session: Any = None
+        ) -> dict[str, Any]:
+            return await self._lookup_client(inputs.get("phone"))
+
+        return ToolSpec(
+            name="client_lookup",
+            description="Look up an existing demo client and derive its synthetic phone.",
+            required_permissions=("read:client_registry",),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "phone": {
+                        "type": "string",
+                        "description": (
+                            "Demo customer phone: +549110000 followed by a "
+                            "four-digit customer ID, e.g. +5491100000001"
+                        ),
+                    }
+                },
+                "required": ["phone"],
+            },
+            connector=client_lookup,
+            tier=Tier.T1,
+        )
+
+    def run_report_tool_spec(self) -> ToolSpec:
+        """Return the existing closed sales-report catalog without alteration."""
+        return build_report_tool_spec(self._readonly_engine, CATALOG)
+
+    def message_sender_tool_spec(self) -> ToolSpec:
+        """Return an in-process-only sender that validates demo recipients."""
+
+        async def message_sender(
+            inputs: dict[str, Any], *, session: Any = None
+        ) -> dict[str, Any]:
+            recipient = inputs.get("to")
+            client = await self._lookup_client(recipient)
+            if client.get("error_kind"):
+                return client
+            if client["client_id"] is None:
+                return {"status": "not_found", "to": recipient}
+            message_id = f"recorded-message-{next(self._message_counter):06d}"
+            self._recorded_messages.append(
+                {
+                    "message_id": message_id,
+                    "to": client["phone"],
+                    "text": str(inputs.get("text") or ""),
+                }
+            )
+            return {
+                "status": "recorded",
+                "message_id": message_id,
+                "to": client["phone"],
+            }
+
+        return ToolSpec(
+            name="message_sender",
+            description=(
+                "Record a message for an existing demo client in this process only; "
+                "it is never sent or delivered."
+            ),
+            required_permissions=("send:message",),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "string",
+                        "description": "Recipient phone number",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Message text to send",
+                    },
+                },
+                "required": ["to", "text"],
+            },
+            connector=message_sender,
+            tier=Tier.T2,
+        )
