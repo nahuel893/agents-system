@@ -397,8 +397,8 @@ class TestDrainFailureIsDiagnosable:
             # Must not raise: the drainer's contract is that it never crashes.
             await sink._flush_batch([make_event()])
 
-        assert mock_logger.error.called, "a failed flush must be logged"
-        _, kwargs = mock_logger.error.call_args
+        assert mock_logger.exception.called, "a failed flush must be logged"
+        _, kwargs = mock_logger.exception.call_args
 
         reported = str(kwargs.get("error", ""))
         assert reported, "the log recorded an empty error string"
