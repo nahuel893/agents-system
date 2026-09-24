@@ -1,0 +1,41 @@
+name: release-please
+
+# Watches main for Conventional Commits and keeps a standing release PR that
+# bumps the manifest version and CHANGELOG.md to match what merged since the
+# last release. Merging that PR is the only way a new version/tag/release is
+# cut -- this workflow never pushes to main directly and never publishes to
+# PyPI (issue #18: the owner decided not to publish yet, so there is no
+# publish step at all).
+on:
+  push:
+    branches: [main]
+
+# One run per push to main. A second push before the first finishes should
+# not be cancelled mid-way -- release-please's own PR update is idempotent,
+# but an in-flight tag/release creation is not something to interrupt.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+
+    # contents: write -- create/update the release PR branch, tags, and
+    #   GitHub releases.
+    # pull-requests: write -- open/update the standing release PR.
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      # Pinned to the v5.0.0 tag's commit SHA (not a mutable version tag):
+      # this action can push commits, create tags, and open releases against
+      # this repository, so its own supply chain is pinned the same way a
+      # third-party action with write access should be.
+      - name: Run release-please
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agents-system"
 version = "0.1.0"
-description = "Reusable platform for configurable AI agent runtimes"
+description = "Reusable AI agent platform library: a generic harness and platform agent roles that a client application equips with its own tools and deployment overrides"
 readme = "README.md"
 license = "MIT"
 authors = [
