@@ -25,6 +25,7 @@
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
   - [Running](#running)
+- [Run the Demo API](#run-the-demo-api)
 - [Configuration](#configuration)
 - [Defining a New Agent Role](#defining-a-new-agent-role)
 - [Creating a Client Deployment](#creating-a-client-deployment)
@@ -273,6 +274,35 @@ curl http://localhost:8000/v1/chat/completions \
     "messages": [{"role": "user", "content": "Show me the catalog"}]
   }'
 ```
+
+---
+
+## Run the Demo API
+
+Load the repeatable demo database first with
+[`demo/load_demo_company.py`](demo/load_demo_company.py). Then configure the
+demo URL, one `EVAL_PROVIDER` and its provider variables, optional
+`DEMO_HOST`/`DEMO_PORT`, plus `ADAPTER_RUNTIMES` and `ADAPTER_API_KEY` to
+publish a role:
+
+```bash
+export DEMO_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo
+export EVAL_PROVIDER=openai_compatible
+export OPENAI_COMPATIBLE_BASE_URL=https://your-compatible-endpoint.example/v1
+export OPENAI_COMPATIBLE_MODEL=your-model-id
+export OPENAI_COMPATIBLE_API_KEY="$YOUR_PROVIDER_API_KEY"
+export DEMO_HOST=127.0.0.1
+export DEMO_PORT=8000
+export ADAPTER_RUNTIMES='["_generic__sales-agent"]'
+export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
+
+uv run python -m agents_system.demo
+```
+
+`EVAL_PROVIDER` can also be `ollama`, `groq`, or `anthropic`; use that
+provider's required variables instead. See the full walkthrough, provider
+requirements, and `/v1` examples in
+[`docs/platform/demo-entrypoint.md`](docs/platform/demo-entrypoint.md).
 
 ---
 
