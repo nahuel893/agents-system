@@ -20,6 +20,7 @@ import pytest
 from agents_system.harness.registry import Tier
 from agents_system.permissions.base import Permission
 from agents_system.permissions.errors import (
+    InvalidPermissionTierError,
     PermissionRegistrationCollisionError,
     UnknownPermissionNameError,
 )
@@ -41,6 +42,19 @@ def test_resolve_returns_the_registered_class() -> None:
     registry.register(_Alpha, "test:alpha")
 
     assert registry.resolve("test:alpha") is _Alpha
+
+
+def test_registering_the_abstract_permission_root_raises() -> None:
+    """The abstract root carries no tier and MUST NOT be usable as a
+    required/granted permission (spec: "the abstract Permission root MUST
+    NOT be directly usable as a required or granted permission")."""
+    registry = PermissionRegistry()
+
+    with pytest.raises(InvalidPermissionTierError):
+        registry.register(Permission, "test:bare_root")
+
+    with pytest.raises(UnknownPermissionNameError):
+        registry.resolve("test:bare_root")
 
 
 def test_resolve_of_unregistered_name_raises_naming_the_exact_string() -> None:

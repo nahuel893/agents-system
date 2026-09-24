@@ -71,6 +71,26 @@ def test_deescalating_subclass_raises_before_class_object_exists() -> None:
     assert "DeEscalated" not in dir()  # class statement raised -- name never bound
 
 
+def test_subclass_with_non_tier_value_raises_not_keyerror() -> None:
+    """A garbage `tier` value (not a `Tier` member) must raise
+    `InvalidPermissionTierError`, not a raw `KeyError` from the internal
+    `_RANK` ordinal lookup -- regardless of whether there is a parent tier
+    to compare against."""
+
+    with pytest.raises(InvalidPermissionTierError):
+
+        class DirectlyBadTier(Permission):
+            tier = "not_a_real_tier"
+
+    class Base(Permission):
+        tier = Tier.T1
+
+    with pytest.raises(InvalidPermissionTierError):
+
+        class BadTierWithParent(Base):
+            tier = "still_not_a_tier"
+
+
 def test_subclass_omitting_tier_override_inherits_parents_tier() -> None:
     """Omitting `tier` on a subclass of a tiered parent is plain
     inheritance, not an R1 violation -- distinguished via

@@ -1,22 +1,15 @@
-"""Exception hierarchy for the permission class model.
-
-Rooted at `PermissionError` (spec: "Permission error type hierarchy"). Each
-subclass corresponds to exactly one failure mode of the class-based
-`Permission`/`PermissionRegistry` model that replaces string-prefix
-inference:
+"""Exception hierarchy for the permission class model, rooted at
+`AgentPermissionError` (spec: "Permission error type hierarchy"). PR2 adds
+`PermissionTierMismatchError`, `PermissionFloorViolationError`, and
+`UntrustedInputGrantError` once the callers that raise them exist; this
+module only defines the errors PR1's own package can itself raise:
 
 ```
-PermissionError
+AgentPermissionError
 ├── UnknownPermissionNameError            # registry lookup failure (forward or reverse)
 ├── PermissionRegistrationCollisionError  # name<->class collision
 └── InvalidPermissionTierError            # R1 violation at class creation
 ```
-
-`PermissionTierMismatchError`, `PermissionFloorViolationError` (R2a/R2b, at
-`ToolSpec` construction) and `UntrustedInputGrantError` (R4, at load/grant
-time) are added to this module in PR2, once the callers that raise them
-exist; this PR1 module only defines the errors its own package (base,
-builtins, registry) can itself raise.
 """
 
 from __future__ import annotations
@@ -24,21 +17,13 @@ from __future__ import annotations
 from typing import Any
 
 
-class PermissionError(Exception):
-    """Root of the permission-model exception hierarchy.
-
-    Deliberately shadows the built-in `PermissionError` (an `OSError`
-    subclass) only within this package's namespace -- this is the exact
-    name the spec's error tree names as its root, and nothing in this
-    package needs the built-in.
-    """
+class AgentPermissionError(Exception):
+    """Root of the permission-model exception hierarchy."""
 
 
-class InvalidPermissionTierError(PermissionError):
-    """R1 violation: a `Permission` subclass's own declared tier ranks
-    below its parent's, or a concrete subclass declares no tier and has no
-    parent tier to inherit. Raised from `Permission.__init_subclass__`, at
-    class-definition time -- before the class object exists.
+class InvalidPermissionTierError(AgentPermissionError):
+    """R1 violation: a subclass's declared tier is invalid, or ranks below
+    its parent's. Raised from `Permission.__init_subclass__`.
     """
 
     def __init__(
@@ -64,12 +49,9 @@ class InvalidPermissionTierError(PermissionError):
         super().__init__(message)
 
 
-class UnknownPermissionNameError(PermissionError):
-    """Raised by `PermissionRegistry.resolve`/`reverse` when the given wire
-    name or class was never registered (spec: "Resolving an unregistered
-    name fails loudly", "Reverse resolution of an unregistered class
-    fails"). Exactly one of `name`/`cls` is set, depending on which
-    direction of lookup failed.
+class UnknownPermissionNameError(AgentPermissionError):
+    """A wire name or class was never registered (forward or reverse
+    lookup). Exactly one of `name`/`cls` is set.
     """
 
     def __init__(
@@ -86,12 +68,10 @@ class UnknownPermissionNameError(PermissionError):
         super().__init__(message)
 
 
-class PermissionRegistrationCollisionError(PermissionError):
-    """Raised by `PermissionRegistry.register` when a registration would
-    violate the one-name-per-class / one-class-per-name invariant (spec:
-    "Name/class uniqueness and collision"). Either `existing_cls` (a
-    different class already holds `name`) or `existing_name` (`incoming_cls`
-    already holds a different canonical name) is set -- never both.
+class PermissionRegistrationCollisionError(AgentPermissionError):
+    """A registration would violate the one-name-per-class /
+    one-class-per-name invariant. Either `existing_cls` or `existing_name`
+    is set -- never both.
     """
 
     def __init__(

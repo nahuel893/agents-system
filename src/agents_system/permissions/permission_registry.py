@@ -1,15 +1,9 @@
-"""Thread-safe registry resolving wire-name strings to `Permission` classes
-and back.
-
-Spec Requirements: "Explicit registration, no inference from string
+"""Thread-safe registry resolving wire-name strings to `Permission`
+classes and back (spec: "Explicit registration, no inference from string
 structure", "Name/class uniqueness and collision", "Lookup by name and by
-class", "Registry thread-safety". No prefix, substring, or pattern parsing
-of a wire name is ever performed here -- resolution is a plain dict lookup
-against explicitly registered entries only.
-
-`permission_registry` (the module-level instance below) is the one
-package-global registry every built-in and downstream permission is
-registered into (design.md's PermissionRegistry section).
+class", "Registry thread-safety"). No prefix, substring, or pattern
+parsing of a wire name is ever performed -- resolution is a plain dict
+lookup against explicitly registered entries only.
 """
 
 from __future__ import annotations
@@ -17,17 +11,16 @@ from __future__ import annotations
 import threading
 
 from .base import Permission
-from .errors import PermissionRegistrationCollisionError, UnknownPermissionNameError
+from .errors import (
+    InvalidPermissionTierError,
+    PermissionRegistrationCollisionError,
+    UnknownPermissionNameError,
+)
 
 
 class PermissionRegistry:
     """Explicit name <-> class resolution for `Permission` subclasses.
-
-    Two dicts (`_by_name`, `_by_class`) guarded by one `threading.Lock`
-    taken on both read and write paths -- call volume is registration-time
-    bounded (once at import, occasionally at downstream extension), not a
-    per-request hot path, so lock-free reads are not worth the added
-    complexity (design.md's PermissionRegistry section).
+    One `threading.Lock` guards both `_by_name` and `_by_class`.
     """
 
     def __init__(self) -> None:
@@ -36,15 +29,18 @@ class PermissionRegistry:
         self._lock = threading.Lock()
 
     def register(self, cls: type[Permission], name: str) -> None:
-        """Register `cls` under wire name `name`.
-
-        Idempotent when `cls`/`name` exactly match an existing entry (spec:
-        "Idempotent re-registration"). Raises
-        `PermissionRegistrationCollisionError` when `name` already resolves
-        to a *different* class, or when `cls` already holds a *different*
-        canonical name -- a class holds exactly one canonical name, and a
-        name resolves to exactly one class.
+        """Register `cls` under wire name `name`. Idempotent on an exact
+        `cls`/`name` match; raises `PermissionRegistrationCollisionError`
+        when `name` or `cls` is already bound to something else, and
+        `InvalidPermissionTierError` for the abstract `Permission` root
+        itself (spec: never usable as a required or granted permission).
         """
+        if cls is Permission:
+            raise InvalidPermissionTierError(
+                cls,
+                reason="the abstract Permission root carries no tier and "
+                "cannot be registered as a required or granted permission",
+            )
         with self._lock:
             existing_cls = self._by_name.get(name)
             existing_name = self._by_class.get(cls)
@@ -62,11 +58,7 @@ class PermissionRegistry:
             self._by_class[cls] = name
 
     def resolve(self, name: str) -> type[Permission]:
-        """Forward resolution: wire name -> registered class.
-
-        Raises `UnknownPermissionNameError` naming the exact requested
-        string when `name` was never registered.
-        """
+        """Forward resolution: wire name -> registered class."""
         with self._lock:
             try:
                 return self._by_name[name]
@@ -74,11 +66,7 @@ class PermissionRegistry:
                 raise UnknownPermissionNameError(name=name) from error
 
     def reverse(self, cls: type[Permission]) -> str:
-        """Reverse resolution: registered class -> its canonical wire name.
-
-        Raises `UnknownPermissionNameError` when `cls` was never
-        registered.
-        """
+        """Reverse resolution: registered class -> its canonical wire name."""
         with self._lock:
             try:
                 return self._by_class[cls]
@@ -88,10 +76,7 @@ class PermissionRegistry:
     def _snapshot(
         self,
     ) -> tuple[dict[str, type[Permission]], dict[type[Permission], str]]:
-        """Test-only: capture current state for a later `_restore` call
-        (leading underscore -- not part of the public API; design.md's Test
-        Isolation note).
-        """
+        """Test-only: capture state for a later `_restore` call."""
         with self._lock:
             return dict(self._by_name), dict(self._by_class)
 

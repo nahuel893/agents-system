@@ -51,12 +51,12 @@ def test_module_level_resolve_and_register_delegate_to_the_package_global_regist
 
 def test_error_hierarchy_is_importable_from_the_package_root() -> None:
     from agents_system.permissions import (
+        AgentPermissionError,
         InvalidPermissionTierError,
-        PermissionError,
         PermissionRegistrationCollisionError,
         UnknownPermissionNameError,
     )
 
-    assert issubclass(InvalidPermissionTierError, PermissionError)
-    assert issubclass(UnknownPermissionNameError, PermissionError)
-    assert issubclass(PermissionRegistrationCollisionError, PermissionError)
+    assert issubclass(InvalidPermissionTierError, AgentPermissionError)
+    assert issubclass(UnknownPermissionNameError, AgentPermissionError)
+    assert issubclass(PermissionRegistrationCollisionError, AgentPermissionError)

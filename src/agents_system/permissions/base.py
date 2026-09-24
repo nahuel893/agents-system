@@ -1,11 +1,7 @@
-"""`Permission` root class and R1 subclass-tier-monotonicity enforcement.
-
-Spec Requirements: "Permission base class carries an explicit tier",
-"Subclass tier monotonicity (R1)". The abstract `Permission` root carries no
-tier (it exists only as the hierarchy root -- never usable directly as a
-required or granted permission); every concrete subclass must declare a
-`tier: Tier` class attribute, enforced here at class-definition time via
-`__init_subclass__`, not deferred to first use, registration, or grant time
+"""`Permission` root class and R1 subclass-tier-monotonicity enforcement
+(spec: "Permission base class carries an explicit tier", "Subclass tier
+monotonicity (R1)"). Enforced in `__init_subclass__`, at class-definition
+time -- not deferred to first use, registration, or grant time
 (design.md's Class API).
 """
 
@@ -23,14 +19,8 @@ _RANK: dict[Tier, int] = {Tier.T0: 0, Tier.T1: 1, Tier.T2: 2, Tier.T3: 3}
 
 
 class Permission:
-    """Root of the permission class hierarchy.
-
-    `tier` is annotated but never assigned here -- the abstract root has no
-    tier of its own, only concrete subclasses do. Subclassing is open to any
-    downstream package (spec: "Open hierarchy for downstream extension");
-    `__init_subclass__` never auto-registers a new class with the registry
-    (spec: "there is no auto-discovery") -- registration is always an
-    explicit, separate call.
+    """Root of the permission class hierarchy -- carries no tier of its
+    own; every concrete subclass must declare one.
     """
 
     tier: ClassVar[Tier]
@@ -46,5 +36,14 @@ class Permission:
                 raise InvalidPermissionTierError(cls, reason="no tier declared")
             cls.tier = parent_tier  # plain inheritance, not an R1 violation
             return
-        if parent_tier is not None and _RANK[own_tier] < _RANK[parent_tier]:
+        try:
+            own_rank = _RANK[own_tier]
+        except (KeyError, TypeError) as error:
+            raise InvalidPermissionTierError(
+                cls,
+                own_tier,
+                parent_tier,
+                reason=f"{own_tier!r} is not a valid Tier member",
+            ) from error
+        if parent_tier is not None and own_rank < _RANK[parent_tier]:
             raise InvalidPermissionTierError(cls, own_tier, parent_tier)
