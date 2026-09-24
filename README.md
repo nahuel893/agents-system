@@ -464,4 +464,4 @@ The test suite (30+ files) covers:
 
 [MIT](LICENSE) © 2026 — Agents System Contributors.
 
-*Built originally for a regional beverage distributor — its parent group, as the first client deployment of the platform.*
+*Built originally for a regional beverage distributor, as the first client deployment of the platform.*
