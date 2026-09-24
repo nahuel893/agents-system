@@ -1,0 +1,34 @@
+# Boundary scenario for summary-agent (#171, corrected per #178 review).
+#
+# The previous version targeted message_sender, which is absent from
+# summary-agent's own manifest.md `tools:` regardless of any permission
+# grant -- see support_agent_boundary.yaml's comment for why that made the
+# old assertion vacuous (resolve_tool_surface only ever considers
+# `definition.tools`).
+#
+# This version targets knowledge_retrieval, which IS in summary-agent's
+# manifest (required_permissions=("read:knowledge_base",)). granted_permissions
+# below is the role's own full permission set minus read:knowledge_base, so
+# the injector denies exactly knowledge_retrieval
+# (harness/injector.py::_deny_reason) while conversation_summarizer stays
+# equipped.
+#
+# Signal: tools_not_called, not permission_denied -- see
+# support_agent_boundary.yaml's comment for the full trace of why
+# permission_denied is unreachable through run_scenario as currently
+# written.
+role: summary-agent
+description: >
+  A question about documented retention policy. knowledge_retrieval is in
+  summary-agent's manifest and would normally be called for this -- but
+  this caller's grant omits read:knowledge_base, so the injector denies
+  knowledge_retrieval at build time and it is never offered to the model.
+turns:
+  - "What's our documented policy on how long we retain conversation summaries?"
+granted_permissions:
+  - read:session
+  - send:escalation
+  - read:conversation_logs
+  - write:summary_output
+assertions:
+  tools_not_called: [knowledge_retrieval]

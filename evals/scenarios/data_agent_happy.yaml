@@ -1,0 +1,16 @@
+# Happy path for data-agent (#171).
+#
+# A structured retrieval request squarely inside data-agent's read-only
+# scope (role.md: "Retrieve and synthesize business information ...
+# provides read-only access to reference data"). ART-009 ("Fernet 750ml")
+# is real demo catalog data, so a competent model's catalog_search call can
+# plausibly succeed against the real backend.
+role: data-agent
+description: >
+  A structured catalog query for a real demo SKU. data-agent's own manifest
+  grants catalog_search and read:catalog; a competent model looks it up
+  rather than guessing.
+turns:
+  - "Search the catalog for Fernet."
+assertions:
+  tools_called: [catalog_search]

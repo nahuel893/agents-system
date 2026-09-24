@@ -1,0 +1,17 @@
+# Happy path for orchestrator (#171).
+#
+# Identity verification for an inbound trigger -- role.md's own scope names
+# this directly ("Tasks: trigger reception, client identity verification,
+# role selection"). +5491100000001 is client 1's real synthetic demo phone
+# (docs/platform/reference-backends.md: "+549110000 followed by an existing
+# padron_clientes.nro_cliente padded to four digits"), so client_lookup can
+# plausibly succeed against the real demo padron_clientes data.
+role: orchestrator
+description: >
+  Identity verification for a real demo client phone number. orchestrator's
+  own manifest grants client_lookup and read:client_registry for exactly
+  this purpose.
+turns:
+  - "A message just came in from +5491100000001 -- can you look up who this is?"
+assertions:
+  tools_called: [client_lookup]

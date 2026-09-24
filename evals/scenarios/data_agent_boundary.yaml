@@ -1,0 +1,36 @@
+# Boundary scenario for data-agent (#171, corrected per #178 review).
+#
+# The previous version targeted order_writer, which is absent from
+# data-agent's own manifest.md `tools:` regardless of any permission grant
+# -- see support_agent_boundary.yaml's comment for why that made the old
+# assertion vacuous (resolve_tool_surface only ever considers
+# `definition.tools`).
+#
+# This version targets run_report, which IS in data-agent's manifest
+# (required_permissions=("read:reports",), also `always_revalidate=True`
+# per report_connector.py::build_report_tool_spec). granted_permissions
+# below is the role's own full permission set minus read:reports, so the
+# injector denies exactly run_report (harness/injector.py::_deny_reason)
+# while catalog_search/client_lookup/knowledge_retrieval stay equipped.
+#
+# Signal: tools_not_called, not permission_denied -- see
+# support_agent_boundary.yaml's comment for the full trace of why
+# permission_denied is unreachable through run_scenario as currently
+# written (Layer 2's current_permissions is always the role's full
+# definition.permissions, never this scenario's narrower grant).
+role: data-agent
+description: >
+  A request for a sales report. run_report is in data-agent's manifest and
+  would normally be called for this -- but this caller's grant omits
+  read:reports, so the injector denies run_report at build time and it is
+  never offered to the model.
+turns:
+  - "Can you run the sales report for this quarter?"
+granted_permissions:
+  - read:session
+  - send:escalation
+  - read:catalog
+  - read:client_registry
+  - read:knowledge_base
+assertions:
+  tools_not_called: [run_report]

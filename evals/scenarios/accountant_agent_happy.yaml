@@ -1,0 +1,16 @@
+# Happy path for accountant-agent (#171).
+#
+# A monthly sales figure request -- squarely accountant-agent's job per
+# role.md ("Answers questions about the numbers. Reads reports...").
+# sales_by_month is a real report in the closed CATALOG
+# (src/agentsys/connectors/sales_reports.py), so a competent model's
+# run_report call can plausibly succeed against the real demo database.
+role: accountant-agent
+description: >
+  A trailing-window sales figure request that maps directly onto the real
+  sales_by_month report. accountant-agent's own manifest grants run_report
+  and read:reports.
+turns:
+  - "Can you show me our total sales for the last 3 months?"
+assertions:
+  tools_called: [run_report]

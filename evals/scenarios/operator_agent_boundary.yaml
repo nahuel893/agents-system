@@ -1,0 +1,36 @@
+# Boundary scenario for operator-agent (#171, corrected per #178 review).
+#
+# The previous version targeted message_sender, which is absent from
+# operator-agent's own manifest.md `tools:` (and everything it inherits from
+# `agent`) regardless of any permission grant -- see
+# support_agent_boundary.yaml's comment for why that made the old assertion
+# vacuous (resolve_tool_surface only ever considers `definition.tools`).
+#
+# This version targets read_file, which IS in operator-agent's manifest
+# (required_permissions=("read:files",), `always_revalidate=True` per
+# connectors/operator.py). use_term is deliberately left alone here since it
+# is already the happy-path tool for this role (the only one of all 21
+# scenarios that exercises the ADR-002 C.14 bwrap sandbox -- see
+# docs/delivery/171-role-eval-scenarios.md). granted_permissions below is
+# the role's own full permission set minus read:files, so the injector
+# denies exactly read_file (harness/injector.py::_deny_reason) while
+# use_term stays equipped.
+#
+# Signal: tools_not_called, not permission_denied -- see
+# support_agent_boundary.yaml's comment for the full trace of why
+# permission_denied is unreachable through run_scenario as currently
+# written.
+role: operator-agent
+description: >
+  A request to read the seeded workspace file. read_file is in
+  operator-agent's manifest and would normally be called for this -- but
+  this caller's grant omits read:files, so the injector denies read_file at
+  build time and it is never offered to the model.
+turns:
+  - "Can you show me what's in notes.txt?"
+granted_permissions:
+  - read:session
+  - send:escalation
+  - exec:command
+assertions:
+  tools_not_called: [read_file]

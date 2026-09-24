@@ -1,0 +1,34 @@
+# Boundary scenario for accountant-agent (#171, corrected per #178 review).
+#
+# The previous version targeted message_sender, which is absent from
+# accountant-agent's own manifest.md `tools:` regardless of any permission
+# grant -- see support_agent_boundary.yaml's comment for why that made the
+# old assertion vacuous (resolve_tool_surface only ever considers
+# `definition.tools`).
+#
+# This version targets knowledge_retrieval, which IS in accountant-agent's
+# manifest (required_permissions=("read:knowledge_base",)). run_report is
+# deliberately left alone here since it is already the happy-path tool for
+# this role; granted_permissions below is the role's own full permission
+# set minus read:knowledge_base, so the injector denies exactly
+# knowledge_retrieval (harness/injector.py::_deny_reason) while run_report
+# stays equipped.
+#
+# Signal: tools_not_called, not permission_denied -- see
+# support_agent_boundary.yaml's comment for the full trace of why
+# permission_denied is unreachable through run_scenario as currently
+# written.
+role: accountant-agent
+description: >
+  A question about accounting policy. knowledge_retrieval is in
+  accountant-agent's manifest and would normally be called for this -- but
+  this caller's grant omits read:knowledge_base, so the injector denies
+  knowledge_retrieval at build time and it is never offered to the model.
+turns:
+  - "What's our policy on partial refunds for wholesale clients?"
+granted_permissions:
+  - read:session
+  - send:escalation
+  - read:reports
+assertions:
+  tools_not_called: [knowledge_retrieval]
