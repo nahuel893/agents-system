@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import pytest
 import redis.exceptions
@@ -20,7 +21,6 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.loader import AgentDefinition
 from agents_system.harness.registry import Tier, ToolSpec
-
 
 # ---------------------------------------------------------------------------
 # Test model helpers
@@ -39,7 +39,7 @@ class ToolAwareFakeModel(FakeMessagesListChatModel):
         self,
         tools: Sequence[Any],
         **kwargs: Any,
-    ) -> "ToolAwareFakeModel":
+    ) -> ToolAwareFakeModel:
         return self
 
 
@@ -671,7 +671,7 @@ class _SlowFakeModel(FakeMessagesListChatModel):
 
     def bind_tools(  # type: ignore[override]
         self, tools: Sequence[Any], **kwargs: Any
-    ) -> "_SlowFakeModel":
+    ) -> _SlowFakeModel:
         return self
 
     async def ainvoke(self, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]
@@ -718,11 +718,14 @@ class _CapturingFakeModel(FakeMessagesListChatModel):
     with, so tests can assert what the MODEL actually received (as opposed to
     what ends up in the returned/persisted message list)."""
 
-    captured_inputs: list[list[Any]] = []
+    # RUF012 false positive: this is a pydantic BaseModel field (langchain_core's
+    # FakeMessagesListChatModel), so pydantic gives each instance its own list --
+    # not a shared mutable class default.
+    captured_inputs: list[list[Any]] = []  # noqa: RUF012
 
     def bind_tools(  # type: ignore[override]
         self, tools: Sequence[Any], **kwargs: Any
-    ) -> "_CapturingFakeModel":
+    ) -> _CapturingFakeModel:
         return self
 
     async def ainvoke(self, input: Any, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]

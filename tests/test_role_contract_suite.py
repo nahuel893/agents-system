@@ -53,12 +53,10 @@ its registry spec requires.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pytest
-
-from agents_system.harness.injector import resolve_tool_surface
-from agents_system.harness.loader import resolve
 from platform_role_contract import (
     check_base_contract_present_once_and_last,
     check_no_design_notes_leak,
@@ -69,6 +67,9 @@ from platform_role_contract import (
     is_abstract,
     role_chain,
 )
+
+from agents_system.harness.injector import resolve_tool_surface
+from agents_system.harness.loader import resolve
 
 
 def _registry() -> Any:

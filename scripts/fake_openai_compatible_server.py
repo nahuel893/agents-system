@@ -51,10 +51,10 @@ def _chat_completion(model: str, message: dict[str, object]) -> dict[str, object
 
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: object) -> None:
         pass  # keep the CI log free of a request line per test
 
-    def do_GET(self) -> None:  # noqa: N802 - stdlib handler signature
+    def do_GET(self) -> None:
         if self.path != "/health":
             self.send_response(404)
             self.end_headers()
@@ -65,7 +65,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self) -> None:  # noqa: N802 - stdlib handler signature
+    def do_POST(self) -> None:
         if not self.path.endswith("/chat/completions"):
             self.send_response(404)
             self.end_headers()

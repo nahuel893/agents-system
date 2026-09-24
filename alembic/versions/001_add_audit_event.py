@@ -38,7 +38,7 @@ Therefore:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from alembic import op
 
@@ -112,7 +112,7 @@ def upgrade() -> None:
     # UTC, matching the TIMESTAMPTZ bounds above: at the edges of the day the
     # local date can be the previous or next month, which would name the first
     # partition for a month whose range it does not cover.
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     first = _month_start(today.year, today.month)
     for offset in range(_INITIAL_MONTHS):
         create_monthly_partition(_month_start(first.year, first.month + offset))

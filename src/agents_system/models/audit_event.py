@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -70,7 +70,7 @@ class AuditEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     # Correlation + sequence for ordering
@@ -164,7 +164,7 @@ def map_to_audit_event(event_data: dict[str, Any]) -> AuditEvent:
     """
     return AuditEvent(
         event_id=event_data["event_id"],
-        occurred_at=event_data.get("occurred_at", datetime.now(timezone.utc)),
+        occurred_at=event_data.get("occurred_at", datetime.now(UTC)),
         correlation_id=event_data["correlation_id"],
         sequence=event_data["sequence"],
         event_type=event_data["event_type"],

@@ -100,9 +100,11 @@ from langchain_anthropic import ChatAnthropic
 # name a platform role's manifest.md declares (see platform/roles/*/manifest.md)
 # for the injector to be able to grant it.
 
+
 def my_catalog_search(inputs: dict, /) -> dict:
     query = inputs["query"]
     return {"results": my_catalog_service.search(query)}
+
 
 registry = agents_system.ToolRegistry()
 registry.register(

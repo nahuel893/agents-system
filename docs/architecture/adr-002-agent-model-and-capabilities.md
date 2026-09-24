@@ -956,6 +956,17 @@ See also #71 (channel port extraction) — related to how a channel's runtime
 is resolved, but distinct from this boot-time invariant; #111 does not
 depend on #71's port shape.
 
+**Unbounded body read — closed, not accepted (#37).** A separate risk on
+this same route was NOT accepted: `POST /v1/chat/completions` did
+`body = await request.json()` with no size ceiling, and because
+`adapter_api_key` unset makes `verify_bearer` a no-op, that read was
+reachable fully unauthenticated. #37 closes it by reusing #140's webhook
+body-size guard, moved to a shared
+`integration/body_limits.py::read_bounded_body`, with its own
+`settings.adapter_max_body_bytes` ceiling (same 1 MiB default). The ceiling
+is checked before `json.loads`, so an oversized body never reaches parsing
+regardless of whether the key is set.
+
 **Rationale.** Fail at boot, not per message, because a per-message check
 that is skippable or buggy fails open exactly once too often for a
 security-relevant gate; a boot-time refusal fails the whole deployment

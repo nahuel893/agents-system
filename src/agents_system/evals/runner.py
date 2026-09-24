@@ -18,7 +18,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
@@ -218,22 +219,25 @@ def evaluate_assertions(
                 )
             )
 
-    if assertions.escalation_expected is True:
-        if _ESCALATION_NOTIFIER_TOOL not in succeeded:
-            failures.append(
-                AssertionFailure(
-                    "escalation_expected",
-                    "expected a successful escalation_notifier call; none found",
-                )
+    if (
+        assertions.escalation_expected is True
+        and _ESCALATION_NOTIFIER_TOOL not in succeeded
+    ):
+        failures.append(
+            AssertionFailure(
+                "escalation_expected",
+                "expected a successful escalation_notifier call; none found",
             )
-    elif assertions.escalation_expected is False:
-        if _ESCALATION_NOTIFIER_TOOL in called:
-            failures.append(
-                AssertionFailure(
-                    "escalation_expected",
-                    "escalation_notifier must not be called, but it was",
-                )
+        )
+    elif (
+        assertions.escalation_expected is False and _ESCALATION_NOTIFIER_TOOL in called
+    ):
+        failures.append(
+            AssertionFailure(
+                "escalation_expected",
+                "escalation_notifier must not be called, but it was",
             )
+        )
 
     return AssertionOutcome(failures=tuple(failures))
 
@@ -383,7 +387,7 @@ async def run_scenario(
                 outcomes.append(
                     RunOutcome(passed=outcome.passed, failures=outcome.failures)
                 )
-            except Exception as exc:  # noqa: BLE001 -- a run's own crash is
+            except Exception as exc:
                 # a failed run, not a crashed eval: one bad run must not
                 # abort every remaining one, or a single flaky call would
                 # silently erase the rest of the success-rate signal.

@@ -11,7 +11,8 @@ without any network call. The `live`-marked test in
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -36,7 +37,7 @@ class ToolAwareFakeModel(FakeMessagesListChatModel):
 
     def bind_tools(  # type: ignore[override]
         self, tools: Sequence[Any], **kwargs: Any
-    ) -> "ToolAwareFakeModel":
+    ) -> ToolAwareFakeModel:
         return self
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime
 import json
 import pathlib
-from typing import Iterable
+from collections.abc import Iterable
 
 from agents_system.evals.runner import ScenarioResult
 
@@ -31,9 +31,7 @@ def write_results(
     """
     results = list(results)
     out_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = (now or datetime.datetime.now(datetime.timezone.utc)).strftime(
-        "%Y%m%dT%H%M%SZ"
-    )
+    timestamp = (now or datetime.datetime.now(datetime.UTC)).strftime("%Y%m%dT%H%M%SZ")
 
     json_path = out_dir / f"{timestamp}.json"
     json_path.write_text(

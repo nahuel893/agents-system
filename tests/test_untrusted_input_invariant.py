@@ -23,6 +23,7 @@ import pathlib
 from typing import Any
 
 import pytest
+from platform_role_contract import discover_concrete_platform_roles
 
 from agents_system.harness.loader import (
     DefinitionError,
@@ -31,7 +32,6 @@ from agents_system.harness.loader import (
     merge,
     resolve,
 )
-from platform_role_contract import discover_concrete_platform_roles
 
 
 # ---------------------------------------------------------------------------
@@ -128,27 +128,27 @@ def _write_role_with_raw_policy_line(
 
 def _raw(**overrides: Any) -> RawDefinition:
     """Build a RawDefinition with sensible, already-resolved defaults."""
-    base: dict[str, Any] = dict(
-        role_name="role",
-        version="1.0",
-        deployment=None,
-        system_prompt="",
-        tools=[],
-        skills=[],
-        context={},
-        permissions=[],
-        autonomy="supervised",
-        escalation_rules={},
-        delegation_policy={},
-        memory_policy={},
-        audit_policy={},
-        execution_limits=None,
+    base: dict[str, Any] = {
+        "role_name": "role",
+        "version": "1.0",
+        "deployment": None,
+        "system_prompt": "",
+        "tools": [],
+        "skills": [],
+        "context": {},
+        "permissions": [],
+        "autonomy": "supervised",
+        "escalation_rules": {},
+        "delegation_policy": {},
+        "memory_policy": {},
+        "audit_policy": {},
+        "execution_limits": None,
         # A generic role coming out of `load_generic()` always has a
         # concrete bool here (defaulted to False if never declared) — never
         # `None`. `None` is only meaningful on an *override*, meaning "not
         # declared, inherit".
-        untrusted_input=False,
-    )
+        "untrusted_input": False,
+    }
     base.update(overrides)
     return RawDefinition(**base)
 

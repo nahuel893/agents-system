@@ -17,10 +17,11 @@ run it.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from sqlalchemy import TextClause
 from sqlalchemy.ext.asyncio import AsyncEngine
