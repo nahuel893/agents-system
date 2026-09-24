@@ -1,0 +1,52 @@
+# ADR-002 H.29 (docs/architecture/adr-002-agent-model-and-capabilities.md):
+# Dependabot proposes the version bump; the `dependency-audit` CI job
+# (.github/workflows/ci.yml) is the gate that fails a build on a known
+# vulnerability. Neither replaces the other.
+version: 2
+updates:
+  # Tracks uv.lock. GitHub Dependabot's "uv" ecosystem (distinct from "pip")
+  # understands pyproject.toml + uv.lock directly, including [dependency-groups].
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "security"
+      - "infra"
+    open-pull-requests-limit: 10
+    # Each package below is pinned or blocked for a reason tracked in its
+    # own follow-up issue (pip-audit baseline, #115) -- Dependabot cannot
+    # open a mergeable PR for any of them today, so let it stay quiet on
+    # these until the linked issue does the real migration work and removes
+    # the corresponding entry here (and the matching --ignore-vuln lines in
+    # .github/workflows/ci.yml's dependency-audit job).
+    ignore:
+      # #151 -- pyproject.toml pins these <1.0; the fix needs a coordinated
+      # migration to their 1.x line, not a Dependabot-proposed patch bump.
+      - dependency-name: "langchain-anthropic"
+      - dependency-name: "langchain-core"
+      - dependency-name: "langchain-openai"
+      - dependency-name: "langgraph"
+      - dependency-name: "langgraph-checkpoint"
+      - dependency-name: "langgraph-sdk"
+      - dependency-name: "langsmith"
+      # #152 -- transitive via fastapi>=0.115,<1.0; needs a fastapi
+      # compatibility check first.
+      - dependency-name: "starlette"
+      # #153 -- transitive via sentence-transformers>=3.0; needs its own
+      # verification pass against the real BAAI/bge-m3 embedding path.
+      - dependency-name: "transformers"
+      # #154 -- capped by torch's own metadata; won't resolve higher until a
+      # newer CPU-index torch build allows it.
+      - dependency-name: "setuptools"
+
+  # Actions referenced by .github/workflows/*.yml (checkout, setup-uv,
+  # gitleaks-action, cache, upload-artifact, ...).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "security"
+      - "infra"
+    open-pull-requests-limit: 10

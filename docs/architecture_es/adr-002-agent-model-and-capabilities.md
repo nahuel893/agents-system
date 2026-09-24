@@ -34,8 +34,8 @@
 | 26 | Razonamiento — decisión explícita sobre persistirlo | G. Persistencia y memoria | ⏳ pendiente | PR nuevo — #124 |
 | 27 | Tests de integración que nunca se ejecutan | H. CI | ✅ hecho | PR de CI 1 (issue #42) |
 | 28 | El formato no se exige (`ruff format`) | H. CI | ✅ hecho | PR de CI 2 — #105 |
-| 29 | No se revisan vulnerabilidades en dependencias | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
-| 30 | Detección de secretos solo local | H. CI | ⏳ pendiente | PR de CI 3 — #115 |
+| 29 | No se revisan vulnerabilidades en dependencias | H. CI | ✅ hecho | PR de CI 3 — #115 |
+| 30 | Detección de secretos solo local | H. CI | ✅ hecho | PR de CI 3 — #115 |
 | 31 | Cada ejecución corre dos veces; sin cancelación | H. CI | ✅ hecho | PR de CI 1 — #104 |
 | 32 | No se mide la cobertura | H. CI | ⏳ pendiente | PR de CI 4 — #116 |
 | 33 | Los scripts de shell no se validan en CI | H. CI | ⏳ pendiente | PR de CI 4 — #116 |
@@ -2023,7 +2023,30 @@ está justo donde una dependencia comprometida o vulnerable hace más daño.
 **Alternativas consideradas.** Revisión manual periódica: descartada,
 porque no ocurre de forma confiable y las bases de avisos cambian a diario.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 3, junto con H.30.
+**Estado.** ✅ hecho — `dependency-audit`. El job `dependency-audit` de
+`.github/workflows/ci.yml` ejecuta `uv sync --group dev`, instala
+`pip-audit==2.10.1` y luego corre `pip-audit --local` sobre el conjunto de
+dependencias bloqueado, haciendo fallar el build ante cualquier
+vulnerabilidad conocida que no esté explícitamente permitida. Ninguna
+dependencia se actualiza en este PR solo para resolver un hallazgo: siete
+paquetes (`anyio`, `click`, `idna`, `pydantic-settings`, `pyjwt`, `pytest`,
+`urllib3`) se subieron a versiones limpias vía `uv lock -P <paquete>` porque
+sus correcciones entraban dentro de las restricciones ya existentes de
+`pyproject.toml` y la suite completa de tests siguió en verde después. Los
+hallazgos restantes — `langchain-core`, `langchain-openai`,
+`langchain-anthropic`, `langgraph`, `langgraph-checkpoint`, `langgraph-sdk`,
+`langsmith`, `starlette`, `transformers`, `setuptools`, 22 IDs de CVE/PYSEC
+únicos en total — no se actualizan acá deliberadamente: la familia
+langchain/langgraph está bloqueada por los pines `<1.0` de `pyproject.toml`
+y necesita una migración de versión mayor coordinada, y
+`starlette`/`transformers`/`setuptools` tienen cada uno sus propios
+bloqueos transitivos. Cada uno se marca con `--ignore-vuln` en el paso de
+CI con un comentario inline que cita su propia issue de seguimiento,
+agrupadas por causa raíz en cuatro issues (labels
+`security,priority:medium`): #151 para la migración de langchain/langgraph,
+#152 para `starlette`, #153 para `transformers` y #154 para `setuptools`. Dependabot
+para `pip`/`uv` y GitHub Actions (`.github/dependabot.yml`) queda
+habilitado como parte de este mismo cambio — ver H.30.
 
 #### H.30 — La detección de secretos solo corre en la máquina del desarrollador
 
@@ -2044,7 +2067,25 @@ aceptable donde esté disponible y complementario, pero no cubre todas las
 formas de token que cubre una regla propia, y su disponibilidad depende del
 plan del repositorio.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR de CI 3.
+**Estado.** ✅ hecho — `secret-scan`. El job `secret-scan` de
+`.github/workflows/ci.yml` ejecuta `gitleaks/gitleaks-action@v3` en cada
+`pull_request`, escaneando exactamente el rango de commits del PR
+(`baseRef^..headRef` a partir de la propia lista de commits del PR,
+confirmado contra el código fuente de la Action) con `fetch-depth: 0` para
+que ese rango se resuelva correctamente; se usa v3 específicamente porque
+v2 es una Action de Node 20 y GitHub eliminó Node 20 de los runners
+alojados el 2026-09-16, antes de este PR. Se corrió un escaneo completo del
+historial (CLI de `gitleaks` fijada en v8.30.1) contra todo el historial del
+repositorio al incorporar este job, y encontró exactamente un secreto real:
+un token de la API de Outline hardcodeado en dos commits del 2026-05-28, ya
+reemplazado por el commit `2d8d509` (2026-08-28), que movió ambos scripts a
+leer `OUTLINE_API_TOKEN` desde el entorno. El dueño del repositorio confirmó
+el 2026-09-23 que ese token fue rotado. Dos entradas en `.gitleaksignore`
+permiten exactamente esas dos huellas históricas, con la confirmación de
+rotación registrada como motivo — no es una excepción general. Dependabot
+también queda habilitado para `pip`/`uv` y GitHub Actions
+(`.github/dependabot.yml`), cerrando la mitad de Dependabot de la propia
+Decisión de H.29.
 
 #### H.31 — Cada ejecución corre dos veces y las ejecuciones viejas no se cancelan
 
