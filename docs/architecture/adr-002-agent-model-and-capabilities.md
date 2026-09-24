@@ -23,7 +23,7 @@
 | 15 | Reference backends for platform-generic ports | C. Tools & permissions | ✅ done (this change) | — #113 |
 | 16 | Rejected: `operator-agent` as parent of `data-agent`; composition over multi-inheritance | D. Role composition | ✅ decision recorded (no code change) | Issue #53 |
 | 17 | Inherited role contract test suite | D. Role composition | ✅ done (this change) | — #114 |
-| 18 | Live evaluation pipeline | E. Verification | ⏳ pending | New PR, after 8/9 land — #52 |
+| 18 | Live evaluation pipeline | E. Verification | 🚧 in progress | Runner + smoke scenario shipped — #169; per-role scenarios pending — #52 |
 | 19 | Stale: `role.md`/`manifesto.md` say `agents/`, real path is `platform/roles/` | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
 | 20 | Stale: `tool.md` `sensitive:` description, pgvector RAG description | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
 | 21 | Stale: `permission-model.md` open decision (resolved by 10) + pgvector | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
@@ -1391,11 +1391,19 @@ between releases.
 — rejected: real model calls are slow, cost money, and are not fully
 deterministic, which is the wrong shape for a gate that blocks every PR.
 
-**Status.** ⏳ pending. **Planned slice:** new PR, after B.8/B.9 land (see
-C's closing note — evaluating against a prompt that still leaks internal
-rationale would contaminate results) and ideally after C.15's reference
-backends exist (otherwise every knowledge/summary/order task evaluates the
-fail-closed path, not real behavior).
+**Status.** 🚧 in progress — #169 ships the runner: `src/agentsys/evals/`
+(`schema.py`'s YAML scenario schema, `runner.py`'s assertion evaluation and
+N-run success-rate aggregation, `reporting.py`'s JSON + markdown output to
+the gitignored `evals/results/`), the `live` pytest marker (deselected by
+default, same shape as `integration`), configurable `ollama_model`/
+`ollama_base_url` on `Settings` (`src/agentsys/main.py`'s
+`_build_chat_model` no longer hardcodes `qwen2.5:3b`), and one smoke
+scenario (`evals/scenarios/sales_agent_smoke.yaml`) proving the pipeline end
+to end against real Ollama. **Still pending:** per-role scenario coverage
+(#169 explicitly scoped that out to sibling issues under #52) and any
+nightly-run automation — this pipeline still runs by hand
+(`pytest -m live`) only. See `docs/platform/live-eval.md` /
+`docs/platform_es/live-eval.md`.
 
 ---
 

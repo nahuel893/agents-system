@@ -152,6 +152,28 @@ class Settings(BaseSettings):
     openai_compatible_base_url: str = ""
     openai_compatible_model: str = ""
 
+    # Ollama adapter (#169, ADR-002 E.18) — configurable model + host so a
+    # role can be evaluated against a different local model (e.g. the live-eval
+    # pipeline running qwen2.5:3b vs qwen3:8b) without a code change. Defaults
+    # match what `_build_chat_model` hardcoded before this field existed, so
+    # an unconfigured deployment's behavior is unchanged. Empty base_url means
+    # "unset" -- `_build_chat_model` passes None, not "", so ChatOllama falls
+    # back to its own default host resolution (OLLAMA_HOST env var, then
+    # http://localhost:11434) instead of treating "" as a real base URL.
+    ollama_model: str = "qwen2.5:3b"
+    ollama_base_url: str = ""
+
+    # Live-eval pipeline's own provider switch (#169 follow-up, ADR-002
+    # E.18). Deliberately a SEPARATE field from `adapter_provider` above --
+    # a manual eval run choosing a different model must never change what
+    # the running application serves. Accepts the same values
+    # `main._build_chat_model` dispatches on; `openai_compatible` then reads
+    # the same `openai_compatible_*` settings as every other role (e.g.
+    # OpenRouter -- see docs/platform/live-eval.md). Env var: EVAL_PROVIDER.
+    eval_provider: Literal["ollama", "groq", "anthropic", "openai_compatible"] = (
+        "ollama"
+    )
+
     # App
     log_level: str = "INFO"
     debug: bool = False

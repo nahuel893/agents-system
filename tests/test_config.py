@@ -144,6 +144,51 @@ def test_adapter_config_defaults():
 
 
 # ---------------------------------------------------------------------------
+# #169 (ADR-002 E.18) — configurable Ollama model + base URL
+# ---------------------------------------------------------------------------
+
+
+def test_ollama_config_defaults_match_the_previous_hardcoded_values() -> None:
+    """ollama_model/ollama_base_url must default to what `_build_chat_model`
+    hardcoded before #169, so making the provider configurable changes no
+    consumer's behavior until they actually set an env var.
+    """
+    settings = Settings(_env_file=None)
+    assert settings.ollama_model == "qwen2.5:3b"
+    assert settings.ollama_base_url == ""
+
+
+def test_ollama_config_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3:8b")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11500")
+    settings = Settings(_env_file=None)
+    assert settings.ollama_model == "qwen3:8b"
+    assert settings.ollama_base_url == "http://localhost:11500"
+
+
+# ---------------------------------------------------------------------------
+# #169 follow-up (ADR-002 E.18) — eval_provider, separate from adapter_provider
+# ---------------------------------------------------------------------------
+
+
+def test_eval_provider_defaults_to_ollama() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.eval_provider == "ollama"
+
+
+def test_eval_provider_overridable_via_env_independent_of_adapter_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The eval's provider choice must never be coupled to the running
+    app's own adapter_provider -- flipping one must not flip the other."""
+    monkeypatch.setenv("ADAPTER_PROVIDER", "groq")
+    monkeypatch.setenv("EVAL_PROVIDER", "openai_compatible")
+    settings = Settings(_env_file=None)
+    assert settings.adapter_provider == "groq"
+    assert settings.eval_provider == "openai_compatible"
+
+
+# ---------------------------------------------------------------------------
 # openai-compatible-provider — provider value + credential fields (spec R1, R2)
 # ---------------------------------------------------------------------------
 

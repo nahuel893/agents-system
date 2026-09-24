@@ -1,0 +1,18 @@
+# Smoke scenario for the live-eval pipeline (#169, ADR-002 E.18).
+#
+# Proves resolve() -> build_runtime() -> AgentRuntime.run_turn works end to
+# end against a real local model. This is NOT a correctness suite for
+# sales-agent -- per-role scenario coverage is deliberately out of scope for
+# #169 (sibling issues own it). See docs/platform/live-eval.md for the
+# scenario schema and how to run this with `pytest -m live`.
+role: sales-agent
+description: >
+  A customer asks whether a catalog item is in stock and what it costs. A
+  competent sales-agent looks it up with catalog_search instead of guessing,
+  and this single inquiry gives it no reason to write an order or escalate.
+turns:
+  - "Hi, do you have Item Alpha in stock and how much does it cost?"
+assertions:
+  tools_called: [catalog_search]
+  tools_not_called: [order_writer, escalation_notifier]
+  escalation_expected: false
