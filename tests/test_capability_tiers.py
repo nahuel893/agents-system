@@ -378,6 +378,27 @@ def test_t0_tool_with_no_required_permissions_has_no_floor_requirement() -> None
     assert spec.required_permissions == ()
 
 
+@pytest.mark.parametrize("tier_name", ["T2", "T3"])
+def test_t2_and_t3_tool_with_no_required_permissions_fails_floor(
+    tier_name: str,
+) -> None:
+    """The floor's "MUST require at least one permission" is not
+    vacuously satisfied by requiring none — R2b's `any(...)` over an empty
+    `required_permissions` is `False`, so a T2/T3 tool declaring no
+    permissions at all fails the floor exactly like one that requires only
+    low-tier permissions does."""
+    from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import PermissionFloorViolationError
+
+    with pytest.raises(PermissionFloorViolationError, match="none declared"):
+        ToolSpec(
+            name="no_perms_floor_violation",
+            required_permissions=(),
+            connector=_connector,
+            tier=Tier(tier_name),
+        )
+
+
 def test_order_writer_shaped_tool_satisfies_both_r2a_and_r2b() -> None:
     """`order_writer`'s own two Write-T2 permissions independently satisfy
     the ceiling (2<=2 both) and the floor (max(2,2)>=2)."""

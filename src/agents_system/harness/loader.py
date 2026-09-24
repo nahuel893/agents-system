@@ -56,13 +56,6 @@ import structlog
 import yaml
 
 from agents_system.harness.registry import Tier
-from agents_system.permissions import (
-    Run,
-    UnknownPermissionNameError,
-    UntrustedInputGrantError,
-    resource,
-)
-from agents_system.permissions import resolve as resolve_permission
 
 logger = structlog.get_logger()
 
@@ -390,16 +383,24 @@ def _ensure_command_tool_permission_registered(wire_name: str) -> None:
     Unlike the 18 shipped wire names `permissions/builtins.py` registers at
     import time, a command tool's `permission` is authored per-manifest
     (design.md: "`declaration.permission`, which always resolves to `Run`
-    (T2)") — there is no fixed table to register ahead of time. Checking
-    the registry first, rather than calling `resource()` unconditionally,
-    keeps this idempotent across repeated parses of the same manifest
-    (`resource()` itself always builds a fresh class, so calling it twice
-    for the same name would collide with itself).
+    (T2)") — there is no fixed table to register ahead of time.
+    `ensure_resource_registered` does the get-or-create atomically (one
+    `PermissionRegistry` lock acquisition), so two concurrent loads of the
+    same not-yet-seen manifest can't race each other into a spurious
+    collision or a lost registration.
+
+    Deferred import: `permissions.base` imports `Tier` from
+    `harness.registry`, which initializes the `agents_system.harness`
+    PACKAGE (`harness/__init__.py`) first, which imports `loader.py` — a
+    module-level `from agents_system.permissions import ...` here would
+    recurse into `agents_system.permissions` while it is still
+    initializing, whenever `agents_system.permissions` is the first thing a
+    fresh interpreter imports (see `tests/test_public_api.py::
+    test_import_agents_system_permissions_standalone_succeeds`).
     """
-    try:
-        resolve_permission(wire_name)
-    except UnknownPermissionNameError:
-        resource(Run, wire_name)
+    from agents_system.permissions import Run, ensure_resource_registered
+
+    ensure_resource_registered(Run, wire_name)
 
 
 def _resolve_argv0(raw: str, *, tool_name: str, source: pathlib.Path) -> str:
@@ -1591,9 +1592,16 @@ def _validate_untrusted_input_exec(
     unconditionally by both callers — the ``merge()`` branch and the
     no-override branch of ``resolve()`` — so a role resolved with no
     deployment override enforces this exactly like one that has one.
+
+    Deferred import: see `_ensure_command_tool_permission_registered`'s
+    docstring for why a module-level `agents_system.permissions` import in
+    this file is a real circular import, not a theoretical one.
     """
     if not untrusted_input:
         return
+    from agents_system.permissions import UntrustedInputGrantError
+    from agents_system.permissions import resolve as resolve_permission
+
     for name in sorted(permissions):
         cls = resolve_permission(name)
         if cls.tier is Tier.T3:
@@ -1648,6 +1656,11 @@ def merge(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
     Logs the outcome (invariant violation or successful merge) and delegates
     the actual work to ``_merge_validated``.
     """
+    # Deferred import: see `_ensure_command_tool_permission_registered`'s
+    # docstring for why a module-level `agents_system.permissions` import
+    # in this file is a real circular import, not a theoretical one.
+    from agents_system.permissions import UntrustedInputGrantError
+
     try:
         result = _merge_validated(generic, override)
     except (DefinitionError, UntrustedInputGrantError) as exc:

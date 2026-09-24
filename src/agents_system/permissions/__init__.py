@@ -8,7 +8,16 @@ policy predicates, and the `AgentPermissionError` exception tree.
 from __future__ import annotations
 
 from .base import Permission
-from .builtins import Exec, Read, Run, Send, Spawn, Write, resource
+from .builtins import (
+    Exec,
+    Read,
+    Run,
+    Send,
+    Spawn,
+    Write,
+    ensure_resource_registered,
+    resource,
+)
 from .errors import (
     AgentPermissionError,
     InvalidPermissionTierError,
@@ -42,6 +51,7 @@ __all__ = [
     "UntrustedInputGrantError",
     "Write",
     "covers",
+    "ensure_resource_registered",
     "evaluate_tool_spec",
     "register",
     "resolve",

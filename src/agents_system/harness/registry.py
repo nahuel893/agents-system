@@ -76,10 +76,13 @@ class ToolSpec:
         fixtures), not only for the tools this module happens to construct
         itself. The write:/send:/exec:/run: prefix heuristic that used to
         live here is gone; ``agents_system.permissions.evaluate_tool_spec``
-        (deferred import — see ``injector.py``'s identical
-        cycle-avoidance pattern) now resolves each required permission
-        through the ``PermissionRegistry`` and checks the class/tier rules
-        R2a (ceiling) and R2b (floor) directly.
+        (deferred import — see ``harness/loader.py``'s three deferred
+        ``agents_system.permissions`` imports for the identical
+        cycle-avoidance reason: ``permissions.base`` imports ``Tier`` from
+        this module, which initializes the ``agents_system.harness``
+        package and, transitively, ``loader.py``) now resolves each
+        required permission through the ``PermissionRegistry`` and checks
+        the class/tier rules R2a (ceiling) and R2b (floor) directly.
         """
         from agents_system.permissions import evaluate_tool_spec  # deferred
 
