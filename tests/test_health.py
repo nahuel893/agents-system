@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agentsys.config import get_settings
+from agentsys.services.outbox import OutboxBacklogCounts
 from conftest import create_test_app
 
 
@@ -165,6 +167,295 @@ async def test_health_both_degraded(app):
     assert body["status"] == "degraded"
     assert body["postgres"] == "error"
     assert body["redis"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# #141 — webhook worker / outbox backlog visibility
+# ---------------------------------------------------------------------------
+
+
+def _mock_healthy_deps(app) -> tuple[MagicMock, AsyncMock]:
+    """Wire app.state.engine + get_redis_client so postgres/redis read ok,
+    leaving the webhook-worker/backlog fields as the only variable under test.
+    """
+    mock_conn = AsyncMock()
+    mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_conn.__aexit__ = AsyncMock(return_value=False)
+    mock_conn.execute = AsyncMock(return_value=MagicMock())
+
+    mock_engine = MagicMock()
+    mock_engine.connect = MagicMock(return_value=mock_conn)
+    mock_engine.dispose = AsyncMock()
+    app.state.engine = mock_engine
+
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=True)
+    return mock_engine, mock_redis
+
+
+async def test_health_reports_worker_running_and_zero_backlog(app):
+    """A running worker with an empty backlog is unambiguously healthy."""
+    _, mock_redis = _mock_healthy_deps(app)
+    fake_worker = MagicMock()
+    fake_worker.is_running = True
+    app.state.webhook_worker = fake_worker
+
+    with (
+        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agentsys.main._outbox_backlog",
+            new=AsyncMock(
+                return_value=OutboxBacklogCounts(pending=0, leased=0, leased_expired=0)
+            ),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get("/health")
+
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["webhook_worker"] == {
+        "running": True,
+        "outbox_pending": 0,
+        "outbox_leased": 0,
+        "outbox_leased_expired": 0,
+    }
+
+
+async def test_health_degrades_when_worker_not_running_with_pending_backlog(app):
+    """Acceptance criterion: /health reports degraded when the worker is not
+    running while work is pending."""
+    _, mock_redis = _mock_healthy_deps(app)
+    app.state.webhook_worker = None
+
+    with (
+        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agentsys.main._outbox_backlog",
+            new=AsyncMock(
+                return_value=OutboxBacklogCounts(pending=3, leased=1, leased_expired=0)
+            ),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get("/health")
+
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["webhook_worker"] == {
+        "running": False,
+        "outbox_pending": 3,
+        "outbox_leased": 1,
+        "outbox_leased_expired": 0,
+    }
+
+
+async def test_health_stays_ok_when_worker_running_despite_backlog(app):
+    """A nonzero backlog alone is not degradation -- only paired with a
+    worker that is not there to drain it."""
+    _, mock_redis = _mock_healthy_deps(app)
+    fake_worker = MagicMock()
+    fake_worker.is_running = True
+    app.state.webhook_worker = fake_worker
+
+    with (
+        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agentsys.main._outbox_backlog",
+            new=AsyncMock(
+                return_value=OutboxBacklogCounts(pending=5, leased=2, leased_expired=2)
+            ),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get("/health")
+
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["webhook_worker"]["outbox_pending"] == 5
+
+
+async def test_health_stays_ok_when_worker_absent_and_backlog_empty(app):
+    """No worker configured at all (e.g. WhatsApp unset) and nothing pending
+    -- not every deployment runs the webhook worker."""
+    _, mock_redis = _mock_healthy_deps(app)
+    # app.state.webhook_worker deliberately left unset, matching a lifespan
+    # that never ran (as in these tests) or a deployment with no WhatsApp.
+
+    with (
+        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agentsys.main._outbox_backlog",
+            new=AsyncMock(
+                return_value=OutboxBacklogCounts(pending=0, leased=0, leased_expired=0)
+            ),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get("/health")
+
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["webhook_worker"]["running"] is False
+
+
+async def test_health_backlog_query_failure_does_not_crash_the_endpoint(app):
+    """An outbox count failure must not take /health down with it -- report
+    the counts as unavailable (``None``) rather than 500 or a wrong number."""
+    _, mock_redis = _mock_healthy_deps(app)
+    app.state.webhook_worker = None
+
+    with (
+        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agentsys.main._outbox_backlog",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["webhook_worker"]["outbox_pending"] is None
+    assert body["webhook_worker"]["outbox_leased"] is None
+    assert body["webhook_worker"]["outbox_leased_expired"] is None
+    # Unknown backlog must not itself be treated as "pending work exists".
+    assert body["status"] == "ok"
+
+
+async def test_health_degrades_when_worker_not_running_with_expired_leases(app):
+    """#141 review follow-up (BLOCKER): a crashed worker's abandoned,
+    already-expired leases must degrade /health even when nothing is
+    unleased-``pending`` -- the old rule only looked at ``outbox_pending``
+    and silently ignored this exact case."""
+    _, mock_redis = _mock_healthy_deps(app)
+    app.state.webhook_worker = None
+
+    with (
+        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agentsys.main._outbox_backlog",
+            new=AsyncMock(
+                return_value=OutboxBacklogCounts(pending=0, leased=4, leased_expired=4)
+            ),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get("/health")
+
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["webhook_worker"] == {
+        "running": False,
+        "outbox_pending": 0,
+        "outbox_leased": 4,
+        "outbox_leased_expired": 4,
+    }
+
+
+async def test_health_stays_ok_when_worker_not_running_with_only_live_leases(app):
+    """A worker not running with leased-but-not-yet-expired rows is not
+    degraded on its own -- only an already-expired (abandoned) lease is,
+    same as a live worker draining a nonzero ``outbox_pending``."""
+    _, mock_redis = _mock_healthy_deps(app)
+    app.state.webhook_worker = None
+
+    with (
+        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agentsys.main._outbox_backlog",
+            new=AsyncMock(
+                return_value=OutboxBacklogCounts(pending=0, leased=3, leased_expired=0)
+            ),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get("/health")
+
+    body = response.json()
+    assert body["status"] == "ok"
+
+
+async def test_health_stays_ok_when_worker_running_despite_expired_leases(app):
+    """A running worker will reclaim expired leases on its next poll -- an
+    expired lease alone, with a live worker, is not degradation."""
+    _, mock_redis = _mock_healthy_deps(app)
+    fake_worker = MagicMock()
+    fake_worker.is_running = True
+    app.state.webhook_worker = fake_worker
+
+    with (
+        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agentsys.main._outbox_backlog",
+            new=AsyncMock(
+                return_value=OutboxBacklogCounts(pending=0, leased=1, leased_expired=1)
+            ),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get("/health")
+
+    body = response.json()
+    assert body["status"] == "ok"
+
+
+async def test_outbox_backlog_probe_times_out_instead_of_hanging(app):
+    """#141 review follow-up (BLOCKER): ``_outbox_backlog`` must not hang
+    GET /health (and, through it, any liveness probe) when the outbox query
+    itself hangs -- e.g. a locked ``outbox_work`` table. Bounded to the same
+    3s budget as the postgres/redis probes; proven here against a count
+    that would otherwise hang far longer than that."""
+    import time
+
+    from agentsys.main import _outbox_backlog
+
+    class _HangingSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+    async def hanging_count_outbox_backlog(session):
+        await asyncio.sleep(10)
+        raise AssertionError(
+            "count_outbox_backlog was not cancelled by the 3s health-probe timeout"
+        )
+
+    with (
+        patch(
+            "agentsys.main.get_session_factory", return_value=lambda: _HangingSession()
+        ),
+        patch(
+            "agentsys.main.count_outbox_backlog",
+            new=hanging_count_outbox_backlog,
+        ),
+    ):
+        start = time.monotonic()
+        result = await asyncio.wait_for(_outbox_backlog(MagicMock()), timeout=8)
+        elapsed = time.monotonic() - start
+
+    assert result is None
+    # Bounded by the internal 3s timeout, nowhere near the 10s hang.
+    assert elapsed < 6
 
 
 # ---------------------------------------------------------------------------

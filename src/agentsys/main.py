@@ -21,10 +21,14 @@ from agentsys.harness.loader import DefinitionError, RootConfig
 from agentsys.harness.registry import RegistryFactory
 from agentsys.integration import openai_router, webhook_router
 from agentsys.integration.whatsapp_client import WhatsAppClient
-from agentsys.models.base import get_engine
+from agentsys.models.base import get_engine, get_session_factory
 from agentsys.observability import RequestIdMiddleware, setup_logging
 from agentsys.services.admission import TurnAdmissionLimiter
-from agentsys.services.outbox import DEFAULT_LEASE_DURATION
+from agentsys.services.outbox import (
+    DEFAULT_LEASE_DURATION,
+    OutboxBacklogCounts,
+    count_outbox_backlog,
+)
 from agentsys.services.participants import (
     ConversationRecorder,
     ParticipantDirectory,
@@ -122,10 +126,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         # D-007 — AuditSink: async fire-and-forget event sink.
         from agentsys.audit.sink import AuditSink
-        from agentsys.models.base import get_session_factory
 
-        # get_session_factory takes the engine, not the URL. app.state.engine
-        # is already built and disposed by resource_stack above.
+        # get_session_factory takes the engine, not the URL (imported at
+        # module level above — also used by GET /health's backlog query).
+        # app.state.engine is already built and disposed by resource_stack
+        # above.
         _audit_session_factory = get_session_factory(app.state.engine)
         audit_sink = AuditSink(session_factory=_audit_session_factory)
         await audit_sink.start()
@@ -402,6 +407,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await webhook_worker.start()
             resource_stack.push_async_callback(webhook_worker.stop)
             app.state.webhook_worker = webhook_worker
+        elif settings.whatsapp_token and settings.whatsapp_phone_number_id:
+            # #141 review follow-up -- WhatsApp is otherwise fully
+            # configured to receive AND reply (both outbound credentials
+            # set), yet `whatsapp_runtime_id` is empty or malformed (missing
+            # the `{deployment}__{role}` separator -- see the `"__" not in
+            # model_id` skip above). `POST /webhook` is mounted
+            # UNCONDITIONALLY (`include_router(webhook_router)` below) and
+            # durably accepts every signed inbound message regardless of
+            # this value, so the old behaviour -- warn and boot anyway --
+            # let a fully signed, fully credentialed deployment accept
+            # messages that no worker would EVER process, with only a
+            # startup warning line as the signal. Fail closed instead: this
+            # is a boot-time misconfiguration, not a runtime condition to
+            # expose via backlog metrics.
+            #
+            # A well-formed, truthy `whatsapp_runtime_id` cannot reach this
+            # branch while itself being the reason `webhook_runtime` is
+            # `None`: it is unconditionally appended to `required_runtimes`
+            # above whenever truthy, and every id with the `__` separator
+            # that reaches the `required_runtimes` loop either raises before
+            # this code runs (an unsafe `untrusted_input` role, an execution
+            # timeout too close to the outbox lease) or lands in
+            # `runtimes[model_id]` -- there is no silent "resolved but not
+            # cached" path for a well-formed id. If that stops being true,
+            # a well-formed-but-unresolved id must first be covered by a
+            # test before this message claims it again.
+            raise DefinitionError(
+                "WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID are configured "
+                f"but whatsapp_runtime_id={settings.whatsapp_runtime_id!r} "
+                "resolves to no runtime (unset or missing the required "
+                "'{deployment}__{role}' separator). "
+                "POST /webhook would durably accept signed WhatsApp messages "
+                "that the deferred worker would never process. Set "
+                "WHATSAPP_RUNTIME_ID to a valid runtime id, or unset "
+                "WHATSAPP_TOKEN/WHATSAPP_PHONE_NUMBER_ID if this deployment "
+                "does not use WhatsApp. Refusing to boot."
+            )
         else:
             structlog.get_logger().warning(
                 "webhook_worker.no_runtime_resolved",
@@ -498,6 +540,34 @@ def _build_chat_model(provider: str) -> Any:
     )
 
 
+async def _outbox_backlog(engine: Any) -> OutboxBacklogCounts | None:  # noqa: ANN401
+    """Best-effort outbox backlog counts for GET /health (#141).
+
+    ``None`` on any failure -- opening a session or querying can fail for
+    the same reasons the postgres probe can (already reported separately as
+    ``postgres_status``), and that must not crash the health check itself.
+    ``None`` is deliberately not coerced to ``0``: an unreachable/unknown
+    backlog is a different fact than a confirmed-empty one, and collapsing
+    them would let a DB outage report a falsely healthy backlog.
+
+    Bounded to the same 3s budget as the postgres/redis probes above (#141
+    review follow-up, BLOCKER) -- ``outbox_work`` is queried through the
+    same engine those probes use, and without a timeout here a locked or
+    slow table would hang this whole endpoint (and any liveness probe
+    reading it) even while postgres/redis themselves answer fine. A timeout
+    is just another failure from this function's point of view: it is
+    caught below and reported as ``None``, the same as any other error.
+    """
+    try:
+        async with asyncio.timeout(3.0):
+            session_factory = get_session_factory(engine)
+            async with session_factory() as session:
+                return await count_outbox_backlog(session)
+    except Exception:
+        structlog.get_logger().warning("health.outbox_backlog_error")
+        return None
+
+
 def create_app(
     *,
     registry_factory: RegistryFactory,
@@ -562,7 +632,7 @@ def create_app(
     async def health(
         request: Request,
         settings: Settings = Depends(get_settings),
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         engine = request.app.state.engine
         redis_client = get_redis_client(settings.redis_url)
 
@@ -586,8 +656,51 @@ def create_app(
             logger.warning("health.redis_error")
             redis_status = "error"
 
+        # #141 -- webhook worker liveness + outbox backlog depth. Absent
+        # `app.state.webhook_worker` (a lifespan that never ran, or a
+        # deployment with no WhatsApp runtime at all) reads as "not running",
+        # not an error -- a worker-less deployment with an empty backlog is
+        # healthy.
+        worker = getattr(request.app.state, "webhook_worker", None)
+        worker_running = worker is not None and worker.is_running
+
+        backlog = await _outbox_backlog(engine)
+        outbox_pending = backlog.pending if backlog is not None else None
+        outbox_leased = backlog.leased if backlog is not None else None
+        outbox_leased_expired = backlog.leased_expired if backlog is not None else None
+
+        # Acceptance criterion (#141): degraded when the worker is not
+        # running WHILE work is pending -- an unknown backlog (`None`, e.g.
+        # the DB is already down and reported via postgres_status) never
+        # degrades on its own; a nonzero backlog with a live worker doesn't
+        # either, since the worker is actively draining it.
+        #
+        # #141 review follow-up (BLOCKER): the same applies to abandoned
+        # leases. `outbox_leased` alone hides them -- it also counts leases
+        # a currently-running worker still legitimately holds -- so this
+        # checks `outbox_leased_expired` specifically: rows whose lease is
+        # already past its expiry, i.e. claimed by a worker that is no
+        # longer running to reclaim or finish them. A live lease with no
+        # running worker cannot happen in this single-worker-per-process
+        # model without also being `outbox_leased_expired` once it expires,
+        # so this does not need its own "worker not running" gate beyond
+        # the one already shared with `backlog_pending_undrained`.
+        backlog_pending_undrained = (
+            outbox_pending is not None and outbox_pending > 0 and not worker_running
+        )
+        backlog_lease_abandoned = (
+            outbox_leased_expired is not None
+            and outbox_leased_expired > 0
+            and not worker_running
+        )
+        backlog_undrained = backlog_pending_undrained or backlog_lease_abandoned
+
         overall: Literal["ok", "degraded"] = (
-            "ok" if postgres_status == "ok" and redis_status == "ok" else "degraded"
+            "ok"
+            if postgres_status == "ok"
+            and redis_status == "ok"
+            and not backlog_undrained
+            else "degraded"
         )
 
         return {
@@ -595,6 +708,12 @@ def create_app(
             "environment": settings.environment,
             "postgres": postgres_status,
             "redis": redis_status,
+            "webhook_worker": {
+                "running": worker_running,
+                "outbox_pending": outbox_pending,
+                "outbox_leased": outbox_leased,
+                "outbox_leased_expired": outbox_leased_expired,
+            },
         }
 
     return application

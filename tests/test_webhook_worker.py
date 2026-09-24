@@ -742,6 +742,74 @@ async def test_stop_before_start_is_a_no_op() -> None:
     await worker.stop()  # must not raise
 
 
+async def test_is_running_reflects_start_stop_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#141 — GET /health reports whether the worker is running; ``is_running``
+    is the signal it reads, and must track ``start``/``stop`` exactly."""
+
+    async def process_available(self: DeferredWebhookWorker, *, limit: int) -> None:
+        pass
+
+    monkeypatch.setattr(DeferredWebhookWorker, "process_available", process_available)
+    worker = DeferredWebhookWorker(
+        session_factory=_SessionFactory(None),
+        worker_id="worker-loop",
+        directory=_Directory(_Participant()),
+        runtime=MagicMock(),
+        whatsapp_client=MagicMock(),
+        poll_interval_s=0.01,
+    )
+
+    assert worker.is_running is False
+
+    await worker.start()
+    assert worker.is_running is True
+
+    await worker.stop()
+    assert worker.is_running is False
+
+
+async def test_is_running_reads_false_after_the_loop_task_dies_uncaught(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#141 review follow-up (BLOCKER) -- ``_run_loop`` only catches
+    ``Exception`` per iteration; a bug that raises a bare ``BaseException``
+    (or anything else escaping that catch) kills the loop task without ever
+    going through ``stop()``, leaving ``_started`` stuck at ``True`` with
+    nothing actually polling. ``is_running`` must catch this itself by also
+    checking the loop task's own liveness, not just the start/stop flag."""
+
+    class _FatalBug(BaseException):
+        pass
+
+    async def process_available(self: DeferredWebhookWorker, *, limit: int) -> None:
+        raise _FatalBug("unrecoverable bug escaping the poll loop")
+
+    monkeypatch.setattr(DeferredWebhookWorker, "process_available", process_available)
+    worker = DeferredWebhookWorker(
+        session_factory=_SessionFactory(None),
+        worker_id="worker-loop",
+        directory=_Directory(_Participant()),
+        runtime=MagicMock(),
+        whatsapp_client=MagicMock(),
+        poll_interval_s=0.01,
+    )
+
+    await worker.start()
+    assert worker.is_running is True
+
+    task = worker._loop_task
+    assert task is not None
+    with pytest.raises(_FatalBug):
+        await asyncio.wait_for(task, timeout=1)
+
+    # The task is dead, but nothing ever called stop() -- _started alone
+    # would still (wrongly) say the worker is running.
+    assert worker._started is True
+    assert worker.is_running is False
+
+
 # ---------------------------------------------------------------------------
 # W2b2 — ported from the retired webhook-route test (route no longer runs a
 # turn at all; the worker is now the only caller of ``run_turn``)

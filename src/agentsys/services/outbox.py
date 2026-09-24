@@ -54,6 +54,33 @@ class OutboxClaimOutcome:
     terminalized: list[OutboxWork]
 
 
+@dataclass(frozen=True)
+class OutboxBacklogCounts:
+    """Non-terminal ``outbox_work`` counts, split by lease state (#141).
+
+    ``pending`` counts rows no worker has claimed yet (``lease_expires_at``
+    is ``NULL``), including any still in retry backoff -- it deliberately
+    does not require ``available_at <= now`` the way
+    ``pending_outbox_statement`` does, because this is a backlog-depth
+    signal for ``GET /health``, not a claim candidate list. ``leased``
+    counts rows with a lease, whether still live or expired and awaiting
+    reclaim by ``claim_available_outbox_work`` -- a crashed worker's
+    abandoned lease is still "leased" until something reclaims it.
+    ``leased_expired`` is the subset of ``leased`` whose
+    ``lease_expires_at`` is already in the past against the database clock
+    (#141 review follow-up) -- rows a crashed worker abandoned mid-flight,
+    recoverable only once some worker claims them again. A live (not yet
+    expired) lease held by an actively running worker is ``leased`` but not
+    ``leased_expired``.
+
+    A completed or failed row is terminal and counted in neither bucket.
+    """
+
+    pending: int
+    leased: int
+    leased_expired: int = 0
+
+
 class OutboxLeaseLostError(RuntimeError):
     """Raised when a worker no longer owns a live, actionable outbox lease."""
 
@@ -185,6 +212,72 @@ def pending_outbox_statement(
         .limit(limit)
         .with_for_update(skip_locked=True)
     )
+
+
+async def count_outbox_backlog(session: AsyncSession) -> OutboxBacklogCounts:
+    """Count non-terminal ``outbox_work`` rows, split by lease state (#141).
+
+    Two separate ``COUNT(*)`` queries rather than one grouped query: the
+    ``NULL``/``NOT NULL`` split on ``lease_expires_at`` already matches
+    ``ix_outbox_work_ready_recoverable`` and ``ix_outbox_work_expired_recoverable``
+    (see ``models/outbox.py``), so each count hits its own partial index
+    instead of a full-table scan plus in-memory grouping. A third query
+    narrows the ``leased`` bucket to already-expired leases
+    (``leased_expired``, #141 review follow-up) -- still a range scan on
+    ``ix_outbox_work_expired_recoverable`` (indexed on ``lease_expires_at``),
+    now bounded by the database clock rather than just ``IS NOT NULL``.
+    Comparing against the database clock (not app-server wall time) matches
+    every other lease comparison in this module (``claim_available_outbox_work``
+    etc. via ``_database_now``), so a skewed app clock cannot mis-classify a
+    lease that is, from the database's own point of view, still live.
+
+    Read-only and uses no row locks (unlike ``pending_outbox_statement``,
+    this never claims anything) -- safe to call from ``GET /health`` on
+    every request.
+    """
+    not_terminal = (OutboxWork.completed_at.is_(None), OutboxWork.failed_at.is_(None))
+
+    pending = await session.scalar(
+        select(func.count())
+        .select_from(OutboxWork)
+        .where(*not_terminal, OutboxWork.lease_expires_at.is_(None))
+    )
+    leased = await session.scalar(
+        select(func.count())
+        .select_from(OutboxWork)
+        .where(*not_terminal, OutboxWork.lease_expires_at.is_not(None))
+    )
+    database_now = await _database_now(session)
+    leased_expired = await session.scalar(
+        select(func.count())
+        .select_from(OutboxWork)
+        .where(
+            *not_terminal,
+            OutboxWork.lease_expires_at.is_not(None),
+            OutboxWork.lease_expires_at < database_now,
+        )
+    )
+    return OutboxBacklogCounts(
+        pending=_as_count(pending),
+        leased=_as_count(leased),
+        leased_expired=_as_count(leased_expired),
+    )
+
+
+def _as_count(value: Any) -> int:
+    """Coerce one ``COUNT(*)`` scalar result to ``int``.
+
+    Against a real database this is always ``NULL`` or an integer. Rejecting
+    anything else (rather than laundering it through ``value or 0``) matters
+    because a caller (``GET /health``, #141) does arithmetic and comparisons
+    on this value -- silently accepting an unexpected truthy object here
+    would surface as a wrong health signal instead of a loud failure.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    raise TypeError(f"expected COUNT(*) to return an int or None, got {value!r}")
 
 
 async def claim_available_outbox_work(

@@ -30,6 +30,7 @@ from conftest import create_test_app
 
 from agentsys.agent.reasoning import ReasoningSanitizedChatOpenAI
 from agentsys.config import Settings, get_settings
+from agentsys.harness.loader import DefinitionError
 from agentsys.main import _build_chat_model, lifespan
 
 
@@ -41,12 +42,18 @@ def clear_settings_cache() -> Any:
 
 
 def _make_settings(**overrides: object) -> Settings:
+    # #141 review follow-up -- whatsapp_token/whatsapp_phone_number_id are
+    # deliberately NOT defaulted to non-empty here: main.py's lifespan now
+    # fails closed at boot when both are configured but whatsapp_runtime_id
+    # is empty or malformed, and the platform default whatsapp_runtime_id
+    # ("") is exactly that. Most tests using this helper are not about
+    # WhatsApp at all; a test that needs WhatsApp actually configured sets
+    # its own whatsapp_token/whatsapp_phone_number_id alongside a
+    # well-formed whatsapp_runtime_id.
     defaults: dict[str, object] = dict(
         database_url="postgresql+asyncpg://localhost:5432/agentsys_test",
         redis_url="redis://localhost:6379/0",
         adapter_runtimes=["_generic__sales-agent"],
-        whatsapp_token="test-token",
-        whatsapp_phone_number_id="1234567890",
     )
     defaults.update(overrides)
     return Settings(**defaults)  # type: ignore[arg-type]
@@ -1490,9 +1497,13 @@ async def test_lifespan_starts_and_stops_the_webhook_worker_around_dependencies(
 
 @pytest.mark.asyncio
 async def test_lifespan_skips_the_webhook_worker_when_no_runtime_is_resolved() -> None:
-    """Unset whatsapp_runtime_id (the platform default) must not start a
-    worker with no runtime to hand it -- durable inbound work then simply
-    waits unprocessed, matching the webhook route's own no-runtime handling."""
+    """Unset whatsapp_runtime_id, with no WhatsApp credentials configured
+    either (the platform default) must not start a worker with no runtime
+    to hand it -- durable inbound work then simply waits unprocessed,
+    matching the webhook route's own no-runtime handling. #141: this stays a
+    warning, not a boot failure, because WHATSAPP_TOKEN/
+    WHATSAPP_PHONE_NUMBER_ID are also unset -- there is nothing configured
+    to receive-and-reply through in the first place."""
     test_settings = _make_settings(adapter_runtimes=[])
     mock_engine = MagicMock()
     mock_engine.dispose = AsyncMock()
@@ -1515,3 +1526,146 @@ async def test_lifespan_skips_the_webhook_worker_when_no_runtime_is_resolved() -
             assert app.state.turn_admission_limiter is not None
 
         mock_worker_cls.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# #141 — boot fails closed when WhatsApp credentials are configured but
+# whatsapp_runtime_id resolves to no runtime
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lifespan_fails_closed_when_runtime_id_is_empty_with_credentials() -> (
+    None
+):
+    """WHATSAPP_TOKEN + WHATSAPP_PHONE_NUMBER_ID configured, but
+    whatsapp_runtime_id left unset -- boot must refuse rather than accept
+    signed inbound messages nothing will ever process."""
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_token="test-token",
+        whatsapp_phone_number_id="1234567890",
+        whatsapp_runtime_id="",
+    )
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agentsys.services.webhook_worker.DeferredWebhookWorker"
+        ) as mock_worker_cls,
+    ):
+        app = create_test_app()
+
+        with pytest.raises(DefinitionError, match="whatsapp_runtime_id"):
+            async with lifespan(app):
+                pass
+
+        mock_worker_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_fails_closed_when_runtime_id_is_malformed_with_credentials() -> (
+    None
+):
+    """A whatsapp_runtime_id missing the required '{deployment}__{role}'
+    separator is the other #141 review-comment case: it resolves to no
+    runtime just as surely as an unset one, and must fail boot the same way."""
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_token="test-token",
+        whatsapp_phone_number_id="1234567890",
+        whatsapp_runtime_id="not-well-formed",
+        # No Redis in the plain CI job: the malformed id gets past the empty
+        # check and reaches checkpointer setup, so keep it off here.
+        whatsapp_checkpointer_enabled=False,
+    )
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agentsys.services.webhook_worker.DeferredWebhookWorker"
+        ) as mock_worker_cls,
+    ):
+        app = create_test_app()
+
+        with pytest.raises(DefinitionError, match="whatsapp_runtime_id"):
+            async with lifespan(app):
+                pass
+
+        mock_worker_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_boots_with_only_one_whatsapp_credential_set() -> None:
+    """The #141 boot check is scoped to BOTH WHATSAPP_TOKEN and
+    WHATSAPP_PHONE_NUMBER_ID being set -- a deployment with only one (e.g.
+    mid-migration, or genuinely partially configured) is not yet a complete
+    'ready to receive and reply' WhatsApp setup, so it keeps the pre-#141
+    warn-and-boot behaviour rather than a hard failure."""
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_token="test-token",
+        whatsapp_phone_number_id="",
+        whatsapp_runtime_id="",
+    )
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agentsys.services.webhook_worker.DeferredWebhookWorker"
+        ) as mock_worker_cls,
+    ):
+        app = create_test_app()
+
+        async with lifespan(app):
+            assert app.state.webhook_worker is None
+
+        mock_worker_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_boots_normally_with_credentials_and_valid_runtime_id() -> None:
+    """Regression guard: WhatsApp credentials configured AND a well-formed,
+    resolvable whatsapp_runtime_id must still boot and start the worker --
+    #141's check must not fire on the healthy path."""
+    test_settings = _make_settings(
+        whatsapp_token="test-token",
+        whatsapp_phone_number_id="1234567890",
+        whatsapp_runtime_id="_generic__sales-agent",
+        whatsapp_checkpointer_enabled=False,
+    )
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = None
+    fake_equipped = MagicMock()
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.get_engine", return_value=mock_engine),
+        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agentsys.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
+        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+    ):
+        app = create_test_app()
+
+        async with lifespan(app):
+            assert app.state.webhook_worker is not None
