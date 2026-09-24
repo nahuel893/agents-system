@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "bump-minor-pre-major": true,
-  "bootstrap-sha": "58980a444b65e552b7dd489f122b63633ce74aa",
+  "bootstrap-sha": "58980a444b65e552b7dd489f122b63633ce74aa1",
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
     { "type": "fix", "section": "Bug Fixes" },
