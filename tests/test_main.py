@@ -19,16 +19,18 @@ lazily inside the function body).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import ExitStack, asynccontextmanager
-from typing import Any, AsyncIterator
+from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import create_test_app
 
 from agentsys.agent.reasoning import ReasoningSanitizedChatOpenAI
 from agentsys.config import Settings, get_settings
 from agentsys.main import _build_chat_model, lifespan
-from conftest import create_test_app
 
 
 @pytest.fixture(autouse=True)
@@ -411,100 +413,112 @@ def test_openai_compatible_model_still_supports_bind_tools() -> None:
 
 
 # ---------------------------------------------------------------------------
-# D-014 S5 — dedup-TTL invariant (BLOCKER 3: total_execution_timeout_s must be
-# < DEDUP_TTL_SECONDS or a slow turn can outlive the dedup key and Meta's retry
-# triggers a second full processing + double send).
+# #139 T1 — WhatsApp runtime timeout must leave 60 seconds before the outbox
+# lease expires. The constraint is only relevant to the runtime bound to the
+# deferred webhook worker; adapter-only runtimes have no webhook lease.
 # ---------------------------------------------------------------------------
 
 
-def _dedup_invariant_patches(fake_definition: Any) -> tuple[Any, tuple[Any, ...]]:
-    """Common lifespan patches for the dedup-TTL invariant tests. Checkpointer
-    is disabled so no real Redis connection is attempted."""
+WHATSAPP_RUNTIME_ID = "_generic__sales-agent"
+
+
+def _runtime_lease_invariant_patches(
+    fake_definition: Any,
+) -> tuple[Any, Any, tuple[Any, ...]]:
+    """Common lifespan patches for runtime/lease invariant tests.
+
+    The worker itself is mocked so accepted startup cases never create a DB or
+    Redis-backed background task.
+    """
     mock_engine = MagicMock()
     mock_engine.dispose = AsyncMock()
-    return mock_engine, (
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
-        patch(
-            "agentsys.services.embeddings.get_embedding_provider",
-            return_value=MagicMock(),
+    mock_worker = MagicMock()
+    mock_worker.start = AsyncMock()
+    mock_worker.stop = AsyncMock()
+    return (
+        mock_engine,
+        mock_worker,
+        (
+            patch("agentsys.main.get_engine", return_value=mock_engine),
+            patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+            patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+            patch(
+                "agentsys.services.embeddings.get_embedding_provider",
+                return_value=MagicMock(),
+            ),
+            patch("agentsys.harness.loader.resolve", return_value=fake_definition),
+            patch("agentsys.harness.factory.build_runtime", return_value=MagicMock()),
+            patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+            patch(
+                "agentsys.services.webhook_worker.DeferredWebhookWorker",
+                return_value=mock_worker,
+            ),
         ),
-        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
-        patch("agentsys.harness.factory.build_runtime", return_value=MagicMock()),
-        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
     )
 
 
-@pytest.mark.parametrize("timeout_s", [300, 301])
+@pytest.mark.parametrize(
+    ("timeout_s", "boots"),
+    [(300, True), (539, True), (540, False)],
+)
 @pytest.mark.asyncio
-async def test_lifespan_rejects_runtime_when_total_timeout_ge_dedup_ttl(
-    timeout_s: int,
+async def test_lifespan_enforces_whatsapp_runtime_timeout_within_outbox_lease(
+    timeout_s: int, boots: bool
 ) -> None:
-    """A runtime whose effective total_execution_timeout_s >= DEDUP_TTL_SECONDS
-    (300) must make the app refuse to boot, with both values in the message."""
-    from agentsys.services.dedup import DEDUP_TTL_SECONDS
-
-    test_settings = _make_settings(whatsapp_checkpointer_enabled=False)
+    """WhatsApp runtime timeouts must leave the required 60-second headroom."""
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_runtime_id=WHATSAPP_RUNTIME_ID,
+        whatsapp_checkpointer_enabled=False,
+    )
     fake_definition = MagicMock()
     fake_definition.permissions = ("read:catalog",)
     fake_definition.execution_limits = {"total_execution_timeout_s": timeout_s}
 
-    _, patches = _dedup_invariant_patches(fake_definition)
+    _, worker, patches = _runtime_lease_invariant_patches(fake_definition)
 
-    with patch("agentsys.main.get_settings", return_value=test_settings):
-        with _stack(patches):
-            app = create_test_app()
-            with pytest.raises((ValueError, RuntimeError)) as excinfo:
-                async with lifespan(app):
-                    pass
-
-    message = str(excinfo.value)
-    assert str(timeout_s) in message
-    assert str(DEDUP_TTL_SECONDS) in message
-
-
-@pytest.mark.asyncio
-async def test_lifespan_accepts_runtime_just_under_dedup_ttl() -> None:
-    """Boundary: total_execution_timeout_s = 299 (< 300) boots cleanly.
-
-    This pins the guard's comparison as ``>=`` (strictly-less passes), i.e. it
-    is a negative control against a guard that rejects everything. It does NOT
-    certify 299 as an operationally safe budget: the dedup key's 300s TTL starts
-    BEFORE the client lookup and the reply is sent AFTER the conversation-log
-    write, so ``total_execution_timeout_s`` (which bounds only the graph invoke)
-    has no headroom for the surrounding work at that value. Giving the
-    invariant real headroom is a source change — see the module docstring note.
-    """
-    test_settings = _make_settings(whatsapp_checkpointer_enabled=False)
-    fake_definition = MagicMock()
-    fake_definition.permissions = ("read:catalog",)
-    fake_definition.execution_limits = {"total_execution_timeout_s": 299}
-
-    _, patches = _dedup_invariant_patches(fake_definition)
-
-    with patch("agentsys.main.get_settings", return_value=test_settings):
-        with _stack(patches):
-            app = create_test_app()
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        _stack(patches),
+    ):
+        app = create_test_app()
+        if boots:
             async with lifespan(app):
                 assert app.state.runtimes
+            worker.start.assert_awaited_once()
+            worker.stop.assert_awaited_once()
+        else:
+            with pytest.raises(ValueError) as excinfo:
+                async with lifespan(app):
+                    pass
+            message = str(excinfo.value)
+            assert WHATSAPP_RUNTIME_ID in message
+            assert str(timeout_s) in message
+            assert "lease" in message
+            assert "600" in message
 
 
 @pytest.mark.asyncio
-async def test_lifespan_accepts_default_limits_invariant_holds() -> None:
-    """Platform default (60 < 300) boots cleanly when no override is set."""
-    test_settings = _make_settings(whatsapp_checkpointer_enabled=False)
+async def test_lifespan_accepts_default_whatsapp_runtime_limits() -> None:
+    """The default effective limit leaves headroom before the 600-second lease."""
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_runtime_id=WHATSAPP_RUNTIME_ID,
+        whatsapp_checkpointer_enabled=False,
+    )
     fake_definition = MagicMock()
     fake_definition.permissions = ("read:catalog",)
     fake_definition.execution_limits = None
 
-    _, patches = _dedup_invariant_patches(fake_definition)
+    _, _, patches = _runtime_lease_invariant_patches(fake_definition)
 
-    with patch("agentsys.main.get_settings", return_value=test_settings):
-        with _stack(patches):
-            app = create_test_app()
-            async with lifespan(app):
-                assert app.state.runtimes
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        _stack(patches),
+    ):
+        app = create_test_app()
+        async with lifespan(app):
+            assert app.state.runtimes
 
 
 @pytest.mark.parametrize(
@@ -526,12 +540,39 @@ async def test_lifespan_guard_reads_the_merged_effective_limits(
     would raise KeyError/TypeError on exactly these shapes and take the whole
     app down at startup for a perfectly legal role config.
     """
-    test_settings = _make_settings(whatsapp_checkpointer_enabled=False)
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_runtime_id=WHATSAPP_RUNTIME_ID,
+        whatsapp_checkpointer_enabled=False,
+    )
     fake_definition = MagicMock()
     fake_definition.permissions = ("read:catalog",)
     fake_definition.execution_limits = execution_limits
 
-    _, patches = _dedup_invariant_patches(fake_definition)
+    _, _, patches = _runtime_lease_invariant_patches(fake_definition)
+
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        _stack(patches),
+    ):
+        app = create_test_app()
+        async with lifespan(app):
+            assert app.state.runtimes
+
+
+@pytest.mark.asyncio
+async def test_lifespan_does_not_apply_webhook_lease_to_adapter_only_runtime() -> None:
+    """An adapter-only runtime is not constrained by the webhook worker lease."""
+    test_settings = _make_settings(
+        adapter_runtimes=[WHATSAPP_RUNTIME_ID],
+        whatsapp_runtime_id="",
+        whatsapp_checkpointer_enabled=False,
+    )
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = {"total_execution_timeout_s": 601}
+
+    _, worker, patches = _runtime_lease_invariant_patches(fake_definition)
 
     with patch("agentsys.main.get_settings", return_value=test_settings):
         with _stack(patches):
@@ -539,68 +580,30 @@ async def test_lifespan_guard_reads_the_merged_effective_limits(
             async with lifespan(app):
                 assert app.state.runtimes
 
-
-def _load_main_as_fresh_module(module_name: str) -> Any:
-    """Execute ``src/agentsys/main.py`` again under a throwaway module name.
-
-    ``importlib.reload`` would rebind the real ``agentsys.main`` (and rebuild
-    its module-level ``app``) for every test that ran before or after this one.
-    A fresh spec keeps ``sys.modules['agentsys.main']`` untouched while still
-    executing every module-level statement — which is the only way to observe
-    an import-time ``assert``.
-    """
-    import importlib.util
-
-    import agentsys.main as real_main
-
-    spec = importlib.util.spec_from_file_location(module_name, real_main.__file__)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    worker.start.assert_not_awaited()
 
 
-@pytest.mark.parametrize("violating_default", [300, 301, 600])
-def test_import_time_guard_rejects_a_violating_platform_default(
-    monkeypatch: pytest.MonkeyPatch, violating_default: int
-) -> None:
-    """main.py must refuse to IMPORT when the shipped platform default itself
-    violates the dedup-TTL coupling.
-
-    The predecessor of this test re-asserted ``PLATFORM_DEFAULT_LIMITS[...] <
-    DEDUP_TTL_SECONDS`` in its own body and never loaded the module whose guard
-    it named — it passed with the production ``assert`` deleted. This one
-    re-executes main.py with the platform default poisoned, so the assert is
-    the only thing that can produce the expected failure.
-    """
-    from agentsys.harness.loader import PLATFORM_DEFAULT_LIMITS
-
-    monkeypatch.setitem(
-        PLATFORM_DEFAULT_LIMITS, "total_execution_timeout_s", violating_default
+@pytest.mark.asyncio
+async def test_lifespan_uses_full_lease_duration_when_it_exceeds_one_day() -> None:
+    """A long configured lease must not wrap at a day boundary."""
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_runtime_id=WHATSAPP_RUNTIME_ID,
+        whatsapp_checkpointer_enabled=False,
     )
+    definition = MagicMock()
+    definition.permissions = ("read:catalog",)
+    definition.execution_limits = {"total_execution_timeout_s": 601}
+    _, _, patches = _runtime_lease_invariant_patches(definition)
 
-    with pytest.raises(AssertionError) as excinfo:
-        _load_main_as_fresh_module(f"_main_guard_probe_{violating_default}")
-
-    message = str(excinfo.value)
-    assert "total_execution_timeout_s" in message
-    assert str(violating_default) in message
-    assert "double-send" in message
-
-
-def test_shipped_platform_default_satisfies_dedup_ttl_invariant() -> None:
-    """The shipped platform default must satisfy the coupling on its own.
-
-    Deliberately duplicated with the import-time ``assert``: ``assert``
-    statements are stripped under ``python -O`` / ``PYTHONOPTIMIZE=1``, so in an
-    optimised interpreter this test is the ONLY thing left checking the shipped
-    default. It also gives a named failure instead of a collection-time
-    explosion in every module that imports ``agentsys.main``.
-    """
-    from agentsys.harness.loader import PLATFORM_DEFAULT_LIMITS
-    from agentsys.services.dedup import DEDUP_TTL_SECONDS
-
-    assert PLATFORM_DEFAULT_LIMITS["total_execution_timeout_s"] < DEDUP_TTL_SECONDS
+    with (
+        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agentsys.main.DEFAULT_LEASE_DURATION", timedelta(days=1)),
+        _stack(patches),
+    ):
+        app = create_test_app()
+        async with lifespan(app):
+            assert app.state.runtimes
 
 
 # ---------------------------------------------------------------------------
@@ -636,10 +639,10 @@ def _fake_bi_engine(value: str | None, *, raises: Exception | None = None) -> An
                 raise raises
             return _Result()
 
-        async def __aenter__(self) -> "_Conn":
+        async def __aenter__(self) -> _Conn:
             return self
 
-        async def __aexit__(self, *exc: Any) -> None:
+        async def __aexit__(self, *exc: object) -> None:
             return None
 
     engine = MagicMock()
@@ -717,11 +720,10 @@ async def test_bi_engine_is_built_through_get_engine() -> None:
     bi_engine = _fake_bi_engine("on")
     patches = _bi_lifespan_patches(settings, bi_engine)
 
-    with patches[0], patches[1] as mock_get:
-        with _stack(patches[2:]):
-            app = create_test_app()
-            async with lifespan(app):
-                pass
+    with patches[0], patches[1] as mock_get, _stack(patches[2:]):
+        app = create_test_app()
+        async with lifespan(app):
+            pass
 
     assert settings.bi_database_url in [c.args[0] for c in mock_get.call_args_list]
 

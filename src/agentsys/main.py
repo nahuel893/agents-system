@@ -17,30 +17,19 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agentsys.config import Settings, get_settings
-from agentsys.harness.loader import DefinitionError, PLATFORM_DEFAULT_LIMITS, RootConfig
+from agentsys.harness.loader import DefinitionError, RootConfig
+from agentsys.harness.registry import RegistryFactory
 from agentsys.integration import openai_router, webhook_router
 from agentsys.integration.whatsapp_client import WhatsAppClient
 from agentsys.models.base import get_engine
 from agentsys.observability import RequestIdMiddleware, setup_logging
-from agentsys.harness.registry import RegistryFactory
+from agentsys.services.admission import TurnAdmissionLimiter
+from agentsys.services.outbox import DEFAULT_LEASE_DURATION
 from agentsys.services.participants import (
     ConversationRecorder,
     ParticipantDirectory,
 )
-from agentsys.services.admission import TurnAdmissionLimiter
-from agentsys.services.dedup import DEDUP_TTL_SECONDS
 from agentsys.services.redis import close_redis_pool, get_redis_client
-
-# BLOCKER 3 — import-time backstop for the dedup-TTL invariant. A turn whose
-# budget can outlive the dedup key lets Meta's retry re-process the same
-# message_id and double-send. Guard the shipped platform default itself so a
-# stock config can never violate the coupling; per-runtime overrides are
-# re-checked at startup in ``lifespan``.
-assert PLATFORM_DEFAULT_LIMITS["total_execution_timeout_s"] < DEDUP_TTL_SECONDS, (
-    "Platform default total_execution_timeout_s "
-    f"({PLATFORM_DEFAULT_LIMITS['total_execution_timeout_s']}) must be < "
-    f"DEDUP_TTL_SECONDS ({DEDUP_TTL_SECONDS}) to prevent webhook-retry double-sends"
-)
 
 
 def _checkpointer_ttl_config(checkpointer_ttl_s: int | None) -> dict[str, Any] | None:
@@ -52,7 +41,7 @@ def _checkpointer_ttl_config(checkpointer_ttl_s: int | None) -> dict[str, Any] |
     return {"default_ttl": checkpointer_ttl_s / 60, "refresh_on_read": True}
 
 
-def _build_checkpointer_cm(settings: Settings) -> Any:  # noqa: ANN401
+def _build_checkpointer_cm(settings: Settings) -> Any:
     """Build the ``AsyncRedisSaver`` async context manager (design AD-1/AD-7).
 
     Deferred import — the checkpoint-redis package is only needed when there
@@ -77,7 +66,7 @@ def _build_checkpointer_cm(settings: Settings) -> Any:  # noqa: ANN401
     )
 
 
-async def _bi_role_is_read_only(engine: Any) -> bool | None:  # noqa: ANN401
+async def _bi_role_is_read_only(engine: Any) -> bool | None:
     """Ask the database whether the BI role really is read-only.
 
     Returns True / False, or None when the question could not be answered —
@@ -337,19 +326,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         "to be bound to it. Refusing to boot."
                     )
 
-                # BLOCKER 3 — fail fast if this runtime's effective turn budget
-                # can outlive the dedup key (Meta retry → double processing +
-                # double send). The coupling is otherwise implicit and could be
-                # broken silently by any role/platform execution_limits override.
-                effective_limits = _effective_limits(definition.execution_limits)
-                total_timeout_s = effective_limits["total_execution_timeout_s"]
-                if total_timeout_s >= DEDUP_TTL_SECONDS:
-                    raise ValueError(
-                        f"Runtime {model_id!r} has total_execution_timeout_s="
-                        f"{total_timeout_s} which must be < DEDUP_TTL_SECONDS="
-                        f"{DEDUP_TTL_SECONDS}; a turn that outlives the dedup key "
-                        "lets Meta's webhook retry double-send the reply"
-                    )
+                # A WhatsApp turn must finish before its deferred-webhook lease
+                # expires. Reserve explicit non-turn headroom for surrounding
+                # persistence and provider-send work; adapter-only runtimes do
+                # not run under this lease and remain unconstrained by it.
+                if model_id == settings.whatsapp_runtime_id:
+                    effective_limits = _effective_limits(definition.execution_limits)
+                    total_timeout_s = effective_limits["total_execution_timeout_s"]
+                    non_turn_headroom_s = 60
+                    lease_seconds = DEFAULT_LEASE_DURATION.total_seconds()
+                    if total_timeout_s + non_turn_headroom_s >= lease_seconds:
+                        raise ValueError(
+                            f"WhatsApp runtime {model_id!r} has "
+                            f"total_execution_timeout_s={total_timeout_s}; with "
+                            f"non_turn_headroom_s={non_turn_headroom_s}, it must be "
+                            f"less than outbox lease_seconds={lease_seconds}"
+                        )
 
                 # The SAME explicit root as the `resolve` above. Passing it
                 # to only one of the two was the whole bug in a subtler form:
@@ -431,7 +423,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 _NO_API_KEY_PLACEHOLDER = "not-required"
 
 
-def _build_chat_model(provider: str) -> Any:  # noqa: ANN401
+def _build_chat_model(provider: str) -> Any:
     """Construct the chat model for the configured adapter provider.
 
     Returns a LangChain BaseChatModel instance for the configured provider.
