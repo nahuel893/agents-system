@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>agentsys — Guía del sistema (plataforma, roles, archivos y flujo del harness)</title>
+<title>agents_system — Guía del sistema (plataforma, roles, archivos y flujo del harness)</title>
 <style>
   :root {
     --bg: #0f1117; --panel: #171a23; --panel2: #1e222d; --border: #2a2f3a;
@@ -71,14 +71,14 @@
 </head>
 <body>
 <header>
-  <h1><span class="pkg">agentsys</span> — Guía del sistema</h1>
+  <h1><span class="pkg">agents_system</span> — Guía del sistema</h1>
   <p class="sub">Qué es la plataforma, qué roles define, qué archivos la componen, y cómo se ejecuta el harness paso a paso. El modelo es el cerebro; el harness es el sistema operativo que decide qué tiene permitido ser y hacer. Pensado para entender el sistema antes de avanzar.</p>
 </header>
 <div class="wrap">
 
   <h2>¿Qué es la plataforma?</h2>
   <p style="color:var(--muted);font-size:14px;max-width:840px;margin:0 0 14px">
-    <b>agentsys</b> es una <b>plataforma de agentes reutilizable</b>, no un bot. El bot de WhatsApp de <b>ACME</b> es solo el <b>primer deployment</b> que corre sobre ella. La plataforma es el producto; cada cliente es una implementación. Esa separación es la regla que organiza todo el repo.
+    <b>agents_system</b> es una <b>plataforma de agentes reutilizable</b>, no un bot. El bot de WhatsApp de <b>ACME</b> es solo el <b>primer deployment</b> que corre sobre ella. La plataforma es el producto; cada cliente es una implementación. Esa separación es la regla que organiza todo el repo.
   </p>
   <div class="modules" style="grid-template-columns:repeat(2,1fr)">
     <div class="mod loader">
@@ -338,7 +338,7 @@ registry.<span class="f">get</span>(<span class="s">"unknown_tool"</span>)   <sp
       <div class="num">7</div>
       <div class="body">
         <div class="sig">build_runtime(role_type, registry, granted_permissions, *, client, roots) → EquippedRuntime</div>
-        <div class="what">El ensamblador (<code>src/agentsys/harness/factory.py</code>). Orquesta los pasos 1–6, carga las skills y compone el system prompt → un runtime equipado listo para el motor.</div>
+        <div class="what">El ensamblador (<code>src/agents_system/harness/factory.py</code>). Orquesta los pasos 1–6, carga las skills y compone el system prompt → un runtime equipado listo para el motor.</div>
       </div>
     </div>
     <div class="detail" data-for="7">

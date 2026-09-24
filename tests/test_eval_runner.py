@@ -18,11 +18,15 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 
-import agentsys.evals.runner as runner_module
-from agentsys.audit.sink import AuditSink
-from agentsys.evals.runner import _CapturingAuditSink, evaluate_assertions, run_scenario
-from agentsys.evals.schema import Scenario, ScenarioAssertions
-from agentsys.harness.loader import RootConfig
+import agents_system.evals.runner as runner_module
+from agents_system.audit.sink import AuditSink
+from agents_system.evals.runner import (
+    _CapturingAuditSink,
+    evaluate_assertions,
+    run_scenario,
+)
+from agents_system.evals.schema import Scenario, ScenarioAssertions
+from agents_system.harness.loader import RootConfig
 
 
 class ToolAwareFakeModel(FakeMessagesListChatModel):
@@ -326,7 +330,7 @@ async def test_run_scenario_aggregates_a_success_rate_across_multiple_runs() -> 
 
 
 def test_scenario_result_success_rate_is_zero_with_no_runs() -> None:
-    from agentsys.evals.runner import ScenarioResult
+    from agents_system.evals.runner import ScenarioResult
 
     result = ScenarioResult(
         scenario="s", role="sales-agent", model="fake-model", runs=()

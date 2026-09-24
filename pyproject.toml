@@ -3,9 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentsys"
+name = "agents-system"
 version = "0.1.0"
 description = "Reusable platform for configurable AI agent runtimes"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "nahuel893", email = "63928063+nahuel893@users.noreply.github.com" },
+]
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1.0",
@@ -38,16 +43,34 @@ dev = [
     "mypy>=1.13",
 ]
 
+[project.urls]
+Homepage = "https://github.com/nahuel893/agents-system"
+Repository = "https://github.com/nahuel893/agents-system"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentsys"]
+packages = ["src/agents_system"]
 
 # Ship the generic platform roles (platform/roles/**) inside the wheel so
-# `agentsys.harness.loader.resolve()` works after a plain `pip install`.
-# Target is `agentsys/platform` — two `.parent` hops up from loader.py,
-# matching `_PACKAGED_PLATFORM_ROOT` in src/agentsys/harness/loader.py.
+# `agents_system.harness.loader.resolve()` works after a plain `pip install`.
+# Target is `agents_system/platform` — two `.parent` hops up from loader.py,
+# matching `_PACKAGED_PLATFORM_ROOT` in src/agents_system/harness/loader.py.
 # deployments/ is NOT included: a client's deployments are the client's own.
 [tool.hatch.build.targets.wheel.force-include]
-"platform" = "agentsys/platform"
+"platform" = "agents_system/platform"
+
+# Restrict the sdist to what a library needs to build and be understood:
+# source, the platform roles that force-include ships into the wheel, and
+# the top-level docs a package index renders. Everything else (deployments/,
+# demo/, docs/, evals/, scripts/, .env.example, internal tooling) stays out
+# of the published archive.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/agents_system",
+    "/platform",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [tool.ruff]
 src = ["src"]

@@ -22,7 +22,7 @@ OVERRIDE_ROOTS_DIR = FIXTURE_BASE / "overrides"
 
 
 def _override_roots() -> Any:
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=GENERIC_ROOTS_DIR,
@@ -31,7 +31,7 @@ def _override_roots() -> Any:
 
 
 def _make_definition(*, tools: list[str], permissions: list[str]) -> Any:
-    from agentsys.harness.loader import AgentDefinition
+    from agents_system.harness.loader import AgentDefinition
 
     return AgentDefinition(
         role_name="sales-agent",
@@ -52,7 +52,7 @@ def _make_definition(*, tools: list[str], permissions: list[str]) -> Any:
 
 
 def _spec(name: str, perms: list[str]) -> Any:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     # Mirror the pre-tier write:/send: heuristic so fixtures keep their
     # original sensitivity classification (ADR-002 C.10).
@@ -63,7 +63,7 @@ def _spec(name: str, perms: list[str]) -> Any:
 
 
 def _registry_with(*specs: Any) -> Any:
-    from agentsys.harness.registry import ToolRegistry
+    from agents_system.harness.registry import ToolRegistry
 
     reg = ToolRegistry()
     for s in specs:
@@ -75,7 +75,7 @@ def _registry_with(*specs: Any) -> Any:
 # Injector — granted tool emits an audit event
 # ---------------------------------------------------------------------------
 def test_injector_logs_granted_tool() -> None:
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness.injector import resolve_tool_surface
 
     definition = _make_definition(
         tools=["catalog_search"], permissions=["read:catalog"]
@@ -95,7 +95,7 @@ def test_injector_logs_granted_tool() -> None:
 # Injector — denied tool emits an audit event with a reason
 # ---------------------------------------------------------------------------
 def test_injector_logs_denied_tool() -> None:
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness.injector import resolve_tool_surface
 
     definition = _make_definition(tools=["order_writer"], permissions=["write:orders"])
     registry = _registry_with(_spec("order_writer", ["write:orders"]))
@@ -114,7 +114,7 @@ def test_injector_logs_denied_tool() -> None:
 # Injector — unknown tool is logged before raising
 # ---------------------------------------------------------------------------
 def test_injector_logs_unknown_tool() -> None:
-    from agentsys.harness.injector import InjectionError, resolve_tool_surface
+    from agents_system.harness.injector import InjectionError, resolve_tool_surface
 
     definition = _make_definition(tools=["ghost_tool"], permissions=[])
     registry = _registry_with()  # empty registry
@@ -131,7 +131,7 @@ def test_injector_logs_unknown_tool() -> None:
 # Loader — an invariant violation is logged before raising
 # ---------------------------------------------------------------------------
 def test_loader_logs_invariant_violation() -> None:
-    from agentsys.harness.loader import DefinitionError, resolve
+    from agents_system.harness.loader import DefinitionError, resolve
 
     with structlog.testing.capture_logs() as logs:
         with pytest.raises(DefinitionError):

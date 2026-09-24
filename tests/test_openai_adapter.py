@@ -12,7 +12,7 @@ Isolation strategy:
   TestClient is instantiated WITHOUT the context-manager form so the real
   lifespan (which loads BGE-M3 ~570MB and connects to Ollama/DB) never runs.
   Instead we set app.state.runtimes directly before each request and patch
-  agentsys.integration.openai_adapter.get_settings so the verify_bearer
+  agents_system.integration.openai_adapter.get_settings so the verify_bearer
   dependency sees a controlled adapter_api_key.
 """
 
@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
-from agentsys.config import Settings, get_settings
+from agents_system.config import Settings, get_settings
 from conftest import create_test_app
 
 
@@ -64,7 +64,7 @@ def _make_client(
     app.state.engine = MagicMock()
 
     # Patch get_settings at the router module so verify_bearer sees the test key
-    import agentsys.integration.openai_adapter as adapter_mod
+    import agents_system.integration.openai_adapter as adapter_mod
 
     fake_settings = MagicMock()
     fake_settings.adapter_api_key = adapter_api_key
@@ -267,7 +267,7 @@ def test_chat_completions_uses_the_shared_admission_limiter_around_run_turn(
 
     app_instance.state.turn_admission_limiter = _SpyLimiter()
 
-    import agentsys.integration.openai_adapter as adapter_mod
+    import agents_system.integration.openai_adapter as adapter_mod
 
     fake_settings = MagicMock()
     fake_settings.adapter_api_key = ""
@@ -297,7 +297,7 @@ def test_system_message_dropped(monkeypatch: pytest.MonkeyPatch):
     fake_rt = app_instance.state.runtimes["acme__sales-agent"]
     fake_rt.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
 
-    import agentsys.integration.openai_adapter as adapter_mod
+    import agents_system.integration.openai_adapter as adapter_mod
 
     fake_settings = MagicMock()
     fake_settings.adapter_api_key = ""
@@ -353,10 +353,10 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
     """Regression (discovery #184): a write:/send: tool call succeeds through
     the adapter using the runtime's own real grants — the adapter must not
     force ``permissions=()`` at the run_turn call site (design AD-4)."""
-    from agentsys.agent.graph import AgentRuntime
-    from agentsys.harness.factory import EquippedRuntime
-    from agentsys.harness.loader import AgentDefinition
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.agent.graph import AgentRuntime
+    from agents_system.harness.factory import EquippedRuntime
+    from agents_system.harness.loader import AgentDefinition
+    from agents_system.harness.registry import Tier, ToolSpec
 
     invoked: list[dict[str, Any]] = []
 
@@ -419,7 +419,7 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
     app_instance.state.adapter_model_ids = frozenset({"acme__sales-agent"})
     app_instance.state.engine = MagicMock()
 
-    import agentsys.integration.openai_adapter as adapter_mod
+    import agents_system.integration.openai_adapter as adapter_mod
 
     fake_settings = MagicMock()
     fake_settings.adapter_api_key = ""
@@ -440,7 +440,7 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
 
 def test_model_id_roundtrip():
     """to_model_id and parse_model_id are inverses of each other."""
-    from agentsys.integration.openai_adapter import parse_model_id, to_model_id
+    from agents_system.integration.openai_adapter import parse_model_id, to_model_id
 
     # Normal deployment
     model_id = to_model_id("sales-agent", "acme")
@@ -469,7 +469,7 @@ def test_map_messages_role_types():
     from langchain_core.messages import HumanMessage as LCHuman
     from langchain_core.messages import SystemMessage as LCSystem
 
-    from agentsys.integration.openai_adapter import map_messages
+    from agents_system.integration.openai_adapter import map_messages
 
     mapped = map_messages(
         [

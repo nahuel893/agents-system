@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 
-from agentsys.harness.loader import (
+from agents_system.harness.loader import (
     DefinitionError,
     RawDefinition,
     _as_str_list,
@@ -35,7 +35,7 @@ _CLIENT_A_DEPLOYMENTS = (
 
 
 def _client_a_roots() -> Any:
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=_REPO_ROOT / "platform",
@@ -252,7 +252,7 @@ def test_merge_exec_limits_new_key_allowed() -> None:
     than the role, so naming one stricter limit raised the ceiling on all
     the others.
     """
-    from agentsys.harness.loader import _PLATFORM_DEFAULT_LIMITS
+    from agents_system.harness.loader import _PLATFORM_DEFAULT_LIMITS
 
     out = merge(
         _raw(execution_limits=None),  # baseline = platform defaults
@@ -299,14 +299,14 @@ def test_resolve_client_a_fixture_roots_with_deployment() -> None:
 
 
 def test_load_generic_default_roots() -> None:
-    from agentsys.harness.loader import load_generic
+    from agents_system.harness.loader import load_generic
 
     raw = load_generic("sales-agent")  # called directly, no roots → real platform/
     assert raw.role_name == "sales-agent"
 
 
 def test_load_override_client_a_fixture_roots() -> None:
-    from agentsys.harness.loader import load_override
+    from agents_system.harness.loader import load_override
 
     raw = load_override("client-a", "sales-agent", roots=_client_a_roots())
     assert raw is not None

@@ -1,4 +1,4 @@
-"""Tests for agentsys.agent.reasoning — reasoning-block sanitization (spec R5)."""
+"""Tests for agents_system.agent.reasoning — reasoning-block sanitization (spec R5)."""
 
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -7,7 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from agentsys.agent.reasoning import ReasoningSanitizedChatOpenAI, strip_reasoning
+from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI, strip_reasoning
 
 # ---------------------------------------------------------------------------
 # strip_reasoning — the AD-3 behavior table (str content)

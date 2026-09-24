@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentsys.audit.redactor import Redactor
+from agents_system.audit.redactor import Redactor
 
 # ---------------------------------------------------------------------------
 # Reasons for the pinned-defect markers

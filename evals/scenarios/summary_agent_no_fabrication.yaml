@@ -2,7 +2,7 @@
 #
 # Asks for a summary of a session that was never seeded into the reference
 # LLMConversationSummarizer (only "demo-session-1" is seeded -- see
-# src/agentsys/evals/live_registry.py). Per src/agentsys/services/summaries.py's
+# src/agents_system/evals/live_registry.py). Per src/agents_system/services/summaries.py's
 # own port contract, an implementation that cannot read the conversation
 # "must RAISE ... instead of presenting 'no matches' for a search that never
 # ran" -- so a non-fabricating model must still attempt the call (there is no

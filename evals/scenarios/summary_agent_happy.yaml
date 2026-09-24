@@ -1,7 +1,7 @@
 # Happy path for summary-agent (#171).
 #
 # A request to summarize the pre-seeded demo conversation session.
-# src/agentsys/evals/live_registry.py's build_live_registry seeds
+# src/agents_system/evals/live_registry.py's build_live_registry seeds
 # session_id "demo-session-1" with a short transcript specifically so this
 # call can plausibly succeed against the real reference
 # LLMConversationSummarizer -- a plain YAML scenario has no other way to

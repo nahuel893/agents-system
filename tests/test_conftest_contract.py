@@ -1,12 +1,12 @@
 """Pins the contract ``tests/conftest.py`` owes the rest of the suite.
 
 D-014 S5 moved the empty-secret check into a ``Settings`` model validator that
-raises. ``agentsys.main`` ends with a module-level ``app = create_app()``, so
+raises. ``agents_system.main`` ends with a module-level ``app = create_app()``, so
 that validator runs during pytest COLLECTION, before any fixture exists. The
 only place that can keep the suite collectable is conftest's import-time env
 assignment — and if that assignment is written as ``os.environ.setdefault``, an
 inherited ``ALLOW_INSECURE=false`` silently defeats it and every module that
-imports ``agentsys.main`` dies as an unattributable collection error.
+imports ``agents_system.main`` dies as an unattributable collection error.
 
 These tests fail loudly and by name when that regression is reintroduced.
 """
@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from agentsys.config import Settings
-from agentsys.services.participants import (
+from agents_system.config import Settings
+from agents_system.services.participants import (
     ConversationRecorder,
     Participant,
     ParticipantDirectory,
@@ -59,13 +59,13 @@ def test_conftest_fixture_assembly_does_not_load_client_services() -> None:
             "from pathlib import Path\n"
             "sys.path.insert(0, str(Path('tests').resolve()))\n"
             "import conftest\n"
-            "assert 'agentsys.services.clients' not in sys.modules\n"
-            "assert 'agentsys.services.conversation_log' not in sys.modules\n"
-            "assert 'agentsys.models.tables' not in sys.modules\n"
+            "assert 'agents_system.services.clients' not in sys.modules\n"
+            "assert 'agents_system.services.conversation_log' not in sys.modules\n"
+            "assert 'agents_system.models.tables' not in sys.modules\n"
             "app = conftest.create_test_app()\n"
             "leaked = [m for m in sys.modules if m in {\n"
-            "    'agentsys.services.clients',\n"
-            "    'agentsys.services.conversation_log',\n"
+            "    'agents_system.services.clients',\n"
+            "    'agents_system.services.conversation_log',\n"
             "}]\n"
             "assert not leaked, f'Leaked modules: {leaked}'\n",
         ],

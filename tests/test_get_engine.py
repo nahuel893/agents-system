@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentsys.models.base import get_engine
+from agents_system.models.base import get_engine
 
 
 @pytest.mark.asyncio

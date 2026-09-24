@@ -6,7 +6,7 @@ whatever ``OPENAI_COMPATIBLE_BASE_URL`` points at (MiniMax in production:
 paid, rate-limited, and unsuitable as a CI dependency — see that file's
 docstring). The ``openai-compatible-integration`` job in ``ci.yml`` points
 those tests at this local server instead, so the reasoning-sanitizer round
-trip (``src/agentsys/agent/reasoning.py::ReasoningSanitizedChatOpenAI``)
+trip (``src/agents_system/agent/reasoning.py::ReasoningSanitizedChatOpenAI``)
 still runs over a REAL HTTP request/response cycle in CI, just not against
 the paid remote model.
 

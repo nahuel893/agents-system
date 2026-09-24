@@ -1,7 +1,7 @@
 """Tests for capability tiers on ToolSpec (ADR-002 C.10, issue #109).
 
 Strict TDD: written before `Tier`/`ToolSpec.tier` exist in
-`agentsys.harness.registry`. Covers:
+`agents_system.harness.registry`. Covers:
 
 1. `ToolSpec.tier` is a required field (fail closed — no default tier that
    silently grants; a tool author who forgets to classify a tool gets a
@@ -32,7 +32,7 @@ def _connector(_input: Any) -> str:
 
 def test_toolspec_tier_is_required() -> None:
     """Omitting `tier` must fail construction, not silently default to a tier."""
-    from agentsys.harness.registry import ToolSpec
+    from agents_system.harness.registry import ToolSpec
 
     with pytest.raises(TypeError):
         ToolSpec(  # type: ignore[call-arg]
@@ -43,13 +43,13 @@ def test_toolspec_tier_is_required() -> None:
 
 
 def test_tier_enum_has_exactly_t0_through_t3() -> None:
-    from agentsys.harness.registry import Tier
+    from agents_system.harness.registry import Tier
 
     assert {member.value for member in Tier} == {"T0", "T1", "T2", "T3"}
 
 
 def test_toolspec_accepts_explicit_tier() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="catalog_search",
@@ -68,14 +68,14 @@ def test_toolspec_accepts_explicit_tier() -> None:
 
 def _production_specs() -> dict[str, Any]:
     """Every ToolSpec the platform's own public builders can produce today."""
-    from agentsys.connectors.operator import build_operator_tool_specs
-    from agentsys.connectors.order_connector import build_order_writer_tool_spec
-    from agentsys.connectors.platform_connectors import (
+    from agents_system.connectors.operator import build_operator_tool_specs
+    from agents_system.connectors.order_connector import build_order_writer_tool_spec
+    from agents_system.connectors.platform_connectors import (
         build_conversation_summarizer_tool_spec,
         build_escalation_notifier_tool_spec,
         build_knowledge_retrieval_tool_spec,
     )
-    from agentsys.connectors.report_connector import build_report_tool_spec
+    from agents_system.connectors.report_connector import build_report_tool_spec
 
     specs: dict[str, Any] = {}
     for spec in build_operator_tool_specs(None):
@@ -95,7 +95,7 @@ def test_every_registered_platform_tool_has_a_tier() -> None:
     a future tool that forgets a tier fails this test instead of shipping
     with an implicit, unreviewed classification.
     """
-    from agentsys.harness.registry import Tier
+    from agents_system.harness.registry import Tier
 
     specs = _production_specs()
     assert specs, "no production tool builders found — check the import list"
@@ -118,7 +118,7 @@ def test_every_registered_platform_tool_has_a_tier() -> None:
 def test_production_tool_tier_matches_adr_table(
     tool_name: str, expected_tier: str
 ) -> None:
-    from agentsys.harness.registry import Tier
+    from agents_system.harness.registry import Tier
 
     specs = _production_specs()
     assert specs[tool_name].tier is Tier(expected_tier)
@@ -132,9 +132,9 @@ def test_production_tool_tier_matches_adr_table(
 async def test_t3_tool_revalidated_even_under_read_permission_name() -> None:
     """The exact gap C.10 closes: a T3 tool named `read:x` (no `exec:`
     prefix) must still be revalidated at call time."""
-    from agentsys.harness.factory import EquippedRuntime
-    from agentsys.harness.interceptor import PolicyViolation, intercept
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.factory import EquippedRuntime
+    from agents_system.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="disguised_t3_tool",
@@ -160,9 +160,9 @@ async def test_t3_tool_revalidated_even_under_read_permission_name() -> None:
 
 async def test_t1_tool_under_read_permission_is_not_revalidated() -> None:
     """Regression guard: an ordinary T1 read tool stays non-sensitive."""
-    from agentsys.harness.factory import EquippedRuntime
-    from agentsys.harness.interceptor import intercept
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.factory import EquippedRuntime
+    from agents_system.harness.interceptor import intercept
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="plain_read_tool",
@@ -189,8 +189,8 @@ async def test_every_previously_write_send_tool_still_revalidated(
 ) -> None:
     """Regression: every tool the old write:/send: prefix heuristic revalidated
     must still be revalidated once tier replaces that heuristic."""
-    from agentsys.harness.factory import EquippedRuntime
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.factory import EquippedRuntime
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     specs = _production_specs()
     spec = specs[tool_name]
@@ -218,7 +218,7 @@ async def test_every_previously_write_send_tool_still_revalidated(
 
 
 def test_write_permission_with_t1_tier_raises() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     with pytest.raises(ValueError, match="write:orders"):
         ToolSpec(
@@ -230,7 +230,7 @@ def test_write_permission_with_t1_tier_raises() -> None:
 
 
 def test_send_permission_with_t0_tier_raises() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     with pytest.raises(ValueError, match="send:message"):
         ToolSpec(
@@ -243,7 +243,7 @@ def test_send_permission_with_t0_tier_raises() -> None:
 
 def test_exec_permission_with_t2_tier_raises() -> None:
     """exec:* strictly requires T3 — T2 is not sufficient, unlike write:/send:."""
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     with pytest.raises(ValueError, match="EXEC:shell"):
         ToolSpec(
@@ -257,7 +257,7 @@ def test_exec_permission_with_t2_tier_raises() -> None:
 def test_whitespace_variant_write_permission_still_caught() -> None:
     """Mirrors loader._is_exec_permission's own whitespace/case tolerance —
     a stray leading/trailing space or case variant must not disarm the guard."""
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     with pytest.raises(ValueError):
         ToolSpec(
@@ -283,7 +283,7 @@ def test_whitespace_variant_write_permission_still_caught() -> None:
 def test_valid_permission_tier_combinations_construct_cleanly(
     perm: str, tier_name: str
 ) -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="ok_tool",
@@ -297,8 +297,8 @@ def test_valid_permission_tier_combinations_construct_cleanly(
 async def test_always_revalidate_t1_tool_still_revalidated() -> None:
     """Regression: `always_revalidate=True` keeps revalidating a T1 tool
     (run_report) even though T1 alone would not trigger it."""
-    from agentsys.harness.factory import EquippedRuntime
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.factory import EquippedRuntime
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     specs = _production_specs()
     spec = specs["run_report"]
@@ -330,7 +330,7 @@ async def test_always_revalidate_t1_tool_still_revalidated() -> None:
 
 
 def test_run_permission_with_t0_tier_raises() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     with pytest.raises(ValueError, match="run:check_stock"):
         ToolSpec(
@@ -342,7 +342,7 @@ def test_run_permission_with_t0_tier_raises() -> None:
 
 
 def test_run_permission_with_t1_tier_raises() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     with pytest.raises(ValueError, match="run:check_stock"):
         ToolSpec(
@@ -356,7 +356,7 @@ def test_run_permission_with_t1_tier_raises() -> None:
 def test_run_permission_with_t2_tier_is_accepted() -> None:
     """T2 stays allowed — ADR-002 C.12 deliberately lets an untrusted_input
     role hold a narrow T2 command tool; only the room BELOW T2 is closed."""
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="ok_run_tool_t2",
@@ -369,7 +369,7 @@ def test_run_permission_with_t2_tier_is_accepted() -> None:
 
 
 def test_run_permission_with_t3_tier_is_accepted() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="ok_run_tool_t3",
@@ -383,7 +383,7 @@ def test_run_permission_with_t3_tier_is_accepted() -> None:
 
 def test_run_permission_case_and_whitespace_variant_still_caught() -> None:
     """Mirrors the write:/send:/exec: guards' own case/whitespace tolerance."""
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     with pytest.raises(ValueError):
         ToolSpec(

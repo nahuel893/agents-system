@@ -23,8 +23,8 @@ import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
-from agentsys.config import Settings, get_settings
-from agentsys.services.outbox import InboundAcceptance
+from agents_system.config import Settings, get_settings
+from agents_system.services.outbox import InboundAcceptance
 from conftest import create_test_app
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ def make_settings(**overrides: str) -> Settings:
         meta_webhook_secret=TEST_SECRET,
         whatsapp_verify_token=TEST_VERIFY_TOKEN,
         whatsapp_runtime_id="acme__sales-agent",
-        database_url="postgresql+asyncpg://localhost:5432/agentsys_test",
+        database_url="postgresql+asyncpg://localhost:5432/agents_system_test",
         redis_url="redis://localhost:6379/0",
     )
     defaults.update(overrides)
@@ -125,9 +125,9 @@ def _dummy_session_factory() -> MagicMock:
 def _patch_persistence(accept: AsyncMock):
     """Patch both symbols the route needs to reach ``accept_inbound_message``."""
     return (
-        patch("agentsys.integration.webhook.accept_inbound_message", accept),
+        patch("agents_system.integration.webhook.accept_inbound_message", accept),
         patch(
-            "agentsys.integration.webhook.get_session_factory",
+            "agents_system.integration.webhook.get_session_factory",
             return_value=_dummy_session_factory(),
         ),
     )
@@ -184,7 +184,7 @@ def test_verify_signature_valid() -> None:
     """Valid HMAC-SHA256 signature passes without raising."""
     from starlette.datastructures import Headers
 
-    from agentsys.integration.meta_signature import verify_signature
+    from agents_system.integration.meta_signature import verify_signature
 
     body = b'{"hello": "world"}'
     sig = sign_payload(body, TEST_SECRET)
@@ -198,7 +198,7 @@ def test_verify_signature_invalid() -> None:
     from fastapi import HTTPException
     from starlette.datastructures import Headers
 
-    from agentsys.integration.meta_signature import verify_signature
+    from agents_system.integration.meta_signature import verify_signature
 
     body = b'{"hello": "world"}'
     headers = Headers({"x-hub-signature-256": "sha256=deadbeefdeadbeef"})
@@ -212,7 +212,7 @@ def test_verify_signature_missing_header() -> None:
     from fastapi import HTTPException
     from starlette.datastructures import Headers
 
-    from agentsys.integration.meta_signature import verify_signature
+    from agents_system.integration.meta_signature import verify_signature
 
     body = b'{"hello": "world"}'
     headers = Headers({})
@@ -275,7 +275,7 @@ async def test_post_invalid_signature_never_touches_persistence(
 ) -> None:
     """A forged signature is rejected with 403 and never reaches the DB."""
     accept = AsyncMock()
-    with patch("agentsys.integration.webhook.accept_inbound_message", accept):
+    with patch("agents_system.integration.webhook.accept_inbound_message", accept):
         response = await client.post(
             "/webhook",
             content=text_payload,
@@ -294,7 +294,7 @@ async def test_post_missing_signature_never_touches_persistence(
 ) -> None:
     """No X-Hub-Signature-256 header at all is rejected the same way."""
     accept = AsyncMock()
-    with patch("agentsys.integration.webhook.accept_inbound_message", accept):
+    with patch("agents_system.integration.webhook.accept_inbound_message", accept):
         response = await client.post(
             "/webhook",
             content=text_payload,
@@ -462,7 +462,7 @@ async def test_read_bounded_body_malformed_content_length_falls_back_to_stream()
     The fast-path check can't trust it, so enforcement falls through to the
     streamed byte count, which still catches an oversized body.
     """
-    from agentsys.integration.webhook import _read_bounded_body
+    from agents_system.integration.webhook import _read_bounded_body
 
     request = _make_streaming_request(
         {"content-length": "not-a-number"}, [b"x" * 60, b"x" * 60]
@@ -474,7 +474,7 @@ async def test_read_bounded_body_malformed_content_length_falls_back_to_stream()
 
 async def test_read_bounded_body_missing_content_length_enforced_by_stream() -> None:
     """No Content-Length header at all is still bounded by the streamed count."""
-    from agentsys.integration.webhook import _read_bounded_body
+    from agents_system.integration.webhook import _read_bounded_body
 
     request = _make_streaming_request({}, [b"x" * 60, b"x" * 60])
     with pytest.raises(HTTPException) as exc_info:
@@ -494,7 +494,7 @@ async def test_read_bounded_body_lying_content_length_understates_stream_enforce
     enforcement must catch that against the real byte count, not the
     (lying) declared header.
     """
-    from agentsys.integration.webhook import _read_bounded_body
+    from agents_system.integration.webhook import _read_bounded_body
 
     request = _make_streaming_request({"content-length": "10"}, [b"x" * 60, b"x" * 60])
     with pytest.raises(HTTPException) as exc_info:
@@ -504,7 +504,7 @@ async def test_read_bounded_body_lying_content_length_understates_stream_enforce
 
 async def test_read_bounded_body_within_limit_returns_full_body() -> None:
     """A body under the ceiling is read and reassembled unchanged."""
-    from agentsys.integration.webhook import _read_bounded_body
+    from agents_system.integration.webhook import _read_bounded_body
 
     request = _make_streaming_request({}, [b"abc", b"def"])
     result = await _read_bounded_body(request, max_bytes=100)
@@ -633,7 +633,7 @@ async def test_post_status_update_is_not_persisted(
     sig = sign_payload(status_payload, TEST_SECRET)
     accept = AsyncMock()
 
-    with patch("agentsys.integration.webhook.accept_inbound_message", accept):
+    with patch("agents_system.integration.webhook.accept_inbound_message", accept):
         response = await client.post(
             "/webhook",
             content=status_payload,
@@ -849,7 +849,7 @@ async def test_a_malformed_payload_never_500s_and_persists_nothing(
     sig = sign_payload(body, TEST_SECRET)
     accept = AsyncMock()
 
-    with patch("agentsys.integration.webhook.accept_inbound_message", accept):
+    with patch("agents_system.integration.webhook.accept_inbound_message", accept):
         response = await client.post(
             "/webhook",
             content=body,
@@ -870,7 +870,7 @@ async def test_a_malformed_payload_never_500s_and_persists_nothing(
 
 def test_webhook_module_does_not_import_client_domain() -> None:
     """The inbound route must not reach into any client-owned module."""
-    import agentsys.integration.webhook as webhook_module
+    import agents_system.integration.webhook as webhook_module
 
     source = Path(webhook_module.__file__).read_text(encoding="utf-8")
 
@@ -893,10 +893,10 @@ def test_webhook_module_does_not_import_client_domain_at_runtime() -> None:
             sys.executable,
             "-c",
             "import sys\n"
-            "import agentsys.integration.webhook\n"
+            "import agents_system.integration.webhook\n"
             "leaked = [m for m in sys.modules if m in {\n"
-            "    'agentsys.services.clients',\n"
-            "    'agentsys.services.conversation_log',\n"
+            "    'agents_system.services.clients',\n"
+            "    'agents_system.services.conversation_log',\n"
             "}]\n"
             "assert not leaked, leaked\n",
         ],
@@ -945,9 +945,9 @@ def test_the_wired_implementations_satisfy_the_ports() -> None:
 def test_webhook_does_not_pull_in_client_orm_models() -> None:
     """Pins a leak the substring scan above cannot see.
 
-    ``agentsys.models.tables`` — ACME's clients/orders/catalog_embeddings ORM
+    ``agents_system.models.tables`` — ACME's clients/orders/catalog_embeddings ORM
     models — no longer exists (#70): ``webhook.py`` imports
-    ``agentsys.models.base``, and ``models/__init__.py`` used to eagerly
+    ``agents_system.models.base``, and ``models/__init__.py`` used to eagerly
     re-export ``models.tables`` so that ``Base.metadata`` held every table.
     Now it only re-exports the platform's own ``audit_event``, so this
     boundary holds for real instead of by strict xfail.
@@ -960,8 +960,8 @@ def test_webhook_does_not_pull_in_client_orm_models() -> None:
             sys.executable,
             "-c",
             "import sys\n"
-            "import agentsys.integration.webhook\n"
-            "assert 'agentsys.models.tables' not in sys.modules\n",
+            "import agents_system.integration.webhook\n"
+            "assert 'agents_system.models.tables' not in sys.modules\n",
         ],
         capture_output=True,
         text=True,

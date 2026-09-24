@@ -2,7 +2,7 @@
 #
 # Asks about something the seeded knowledge base genuinely does not cover
 # (only shipping/delivery-zone content is seeded -- see
-# src/agentsys/evals/live_registry.py). role.md's standing instruction:
+# src/agents_system/evals/live_registry.py). role.md's standing instruction:
 # "Answer only from what knowledge_retrieval returns... If the knowledge
 # base has no answer, say so and escalate. 'I do not know, let me get
 # someone' is a complete and correct support response." This asserts BOTH

@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-from agentsys.config import Settings
-from agentsys.services import rag
-from agentsys.services.rag import (
+from agents_system.config import Settings
+from agents_system.services import rag
+from agents_system.services.rag import (
     KeywordSearchCandidate,
     VectorSearchCandidate,
 )
@@ -391,7 +391,7 @@ class StubCatalogSource:
 
 
 async def test_search_catalog_uses_the_injected_source_not_a_module_import() -> None:
-    """The orchestration must run with no `agentsys.services.catalog` present.
+    """The orchestration must run with no `agents_system.services.catalog` present.
 
     Before the inversion this could only be tested by monkeypatching
     `rag.catalog`, which proved the coupling rather than removing it.
@@ -427,7 +427,7 @@ def test_rag_module_does_not_import_client_domain() -> None:
 
     A fresh-interpreter probe rather than a substring scan of the file. The
     scan this replaces promised "any client-owned module" and checked two
-    literals naming one of them: adding `from agentsys.models.tables import
+    literals naming one of them: adding `from agents_system.models.tables import
     CatalogEmbedding` -- ACME's actual `catalog_embeddings` ORM table -- and
     using it left the scan green, while a docstring reword turned it red. It
     fired on prose and missed the worst real violation.
@@ -444,16 +444,16 @@ def test_rag_module_does_not_import_client_domain() -> None:
             sys.executable,
             "-c",
             "import sys\n"
-            "import agentsys.services.rag\n"
+            "import agents_system.services.rag\n"
             "client_owned = {\n"
-            "    'agentsys.services.catalog',\n"
-            "    'agentsys.services.clients',\n"
-            "    'agentsys.services.conversation_log',\n"
-            "    'agentsys.services.seed_data',\n"
-            "    'agentsys.services.sync_articles',\n"
-            "    'agentsys.services.sync_clients',\n"
-            "    'agentsys.services.medallion',\n"
-            "    'agentsys.models.tables',\n"
+            "    'agents_system.services.catalog',\n"
+            "    'agents_system.services.clients',\n"
+            "    'agents_system.services.conversation_log',\n"
+            "    'agents_system.services.seed_data',\n"
+            "    'agents_system.services.sync_articles',\n"
+            "    'agents_system.services.sync_clients',\n"
+            "    'agents_system.services.medallion',\n"
+            "    'agents_system.models.tables',\n"
             "}\n"
             "leaked = sorted(client_owned & set(sys.modules))\n"
             "assert not leaked, leaked\n",
@@ -518,7 +518,7 @@ def test_importing_rag_does_not_load_the_embeddings_stack() -> None:
             sys.executable,
             "-c",
             "import sys\n"
-            "import agentsys.services.rag\n"
+            "import agents_system.services.rag\n"
             "heavy = sorted({'openai', 'torch', 'sentence_transformers'} "
             "& set(sys.modules))\n"
             "assert not heavy, heavy\n",

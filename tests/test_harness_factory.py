@@ -39,7 +39,7 @@ SALES_PERMISSIONS = [
 
 def _fixture_roots() -> Any:
     """RootConfig pointing at the simple-role fixtures."""
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=GENERIC_ROOTS_DIR,
@@ -49,7 +49,7 @@ def _fixture_roots() -> Any:
 
 def _client_a_roots() -> Any:
     """RootConfig for platform roles and generic client deployment fixtures."""
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=REPO_ROOT / "platform",
@@ -58,7 +58,7 @@ def _client_a_roots() -> Any:
 
 
 def _spec(name: str, perms: list[str]) -> Any:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     # Mirror the pre-tier write:/send: heuristic so fixtures keep their
     # original sensitivity classification (ADR-002 C.10).
@@ -80,7 +80,7 @@ def _sales_registry() -> Any:
     resolved chain, so a registry built from the leaf manifest alone no longer
     boots the role.
     """
-    from agentsys.harness.registry import ToolRegistry
+    from agents_system.harness.registry import ToolRegistry
 
     reg = ToolRegistry()
     reg.register(_spec("message_sender", ["send:message"]))
@@ -96,7 +96,7 @@ def _sales_registry() -> Any:
 # Happy path — generic client deployment
 # ---------------------------------------------------------------------------
 def test_build_runtime_attaches_resolved_definition() -> None:
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness.factory import build_runtime
 
     runtime = build_runtime(
         "sales-agent",
@@ -111,7 +111,7 @@ def test_build_runtime_attaches_resolved_definition() -> None:
 
 
 def test_build_runtime_grants_all_tools_when_permitted() -> None:
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness.factory import build_runtime
 
     runtime = build_runtime(
         "sales-agent",
@@ -133,7 +133,7 @@ def test_build_runtime_grants_all_tools_when_permitted() -> None:
 
 
 def test_build_runtime_denies_tools_missing_permissions() -> None:
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness.factory import build_runtime
 
     # Only read:catalog granted → catalog_search (needs read:catalog) and
     # session_state (needs nothing) pass; the rest are denied.
@@ -153,7 +153,7 @@ def test_build_runtime_denies_tools_missing_permissions() -> None:
 
 
 def test_build_runtime_loads_declared_skills_in_order() -> None:
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness.factory import build_runtime
 
     runtime = build_runtime(
         "sales-agent",
@@ -174,7 +174,7 @@ def test_build_runtime_loads_declared_skills_in_order() -> None:
 
 
 def test_build_runtime_composes_prompt_from_role_body_and_skills() -> None:
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness.factory import build_runtime
 
     runtime = build_runtime(
         "sales-agent",
@@ -198,7 +198,7 @@ def test_build_runtime_composes_prompt_from_role_body_and_skills() -> None:
 # Generic role (no client) — no skills, prompt is the role body alone
 # ---------------------------------------------------------------------------
 def test_build_runtime_generic_role_has_no_skills() -> None:
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness.factory import build_runtime
 
     runtime = build_runtime("sales-agent", _sales_registry(), SALES_PERMISSIONS)
 
@@ -212,8 +212,8 @@ def test_build_runtime_generic_role_has_no_skills() -> None:
 # Failure mode — a declared skill with no file on disk fails loud
 # ---------------------------------------------------------------------------
 def test_build_runtime_missing_skill_file_raises() -> None:
-    from agentsys.harness.factory import FactoryError, build_runtime
-    from agentsys.harness.registry import ToolRegistry
+    from agents_system.harness.factory import FactoryError, build_runtime
+    from agents_system.harness.registry import ToolRegistry
 
     # client-a/simple-role declares skills [skill_one, skill_two] but the
     # fixture has no skills/ directory → the factory must fail loud.
@@ -235,8 +235,8 @@ def test_build_runtime_missing_skill_file_raises() -> None:
 # Defensive guard — skills declared but no client to load them from
 # ---------------------------------------------------------------------------
 def test_load_skills_without_client_raises() -> None:
-    from agentsys.harness.factory import FactoryError, _load_skills
-    from agentsys.harness.loader import AgentDefinition
+    from agents_system.harness.factory import FactoryError, _load_skills
+    from agents_system.harness.loader import AgentDefinition
 
     definition = AgentDefinition(
         role_name="sales-agent",
@@ -263,7 +263,7 @@ def test_load_skills_without_client_raises() -> None:
 # Auditability — building a runtime emits a structured event
 # ---------------------------------------------------------------------------
 def test_build_runtime_logs_built_event() -> None:
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness.factory import build_runtime
 
     with structlog.testing.capture_logs() as logs:
         build_runtime(
@@ -279,7 +279,7 @@ def test_build_runtime_logs_built_event() -> None:
 
 
 def test_build_runtime_logs_each_skill_loaded() -> None:
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness.factory import build_runtime
 
     with structlog.testing.capture_logs() as logs:
         build_runtime(
@@ -299,8 +299,8 @@ def test_build_runtime_logs_each_skill_loaded() -> None:
 
 
 def test_build_runtime_logs_skill_missing_before_raising() -> None:
-    from agentsys.harness.factory import FactoryError, build_runtime
-    from agentsys.harness.registry import ToolRegistry
+    from agents_system.harness.factory import FactoryError, build_runtime
+    from agents_system.harness.registry import ToolRegistry
 
     reg = ToolRegistry()
     reg.register(_spec("tool_alpha", ["read:alpha"]))
@@ -334,8 +334,12 @@ def test_loading_skills_with_an_absent_deployments_root_raises_clearly(
     """
     import pytest
 
-    from agentsys.harness.factory import _load_skills
-    from agentsys.harness.loader import AgentDefinition, DefinitionError, RootConfig
+    from agents_system.harness.factory import _load_skills
+    from agents_system.harness.loader import (
+        AgentDefinition,
+        DefinitionError,
+        RootConfig,
+    )
 
     definition = AgentDefinition(
         role_name="simple-role",

@@ -24,22 +24,22 @@
 --
 -- Created before the DROPs so that an interrupted first load still leaves the
 -- database marked as the loader's own, and the retry is allowed through.
-CREATE TABLE IF NOT EXISTS agentsys_demo_marker (
+CREATE TABLE IF NOT EXISTS agents_system_demo_marker (
     note       text        NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
 -- Cleared first: the loader is meant to be re-run, and an INSERT alone would
 -- stack one row per load, making the marker a growing log instead of a fact.
-DELETE FROM agentsys_demo_marker;
+DELETE FROM agents_system_demo_marker;
 
-INSERT INTO agentsys_demo_marker (note)
+INSERT INTO agents_system_demo_marker (note)
 VALUES ('Created by demo/load_demo_company.py. This database is disposable.');
 
-DROP VIEW IF EXISTS agentsys_stock;
-DROP VIEW IF EXISTS agentsys_sale_items;
-DROP VIEW IF EXISTS agentsys_sales;
-DROP VIEW IF EXISTS agentsys_customers;
+DROP VIEW IF EXISTS agents_system_stock;
+DROP VIEW IF EXISTS agents_system_sale_items;
+DROP VIEW IF EXISTS agents_system_sales;
+DROP VIEW IF EXISTS agents_system_customers;
 
 DROP TABLE IF EXISTS factura_lineas;
 DROP TABLE IF EXISTS facturas;

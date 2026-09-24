@@ -1,7 +1,7 @@
 -- The contract, satisfied.
 --
 -- These four views are the ENTIRE integration surface between a company's
--- database and `agentsys.connectors.sales_reports`. Every difference between
+-- database and `agents_system.connectors.sales_reports`. Every difference between
 -- this fake distributor's schema and the platform's expectations is absorbed
 -- here; not one line of the platform's SQL knows this company exists.
 --
@@ -10,7 +10,7 @@
 -- that against the live database rather than trusting this comment.
 
 -- customer_id, name, zone, segment
-CREATE VIEW agentsys_customers AS
+CREATE VIEW agents_system_customers AS
 SELECT
     nro_cliente  AS customer_id,
     razon_social AS name,
@@ -40,7 +40,7 @@ FROM padron_clientes;
 -- fix this view can see that it needs fixing. `demo/load_demo_company.py`
 -- additionally fails the load when any row lands here, so a new status word is
 -- caught at load time rather than in a report months later.
-CREATE VIEW agentsys_sales AS
+CREATE VIEW agents_system_sales AS
 SELECT
     nro_factura   AS sale_id,
     fecha_emision AS sold_at,
@@ -61,7 +61,7 @@ FROM facturas;
 -- and unit price. The contract wants the line total, so it is computed here.
 -- This is why the contract is views rather than a name-to-name mapping — a
 -- mapping table could not express arithmetic.
-CREATE VIEW agentsys_sale_items AS
+CREATE VIEW agents_system_sale_items AS
 SELECT
     l.nro_factura                        AS sale_id,
     l.codigo_articulo                    AS sku,
@@ -73,7 +73,7 @@ JOIN articulos a ON a.codigo_articulo = l.codigo_articulo;
 
 
 -- sku, description, on_hand, reorder_point
-CREATE VIEW agentsys_stock AS
+CREATE VIEW agents_system_stock AS
 SELECT
     e.codigo_articulo     AS sku,
     a.detalle             AS description,

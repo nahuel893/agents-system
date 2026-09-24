@@ -29,7 +29,7 @@ import pathlib
 
 import pytest
 
-from agentsys.harness.loader import DefinitionError, RootConfig, resolve
+from agents_system.harness.loader import DefinitionError, RootConfig, resolve
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _REAL_PLATFORM_ROOT = _REPO_ROOT / "platform"
@@ -231,8 +231,8 @@ def test_base_contract_is_the_final_block_the_model_actually_receives() -> None:
     what `agent/graph.py` sends to the model, and the contract must be its
     last block, exactly once, even with skill content in the mix.
     """
-    from agentsys.harness.factory import build_runtime
-    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
+    from agents_system.harness.factory import build_runtime
+    from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     for name, perms in (

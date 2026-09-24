@@ -9,7 +9,7 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "agentsys"
+name = "agents-system"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

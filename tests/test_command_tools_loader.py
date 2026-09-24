@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from agentsys.harness.loader import (
+from agents_system.harness.loader import (
     CommandToolParam,
     DefinitionError,
     Tier,
@@ -375,7 +375,7 @@ def test_parse_command_tools_param_type_must_be_known() -> None:
 # End-to-end via resolve() against real fixture files
 # ---------------------------------------------------------------------------
 def _cmdtool_roots() -> Any:
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=_FIXTURE_BASE,
@@ -384,7 +384,7 @@ def _cmdtool_roots() -> Any:
 
 
 def test_resolve_generic_role_carries_command_tools() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("cmdtool-role", roots=_cmdtool_roots())
 
@@ -397,7 +397,7 @@ def test_untrusted_input_role_with_only_command_tools_resolves_cleanly() -> None
     """ADR-002 C.12 acceptance criterion: an `untrusted_input` role holding
     only `command_tools`-declared tools (permission family `run:`, never
     `exec:*`) must pass C.11's mutual-exclusion invariant check."""
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("cmdtool-role", roots=_cmdtool_roots())
 
@@ -406,7 +406,7 @@ def test_untrusted_input_role_with_only_command_tools_resolves_cleanly() -> None
 
 
 def test_deployment_override_may_keep_a_declared_command_tool() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("cmdtool-role", client="keep-subset", roots=_cmdtool_roots())
 
@@ -414,7 +414,7 @@ def test_deployment_override_may_keep_a_declared_command_tool() -> None:
 
 
 def test_deployment_override_adding_undeclared_command_tool_raises() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     with pytest.raises(DefinitionError, match="command_tools"):
         resolve("cmdtool-role", client="add-extra", roots=_cmdtool_roots())

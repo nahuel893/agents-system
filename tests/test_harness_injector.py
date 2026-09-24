@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from agentsys.harness.loader import AgentDefinition
-from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
+from agents_system.harness.loader import AgentDefinition
+from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
 
 def _connector() -> str:
@@ -36,7 +36,7 @@ def _definition(
 
 
 def test_resolve_tool_surface_grants_all_tools_when_permissions_present() -> None:
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     catalog_search = ToolSpec(
@@ -69,7 +69,7 @@ def test_resolve_tool_surface_grants_all_tools_when_permissions_present() -> Non
 
 
 def test_resolve_tool_surface_denies_tool_with_missing_permissions() -> None:
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     catalog_search = ToolSpec(
@@ -104,7 +104,7 @@ def test_resolve_tool_surface_denies_tool_with_missing_permissions() -> None:
 
 
 def test_resolve_tool_surface_uses_role_and_user_permission_intersection() -> None:
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     client_lookup = ToolSpec(
@@ -132,7 +132,7 @@ def test_resolve_tool_surface_uses_role_and_user_permission_intersection() -> No
 
 
 def test_resolve_tool_surface_raises_for_unregistered_tool() -> None:
-    from agentsys.harness.injector import InjectionError, resolve_tool_surface
+    from agents_system.harness.injector import InjectionError, resolve_tool_surface
 
     definition = _definition(
         tools=("missing_tool",),
@@ -157,7 +157,7 @@ def test_untrusted_input_role_denied_t3_tool_even_with_permission_granted() -> N
     permission (no `exec:` prefix) that a hypothetical manifest grants to an
     `untrusted_input` role must still never reach the model's tool surface.
     """
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     disguised_t3 = ToolSpec(
@@ -190,8 +190,8 @@ def test_untrusted_input_role_denied_t3_tool_even_with_permission_granted() -> N
 
 def test_untrusted_input_role_denied_real_t3_tool_by_name() -> None:
     """Same barrier, exercised against the real `use_term`/`read_file` specs."""
-    from agentsys.connectors.operator import build_operator_tool_specs
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.connectors.operator import build_operator_tool_specs
+    from agents_system.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     for spec in build_operator_tool_specs(None):
@@ -216,7 +216,7 @@ def test_untrusted_input_role_denied_real_t3_tool_by_name() -> None:
 def test_trusted_role_still_receives_t3_tool_when_permission_granted() -> None:
     """Regression: the new barrier must not overreach — a role that is NOT
     `untrusted_input` (e.g. `operator-agent`) keeps receiving its T3 tools."""
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     t3_tool = ToolSpec(
@@ -246,7 +246,7 @@ def test_untrusted_input_role_still_receives_t1_and_t2_tools() -> None:
     """Regression: the barrier is scoped to T3 only — T1/T2 tools an
     untrusted_input role legitimately holds (e.g. sales-agent's order_writer)
     are unaffected."""
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness.injector import resolve_tool_surface
 
     registry = ToolRegistry()
     catalog_search = ToolSpec(
@@ -287,8 +287,8 @@ def test_real_sales_agent_definition_never_grants_hypothetical_t3_tool() -> None
     """
     import dataclasses
 
-    from agentsys.harness.injector import resolve_tool_surface
-    from agentsys.harness.loader import RootConfig, resolve
+    from agents_system.harness.injector import resolve_tool_surface
+    from agents_system.harness.loader import RootConfig, resolve
 
     real_definition = resolve("sales-agent", roots=RootConfig())
     assert real_definition.untrusted_input is True

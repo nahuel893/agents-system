@@ -26,7 +26,7 @@ import structlog
 def _infer_tier(perms: list[str]) -> Any:
     """Mirror the pre-tier write:/send: heuristic so existing fixtures keep
     their original sensitivity after `_is_sensitive` becomes tier-based."""
-    from agentsys.harness.registry import Tier
+    from agents_system.harness.registry import Tier
 
     if any(p.startswith(("write:", "send:")) for p in perms):
         return Tier.T2
@@ -34,7 +34,7 @@ def _infer_tier(perms: list[str]) -> Any:
 
 
 def _spec(name: str, perms: list[str], connector: Any = None, tier: Any = None) -> Any:
-    from agentsys.harness.registry import ToolSpec
+    from agents_system.harness.registry import ToolSpec
 
     if connector is None:
 
@@ -51,7 +51,7 @@ def _spec(name: str, perms: list[str], connector: Any = None, tier: Any = None) 
 
 def _runtime(tools: list[Any]) -> Any:
     """Minimal EquippedRuntime with only the tools field populated."""
-    from agentsys.harness.factory import EquippedRuntime
+    from agents_system.harness.factory import EquippedRuntime
 
     return EquippedRuntime(
         definition=None,  # type: ignore[arg-type]
@@ -68,7 +68,7 @@ def _runtime(tools: list[Any]) -> Any:
 
 
 async def test_intercept_allowed_non_sensitive_tool() -> None:
-    from agentsys.harness.interceptor import CallResult, intercept
+    from agents_system.harness.interceptor import CallResult, intercept
 
     spec = _spec("session_state", [])
     runtime = _runtime([spec])
@@ -87,7 +87,7 @@ async def test_intercept_allowed_non_sensitive_tool() -> None:
 
 
 async def test_intercept_blocks_tool_not_in_surface() -> None:
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     runtime = _runtime([_spec("session_state", [])])
 
@@ -98,7 +98,7 @@ async def test_intercept_blocks_tool_not_in_surface() -> None:
 
 
 async def test_intercept_logs_call_blocked_when_not_in_surface() -> None:
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     runtime = _runtime([_spec("session_state", [])])
 
@@ -116,7 +116,7 @@ async def test_intercept_logs_call_blocked_when_not_in_surface() -> None:
 
 
 async def test_intercept_sensitive_tool_with_sufficient_permissions() -> None:
-    from agentsys.harness.interceptor import intercept
+    from agents_system.harness.interceptor import intercept
 
     spec = _spec("order_writer", ["write:orders", "write:order_items"])
     runtime = _runtime([spec])
@@ -138,7 +138,7 @@ async def test_intercept_sensitive_tool_with_sufficient_permissions() -> None:
 
 
 async def test_intercept_sensitive_tool_permission_revoked() -> None:
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     spec = _spec("order_writer", ["write:orders", "write:order_items"])
     runtime = _runtime([spec])
@@ -155,7 +155,7 @@ async def test_intercept_sensitive_tool_permission_revoked() -> None:
 
 
 async def test_intercept_logs_blocked_on_permission_revoked() -> None:
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     spec = _spec("order_writer", ["write:orders", "write:order_items"])
     runtime = _runtime([spec])
@@ -175,7 +175,7 @@ async def test_intercept_logs_blocked_on_permission_revoked() -> None:
 
 
 async def test_intercept_sensitive_tool_without_permissions_raises() -> None:
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     spec = _spec("message_sender", ["send:message"])
     runtime = _runtime([spec])
@@ -194,7 +194,7 @@ async def test_intercept_sensitive_tool_without_permissions_raises() -> None:
 
 
 async def test_intercept_non_sensitive_tool_ignores_current_permissions() -> None:
-    from agentsys.harness.interceptor import intercept
+    from agents_system.harness.interceptor import intercept
 
     spec = _spec("catalog_search", ["read:catalog"])
     runtime = _runtime([spec])
@@ -216,7 +216,7 @@ async def test_intercept_non_sensitive_tool_ignores_current_permissions() -> Non
 
 
 async def test_intercept_logs_call_allowed_and_executed_on_success() -> None:
-    from agentsys.harness.interceptor import intercept
+    from agents_system.harness.interceptor import intercept
 
     spec = _spec("session_state", [])
     runtime = _runtime([spec])
@@ -236,8 +236,8 @@ async def test_intercept_logs_call_allowed_and_executed_on_success() -> None:
 
 async def test_async_connector_dispatched_and_awaited() -> None:
     """Async connector is awaited directly; session kwarg is forwarded."""
-    from agentsys.harness.interceptor import CallResult, intercept
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.interceptor import CallResult, intercept
+    from agents_system.harness.registry import Tier, ToolSpec
 
     received_session: list[Any] = []
 
@@ -267,8 +267,8 @@ async def test_async_connector_dispatched_and_awaited() -> None:
 
 async def test_policy_violation_raised_for_async_connector() -> None:
     """Enforcement (surface check) fires before async connector runs."""
-    from agentsys.harness.interceptor import PolicyViolation, intercept
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.registry import Tier, ToolSpec
 
     called: list[bool] = []
 
@@ -301,8 +301,8 @@ async def test_policy_violation_raised_for_async_connector() -> None:
 
 async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
     """An always_revalidate=True read tool is revalidated like write:/send:."""
-    from agentsys.harness.interceptor import PolicyViolation, intercept
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.registry import Tier, ToolSpec
 
     def connector(_input: Any) -> str:
         return "sensitive_result"
@@ -330,8 +330,8 @@ async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
 
 async def test_always_revalidate_read_allowed_when_permission_present() -> None:
     """An always_revalidate=True read tool executes when the permission is present."""
-    from agentsys.harness.interceptor import intercept
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.interceptor import intercept
+    from agents_system.harness.registry import Tier, ToolSpec
 
     def connector(_input: Any) -> str:
         return "sensitive_result"
@@ -359,8 +359,8 @@ async def test_always_revalidate_read_allowed_when_permission_present() -> None:
 async def test_unflagged_read_proceeds_regardless_of_current_permissions() -> None:
     """Regression guard: a read tool with always_revalidate=False (default) is
     unaffected by current_permissions content — existing behavior unchanged."""
-    from agentsys.harness.interceptor import intercept
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.interceptor import intercept
+    from agents_system.harness.registry import Tier, ToolSpec
 
     def connector(_input: Any) -> str:
         return "catalog_result"
@@ -385,8 +385,10 @@ async def test_unflagged_read_proceeds_regardless_of_current_permissions() -> No
 
 
 def test_connector_no_commit_rollback() -> None:
-    """Static assertion: no connector in src/agentsys/connectors/ calls commit() or rollback()."""
-    connectors_dir = Path(__file__).parent.parent / "src" / "agentsys" / "connectors"
+    """Static assertion: no connector in src/agents_system/connectors/ calls commit() or rollback()."""
+    connectors_dir = (
+        Path(__file__).parent.parent / "src" / "agents_system" / "connectors"
+    )
     py_files = list(connectors_dir.glob("*.py"))
     assert py_files, "No connector files found — check the path"
 

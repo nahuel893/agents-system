@@ -189,7 +189,7 @@ Enforced invariants:
 │       └── sales-agent/          # ACME-specific sales agent
 │           └── skills/           # Injected context
 │
-├── src/agentsys/                 # Platform source
+├── src/agents_system/             # Platform source
 │   ├── agent/                    # LangGraph agent graph & nodes
 │   ├── connectors/               # External integrations (stubs, RAG)
 │   ├── harness/                  # ⬅ Core platform
@@ -246,10 +246,10 @@ uv run pytest
 
 ```bash
 # Development
-uv run uvicorn agentsys.main:app --reload --port 8000
+uv run uvicorn agents_system.main:app --reload --port 8000
 
 # Production
-uv run uvicorn agentsys.main:app --host 0.0.0.0 --port 8000 --workers 4
+uv run uvicorn agents_system.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 The platform exposes an **OpenAI-compatible adapter** at `/v1/*` — any OpenAI SDK client can point to it and get agent responses. This lets you use the platform as a drop-in replacement for OpenAI with your own roles and tools.
@@ -282,7 +282,7 @@ Environment variables (loaded from `.env`). Key settings:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+asyncpg://localhost:5432/agentsys` | PostgreSQL connection. Composed from `DB_USER`/`DB_HOST`/`DB_NAME` when those are set |
+| `DATABASE_URL` | `postgresql+asyncpg://localhost:5432/agents_system` | PostgreSQL connection. Composed from `DB_USER`/`DB_HOST`/`DB_NAME` when those are set |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
 | `ANTHROPIC_API_KEY` | — | Anthropic Claude API key |
 | `OPENAI_API_KEY` | — | OpenAI API key — **embeddings only** (see `OPENAI_COMPATIBLE_API_KEY` for chat) |
@@ -294,7 +294,7 @@ Environment variables (loaded from `.env`). Key settings:
 | `OPENAI_COMPATIBLE_MODEL` | — | **Required** for `openai_compatible`. Model id to request |
 | `OPENAI_COMPATIBLE_API_KEY` | — | Optional — omit it for keyless local endpoints |
 
-Full reference: [`src/agentsys/config.py`](src/agentsys/config.py).
+Full reference: [`src/agents_system/config.py`](src/agents_system/config.py).
 
 ### Using any OpenAI-compatible endpoint
 
@@ -322,7 +322,7 @@ Notes:
   forgotten key is still visible.
 - Reasoning models (MiniMax, and others that emit `<think>...</think>` inline in
   the response) are sanitized automatically — see
-  [`src/agentsys/agent/reasoning.py`](src/agentsys/agent/reasoning.py). Streaming
+  [`src/agents_system/agent/reasoning.py`](src/agents_system/agent/reasoning.py). Streaming
   is **not** sanitized; nothing in the app streams today.
 
 ---
@@ -427,7 +427,7 @@ uv run pytest
 uv run pytest -m 'not integration'
 
 # With coverage
-uv run pytest --cov=agentsys
+uv run pytest --cov=agents_system
 
 # Type checking
 uv run mypy src/
@@ -452,7 +452,7 @@ The test suite (30+ files) covers:
 |------|------|----------|
 | Agent Platform Architecture | [`docs/architecture/`](docs/architecture/) | EN |
 | Platform Specification | [`docs/platform/`](docs/platform/) | EN |
-| Library Usage (integrating `agentsys` into your app) | [`docs/platform/library-usage.md`](docs/platform/library-usage.md) | EN |
+| Library Usage (integrating `agents_system` into your app) | [`docs/platform/library-usage.md`](docs/platform/library-usage.md) | EN |
 | Especificación de Plataforma | [`docs/platform_es/`](docs/platform_es/) | ES |
 | Delivery & Delegation Protocol | [`docs/delivery/`](docs/delivery/) | EN + ES |
 | Product Requirements (ACME) | [`PRD_WhatsApp_Sales_Agent.md`](PRD_WhatsApp_Sales_Agent.md) | ES |

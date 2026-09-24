@@ -12,8 +12,8 @@ import sys
 
 import pytest
 
-from agentsys.connectors.command_tools import build_command_tool_connector
-from agentsys.harness.loader import CommandToolDeclaration, CommandToolParam, Tier
+from agents_system.connectors.command_tools import build_command_tool_connector
+from agents_system.harness.loader import CommandToolDeclaration, CommandToolParam, Tier
 
 
 def _check_stock_declaration() -> CommandToolDeclaration:

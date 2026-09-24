@@ -10,8 +10,11 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agentsys.models.outbox import InboundMessage, OutboxWork
-from agentsys.services.outbox import accept_inbound_message, pending_outbox_statement
+from agents_system.models.outbox import InboundMessage, OutboxWork
+from agents_system.services.outbox import (
+    accept_inbound_message,
+    pending_outbox_statement,
+)
 
 
 class _ConstraintError(Exception):

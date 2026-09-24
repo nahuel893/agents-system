@@ -1,4 +1,4 @@
-"""Alembic async environment for agentsys migrations.
+"""Alembic async environment for agents_system migrations.
 
 The database URL comes from the application's own ``Settings`` — the same
 composed ``database_url`` the app connects with — not from ``alembic.ini``.
@@ -9,7 +9,7 @@ Migrating a server must not require editing a versioned file, and a checked-in
 integration tests point alembic at a throwaway database.
 """
 
-# Make `agentsys` importable before any agentsys import below. This block must
+# Make `agents_system` importable before any agents_system import below. This block must
 # run at module level, above those imports, so E402/E401 are silenced there
 # rather than reordered away.
 import sys  # noqa: I001
@@ -30,8 +30,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config  # noqa: E402
 # Importing the package (not a submodule) registers EVERY table in
 # Base.metadata. Autogenerate diffs against this metadata, so a partial
 # inventory would make it propose dropping the tables it could not see.
-from agentsys.config import get_settings  # noqa: E402
-from agentsys.models import Base  # noqa: E402
+from agents_system.config import get_settings  # noqa: E402
+from agents_system.models import Base  # noqa: E402
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

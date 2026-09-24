@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def test_agent_state_fields() -> None:
-    from agentsys.agent.state import AgentState
+    from agents_system.agent.state import AgentState
 
     state: AgentState = {
         "messages": [],

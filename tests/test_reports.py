@@ -1,6 +1,6 @@
 """Unit tests for the generic report execution engine (D-023 / services.reports).
 
-Strict TDD: written BEFORE agentsys.services.reports exists. Pure logic only
+Strict TDD: written BEFORE agents_system.services.reports exists. Pure logic only
 - no real AsyncEngine, no real Postgres. DB behavior against the real
 bi_readonly-scoped connection is covered by tests/test_reports_integration.py
 (@pytest.mark.integration).
@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
-from agentsys.services.reports import (
+from agents_system.services.reports import (
     HARD_ROW_CEILING,
     ParamSpec,
     ReportSpec,
@@ -252,7 +252,7 @@ async def test_run_report_clamps_limit_and_attaches_metadata(monkeypatch: Any) -
         captured["bind_params"] = bind_params
         return [{"one": 1}]
 
-    monkeypatch.setattr("agentsys.services.reports.fetch_rows", fake_fetch_rows)
+    monkeypatch.setattr("agents_system.services.reports.fetch_rows", fake_fetch_rows)
 
     result = await run_report(object(), spec, {"limit": 10_000_000})
 
@@ -295,7 +295,7 @@ def test_json_safe_converts_decimal_and_datetime_exactly() -> None:
     from datetime import UTC, datetime
     from decimal import Decimal
 
-    from agentsys.services.reports import json_safe
+    from agents_system.services.reports import json_safe
 
     row = {
         "revenue": Decimal("5014100.00"),
@@ -317,7 +317,7 @@ def test_json_safe_handles_nested_rows() -> None:
     import json
     from decimal import Decimal
 
-    from agentsys.services.reports import json_safe
+    from agents_system.services.reports import json_safe
 
     json.dumps(json_safe([{"a": Decimal("1.5")}, {"a": Decimal("2.5")}]))
 
@@ -390,7 +390,7 @@ async def test_run_report_clamps_limit_sent_as_explicit_null(monkeypatch: Any) -
         captured["bind_params"] = bind_params
         return []
 
-    monkeypatch.setattr("agentsys.services.reports.fetch_rows", fake_fetch_rows)
+    monkeypatch.setattr("agents_system.services.reports.fetch_rows", fake_fetch_rows)
     await run_report(object(), spec, {"limit": None})
 
     assert captured["bind_params"]["limit"] == 10
@@ -416,7 +416,7 @@ async def test_run_report_applies_ceiling_when_limit_resolves_to_none(
         captured["bind_params"] = bind_params
         return []
 
-    monkeypatch.setattr("agentsys.services.reports.fetch_rows", fake_fetch_rows)
+    monkeypatch.setattr("agents_system.services.reports.fetch_rows", fake_fetch_rows)
     await run_report(object(), spec, {})
 
     assert captured["bind_params"]["limit"] == HARD_ROW_CEILING
@@ -473,7 +473,7 @@ async def test_run_report_json_safes_metadata(monkeypatch: Any) -> None:
     async def fake_fetch_rows(*_: Any, **__: Any) -> list[dict[str, Any]]:
         return []
 
-    monkeypatch.setattr("agentsys.services.reports.fetch_rows", fake_fetch_rows)
+    monkeypatch.setattr("agents_system.services.reports.fetch_rows", fake_fetch_rows)
     result = await run_report(object(), spec, {})
 
     assert result["meta"]["window_start"] == "2025-08-01T00:00:00+00:00"

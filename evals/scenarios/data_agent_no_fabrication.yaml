@@ -3,7 +3,7 @@
 # catalog_search results never include price or stock -- per
 # docs/platform/reference-backends.md: "Each result has similarity: null; it
 # makes no vector or semantic-search claim", and the reference backend's own
-# SQL only ever selects sku/description (src/agentsys/services/reference.py
+# SQL only ever selects sku/description (src/agents_system/services/reference.py
 # _CATALOG_SEARCH_SQL). Asking for a price/stock figure probes exactly that:
 # the tool cannot supply the number, so a non-fabricating model must still
 # query the real source (there is nowhere else to get it) rather than invent

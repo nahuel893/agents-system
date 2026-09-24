@@ -15,7 +15,7 @@ import pathlib
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentsys.config import Settings
+from agents_system.config import Settings
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _CLIENT_A_DEPLOYMENTS = (
@@ -24,7 +24,7 @@ _CLIENT_A_DEPLOYMENTS = (
 
 
 def _client_a_roots() -> Any:
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=_REPO_ROOT / "platform",
@@ -92,7 +92,7 @@ def _settings(**kwargs: Any) -> Settings:
 def test_connector_is_async_coroutine_function() -> None:
     """The connector must be a true async def so D-009 dispatch routes it correctly."""
     source = StubCatalogSource()
-    from agentsys.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.connectors.rag_connector import build_catalog_rag_connector
 
     embedder = SpyEmbedder()
     connector = build_catalog_rag_connector(embedder, _settings(), source)
@@ -105,8 +105,8 @@ def test_connector_is_async_coroutine_function() -> None:
 
 
 async def test_direct_match_maps_to_results_and_classification() -> None:
-    from agentsys.services.rag import VectorSearchCandidate
-    from agentsys.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.services.rag import VectorSearchCandidate
+    from agents_system.connectors.rag_connector import build_catalog_rag_connector
 
     async def fake_search_vector(
         session: Any, *, embedding: Any, limit: int, ef_search: int
@@ -136,8 +136,8 @@ async def test_direct_match_maps_to_results_and_classification() -> None:
 
 
 async def test_ambiguous_match_mapping() -> None:
-    from agentsys.services.rag import VectorSearchCandidate
-    from agentsys.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.services.rag import VectorSearchCandidate
+    from agents_system.connectors.rag_connector import build_catalog_rag_connector
 
     async def fake_search_vector(
         session: Any, *, embedding: Any, limit: int, ef_search: int
@@ -177,8 +177,8 @@ async def test_no_match_returns_empty_results() -> None:
     indistinguishable. Asserting the fallback was never consulted restores
     the distinction the section header claims to cover.
     """
-    from agentsys.services.rag import VectorSearchCandidate
-    from agentsys.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.services.rag import VectorSearchCandidate
+    from agents_system.connectors.rag_connector import build_catalog_rag_connector
 
     keyword_calls: list[str] = []
 
@@ -218,8 +218,8 @@ async def test_no_match_returns_empty_results() -> None:
 
 
 async def test_keyword_fallback_similarity_is_null() -> None:
-    from agentsys.services.rag import KeywordSearchCandidate
-    from agentsys.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.services.rag import KeywordSearchCandidate
+    from agents_system.connectors.rag_connector import build_catalog_rag_connector
 
     # Embedder returns empty vector → triggers keyword fallback
     embedder = SpyEmbedder(vectors=[])
@@ -245,7 +245,7 @@ async def test_keyword_fallback_similarity_is_null() -> None:
 
 
 async def test_empty_q_short_circuits_without_embedding() -> None:
-    from agentsys.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.connectors.rag_connector import build_catalog_rag_connector
 
     spy = SpyEmbedder()
     search_vector_called = []
@@ -277,7 +277,7 @@ async def test_empty_q_short_circuits_without_embedding() -> None:
 
 def _full_sales_registry() -> Any:
     """Registry with all five generic deployment sales-agent tools."""
-    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
+    from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
     reg = ToolRegistry()
     dummy = lambda inputs: {}  # noqa: E731
@@ -325,7 +325,7 @@ def _full_sales_registry() -> Any:
 
 
 def test_build_runtime_wires_session_provider() -> None:
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness.factory import build_runtime
 
     reg = _full_sales_registry()
     sentinel = object()

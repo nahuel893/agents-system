@@ -19,7 +19,7 @@ import sys
 
 import pytest
 
-from agentsys.connectors.operator import (
+from agents_system.connectors.operator import (
     SandboxPolicy,
     TerminalPolicy,
     build_file_reader_connector,
@@ -241,7 +241,7 @@ async def test_an_unconfigured_deployment_gets_tools_that_refuse_everything(
     The test registry registers these specs unconditionally, so this is
     what every deployment gets until it configures a policy.
     """
-    from agentsys.connectors.operator import build_operator_tool_specs
+    from agents_system.connectors.operator import build_operator_tool_specs
 
     specs = {spec.name: spec for spec in build_operator_tool_specs()}
 
@@ -578,7 +578,7 @@ async def test_use_term_refuses_when_bwrap_is_unavailable(
     than fighting with `$PATH`, so the test is about the refusal, not about
     hiding a real binary.
     """
-    import agentsys.connectors.operator as operator_module
+    import agents_system.connectors.operator as operator_module
 
     monkeypatch.setattr(operator_module, "_bwrap_path", lambda: None)
     connector = build_terminal_connector(_policy(tmp_path))
@@ -598,7 +598,7 @@ def test_bwrap_argv_clears_the_environment_before_setting_it_explicitly(
     `bwrap`'s own process): if a future change ever widens that outer `env=`,
     this inner guard still stops it from reaching the sandboxed command.
     """
-    from agentsys.connectors.operator import _bwrap_argv
+    from agents_system.connectors.operator import _bwrap_argv
 
     policy = _policy(tmp_path)
     wrapped = _bwrap_argv(["echo", "hi"], policy=policy, bwrap="/usr/bin/bwrap")
@@ -699,7 +699,7 @@ async def test_use_term_refuses_when_prlimit_is_unavailable(
     """No `prlimit` on the host -> refuse, same fail-closed posture as a
     missing `bwrap` -- running sandboxed but with NO enforced memory/CPU
     ceiling is not an acceptable degraded mode (ADR-002 C.14)."""
-    import agentsys.connectors.operator as operator_module
+    import agents_system.connectors.operator as operator_module
 
     monkeypatch.setattr(operator_module, "_prlimit_path", lambda: None)
     connector = build_terminal_connector(_policy(tmp_path))
@@ -717,7 +717,7 @@ def test_run_argv_wraps_bwrap_in_prlimit_not_preexec_fn() -> None:
     threads) -- PR #148 review follow-up."""
     import inspect
 
-    import agentsys.connectors.operator as operator_module
+    import agents_system.connectors.operator as operator_module
 
     assert not hasattr(operator_module, "_rlimits"), (
         "the preexec_fn-based _rlimits helper should be gone entirely"

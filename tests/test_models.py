@@ -1,14 +1,14 @@
 """Tests for ORM model definitions (no running database required)."""
 
-from agentsys.models import Base
+from agents_system.models import Base
 
 # Imported for its side effect: registering audit_event in Base.metadata.
 # Without this import the inventory assertions below depend on whether some
 # other test module imported the audit model first — they passed in isolation
 # and failed in a full run.
-from agentsys.models.audit_event import AuditEvent  # noqa: F401
+from agents_system.models.audit_event import AuditEvent  # noqa: F401
 
-#: Every table the ORM declares. Importing ``agentsys.models`` must register
+#: Every table the ORM declares. Importing ``agents_system.models`` must register
 #: all of them, so this inventory is the same whether the suite runs whole or
 #: one module at a time — it did not used to be.
 #:

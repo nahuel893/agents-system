@@ -3,7 +3,7 @@
 # A monthly sales figure request -- squarely accountant-agent's job per
 # role.md ("Answers questions about the numbers. Reads reports...").
 # sales_by_month is a real report in the closed CATALOG
-# (src/agentsys/connectors/sales_reports.py), so a competent model's
+# (src/agents_system/connectors/sales_reports.py), so a competent model's
 # run_report call can plausibly succeed against the real demo database.
 role: accountant-agent
 description: >

@@ -5,7 +5,7 @@ Deterministic per-PR tests (`build_test_registry`, fake models) prove the
 *mechanism* works: a denied call is denied, a tool surface resolves as
 declared. They cannot prove a role's *behavior* under a real model matches
 what its prompt and policy intend. The live-eval pipeline in
-`src/agentsys/evals/` closes that gap: it runs a role's scenario N times
+`src/agents_system/evals/` closes that gap: it runs a role's scenario N times
 against a real local model and reports a success rate, never a single
 pass/fail — a probabilistic system's correctness is a rate, not a boolean.
 
@@ -44,7 +44,7 @@ ChatOllama's own host resolution) — an unconfigured run is unchanged.
 
 The eval's own provider is a separate switch from the running application's
 `ADAPTER_PROVIDER`: `EVAL_PROVIDER` (`Settings.eval_provider`, default
-`"ollama"`), read by `agentsys.evals.provider.build_eval_model()`. Choosing a
+`"ollama"`), read by `agents_system.evals.provider.build_eval_model()`. Choosing a
 different model for a one-off eval run must never change what the app itself
 serves, so the two never share a field. It accepts the same values
 `main._build_chat_model` dispatches on: `ollama`, `groq`, `anthropic`,
@@ -66,7 +66,7 @@ pytest -m live
 (Or keep these in your `.env` — `Settings` loads it automatically; never
 print or commit that file.) The model name `ScenarioResult` reports is read
 back from the constructed model itself
-(`agentsys.evals.provider.model_display_name`): the ChatOpenAI-family
+(`agents_system.evals.provider.model_display_name`): the ChatOpenAI-family
 classes (`groq`, `openai_compatible`) expose it as `model_name`, not
 `model` — reporting a hardcoded string here would silently drift from
 whatever the provider actually used.
@@ -112,7 +112,7 @@ tool calls within a turn are resolved automatically by the graph; `turns` are
 only the user's own messages, sent one at a time with the runtime's
 accumulated history fed back in.
 
-Load one file with `agentsys.evals.schema.load_scenario(path)`, or every
+Load one file with `agents_system.evals.schema.load_scenario(path)`, or every
 `*.yaml`/`*.yml` file in a directory with `load_scenarios(directory)`.
 Either raises `ScenarioError`, naming the offending file, on any structural
 problem (missing `role`, empty `turns`, a non-boolean `escalation_expected`,
@@ -132,7 +132,7 @@ coverage is out of scope for #169 and belongs to the sibling issues under
 
 `evals/results/` — **gitignored** (`.gitignore`'s `evals/results/` entry;
 `evals/scenarios/` is a sibling, not a parent, and stays tracked). Each run
-of `agentsys.evals.reporting.write_results(...)` writes two timestamped
+of `agents_system.evals.reporting.write_results(...)` writes two timestamped
 files:
 
 - `evals/results/<UTC timestamp>.json` — one entry per scenario: role,
@@ -142,13 +142,13 @@ files:
 
 ## Running it as a role's own pipeline
 
-`agentsys.evals.runner.run_scenario(scenario, *, model, model_name,
+`agents_system.evals.runner.run_scenario(scenario, *, model, model_name,
 registry, roots=None, runs=1)` resolves the scenario's role through the same
 `resolve()`/`build_runtime()` path every other consumer uses (with the
 role's own reference backends wired in the same way `tests/conftest.py`'s
 `build_test_registry` does for tests), runs it `runs` times, and returns a
 `ScenarioResult` carrying every run's outcome plus the aggregate
-`success_rate`. `agentsys.evals.runner.evaluate_assertions(assertions,
+`success_rate`. `agents_system.evals.runner.evaluate_assertions(assertions,
 messages)` is the assertion engine itself, callable directly against any
 accumulated message transcript — this is what the offline unit tests in
 `tests/test_eval_runner.py` exercise with a fake model, proving the runner's
@@ -179,7 +179,7 @@ bug in the pipeline.
 
 - ADR-002 E.18: `docs/architecture/adr-002-agent-model-and-capabilities.md`
 - Reference backends the eval runner wires in: `docs/platform/reference-backends.md`
-- Runner code: `src/agentsys/evals/{schema,runner,reporting,provider}.py`
+- Runner code: `src/agents_system/evals/{schema,runner,reporting,provider}.py`
 - Offline tests: `tests/test_eval_schema.py`, `tests/test_eval_runner.py`,
   `tests/test_eval_reporting.py`, `tests/test_eval_provider.py`
 - Live smoke test: `tests/test_live_eval_sales_agent.py`

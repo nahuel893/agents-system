@@ -12,7 +12,7 @@ import pathlib
 
 import pytest
 
-from agentsys.evals.schema import (
+from agents_system.evals.schema import (
     Scenario,
     ScenarioAssertions,
     ScenarioError,

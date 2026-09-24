@@ -24,9 +24,9 @@ from __future__ import annotations
 
 from sqlalchemy import DateTime
 
-from agentsys.models import Base
-from agentsys.models.audit_event import AuditEvent
-from agentsys.models.base import alembic_owned_tables
+from agents_system.models import Base
+from agents_system.models.audit_event import AuditEvent
+from agents_system.models.base import alembic_owned_tables
 
 
 def test_audit_event_declares_itself_alembic_owned() -> None:

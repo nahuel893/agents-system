@@ -8,7 +8,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from agentsys.integration.whatsapp_client import WhatsAppClient
+from agents_system.integration.whatsapp_client import WhatsAppClient
 
 BASE_URL = "https://graph.facebook.com/v21.0"
 PHONE_NUMBER_ID = "1234567890"

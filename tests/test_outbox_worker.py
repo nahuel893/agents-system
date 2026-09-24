@@ -9,9 +9,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agentsys.models.audit_event import AuditEvent
-from agentsys.models.outbox import OutboxWork
-from agentsys.services.outbox import (
+from agents_system.models.audit_event import AuditEvent
+from agents_system.models.outbox import OutboxWork
+from agents_system.services.outbox import (
     DEFAULT_LEASE_DURATION,
     MAX_OUTBOX_ATTEMPTS,
     OutboxLeaseLostError,

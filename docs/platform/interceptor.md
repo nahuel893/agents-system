@@ -51,7 +51,7 @@ Three events are emitted via structlog on every call:
 ## API
 
 ```python
-from agentsys.harness.interceptor import intercept, PolicyViolation, CallResult
+from agents_system.harness.interceptor import intercept, PolicyViolation, CallResult
 
 result: CallResult = intercept(
     tool_name,        # name of the tool the model requested
@@ -89,7 +89,7 @@ Trigger
 
 ## Implementation
 
-- `src/agentsys/harness/interceptor.py` — implementation
+- `src/agents_system/harness/interceptor.py` — implementation
 - `tests/test_harness_interceptor.py` — 9 tests (Strict TDD)
 
 ## Cross-references

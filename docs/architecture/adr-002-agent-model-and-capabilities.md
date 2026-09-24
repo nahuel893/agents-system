@@ -51,7 +51,7 @@ architectural decisions the code now embodies as comments (`design AD-1`
 through `AD-8` scattered through `main.py`, `graph.py`, `webhook.py`) without
 a document that collects them. Meanwhile the code has drifted in the other
 direction: `granted_permissions=definition.permissions` at startup
-(`src/agentsys/main.py:329`) quietly answers "which employee is this agent
+(`src/agents_system/main.py:329`) quietly answers "which employee is this agent
 acting for?" with "none — every user of this role shares one grant," a
 design choice nobody wrote down as a choice. Prompt composition
 (`harness/loader.py`) folds internal developer design notes into the same
@@ -144,7 +144,7 @@ changes in this item; A.2 is where identity actually gets threaded through.
 
 **Current state.** At application startup, `create_app`'s lifespan builds
 one `AgentRuntime` per configured role and caches it in `app.state.runtimes`
-(`src/agentsys/main.py:326-336`). The permission grant for that runtime is
+(`src/agents_system/main.py:326-336`). The permission grant for that runtime is
 `definition.permissions` — the role's *own* resolved permissions
 (`main.py:329`) — not any employee's or customer's grant. The comment at
 `main.py:295-297` documents this as a deliberate choice ("data-driven
@@ -278,7 +278,7 @@ implementation) and, transitively, on A.2.
 
 **Current state.** The checkpointer that backs working memory
 (`_build_checkpointer_cm`, `main.py:53-`) is an `AsyncRedisSaver` configured
-with a TTL: `checkpointer_ttl_s: int | None = 86400` (`src/agentsys/config.py:100`,
+with a TTL: `checkpointer_ttl_s: int | None = 86400` (`src/agents_system/config.py:100`,
 i.e. 24 hours), converted from seconds to the package's expected minutes and
 given `refresh_on_read=True` by `_checkpointer_ttl_config`
 (`main.py:44-50`). The `redis` service in `docker-compose.yml:32-41` has no
@@ -334,7 +334,7 @@ truth; same PR as G.22 (same underlying gap).
 (`loader.py:194,216,383,662`), merged across parent→child
 (`loader.py:496`) and generic→override (`loader.py:941-943,1024,1088`) —
 the loader fully honors the field. Verified by exhaustive search: `rg -n
-"read_scope|write_scope|persist_conversation" src/agentsys/ --type py`
+"read_scope|write_scope|persist_conversation" src/agents_system/ --type py`
 returns **zero matches outside `loader.py`**. No connector, no interceptor
 check, no injector check, nothing in `agent/graph.py` ever reads these three
 sub-fields. The policy is declared, faithfully carried through every merge
@@ -376,7 +376,7 @@ permissions (`platform/roles/orchestrator/manifest.md:15-18`) and its
 `policy.md` sets `delegation_policy.allowed: true` with
 `permitted_child_roles: [sales-agent, data-agent, summary-agent]` and
 `max_depth: 2`. No `spawn` tool exists anywhere in the tool registry or
-connectors — exhaustive search across `src/agentsys/` for `spawn` returns no
+connectors — exhaustive search across `src/agents_system/` for `spawn` returns no
 tool definition, only the unrelated substring in `operator.py`'s `n_failed`.
 `agent/graph.py:49-50` documents the gap directly in its own comment:
 `_ENFORCED_LIMIT_KEYS` is "the subset of `PLATFORM_DEFAULT_LIMITS` the agent
@@ -982,7 +982,7 @@ its regression counterpart, and the adapter-scoping regression).
 #### C.14 — T3 sandbox (bubblewrap)
 
 **Current state.** No sandboxing exists. Exhaustive search for
-`bwrap`/`bubblewrap`/`sandbox` across `src/agentsys/` returns zero hits.
+`bwrap`/`bubblewrap`/`sandbox` across `src/agents_system/` returns zero hits.
 `build_terminal_connector` (`operator.py:160-238`) runs commands directly
 via `create_subprocess_exec` with the process's own network access,
 filesystem visibility (bounded only by `cwd=policy.root`, not by any
@@ -1160,7 +1160,7 @@ integrations"); the library's job is to ship something that makes the
 *contract* exercisable, not a production-grade integration for any one
 client.
 
-**Status.** ✅ done (this change) — `src/agentsys/services/reference.py` ships
+**Status.** ✅ done (this change) — `src/agents_system/services/reference.py` ships
 `InMemoryKnowledgeBase`, `LLMConversationSummarizer` (reuses the role's
 already-configured `BaseChatModel`, no new provider config),
 `LoggingEscalationChannel` (writes a structured log entry, reports
@@ -1391,12 +1391,12 @@ between releases.
 — rejected: real model calls are slow, cost money, and are not fully
 deterministic, which is the wrong shape for a gate that blocks every PR.
 
-**Status.** 🚧 in progress — #169 ships the runner: `src/agentsys/evals/`
+**Status.** 🚧 in progress — #169 ships the runner: `src/agents_system/evals/`
 (`schema.py`'s YAML scenario schema, `runner.py`'s assertion evaluation and
 N-run success-rate aggregation, `reporting.py`'s JSON + markdown output to
 the gitignored `evals/results/`), the `live` pytest marker (deselected by
 default, same shape as `integration`), configurable `ollama_model`/
-`ollama_base_url` on `Settings` (`src/agentsys/main.py`'s
+`ollama_base_url` on `Settings` (`src/agents_system/main.py`'s
 `_build_chat_model` no longer hardcodes `qwen2.5:3b`), and one smoke
 scenario (`evals/scenarios/sales_agent_smoke.yaml`) proving the pipeline end
 to end against real Ollama. **Still pending:** per-role scenario coverage
@@ -1914,7 +1914,7 @@ without one does not need CI until it has one.
 **Current state (before this change).** No job measured which code the
 tests exercise.
 
-**Decision.** The `ci` job's `Test` step now runs `pytest --cov=agentsys
+**Decision.** The `ci` job's `Test` step now runs `pytest --cov=agents_system
 --cov-report=term-missing --cov-report=xml --cov-report=html
 --cov-fail-under=94` (`ci.yml`), and an `actions/upload-artifact@v4` step
 right after it publishes `coverage.xml` and `htmlcov/` as the
@@ -2004,9 +2004,9 @@ ADR — none of the following are agent-model or capability decisions, and
 none are addressed above:
 
 - **Closing #70 leftovers.** ACME-specific docstrings still present at
-  `src/agentsys/services/medallion.py:29` ("ACME's settings, extending the
+  `src/agents_system/services/medallion.py:29` ("ACME's settings, extending the
   platform surface with its warehouse") and
-  `src/agentsys/integration/openai_adapter.py:53` (`"acme__sales-agent"`
+  `src/agents_system/integration/openai_adapter.py:53` (`"acme__sales-agent"`
   example); `pyproject.toml:8`'s package description ("WhatsApp Sales Agent
   powered by LangGraph"); `openspec/config.yaml`'s ACME/WhatsApp-specific
   `context:`/`rules:` blocks; a wheel packaging-boundary test referenced by
@@ -2016,7 +2016,7 @@ none are addressed above:
   including heavyweight ones (`torch`, `sentence-transformers` — confirmed
   present via the same `pyproject.toml` read for F.20) that should become
   optional extras; tracked separately (#57, SemVer). Note: `#74` (`py.typed`
-  marker) is **already shipped** — `src/agentsys/py.typed` exists, verified
+  marker) is **already shipped** — `src/agents_system/py.typed` exists, verified
   — and can be closed as-is.
 - **Issue triage.** #66 (obsolete); #39 (likely already covered by the
   #83-#85 range of recent fail-closed-connector work, e.g. the

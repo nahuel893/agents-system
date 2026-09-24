@@ -1,7 +1,7 @@
 # Happy path for developer-agent (#171).
 #
 # Asks about a repository convention seeded into the shared knowledge base
-# specifically for this scenario (src/agentsys/evals/live_registry.py seeds
+# specifically for this scenario (src/agents_system/evals/live_registry.py seeds
 # a "Repository engineering conventions" document). role.md: "Works on a
 # codebase ... conventions, runbooks, and the decisions a repository made
 # that its source does not explain" -- manifest.md's own rationale for

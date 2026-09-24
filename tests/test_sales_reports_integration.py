@@ -33,13 +33,15 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from agentsys.connectors.sales_reports import CATALOG, UNMAPPED_STATUS
-from agentsys.services.reports import run_report
+from agents_system.connectors.sales_reports import CATALOG, UNMAPPED_STATUS
+from agents_system.services.reports import run_report
 
 pytestmark = pytest.mark.integration
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_DEFAULT_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agentsys_demo"
+_DEFAULT_URL = (
+    "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo"
+)
 
 #: Straight from `03_seed.sql`, recomputed here rather than imported.
 SEEDED_SALES = 360
@@ -261,7 +263,7 @@ async def test_the_default_status_filter_excludes_cancelled_sales(
 async def test_line_revenue_reconciles_with_invoice_header_revenue(
     engine: Any,
 ) -> None:
-    """`agentsys_sale_items.amount` is computed; `agentsys_sales.amount` is not.
+    """`agents_system_sale_items.amount` is computed; `agents_system_sales.amount` is not.
 
     The demo's invoice headers are derived from their lines, so the two must
     agree exactly. If the view's arithmetic were wrong — a missing quantity

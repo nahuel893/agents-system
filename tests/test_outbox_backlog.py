@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from agentsys.services.outbox import OutboxBacklogCounts, count_outbox_backlog
+from agents_system.services.outbox import OutboxBacklogCounts, count_outbox_backlog
 
 _DATABASE_NOW = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 

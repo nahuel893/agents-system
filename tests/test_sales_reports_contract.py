@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from agentsys.connectors.sales_reports import (
+from agents_system.connectors.sales_reports import (
     ALL_STATUSES,
     CATALOG,
     CONTRACT_VIEWS,
@@ -32,10 +32,10 @@ _DEMO_VIEWS_SQL = (
 #: CONTRACT_VIEWS would make the test compare the module to itself, which
 #: cannot fail for any implementation.
 EXPECTED_VIEWS = {
-    "agentsys_sales",
-    "agentsys_sale_items",
-    "agentsys_customers",
-    "agentsys_stock",
+    "agents_system_sales",
+    "agents_system_sale_items",
+    "agents_system_customers",
+    "agents_system_stock",
 }
 
 EXPECTED_REPORTS = {

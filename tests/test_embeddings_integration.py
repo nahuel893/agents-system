@@ -16,7 +16,7 @@ import math
 
 import pytest
 
-from agentsys.services.embeddings import LocalBGEEmbeddingProvider
+from agents_system.services.embeddings import LocalBGEEmbeddingProvider
 
 
 def _cosine(a: list[float], b: list[float]) -> float:

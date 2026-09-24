@@ -17,9 +17,9 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from agentsys.harness.factory import EquippedRuntime
-from agentsys.harness.loader import AgentDefinition
-from agentsys.harness.registry import Tier, ToolSpec
+from agents_system.harness.factory import EquippedRuntime
+from agents_system.harness.loader import AgentDefinition
+from agents_system.harness.registry import Tier, ToolSpec
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ def _catalog_spec() -> ToolSpec:
 @pytest.mark.asyncio
 async def test_run_turn_returns_final_ai_message() -> None:
     """A turn with no tool calls ends immediately with an AIMessage."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     final_reply = AIMessage(content="Hello! How can I help you?")
     model = FakeMessagesListChatModel(responses=[final_reply])
@@ -126,7 +126,7 @@ async def test_run_turn_returns_final_ai_message() -> None:
 async def test_tool_call_blocked_emits_error_tool_message() -> None:
     """When the model requests a tool not in the runtime surface, PolicyViolation
     is caught and a ToolMessage with status='error' is returned."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     tool_call_id = "call_123"
     first_response = AIMessage(
@@ -159,7 +159,7 @@ async def test_tool_call_blocked_emits_error_tool_message() -> None:
 @pytest.mark.asyncio
 async def test_permitted_tool_call_returns_json_output() -> None:
     """When the model calls a permitted tool, connector output is JSON-encoded."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     tool_call_id = "call_456"
     first_response = AIMessage(
@@ -196,7 +196,7 @@ async def test_permitted_tool_call_returns_json_output() -> None:
 @pytest.mark.asyncio
 async def test_sync_connector_does_not_block_event_loop() -> None:
     """Sync connectors are wrapped in asyncio.to_thread — the event loop stays free."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     tool_call_id = "call_789"
     first_response = AIMessage(
@@ -248,7 +248,7 @@ async def test_provider_swap_requires_zero_runtime_changes() -> None:
     This covers the spec scenario: 'Provider swap requires zero runtime changes'.
     The runtime does not import or reference any concrete provider class.
     """
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     reply_a = AIMessage(content="Response from model A")
     reply_b = AIMessage(content="Response from model B")
@@ -279,7 +279,7 @@ async def test_stateless_run_turn_caller_owns_history() -> None:
 
     The runtime is stateless — each call uses only the messages the caller supplies.
     """
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     reply_1 = AIMessage(content="First turn reply")
     reply_2 = AIMessage(content="Second turn reply")
@@ -313,7 +313,7 @@ async def test_session_passed_to_async_connector() -> None:
     """session_provider on EquippedRuntime opens a session; async connector receives it."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     received_sessions: list[Any] = []
 
@@ -378,7 +378,7 @@ async def test_session_passed_to_async_connector() -> None:
 @pytest.mark.asyncio
 async def test_no_session_provider_backward_compatible() -> None:
     """session_provider=None (default) — turn runs; connector receives session=None."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     received_sessions: list[Any] = []
 
@@ -435,7 +435,7 @@ async def test_no_session_provider_backward_compatible() -> None:
 @pytest.mark.asyncio
 async def test_run_turn_permissions_default_to_definition_permissions() -> None:
     """permissions=None (default) uses the runtime's own resolved grants."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     tool_call_id = "call_perm_001"
     first_response = AIMessage(
@@ -468,7 +468,7 @@ async def test_run_turn_permissions_default_to_definition_permissions() -> None:
 
 def test_agent_runtime_permissions_property() -> None:
     """AgentRuntime.permissions returns the equipped runtime's definition.permissions."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
     runtime = _make_runtime()
@@ -485,7 +485,7 @@ def test_agent_runtime_permissions_property() -> None:
 def test_agent_runtime_untrusted_input_property_reflects_false() -> None:
     """AgentRuntime.untrusted_input returns the equipped runtime's
     definition.untrusted_input when the resolved role is trusted."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
     runtime = _make_runtime(untrusted_input=False)
@@ -497,7 +497,7 @@ def test_agent_runtime_untrusted_input_property_reflects_false() -> None:
 def test_agent_runtime_untrusted_input_property_reflects_true() -> None:
     """Same property, sourced from a role resolved with untrusted_input=True
     — the value create_app's boot-time channel check (ADR-002 C.13) reads."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
     runtime = _make_runtime(untrusted_input=True)
@@ -516,7 +516,7 @@ async def test_max_tool_calls_breach_terminates_gracefully() -> None:
     """When the model keeps requesting tool calls past max_tool_calls, the loop
     terminates with a terminal AIMessage instead of looping/crashing (spec:
     'max_tool_calls breach terminates gracefully')."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     def _tool_call(call_id: str) -> dict[str, Any]:
         return {
@@ -566,7 +566,7 @@ async def test_recursion_limit_backstop_allows_full_budget_turn() -> None:
     """A turn that legitimately uses the full max_tool_calls budget must not hit
     LangGraph's own default recursion_limit (25) — run_turn must configure a
     recursion_limit derived from max_tool_calls (design AD-3 backstop)."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     catalog_spec = _catalog_spec()
     max_tool_calls = 15
@@ -610,7 +610,7 @@ async def test_recursion_limit_backstop_allows_full_budget_turn() -> None:
 async def test_tool_call_timeout_appends_error_tool_message_and_continues() -> None:
     """A single slow tool call is bounded by tool_call_timeout_s — it does not
     consume the whole turn budget and the loop continues (design AD-3)."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     async def slow_connector(
         inputs: dict[str, Any], *, session: Any = None
@@ -684,7 +684,7 @@ async def test_total_execution_timeout_returns_fallback_message() -> None:
     """When the turn exceeds total_execution_timeout_s, run_turn returns the
     caller-supplied messages plus a fallback AIMessage instead of hanging or
     raising (spec: 'Timeout breach terminates gracefully')."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     model = _SlowFakeModel(responses=[AIMessage(content="unreachable")])
     definition = _fake_definition(execution_limits={"total_execution_timeout_s": 0.05})
@@ -735,7 +735,7 @@ async def test_system_prompt_not_persisted_in_returned_messages() -> None:
     """The runtime SystemMessage must never appear in run_turn's returned list
     (design AD-1) — it is a model-input-only concern, kept out of state so a
     checkpointer never accumulates/duplicates it across turns."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     model = FakeMessagesListChatModel(responses=[AIMessage(content="Hi there!")])
     runtime = _make_runtime()
@@ -752,7 +752,7 @@ async def test_system_prompt_not_persisted_in_returned_messages() -> None:
 async def test_system_prompt_injected_at_model_call_time() -> None:
     """_call_model prepends the runtime's system prompt to the MODEL INPUT on
     every call, even though it is never stored in state (design AD-1)."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     model = _CapturingFakeModel(responses=[AIMessage(content="Hi there!")])
     model.captured_inputs = []
@@ -779,7 +779,7 @@ async def test_thread_id_none_compiles_without_checkpointer() -> None:
     the runtime (design AD-1: opt-in per invocation, not blanket)."""
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     checkpointer = InMemorySaver()
     model = FakeMessagesListChatModel(
@@ -810,7 +810,7 @@ async def test_thread_id_engages_checkpointer_for_cross_turn_retention() -> None
     via the checkpointer (spec: 'Multi-turn context retention')."""
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     checkpointer = InMemorySaver()
     model = FakeMessagesListChatModel(
@@ -850,7 +850,7 @@ async def test_tool_call_count_resets_to_zero_on_checkpointer_resume() -> None:
     though messages accumulate (design AD-1/AD-3)."""
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     def _tool_call(call_id: str) -> dict[str, Any]:
         return {
@@ -931,7 +931,7 @@ async def test_checkpointer_failure_degrades_without_crashing_the_turn() -> None
     """A checkpointer backend failure must NOT crash run_turn — the turn
     completes over the caller-supplied messages only, and the degradation is
     logged (spec: 'Checkpointer unavailable')."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     checkpointer = _FailingCheckpointer()
     model = FakeMessagesListChatModel(responses=[AIMessage(content="Still here.")])
@@ -960,7 +960,7 @@ async def test_checkpointer_failure_degradation_is_logged(
     uses PrintLoggerFactory (writes straight to stdout, not routed through the
     stdlib logging module) — so stdout capture, not caplog, is the correct
     assertion mechanism here."""
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     checkpointer = _FailingCheckpointer()
     model = FakeMessagesListChatModel(responses=[AIMessage(content="Still here.")])
@@ -988,7 +988,7 @@ async def test_turn_timeout_is_not_mislabeled_as_checkpointer_degradation(
     when a checkpointer is engaged (and healthy) for this turn."""
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from agentsys.agent.graph import AgentRuntime
+    from agents_system.agent.graph import AgentRuntime
 
     checkpointer = InMemorySaver()
     definition = _fake_definition(execution_limits={"total_execution_timeout_s": 0.05})

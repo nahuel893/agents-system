@@ -2,7 +2,7 @@
 #
 # A customer asks about delivery coverage -- a question the live-eval
 # registry's seeded knowledge base can answer directly (see
-# src/agentsys/evals/live_registry.py's "shipping-policy" document).
+# src/agents_system/evals/live_registry.py's "shipping-policy" document).
 # role.md's standing instruction: "Answer only from what knowledge_retrieval
 # returns" -- a competent support-agent looks this up rather than guessing,
 # and since the knowledge base genuinely has an answer, policy.md's

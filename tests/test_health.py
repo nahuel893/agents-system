@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agentsys.config import get_settings
-from agentsys.services.outbox import OutboxBacklogCounts
+from agents_system.config import get_settings
+from agents_system.services.outbox import OutboxBacklogCounts
 from conftest import create_test_app
 
 
@@ -56,7 +56,7 @@ async def test_health_all_ok(app):
 
     app.state.engine = mock_engine
 
-    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
+    with patch("agents_system.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:
@@ -89,7 +89,7 @@ async def test_health_postgres_degraded(app):
 
     app.state.engine = mock_engine
 
-    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
+    with patch("agents_system.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:
@@ -123,7 +123,7 @@ async def test_health_redis_degraded(app):
 
     app.state.engine = mock_engine
 
-    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
+    with patch("agents_system.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:
@@ -156,7 +156,7 @@ async def test_health_both_degraded(app):
 
     app.state.engine = mock_engine
 
-    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
+    with patch("agents_system.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:
@@ -201,9 +201,9 @@ async def test_health_reports_worker_running_and_zero_backlog(app):
     app.state.webhook_worker = fake_worker
 
     with (
-        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
         patch(
-            "agentsys.main._outbox_backlog",
+            "agents_system.main._outbox_backlog",
             new=AsyncMock(
                 return_value=OutboxBacklogCounts(pending=0, leased=0, leased_expired=0)
             ),
@@ -231,9 +231,9 @@ async def test_health_degrades_when_worker_not_running_with_pending_backlog(app)
     app.state.webhook_worker = None
 
     with (
-        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
         patch(
-            "agentsys.main._outbox_backlog",
+            "agents_system.main._outbox_backlog",
             new=AsyncMock(
                 return_value=OutboxBacklogCounts(pending=3, leased=1, leased_expired=0)
             ),
@@ -263,9 +263,9 @@ async def test_health_stays_ok_when_worker_running_despite_backlog(app):
     app.state.webhook_worker = fake_worker
 
     with (
-        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
         patch(
-            "agentsys.main._outbox_backlog",
+            "agents_system.main._outbox_backlog",
             new=AsyncMock(
                 return_value=OutboxBacklogCounts(pending=5, leased=2, leased_expired=2)
             ),
@@ -289,9 +289,9 @@ async def test_health_stays_ok_when_worker_absent_and_backlog_empty(app):
     # that never ran (as in these tests) or a deployment with no WhatsApp.
 
     with (
-        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
         patch(
-            "agentsys.main._outbox_backlog",
+            "agents_system.main._outbox_backlog",
             new=AsyncMock(
                 return_value=OutboxBacklogCounts(pending=0, leased=0, leased_expired=0)
             ),
@@ -314,9 +314,9 @@ async def test_health_backlog_query_failure_does_not_crash_the_endpoint(app):
     app.state.webhook_worker = None
 
     with (
-        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
         patch(
-            "agentsys.main._outbox_backlog",
+            "agents_system.main._outbox_backlog",
             new=AsyncMock(return_value=None),
         ),
     ):
@@ -343,9 +343,9 @@ async def test_health_degrades_when_worker_not_running_with_expired_leases(app):
     app.state.webhook_worker = None
 
     with (
-        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
         patch(
-            "agentsys.main._outbox_backlog",
+            "agents_system.main._outbox_backlog",
             new=AsyncMock(
                 return_value=OutboxBacklogCounts(pending=0, leased=4, leased_expired=4)
             ),
@@ -374,9 +374,9 @@ async def test_health_stays_ok_when_worker_not_running_with_only_live_leases(app
     app.state.webhook_worker = None
 
     with (
-        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
         patch(
-            "agentsys.main._outbox_backlog",
+            "agents_system.main._outbox_backlog",
             new=AsyncMock(
                 return_value=OutboxBacklogCounts(pending=0, leased=3, leased_expired=0)
             ),
@@ -400,9 +400,9 @@ async def test_health_stays_ok_when_worker_running_despite_expired_leases(app):
     app.state.webhook_worker = fake_worker
 
     with (
-        patch("agentsys.main.get_redis_client", return_value=mock_redis),
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
         patch(
-            "agentsys.main._outbox_backlog",
+            "agents_system.main._outbox_backlog",
             new=AsyncMock(
                 return_value=OutboxBacklogCounts(pending=0, leased=1, leased_expired=1)
             ),
@@ -425,7 +425,7 @@ async def test_outbox_backlog_probe_times_out_instead_of_hanging(app):
     that would otherwise hang far longer than that."""
     import time
 
-    from agentsys.main import _outbox_backlog
+    from agents_system.main import _outbox_backlog
 
     class _HangingSession:
         async def __aenter__(self):
@@ -442,10 +442,11 @@ async def test_outbox_backlog_probe_times_out_instead_of_hanging(app):
 
     with (
         patch(
-            "agentsys.main.get_session_factory", return_value=lambda: _HangingSession()
+            "agents_system.main.get_session_factory",
+            return_value=lambda: _HangingSession(),
         ),
         patch(
-            "agentsys.main.count_outbox_backlog",
+            "agents_system.main.count_outbox_backlog",
             new=hanging_count_outbox_backlog,
         ),
     ):
@@ -500,7 +501,7 @@ async def test_middleware_adds_request_id(app):
     mock_redis = AsyncMock()
     mock_redis.ping = AsyncMock(return_value=True)
 
-    with patch("agentsys.main.get_redis_client", return_value=mock_redis):
+    with patch("agents_system.main.get_redis_client", return_value=mock_redis):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:

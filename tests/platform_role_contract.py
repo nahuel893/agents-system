@@ -32,7 +32,7 @@ from typing import Any
 
 def platform_roles_dir() -> pathlib.Path:
     """The on-disk ``platform/roles/`` directory the loader reads from."""
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig().platform_root / "roles"
 
@@ -54,7 +54,7 @@ def discover_platform_roles() -> tuple[str, ...]:
 
 def is_abstract(role: str) -> bool:
     """Whether ``role``'s manifest declares ``abstract: true``."""
-    from agentsys.harness.loader import _read_md
+    from agents_system.harness.loader import _read_md
 
     manifest_fm, _ = _read_md(platform_roles_dir() / role / "manifest.md")
     return bool(manifest_fm.get("abstract", False))
@@ -162,7 +162,7 @@ def role_chain(role: str) -> tuple[str, ...]:
     loader's own fold) does, so a role's ancestry here can never drift from
     what actually gets resolved -- never a hardcoded map.
     """
-    from agentsys.harness.loader import RootConfig, _load_role_files
+    from agents_system.harness.loader import RootConfig, _load_role_files
 
     roots = RootConfig()
     chain: list[str] = []

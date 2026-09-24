@@ -9,19 +9,19 @@ class TestAuditEventModelImports:
 
     def test_audit_event_model_imports(self) -> None:
         """AuditEvent must be importable from models package."""
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         assert AuditEvent is not None
 
     def test_audit_event_tablename(self) -> None:
         """Table name must be 'audit_event'."""
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         assert AuditEvent.__tablename__ == "audit_event"
 
     def test_audit_event_columns_exist(self) -> None:
         """All required columns are defined on the model."""
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         table = AuditEvent.__table__
         column_names = {c.name for c in table.columns}
@@ -48,7 +48,7 @@ class TestAuditEventModelImports:
 
     def test_audit_event_column_types(self) -> None:
         """Column types match REQ-AUDIT-41."""
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         table = AuditEvent.__table__
 
@@ -84,7 +84,7 @@ class TestAuditEventModelImports:
         UNIQUE(correlation_id, sequence), which is satisfied by the
         PostgreSQL-compatible composite form.
         """
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         table = AuditEvent.__table__
         # Check that the unique constraint exists and covers correlation_id + sequence
@@ -100,7 +100,7 @@ class TestAuditEventModelImports:
 
     def test_audit_event_indexes(self) -> None:
         """Required indexes are defined: role+occurred_at, tool_name+occurred_at, GIN payload."""
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         table = AuditEvent.__table__
 
@@ -133,13 +133,13 @@ class TestMapToAuditEventMapper:
 
     def test_mapper_function_exists(self) -> None:
         """map_to_audit_event function must be importable."""
-        from agentsys.models.audit_event import map_to_audit_event
+        from agents_system.models.audit_event import map_to_audit_event
 
         assert map_to_audit_event is not None
 
     def test_mapper_returns_orm_instance(self) -> None:
         """map_to_audit_event returns an AuditEvent ORM instance."""
-        from agentsys.models.audit_event import AuditEvent, map_to_audit_event
+        from agents_system.models.audit_event import AuditEvent, map_to_audit_event
 
         event_data = {
             "event_id": uuid.uuid4(),
@@ -190,7 +190,7 @@ class TestOccurredAtMatchesTheMigration:
 
     def test_occurred_at_is_timezone_aware(self) -> None:
         """`occurred_at` must compile to TIMESTAMP WITH TIME ZONE."""
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         column = AuditEvent.__table__.c.occurred_at
         assert getattr(column.type, "timezone", False) is True, (
@@ -206,7 +206,7 @@ class TestOccurredAtMatchesTheMigration:
         other way to make the mismatch stop erroring — is caught here instead
         of silently recording every event in an unknown timezone.
         """
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         default = AuditEvent.__table__.c.occurred_at.default
         assert default is not None, "occurred_at must carry a default"

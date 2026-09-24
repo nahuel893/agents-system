@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from agentsys.harness.loader import (
+from agents_system.harness.loader import (
     DefinitionError,
     RawDefinition,
     RootConfig,
@@ -303,7 +303,7 @@ def test_chain_three_levels_deep_rejects_a_false_two_levels_down(
 # issue's scope.
 # ---------------------------------------------------------------------------
 def test_every_concrete_platform_role_explicitly_declares_untrusted_input() -> None:
-    from agentsys.harness.loader import _extends_target, _read_md
+    from agents_system.harness.loader import _extends_target, _read_md
 
     roots = RootConfig()
     for role in discover_concrete_platform_roles():

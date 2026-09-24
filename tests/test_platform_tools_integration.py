@@ -46,8 +46,8 @@ def _build_runtime(role_type: str, granted_permissions: Any = None) -> Any:
     Defaults to granting the role's own resolved manifest permissions
     (mirrors main.py: grants are data-driven from the definition).
     """
-    from agentsys.harness import loader
-    from agentsys.harness.factory import build_runtime
+    from agents_system.harness import loader
+    from agents_system.harness.factory import build_runtime
 
     definition = loader.resolve(role_type, client=None)
     grants = (
@@ -80,9 +80,9 @@ def test_platform_roles_on_disk_match_the_pinned_contract() -> None:
 
 @pytest.mark.parametrize("role_type", discover_concrete_platform_roles())
 def test_every_platform_role_boots_end_to_end(role_type: str) -> None:
-    from agentsys.harness import loader
-    from agentsys.harness.factory import build_runtime
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness import loader
+    from agents_system.harness.factory import build_runtime
+    from agents_system.harness.injector import resolve_tool_surface
 
     # loader: real platform/roles/{role_type} definition from disk
     definition = loader.resolve(role_type, client=None)
@@ -105,7 +105,7 @@ def test_booted_runtime_carries_the_pinned_tool_surface(role_type: str) -> None:
     Comparing the runtime surface to the manifest that produced it cannot catch
     a tool being deleted from that manifest — both sides shrink together.
     """
-    from agentsys.harness import loader
+    from agents_system.harness import loader
 
     definition = loader.resolve(role_type, client=None)
     runtime = _build_runtime(role_type)
@@ -120,7 +120,7 @@ def test_booted_runtime_carries_the_pinned_tool_surface(role_type: str) -> None:
 
 
 async def test_knowledge_retrieval_executes_on_data_agent() -> None:
-    from agentsys.harness.interceptor import intercept
+    from agents_system.harness.interceptor import intercept
 
     runtime = _build_runtime("data-agent")
 
@@ -136,7 +136,7 @@ async def test_knowledge_retrieval_executes_on_data_agent() -> None:
 
 
 async def test_conversation_summarizer_executes_on_summary_agent() -> None:
-    from agentsys.harness.interceptor import intercept
+    from agents_system.harness.interceptor import intercept
 
     runtime = _build_runtime("summary-agent")
 
@@ -153,7 +153,7 @@ async def test_conversation_summarizer_executes_on_summary_agent() -> None:
 
 
 async def test_escalation_notifier_executes_on_orchestrator() -> None:
-    from agentsys.harness.interceptor import intercept
+    from agents_system.harness.interceptor import intercept
 
     runtime = _build_runtime("orchestrator")
 
@@ -180,7 +180,7 @@ async def test_escalation_notifier_executes_on_orchestrator() -> None:
 
 
 async def test_escalation_notifier_blocked_without_current_permissions() -> None:
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     runtime = _build_runtime("orchestrator")
 
@@ -192,7 +192,7 @@ async def test_escalation_notifier_blocked_without_current_permissions() -> None
 
 
 async def test_escalation_notifier_revalidated_with_send_escalation() -> None:
-    from agentsys.harness.interceptor import intercept
+    from agents_system.harness.interceptor import intercept
 
     runtime = _build_runtime("orchestrator")
 
@@ -209,7 +209,7 @@ async def test_escalation_notifier_revalidated_with_send_escalation() -> None:
 
 
 async def test_escalation_notifier_blocked_when_permission_revoked() -> None:
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     runtime = _build_runtime("orchestrator")
 
@@ -231,7 +231,7 @@ async def test_escalation_notifier_blocked_when_permission_revoked() -> None:
 
 
 async def test_order_writer_blocked_on_data_agent_runtime() -> None:
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     # order_writer EXISTS in the registry — the surface, not the registry, is
     # the authority at call time.
@@ -256,7 +256,7 @@ async def test_order_writer_blocked_on_data_agent_runtime() -> None:
 
 
 def test_data_agent_boots_with_knowledge_retrieval_denied() -> None:
-    from agentsys.harness import loader
+    from agents_system.harness import loader
 
     definition = loader.resolve("data-agent", client=None)
     narrowed = [p for p in definition.permissions if p != "read:knowledge_base"]
@@ -294,7 +294,7 @@ def test_every_abstract_role_refuses_to_be_built() -> None:
     name — that filter would be hiding a failure instead of describing a
     design. This is what makes the exclusion legitimate.
     """
-    from agentsys.harness.loader import DefinitionError, resolve
+    from agents_system.harness.loader import DefinitionError, resolve
     from platform_role_contract import discover_platform_roles, is_abstract
 
     abstract = [r for r in discover_platform_roles() if is_abstract(r)]
@@ -313,8 +313,8 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
     with no effect — the same class of problem as `extends:` being inert. This
     catches it the moment it appears rather than years later.
     """
-    from agentsys.harness.loader import _extends_target, _load_role_files
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import _extends_target, _load_role_files
+    from agents_system.harness.loader import RootConfig
     from platform_role_contract import discover_platform_roles, is_abstract
 
     roots = RootConfig()
@@ -328,7 +328,7 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
     # satisfied by another abstract role, which would leave a whole abstract
     # subtree that still cannot be built and still grants nothing — the exact
     # dead-file case this exists to catch, one level down.
-    from agentsys.harness.loader import _extends_target, _load_role_files
+    from agents_system.harness.loader import _extends_target, _load_role_files
 
     def reaches_a_concrete_descendant(ancestor: str) -> bool:
         for role in discover_platform_roles():

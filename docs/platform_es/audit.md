@@ -218,10 +218,10 @@ la sesión, lo que partiría el mes distinto según quién corriera la migració
 
 ## Agregar un tipo de evento nuevo
 
-1. Agregar el sub-modelo en `src/agentsys/audit/events.py` y registrarlo en el
+1. Agregar el sub-modelo en `src/agents_system/audit/events.py` y registrarlo en el
    mapa de dispatch. Los campos van en `payload`, no en el sub-modelo, salvo que
    necesiten indexarse.
-2. Agregar una corrutina `record_*` en `src/agentsys/audit/recorder.py`. Debe
+2. Agregar una corrutina `record_*` en `src/agents_system/audit/recorder.py`. Debe
    construir el payload y pasarlo por `_build_and_redact` — nunca construir el
    evento directamente, o la PII saltea el redactor.
 3. Llamarla desde el harness mediante `_emit("record_tu_evento", ...)`. Nunca
@@ -267,12 +267,12 @@ distintos — así que queda fichado y no parchado.
 
 ## Implementación
 
-- `src/agentsys/audit/events.py` — la unión discriminada
-- `src/agentsys/audit/redactor.py` — política default-deny de PII
-- `src/agentsys/audit/recorder.py` — constructores de eventos, uno por tipo
-- `src/agentsys/audit/sink.py` — cola, drainer, escrituras por lote
-- `src/agentsys/harness/injector.py` — `_emit` / `_emit_async`
-- `src/agentsys/models/audit_event.py` — modelo ORM, propiedad de Alembic
+- `src/agents_system/audit/events.py` — la unión discriminada
+- `src/agents_system/audit/redactor.py` — política default-deny de PII
+- `src/agents_system/audit/recorder.py` — constructores de eventos, uno por tipo
+- `src/agents_system/audit/sink.py` — cola, drainer, escrituras por lote
+- `src/agents_system/harness/injector.py` — `_emit` / `_emit_async`
+- `src/agents_system/models/audit_event.py` — modelo ORM, propiedad de Alembic
 - `alembic/versions/` — tabla, particiones y la partición `DEFAULT`
 - `tests/test_audit_wiring.py` — entrega punta a punta, verificada por mutación
 - `tests/test_audit_sink.py`, `tests/test_audit_redactor.py`,

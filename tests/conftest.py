@@ -2,7 +2,7 @@
 
 D-014 S5 hardening — the Settings security validator fails CLOSED at boot when
 adapter runtimes are configured without an adapter API key, or when the Meta
-webhook secret is empty (see ``agentsys.config.Settings``). The test suite is
+webhook secret is empty (see ``agents_system.config.Settings``). The test suite is
 not production: it opts into the insecure/dev mode by default so unrelated
 tests (embeddings, RAG, health, etc.) that build ``Settings`` with empty
 secrets keep booting. Tests that exercise the security boundary construct
@@ -10,7 +10,7 @@ secrets keep booting. Tests that exercise the security boundary construct
 default (init kwargs win over environment variables in pydantic-settings).
 
 This is set at conftest import time — before any test module imports
-``agentsys.main`` (whose module-level ``app = create_app()`` would otherwise
+``agents_system.main`` (whose module-level ``app = create_app()`` would otherwise
 trip the fail-closed validator during collection). It CANNOT be an autouse
 fixture: fixtures run after collection, and collection is what explodes.
 
@@ -58,7 +58,7 @@ def _get_neutral_report_catalog() -> dict[str, Any]:
     import importlib
 
     text_fn = importlib.import_module("sqlalchemy").text
-    from agentsys.services.reports import ReportSpec
+    from agents_system.services.reports import ReportSpec
 
     return {
         "test_report": ReportSpec(
@@ -112,15 +112,15 @@ def build_test_registry(
     catalog_connector: Callable[..., Any] | None = None,
 ) -> Any:
     """Build a ToolRegistry assembled from public platform builders and neutral fakes."""
-    from agentsys.connectors.operator import build_operator_tool_specs
-    from agentsys.connectors.order_connector import build_order_writer_tool_spec
-    from agentsys.connectors.platform_connectors import (
+    from agents_system.connectors.operator import build_operator_tool_specs
+    from agents_system.connectors.order_connector import build_order_writer_tool_spec
+    from agents_system.connectors.platform_connectors import (
         build_conversation_summarizer_tool_spec,
         build_escalation_notifier_tool_spec,
         build_knowledge_retrieval_tool_spec,
     )
-    from agentsys.connectors.report_connector import build_report_tool_spec
-    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
+    from agents_system.connectors.report_connector import build_report_tool_spec
+    from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
 
@@ -384,7 +384,7 @@ def create_test_app(**overrides: Any) -> Any:
 
     A test that IS about composition passes its own arguments instead.
     """
-    from agentsys.main import create_app
+    from agents_system.main import create_app
 
     kwargs: dict[str, Any] = {
         "registry_factory": build_test_registry,

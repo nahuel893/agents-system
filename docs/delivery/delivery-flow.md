@@ -125,7 +125,7 @@ Formatting is enforced: the `ci` job runs `ruff format --check .` and fails on
 drift, and the `ruff-format` pre-commit hook formats what a commit touches.
 
 Coverage is measured, not just tests run: the `ci` job's `Test` step runs the
-default unit suite with `pytest --cov=agentsys` and fails the build under a
+default unit suite with `pytest --cov=agents_system` and fails the build under a
 threshold set at the measured baseline (94, the floor of 94.87 % measured
 when the gate was added), then publishes `coverage.xml` and `htmlcov/` as the
 `coverage-report` job artifact on every run. Shell scripts are linted too: a
@@ -260,7 +260,7 @@ second pair of eyes does not exist yet.
    is the argument for the template rather than against it.
 2. **CODEOWNERS** (#56) — routes review instead of leaving it to chance.
 3. **Versioning and CHANGELOG** (#57) — SemVer driven by the commit prefixes we
-   already write. `agentsys` is consumed as a library, so until tags exist a
+   already write. `agents_system` is consumed as a library, so until tags exist a
    downstream project has no version it can pin.
 4. **Required approving reviews at `1`** (#59) — blocked on a second identity.
 5. **Environments and deploy pipeline** (#49) — the deployment work itself.

@@ -5,7 +5,7 @@ different".
 
 ## The problem
 
-`src/agentsys/connectors/acme_reports.py` holds six sales reports written
+`src/agents_system/connectors/acme_reports.py` holds six sales reports written
 against `orders`, `order_items` and `clients`. They work, and they serve
 exactly one company. The next one has a `facturas` table with `fecha_emision`
 instead of `created_at`, statuses spelled `facturada` and `anulada`, and
@@ -18,22 +18,22 @@ express arithmetic anyway.
 
 ## The answer: four views
 
-`src/agentsys/connectors/sales_reports.py` is one portable catalog. It reads
+`src/agents_system/connectors/sales_reports.py` is one portable catalog. It reads
 from four view names and nothing else:
 
 | View | Columns |
 |---|---|
-| `agentsys_customers` | `customer_id`, `name`, `zone`, `segment` |
-| `agentsys_sales` | `sale_id`, `sold_at`, `customer_id`, `status`, `amount` |
-| `agentsys_sale_items` | `sale_id`, `sku`, `description`, `quantity`, `amount` |
-| `agentsys_stock` | `sku`, `description`, `on_hand`, `reorder_point` |
+| `agents_system_customers` | `customer_id`, `name`, `zone`, `segment` |
+| `agents_system_sales` | `sale_id`, `sold_at`, `customer_id`, `status`, `amount` |
+| `agents_system_sale_items` | `sale_id`, `sku`, `description`, `quantity`, `amount` |
+| `agents_system_stock` | `sku`, `description`, `on_hand`, `reorder_point` |
 
 A deployment writes those views once over whatever its own tables are called.
 The reports never change.
 
 The views normalize three things, and the third is the one people forget:
 
-1. **Names** — `facturas.fecha_emision` becomes `agentsys_sales.sold_at`.
+1. **Names** — `facturas.fecha_emision` becomes `agents_system_sales.sold_at`.
 2. **Grain** — one row per sale, one row per line.
 3. **Vocabulary** — `status` must be `confirmed`, `pending` or `cancelled`.
    Every status filter and every `statuses_included` disclosure depends on
@@ -66,7 +66,7 @@ distrust the right answers.
 
 ```bash
 docker compose up -d
-docker exec agents-system-postgres-1 psql -U postgres -c 'CREATE DATABASE agentsys_demo;'
+docker exec agents-system-postgres-1 psql -U postgres -c 'CREATE DATABASE agents_system_demo;'
 uv run python demo/load_demo_company.py
 ```
 

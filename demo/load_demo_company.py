@@ -2,10 +2,10 @@
 
     uv run python demo/load_demo_company.py
 
-Reads `DEMO_DATABASE_URL`, falling back to a local `agentsys_demo` database on
+Reads `DEMO_DATABASE_URL`, falling back to a local `agents_system_demo` database on
 the compose Postgres. The database must already exist:
 
-    docker exec agents-system-postgres-1 psql -U postgres -c 'CREATE DATABASE agentsys_demo;'
+    docker exec agents-system-postgres-1 psql -U postgres -c 'CREATE DATABASE agents_system_demo;'
 
 Loading is destructive and deliberately so — the schema file drops its own
 tables first, so a reload is the way to get back to a known state. It refuses
@@ -30,16 +30,18 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agentsys.connectors.sales_reports import (  # noqa: E402
+from agents_system.connectors.sales_reports import (  # noqa: E402
     CONTRACT_VIEWS,
     UNMAPPED_STATUS,
 )
 
-_DEFAULT_URL = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agentsys_demo"
+_DEFAULT_URL = (
+    "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo"
+)
 
 _SQL_FILES = ("01_schema.sql", "02_views.sql", "03_seed.sql")
 
-DEMO_MARKER_TABLE = "agentsys_demo_marker"
+DEMO_MARKER_TABLE = "agents_system_demo_marker"
 """The loader's own signature, created by `01_schema.sql`.
 
 This exists because the previous guard asked the wrong question. It listed the
@@ -170,7 +172,7 @@ async def _unmapped_statuses(conn: AsyncConnection) -> list[tuple[str, int]]:
     result = await conn.execute(
         text(
             "SELECT f.estado, COUNT(*) FROM facturas f "
-            "JOIN agentsys_sales s ON s.sale_id = f.nro_factura "
+            "JOIN agents_system_sales s ON s.sale_id = f.nro_factura "
             "WHERE s.status = :unmapped "
             "GROUP BY f.estado ORDER BY f.estado"
         ),
@@ -190,7 +192,7 @@ async def _verify_contract(conn: AsyncConnection) -> list[str]:
         if missing:
             problems.append(f"view '{view}' is missing columns: {missing}")
 
-    # Only meaningful once agentsys_sales exists; a missing view is already
+    # Only meaningful once agents_system_sales exists; a missing view is already
     # reported above and this query would fail rather than add information.
     if not problems:
         for estado, count in await _unmapped_statuses(conn):
@@ -198,7 +200,7 @@ async def _verify_contract(conn: AsyncConnection) -> list[str]:
                 f"{count} sale(s) carry source status '{estado}', which "
                 f"02_views.sql does not map — they are reported as "
                 f"'{UNMAPPED_STATUS}' and excluded from every revenue figure. "
-                f"Add it to the CASE in agentsys_sales."
+                f"Add it to the CASE in agents_system_sales."
             )
     return problems
 

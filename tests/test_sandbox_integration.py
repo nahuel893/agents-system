@@ -20,13 +20,13 @@ import sys
 
 import pytest
 
-from agentsys.connectors.command_tools import build_command_tool_connector
-from agentsys.connectors.operator import (
+from agents_system.connectors.command_tools import build_command_tool_connector
+from agents_system.connectors.operator import (
     SandboxPolicy,
     TerminalPolicy,
     build_terminal_connector,
 )
-from agentsys.harness.loader import CommandToolDeclaration, Tier
+from agents_system.harness.loader import CommandToolDeclaration, Tier
 
 pytestmark = pytest.mark.integration
 
@@ -67,7 +67,7 @@ async def test_a_sandboxed_command_cannot_read_outside_the_workspace(
     tmp_path: pathlib.Path,
 ) -> None:
     """A sentinel outside the root, the shape a `.env` leak would take."""
-    sentinel = pathlib.Path.home() / ".agentsys-sandbox-test-sentinel"
+    sentinel = pathlib.Path.home() / ".agents_system-sandbox-test-sentinel"
     sentinel.write_text("do-not-leak", encoding="utf-8")
     try:
         connector = build_terminal_connector(_policy(tmp_path))
@@ -92,7 +92,7 @@ async def test_a_sandboxed_command_cannot_write_outside_the_workspace(
     the sandbox's own discarded overlay, not on host disk, which is already
     safe but gives no clean OS-level failure to assert on).
     """
-    target = pathlib.Path("/usr/agentsys-sandbox-escape-write.txt")
+    target = pathlib.Path("/usr/agents_system-sandbox-escape-write.txt")
     connector = build_terminal_connector(_policy(tmp_path))
 
     result = await connector(
@@ -114,7 +114,7 @@ async def test_a_sandboxed_command_does_not_see_host_only_env_vars(
 ) -> None:
     """Beyond `_child_env`'s own scrubbing: `--clearenv` inside the sandbox
     itself, proven with a var that only exists on the HOST side."""
-    monkeypatch.setenv("AGENTSYS_SANDBOX_TEST_SECRET", "must-not-leak")
+    monkeypatch.setenv("AGENTS_SYSTEM_SANDBOX_TEST_SECRET", "must-not-leak")
     connector = build_terminal_connector(_policy(tmp_path))
 
     result = await connector(
@@ -123,7 +123,7 @@ async def test_a_sandboxed_command_does_not_see_host_only_env_vars(
                 sys.executable,
                 "-c",
                 "import os; "
-                "print(os.environ.get('AGENTSYS_SANDBOX_TEST_SECRET', 'ABSENT'))",
+                "print(os.environ.get('AGENTS_SYSTEM_SANDBOX_TEST_SECRET', 'ABSENT'))",
             ]
         }
     )
@@ -286,7 +286,7 @@ async def test_command_tool_scratch_workspace_is_writable_and_cleaned_up(
     import glob
     import tempfile
 
-    prefix = str(pathlib.Path(tempfile.gettempdir()) / "agentsys-command-tool-*")
+    prefix = str(pathlib.Path(tempfile.gettempdir()) / "agents_system-command-tool-*")
     before = set(glob.glob(prefix))
 
     declaration = CommandToolDeclaration(
@@ -314,10 +314,10 @@ async def test_command_tool_scratch_workspace_is_cleaned_up_after_a_timeout(
     import glob
     import tempfile
 
-    import agentsys.connectors.command_tools as command_tools_module
+    import agents_system.connectors.command_tools as command_tools_module
 
     monkeypatch.setattr(command_tools_module, "_DEFAULT_TIMEOUT_S", 1.0)
-    prefix = str(pathlib.Path(tempfile.gettempdir()) / "agentsys-command-tool-*")
+    prefix = str(pathlib.Path(tempfile.gettempdir()) / "agents_system-command-tool-*")
     before = set(glob.glob(prefix))
 
     declaration = CommandToolDeclaration(

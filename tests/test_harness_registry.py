@@ -8,7 +8,7 @@ def _connector() -> str:
 
 
 def test_register_and_get_round_trip() -> None:
-    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
+    from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     spec = ToolSpec(
@@ -24,7 +24,7 @@ def test_register_and_get_round_trip() -> None:
 
 
 def test_get_unknown_tool_raises_not_found() -> None:
-    from agentsys.harness.registry import ToolNotFoundError, ToolRegistry
+    from agents_system.harness.registry import ToolNotFoundError, ToolRegistry
 
     registry = ToolRegistry()
 
@@ -33,7 +33,7 @@ def test_get_unknown_tool_raises_not_found() -> None:
 
 
 def test_register_duplicate_name_raises() -> None:
-    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
+    from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     spec = ToolSpec(
@@ -50,7 +50,7 @@ def test_register_duplicate_name_raises() -> None:
 
 
 def test_toolspec_has_description_and_schema_defaults() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="x",
@@ -64,7 +64,7 @@ def test_toolspec_has_description_and_schema_defaults() -> None:
 
 
 def test_to_langchain_tool_schema_shape() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="catalog_search",
@@ -87,7 +87,7 @@ def test_to_langchain_tool_schema_shape() -> None:
 
 
 def test_toolspec_always_revalidate_defaults_false() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="catalog_search",
@@ -100,7 +100,7 @@ def test_toolspec_always_revalidate_defaults_false() -> None:
 
 
 def test_toolspec_accepts_always_revalidate_true() -> None:
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.harness.registry import Tier, ToolSpec
 
     spec = ToolSpec(
         name="sensitive_read",
@@ -114,7 +114,7 @@ def test_toolspec_accepts_always_revalidate_true() -> None:
 
 
 def test_contains_and_names_reflect_registered_tools() -> None:
-    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
+    from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     first = ToolSpec(
