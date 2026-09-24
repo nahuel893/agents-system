@@ -73,7 +73,9 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "AgentRuntime": ("agents_system.agent.graph", "AgentRuntime"),
 }
 
-__all__ = sorted(_EXPORTS) + ["__version__"]
+# PLE0605/PLE0604 false positive: ruff's static check cannot see that
+# sorted() over this dict's str keys, plus a literal str, is a list[str].
+__all__ = sorted(_EXPORTS) + ["__version__"]  # noqa: PLE0605
 
 
 def _resolve_version() -> str:

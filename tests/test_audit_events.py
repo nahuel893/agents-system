@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -19,7 +19,7 @@ class TestAuditEventDiscriminatedUnion:
         payload = {
             "event_type": "tool_call_attempted",
             "event_id": str(uuid4()),
-            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
             "correlation_id": "req-abc-123",
             "sequence": 1,
             "role": "sales-agent",
@@ -45,7 +45,7 @@ class TestAuditEventDiscriminatedUnion:
         payload = {
             "event_type": "tool_call_blocked",
             "event_id": str(uuid4()),
-            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
             "correlation_id": "req-abc-123",
             "sequence": 2,
             "role": "sales-agent",
@@ -66,7 +66,7 @@ class TestAuditEventDiscriminatedUnion:
         payload = {
             "event_type": "wat",
             "event_id": str(uuid4()),
-            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
             "correlation_id": "req-abc-123",
             "sequence": 1,
             "role": "sales-agent",
@@ -82,7 +82,7 @@ class TestAuditEventDiscriminatedUnion:
 
         event = ToolCallAttempted(
             event_id=uuid4(),
-            occurred_at=datetime.now(tz=timezone.utc),
+            occurred_at=datetime.now(tz=UTC),
             correlation_id="req-abc-123",
             sequence=1,
             role="sales-agent",
@@ -106,7 +106,7 @@ class TestAllEventFamilies:
         base = {
             "event_type": event_type,
             "event_id": str(uuid4()),
-            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
             "correlation_id": "req-test-001",
             "sequence": 1,
             "role": "test-role",
@@ -199,7 +199,7 @@ class TestAuditEventPayload:
 
         event = ToolCallAttempted(
             event_id=uuid4(),
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
             correlation_id="abc",
             sequence=1,
             role="sales-agent",
@@ -217,6 +217,7 @@ class TestAuditEventPayload:
     def test_recorder_populates_payload(self) -> None:
         """Recorder helpers must populate payload with event-specific data (REQ-AUDIT-31)."""
         import asyncio
+
         from agents_system.audit.events import ToolCallAttempted
         from agents_system.audit.recorder import record_tool_call_attempted
 
@@ -252,7 +253,7 @@ class TestAuditEventPayload:
         data = {
             "event_type": "skill_loaded",
             "event_id": str(uuid4()),
-            "occurred_at": datetime.now(tz=timezone.utc).isoformat(),
+            "occurred_at": datetime.now(tz=UTC).isoformat(),
             "correlation_id": "req-abc",
             "sequence": 1,
             "role": "sales-agent",
@@ -277,7 +278,7 @@ class TestAuditEventPayload:
 
         event = ToolCallAttempted(
             event_id=uuid4(),
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
             correlation_id="req-test",
             sequence=1,
             role="sales-agent",

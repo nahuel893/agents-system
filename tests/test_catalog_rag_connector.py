@@ -105,8 +105,8 @@ def test_connector_is_async_coroutine_function() -> None:
 
 
 async def test_direct_match_maps_to_results_and_classification() -> None:
-    from agents_system.services.rag import VectorSearchCandidate
     from agents_system.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.services.rag import VectorSearchCandidate
 
     async def fake_search_vector(
         session: Any, *, embedding: Any, limit: int, ef_search: int
@@ -136,8 +136,8 @@ async def test_direct_match_maps_to_results_and_classification() -> None:
 
 
 async def test_ambiguous_match_mapping() -> None:
-    from agents_system.services.rag import VectorSearchCandidate
     from agents_system.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.services.rag import VectorSearchCandidate
 
     async def fake_search_vector(
         session: Any, *, embedding: Any, limit: int, ef_search: int
@@ -177,8 +177,8 @@ async def test_no_match_returns_empty_results() -> None:
     indistinguishable. Asserting the fallback was never consulted restores
     the distinction the section header claims to cover.
     """
-    from agents_system.services.rag import VectorSearchCandidate
     from agents_system.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.services.rag import VectorSearchCandidate
 
     keyword_calls: list[str] = []
 
@@ -218,8 +218,8 @@ async def test_no_match_returns_empty_results() -> None:
 
 
 async def test_keyword_fallback_similarity_is_null() -> None:
-    from agents_system.services.rag import KeywordSearchCandidate
     from agents_system.connectors.rag_connector import build_catalog_rag_connector
+    from agents_system.services.rag import KeywordSearchCandidate
 
     # Embedder returns empty vector → triggers keyword fallback
     embedder = SpyEmbedder(vectors=[])
@@ -280,7 +280,7 @@ def _full_sales_registry() -> Any:
     from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
     reg = ToolRegistry()
-    dummy = lambda inputs: {}  # noqa: E731
+    dummy = lambda inputs: {}
     reg.register(
         ToolSpec(
             name="catalog_search",

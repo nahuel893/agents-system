@@ -18,11 +18,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agents_system.connectors.sales_reports import CATALOG
 from agents_system.connectors.report_connector import (
     build_report_connector,
     build_report_registry,
 )
+from agents_system.connectors.sales_reports import CATALOG
 
 
 def _catalog() -> dict[str, Any]:

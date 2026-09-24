@@ -31,7 +31,8 @@ client) has no skills, so its prompt is just the role body.
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -41,9 +42,9 @@ from agents_system.harness.injector import (
     resolve_tool_surface,
 )
 from agents_system.harness.loader import (
+    _BASE_PROMPT_CONTRACT,
     AgentDefinition,
     RootConfig,
-    _BASE_PROMPT_CONTRACT,
     _require_deployments_root,
     _strip_base_contract,
     resolve,
@@ -207,7 +208,7 @@ def build_runtime(
     *,
     client: str | None = None,
     roots: RootConfig | None = None,
-    session_provider: "async_sessionmaker[AsyncSession] | None" = None,
+    session_provider: async_sessionmaker[AsyncSession] | None = None,
 ) -> EquippedRuntime:
     """Assemble an ``EquippedRuntime`` for a role (optionally a client deployment).
 
