@@ -9,7 +9,7 @@ description = "Reusable platform for configurable AI agent runtimes"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1.0",
-    "uvicorn[standard]>=0.34",
+    "uvicorn[standard]>=0.53.0",
     "langgraph>=0.2,<1.0",
     "langgraph-checkpoint-redis>=0.1",
     "langchain-anthropic>=0.3,<1.0",
