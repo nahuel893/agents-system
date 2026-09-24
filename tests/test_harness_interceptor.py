@@ -306,7 +306,7 @@ async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
 
     spec = ToolSpec(
         name="sensitive_read",
-        required_permissions=("read:orders",),
+        required_permissions=("read:client_registry",),
         connector=connector,
         always_revalidate=True,
         tier=Tier.T1,
@@ -318,7 +318,7 @@ async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
             "sensitive_read",
             {},
             runtime,
-            current_permissions=["read:catalog"],  # missing read:orders
+            current_permissions=["read:catalog"],  # missing read:client_registry
         )
 
     assert exc_info.value.tool_name == "sensitive_read"
@@ -335,7 +335,7 @@ async def test_always_revalidate_read_allowed_when_permission_present() -> None:
 
     spec = ToolSpec(
         name="sensitive_read",
-        required_permissions=("read:orders",),
+        required_permissions=("read:client_registry",),
         connector=connector,
         always_revalidate=True,
         tier=Tier.T1,
@@ -346,7 +346,7 @@ async def test_always_revalidate_read_allowed_when_permission_present() -> None:
         "sensitive_read",
         {},
         runtime,
-        current_permissions=["read:orders"],
+        current_permissions=["read:client_registry"],
     )
 
     assert result.revalidated is True

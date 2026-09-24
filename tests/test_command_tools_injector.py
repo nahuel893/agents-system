@@ -16,6 +16,24 @@ from agents_system.harness.loader import (
     CommandToolParam,
     Tier,
 )
+from agents_system.permissions import Run, UnknownPermissionNameError, resolve, resource
+
+
+#: These fixtures build `CommandToolDeclaration`/`ToolSpec` directly,
+#: bypassing `harness.loader._parse_command_tools` (which registers a
+#: declared command tool's permission dynamically at manifest-parse time —
+#: see that function's docstring). Register the same two wire names here so
+#: this file is self-contained regardless of run order; `resource()` is not
+#: idempotent (it always builds a fresh class), so check-then-create.
+def _ensure_run_permission_registered(wire_name: str) -> None:
+    try:
+        resolve(wire_name)
+    except UnknownPermissionNameError:
+        resource(Run, wire_name)
+
+
+_ensure_run_permission_registered("run:check_stock")
+_ensure_run_permission_registered("run:dangerous_tool")
 
 
 def _declaration(*, name: str, tier: Tier, permission: str) -> CommandToolDeclaration:
@@ -102,38 +120,19 @@ def test_untrusted_input_role_still_receives_t2_command_tool() -> None:
     assert result.denied == ()
 
 
-def test_untrusted_input_role_denied_t3_command_tool() -> None:
-    """ADR-002 C.10's second barrier applies to command tools exactly like it
-    already applies to registry-backed tools: an `untrusted_input` role never
-    receives a T3-tiered tool, regardless of its permission family."""
+def test_t3_command_tool_can_no_longer_be_built_at_all() -> None:
+    """Superseded by permission-model Resolved Decision 3: `Run` is a single
+    T2 family with no T3-floor sibling, so a T3-tiered command tool now
+    fails R2b's floor the moment `resolve_command_tool_surface` tries to
+    build its `ToolSpec` (`max(2) >= 3` is false) — a T3 command tool can
+    no longer even reach the ADR-002 C.10 untrusted_input+T3 barrier this
+    test used to exercise, regardless of `untrusted_input`. `harness.loader`
+    independently rejects `tier: T3` at manifest-parse time
+    (`test_command_tools_loader.py::test_parse_command_tools_t3_tier_is_now_rejected`);
+    this proves the ToolSpec-level guard holds even for a declaration built
+    directly, bypassing the loader."""
     from agents_system.harness.injector import resolve_command_tool_surface
-
-    decl = _declaration(
-        name="dangerous_tool", tier=Tier.T3, permission="run:dangerous_tool"
-    )
-    definition = _definition(
-        command_tools=(decl,),
-        permissions=("run:dangerous_tool",),
-        untrusted_input=True,
-    )
-
-    result = resolve_command_tool_surface(
-        definition, granted_permissions=("run:dangerous_tool",)
-    )
-
-    assert result.granted == ()
-    assert result.denied == (
-        (
-            "dangerous_tool",
-            "tier T3 tools are never granted to an untrusted_input role (ADR-002 C.10)",
-        ),
-    )
-
-
-def test_trusted_role_still_receives_t3_command_tool() -> None:
-    """Regression: the barrier must not overreach for a role that is NOT
-    `untrusted_input`."""
-    from agents_system.harness.injector import resolve_command_tool_surface
+    from agents_system.permissions import PermissionFloorViolationError
 
     decl = _declaration(
         name="dangerous_tool", tier=Tier.T3, permission="run:dangerous_tool"
@@ -144,12 +143,10 @@ def test_trusted_role_still_receives_t3_command_tool() -> None:
         untrusted_input=False,
     )
 
-    result = resolve_command_tool_surface(
-        definition, granted_permissions=("run:dangerous_tool",)
-    )
-
-    assert [spec.name for spec in result.granted] == ["dangerous_tool"]
-    assert result.denied == ()
+    with pytest.raises(PermissionFloorViolationError, match="dangerous_tool"):
+        resolve_command_tool_surface(
+            definition, granted_permissions=("run:dangerous_tool",)
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ from agents_system.harness.loader import (
     merge,
     resolve,
 )
+from agents_system.permissions import UntrustedInputGrantError
 
 
 # ---------------------------------------------------------------------------
@@ -166,10 +167,10 @@ def test_no_override_branch_rejects_untrusted_input_with_exec_permission(
     and everything it validates. The invariant must be checked here too.
     """
     _write_role(
-        tmp_path, "rogue-agent", permissions=["exec:shell"], untrusted_input=True
+        tmp_path, "rogue-agent", permissions=["exec:command"], untrusted_input=True
     )
 
-    with pytest.raises(DefinitionError, match="untrusted_input"):
+    with pytest.raises(UntrustedInputGrantError, match="exec:command"):
         resolve("rogue-agent", roots=RootConfig(platform_root=tmp_path))
 
 
@@ -178,17 +179,17 @@ def test_merge_branch_rejects_untrusted_input_with_exec_permission(
 ) -> None:
     """The invariant must hold when the conflict is only complete after merge.
 
-    The platform role alone holds `exec:shell` but says nothing about
+    The platform role alone holds `exec:command` but says nothing about
     `untrusted_input`; the deployment override is the one that declares
     `untrusted_input: true`. Neither file alone violates the invariant — only
     the resolved, merged definition does.
     """
-    _write_role(tmp_path, "rogue-agent", permissions=["exec:shell"])
+    _write_role(tmp_path, "rogue-agent", permissions=["exec:command"])
     deployments = tmp_path / "deployments"
     _write_override(deployments, "acme", "rogue-agent", untrusted_input=True)
 
     roots = RootConfig(platform_root=tmp_path, deployments_root=deployments)
-    with pytest.raises(DefinitionError, match="untrusted_input"):
+    with pytest.raises(UntrustedInputGrantError, match="exec:command"):
         resolve("rogue-agent", client="acme", roots=roots)
 
 
@@ -328,13 +329,20 @@ def test_every_concrete_platform_role_explicitly_declares_untrusted_input() -> N
 
 
 # ---------------------------------------------------------------------------
-# exec:* prefix match must be case-insensitive and whitespace-tolerant
-# (review follow-up: `EXEC:shell` with untrusted_input=true resolved
-# cleanly, silently disarming the lethal-trifecta guard on a typo/case
-# variant that is still, functionally, an exec:* permission).
+# R4 generalizes from an `exec:*` string match to any T3-tier class: the
+# barrier is driven by the resolved permission's `.tier`, not by its wire
+# name carrying an `exec:` prefix. No case/whitespace tolerance requirement
+# carries over from the old prefix heuristic (see `test_capability_tiers.py`'s
+# own note on the same point) — a registered name is looked up exactly.
+# `read:files` (`ReadFiles(Read)` at T3, PR1 Resolved Decision 1) is the
+# real, shipped instance of a T3 permission with no `exec:` name at all.
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("permission", ["EXEC:shell", "Exec:Shell", "  exec:shell"])
-def test_exec_prefix_check_is_case_and_whitespace_insensitive(permission: str) -> None:
+@pytest.mark.parametrize("permission", ["exec:command", "read:files"])
+def test_untrusted_input_role_declaring_any_t3_permission_fails_at_load(
+    permission: str,
+) -> None:
+    """Any T3-tier class is rejected identically, regardless of wire name —
+    the spec's own new scenario for a "differently-named T3 permission"."""
     generic = _raw(
         role_name="case-role", permissions=[permission], untrusted_input=False
     )
@@ -345,7 +353,7 @@ def test_exec_prefix_check_is_case_and_whitespace_insensitive(permission: str) -
         untrusted_input=True,
     )
 
-    with pytest.raises(DefinitionError, match="untrusted_input"):
+    with pytest.raises(UntrustedInputGrantError, match=permission):
         merge(generic, override)
 
 
@@ -387,7 +395,7 @@ def test_untrusted_input_rejects_non_bool_yaml_values(
 def test_truth_table(
     untrusted_input: bool, has_exec_permission: bool, should_raise: bool
 ) -> None:
-    permissions = ["exec:shell"] if has_exec_permission else []
+    permissions = ["exec:command"] if has_exec_permission else []
     generic = _raw(role_name="tt-role", permissions=permissions, untrusted_input=False)
     override = _raw(
         role_name="tt-role",
@@ -397,7 +405,7 @@ def test_truth_table(
     )
 
     if should_raise:
-        with pytest.raises(DefinitionError, match="untrusted_input"):
+        with pytest.raises(UntrustedInputGrantError, match="exec:command"):
             merge(generic, override)
     else:
         result = merge(generic, override)

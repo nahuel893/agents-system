@@ -222,14 +222,14 @@ def test_build_runtime_missing_skill_file_raises() -> None:
     # client-a/simple-role declares skills [skill_one, skill_two] but the
     # fixture has no skills/ directory → the factory must fail loud.
     reg = ToolRegistry()
-    reg.register(_spec("tool_alpha", ["read:alpha"]))
-    reg.register(_spec("tool_beta", ["read:beta"]))
+    reg.register(_spec("tool_alpha", ["read:catalog"]))
+    reg.register(_spec("tool_beta", ["read:client_registry"]))
 
     with pytest.raises(FactoryError):
         build_runtime(
             "simple-role",
             reg,
-            ["read:alpha", "read:beta", "write:gamma"],
+            ["read:catalog", "read:client_registry", "write:gamma"],
             client="client-a",
             roots=_fixture_roots(),
         )
@@ -307,14 +307,14 @@ def test_build_runtime_logs_skill_missing_before_raising() -> None:
     from agents_system.harness.registry import ToolRegistry
 
     reg = ToolRegistry()
-    reg.register(_spec("tool_alpha", ["read:alpha"]))
-    reg.register(_spec("tool_beta", ["read:beta"]))
+    reg.register(_spec("tool_alpha", ["read:catalog"]))
+    reg.register(_spec("tool_beta", ["read:client_registry"]))
 
     with structlog.testing.capture_logs() as logs, pytest.raises(FactoryError):
         build_runtime(
             "simple-role",
             reg,
-            ["read:alpha", "read:beta", "write:gamma"],
+            ["read:catalog", "read:client_registry", "write:gamma"],
             client="client-a",
             roots=_fixture_roots(),
         )

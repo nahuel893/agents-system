@@ -1,36 +1,51 @@
 """Public surface of the `Permission` class hierarchy (spec: "Open hierarchy
 for downstream extension"): the `Permission` root, the built-in action
 families, the package-global `PermissionRegistry`, `resolve()`/`register()`
-convenience wrappers, and the `AgentPermissionError` exception tree.
+convenience wrappers, the R2a/R2b `evaluate_tool_spec` and R3 `covers`
+policy predicates, and the `AgentPermissionError` exception tree.
 """
 
 from __future__ import annotations
 
 from .base import Permission
-from .builtins import Exec, Read, Run, Send, Spawn, Write
+from .builtins import Exec, Read, Run, Send, Spawn, Write, resource
 from .errors import (
     AgentPermissionError,
     InvalidPermissionTierError,
+    PermissionFloorViolationError,
     PermissionRegistrationCollisionError,
+    PermissionTierMismatchError,
     UnknownPermissionNameError,
+    UntrustedInputGrantError,
 )
-from .permission_registry import PermissionRegistry, permission_registry
+from .permission_registry import (
+    PermissionRegistry,
+    covers,
+    evaluate_tool_spec,
+    permission_registry,
+)
 
 __all__ = [
     "AgentPermissionError",
     "Exec",
     "InvalidPermissionTierError",
     "Permission",
+    "PermissionFloorViolationError",
     "PermissionRegistrationCollisionError",
     "PermissionRegistry",
+    "PermissionTierMismatchError",
     "Read",
     "Run",
     "Send",
     "Spawn",
     "UnknownPermissionNameError",
+    "UntrustedInputGrantError",
     "Write",
+    "covers",
+    "evaluate_tool_spec",
     "register",
     "resolve",
+    "resource",
 ]
 
 

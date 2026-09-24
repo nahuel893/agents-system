@@ -213,7 +213,7 @@ Depends on PR1 (imports `agents_system.permissions`). Estimated lines: ~390
 (design.md Testing Strategy table) — closest PR to the 400-line ceiling;
 watch scope closely (see Cross-PR Ground Rules).
 
-- [ ] **PR2-T1 — `ToolSpec` R2a (ceiling) replaces prefix branches.**
+- [x] **PR2-T1 — `ToolSpec` R2a (ceiling) replaces prefix branches.**
   RED: rewrite the prefix-based assertions in `tests/test_capability_tiers.py`
   to their R2a class/tier equivalents (spec Requirement "ToolSpec permission
   tier ceiling (R2a)"): `test_write_permission_with_t1_tier_raises`,
@@ -247,7 +247,7 @@ watch scope closely (see Cross-PR Ground Rules).
   Verify: `.venv/bin/pytest -q tests/test_capability_tiers.py`
   Satisfies: "ToolSpec permission tier ceiling (R2a)". <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T2 — `ToolSpec` R2b (floor) + `read_file` regression.**
+- [x] **PR2-T2 — `ToolSpec` R2b (floor) + `read_file` regression.**
   RED: extend `tests/test_capability_tiers.py` with the spec's R2b scenarios
   (Requirement "ToolSpec permission tier floor (R2b)"): a T3 tool requiring
   only a T0 permission fails the floor with `PermissionFloorViolationError`
@@ -277,7 +277,7 @@ watch scope closely (see Cross-PR Ground Rules).
   "R2a/R2b compatibility of every currently shipped ToolSpec".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T3 — Injector R3 (descendant grant coverage) + R4 (T3 barrier, generalized).**
+- [x] **PR2-T3 — Injector R3 (descendant grant coverage) + R4 (T3 barrier, generalized).**
   RED: rewrite `tests/test_harness_injector.py`'s permission-coverage tests
   to class/tier equivalents and add the spec's R3 descendant-tier scenarios
   (Requirement "Grant coverage of permission descendants (R3)"): an ancestor
@@ -307,7 +307,7 @@ watch scope closely (see Cross-PR Ground Rules).
   "untrusted_input roles hold no T3 permission (R4)".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T4 — Loader R4: load-time and any-name T3 rejection for untrusted_input.**
+- [x] **PR2-T4 — Loader R4: load-time and any-name T3 rejection for untrusted_input.**
   RED: rewrite `tests/test_untrusted_input_invariant.py`'s exec-prefix-named
   tests (`test_exec_prefix_check_is_case_and_whitespace_insensitive`,
   `test_no_override_branch_rejects_untrusted_input_with_exec_permission`,
@@ -340,7 +340,7 @@ watch scope closely (see Cross-PR Ground Rules).
   Satisfies: "untrusted_input roles hold no T3 permission (R4)".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T5 — Narrow declarative command-tool tier ceiling to T2 (Resolved Decision 3).**
+- [x] **PR2-T5 — Narrow declarative command-tool tier ceiling to T2 (Resolved Decision 3).**
   RED: add a test to `tests/test_command_tools_loader.py` asserting a
   `command_tools:` declaration with `tier: T3` is now rejected at load
   (previously accepted, since `_COMMAND_TOOL_MIN_TIER` allowed both T2 and
@@ -361,7 +361,7 @@ watch scope closely (see Cross-PR Ground Rules).
   (declarative command-tool tier ceiling is a design-phase decision, not a
   numbered R1-R4 requirement). <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T6 — PR2 closing: docs + full verification.**
+- [x] **PR2-T6 — PR2 closing: docs + full verification.**
   Update the module docstring/comment at `registry.py`'s removed prefix
   constants site to point at `agents_system.permissions.evaluate_tool_spec`
   instead (one short note, not a rewrite of the `Tier` docstring itself,

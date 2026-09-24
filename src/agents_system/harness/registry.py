@@ -33,17 +33,6 @@ class Tier(str, Enum):
     T3 = "T3"
 
 
-#: Permission-family prefixes whose danger a tier MUST reflect, regardless of
-#: how carefully (or carelessly) a tool author classified the tool by hand.
-#: Case-insensitive, whitespace-tolerant — mirrors
-#: ``loader._is_exec_permission``'s own tolerance, for the same reason: a
-#: stray case or whitespace variant is still, functionally, the same
-#: permission family and must not silently disarm the guard.
-_WRITE_SEND_PREFIXES = ("write:", "send:")
-_EXEC_PREFIX = "exec:"
-_RUN_PREFIX = "run:"
-
-
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
@@ -80,48 +69,21 @@ class ToolSpec:
 
     def __post_init__(self) -> None:
         """Fail closed at construction (ADR-002 C.10 review follow-up,
-        PR #142): replacing the write:/send: prefix heuristic with tier-based
-        revalidation must not turn "every tool is revalidated correctly"
-        into "every tool author must remember to self-classify correctly".
-        A permission whose family implies danger must be paired with a tier
-        that actually gets revalidated — checked here, at registration time,
-        so a mismatched tier fails loudly for every caller (production
-        builders AND ad hoc test fixtures), not only for the tools this
-        module happens to construct itself.
+        PR #142; permission-model R2a/R2b): a permission whose class implies
+        danger must be paired with a tier that actually gets revalidated —
+        checked here, at construction time, so a mismatched tier fails
+        loudly for every caller (production builders AND ad hoc test
+        fixtures), not only for the tools this module happens to construct
+        itself. The write:/send:/exec:/run: prefix heuristic that used to
+        live here is gone; ``agents_system.permissions.evaluate_tool_spec``
+        (deferred import — see ``injector.py``'s identical
+        cycle-avoidance pattern) now resolves each required permission
+        through the ``PermissionRegistry`` and checks the class/tier rules
+        R2a (ceiling) and R2b (floor) directly.
         """
-        for permission in self.required_permissions:
-            normalized = permission.strip().lower()
-            if normalized.startswith(_EXEC_PREFIX) and self.tier is not Tier.T3:
-                raise ValueError(
-                    f"ToolSpec {self.name!r}: permission {permission!r} is "
-                    f"in the exec:* family, which requires tier=T3 (host "
-                    f"execution, ADR-002 C.10) — got tier={self.tier.value}."
-                )
-            elif normalized.startswith(_WRITE_SEND_PREFIXES) and self.tier not in (
-                Tier.T2,
-                Tier.T3,
-            ):
-                raise ValueError(
-                    f"ToolSpec {self.name!r}: permission {permission!r} is "
-                    f"a write:/send: permission, which requires tier in "
-                    f"{{T2, T3}} (ADR-002 C.10) — got tier={self.tier.value}."
-                )
-            elif normalized.startswith(_RUN_PREFIX) and self.tier not in (
-                Tier.T2,
-                Tier.T3,
-            ):
-                raise ValueError(
-                    f"ToolSpec {self.name!r}: permission {permission!r} is "
-                    f"in the run:* family (ADR-002 C.12 command tools), "
-                    f"which requires tier in {{T2, T3}} — a T0/T1 command "
-                    f"tool is never revalidated at call time "
-                    f"(interceptor._is_sensitive only checks T2/T3 or "
-                    f"always_revalidate), which would let an "
-                    f"untrusted_input role reach an unrevalidated host "
-                    f"command. ADR-002 C.12 allows untrusted_input roles "
-                    f"to hold only a NARROW T2 (or T3) command tool, never "
-                    f"an unrevalidated one — got tier={self.tier.value}."
-                )
+        from agents_system.permissions import evaluate_tool_spec  # deferred
+
+        evaluate_tool_spec(self.name, self.tier, self.required_permissions)
 
     def to_langchain_tool_schema(self) -> dict[str, Any]:
         return {
