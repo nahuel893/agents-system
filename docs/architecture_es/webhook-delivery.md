@@ -84,7 +84,47 @@ Un "mensaje de Meta válido" es cualquier entrada alcanzable en `entry[].changes
 
 ## Conexión del worker en el lifespan de W2b2: arrancar después de las dependencias, detener antes del teardown
 
-El `lifespan` de `main.py` construye un `DeferredWebhookWorker` por proceso y arranca su loop de sondeo solo después de que cada dependencia que necesita ya existe en `app.state`: el engine, el cliente de WhatsApp, el caché de runtimes resuelto, y el directorio de participantes / grabador de conversación que `create_app` guarda ahí. Se omite —con una advertencia `webhook_worker.no_runtime_resolved`, no con una falla de arranque— cuando `whatsapp_runtime_id` no está configurado o no resuelve a nada en el caché de runtimes; el trabajo entrante durable igual se acumula y simplemente espera a que un operador corrija la configuración, nunca se descarta.
+El `lifespan` de `main.py` construye un `DeferredWebhookWorker` por proceso y arranca su loop de sondeo solo después de que cada dependencia que necesita ya existe en `app.state`: el engine, el cliente de WhatsApp, el caché de runtimes resuelto, y el directorio de participantes / grabador de conversación que `create_app` guarda ahí. Se omite —con una advertencia `webhook_worker.no_runtime_resolved`, no con una falla de arranque— cuando `whatsapp_runtime_id` no está configurado o no resuelve a nada en el caché de runtimes **y WhatsApp no está configurado de ningún otro modo para recibir y responder**; el trabajo entrante durable igual se acumula y simplemente espera a que un operador corrija la configuración, nunca se descarta. Ver "#141 — arranque fail-closed cuando WhatsApp está configurado pero ningún runtime resuelve" más abajo para cuándo esto se convierte en una falla de arranque.
+
+### #141 — arranque fail-closed cuando WhatsApp está configurado pero ningún runtime resuelve
+
+`POST /webhook` (`integration/webhook.py`) se monta **sin condiciones** — acepta de forma durable cada mensaje entrante firmado sin importar si algún worker llegará a procesarlo. Antes de #141, un `whatsapp_runtime_id` vacío o malformado (sin el separador `{deployment}__{role}`) dejaba esa brecha en silencio: la app arrancaba, la ruta seguía aceptando y guardando mensajes, y la única señal era la advertencia `webhook_worker.no_runtime_resolved` de arriba — fácil de pasar por alto, y nada la volvía a emitir a medida que crecía el backlog.
+
+Ahora el lifespan falla cerrado en su lugar, pero solo cuando el operador configuró demostrablemente WhatsApp para recibir y responder: `WHATSAPP_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID` están ambos configurados. En ese caso, no resolver ningún runtime de webhook (`whatsapp_runtime_id` vacío, malformado, o de otro modo ausente del caché de runtimes construido) lanza `DefinitionError` y la app se niega a arrancar, con un mensaje que nombra la corrección exacta (configurar `WHATSAPP_RUNTIME_ID`, o quitar las credenciales de WhatsApp si este despliegue no usa WhatsApp). Un despliegue sin ninguna de las dos credenciales configuradas mantiene el comportamiento previo a #141 de advertir y arrancar — no hay nada configurado para recibir y responder, así que no hay nada que fallar cerrado. Un despliegue con solo una de las dos credenciales configuradas (una configuración genuinamente parcial, por ejemplo en medio de una migración) también mantiene el camino de solo advertencia; la verificación es deliberadamente conservadora sobre cuándo se dispara — "ambas credenciales configuradas" es la única combinación que revisa, y no verifica de forma independiente que el runtime id resuelva a un rol que sea seguro para el input no confiable de WhatsApp, lo cual es responsabilidad de ADR-002 C.13 (justo arriba de esta verificación en `main.py`, y sin condiciones siempre que `whatsapp_runtime_id` coincida con un runtime construido, no solo cuando falla en hacerlo).
+
+`GET /health` (más abajo) cubre el caso complementario, ya en ejecución: un worker que deja de correr (crash, apagado inesperado) después de un arranque exitoso.
+
+## GET /health — actividad del worker de webhook y profundidad del backlog del outbox (#141)
+
+Antes de #141, nada más que la advertencia de arranque de arriba señalaba un backlog estancado: si el worker moría después de un arranque limpio, o nunca corrió por una configuración que la verificación fail-closed de arriba no cubre (por ejemplo, WhatsApp no configurado en absoluto, a propósito), el trabajo entrante durable podía acumularse indefinidamente sin ninguna señal operativa más allá de una consulta a la base de datos que alguien tendría que pensar en correr.
+
+La respuesta de `GET /health` ahora lleva un objeto `webhook_worker`:
+
+```json
+{
+  "status": "ok",
+  "webhook_worker": {
+    "running": true,
+    "outbox_pending": 0,
+    "outbox_leased": 0,
+    "outbox_leased_expired": 0
+  }
+}
+```
+
+- `running` lee `DeferredWebhookWorker.is_running` desde `app.state.webhook_worker` (`false` cuando nunca se arrancó ningún worker, o cuando su tarea del poll-loop murió sin pasar por `stop()` — seguimiento de revisión #141 — no es en sí mismo un signo de mala salud para un despliegue sin runtime de WhatsApp configurado).
+- `outbox_pending` / `outbox_leased` / `outbox_leased_expired` vienen de `services/outbox.py::count_outbox_backlog`, tres consultas `COUNT(*)` contra `outbox_work` filtradas a filas no terminales (`completed_at IS NULL AND failed_at IS NULL`): `pending` (sin lease), `leased` (cualquier lease, vigente o vencida y sin reclamar), y `leased_expired` (el subconjunto de `leased` cuya lease ya venció según el reloj de la base de datos — filas abandonadas por un worker caído). Las tres usan los mismos índices parciales de los que ya depende `pending_outbox_statement`, así que esto no agrega ningún índice nuevo ni un table scan.
+- **La consulta del backlog está acotada al mismo presupuesto de 3s que las verificaciones de postgres/redis de arriba** (seguimiento de revisión #141, BLOCKER): `outbox_work` se consulta a través del mismo engine, y sin su propio timeout una tabla trabada o lenta colgaría todo este endpoint — y cualquier sonda de liveness que lo lea — incluso mientras `postgres`/`redis` arriba responden bien. Ante un timeout, un error de base de datos, o cualquier otra falla, los contadores se reportan como `null` (no `0` — un backlog inalcanzable es un hecho distinto de uno confirmado-vacío). Esto es independiente de `postgres`: una tabla `outbox_work` lenta o trabada puede producir un backlog `null` incluso cuando la verificación simple `SELECT 1` de postgres tiene éxito, así que `postgres: "ok"` por sí solo no significa que los contadores del backlog sean confiables.
+- **El `status` general se degrada** cuando el worker no está corriendo **y** `outbox_pending` u `outbox_leased_expired` es un número conocido distinto de cero — la condición de aceptación que pide #141, extendida (seguimiento de revisión #141, BLOCKER) para cubrir leases que un worker caído abandonó a mitad de camino, no solo trabajo que todavía nadie reclamó. `outbox_leased` por sí solo no se usa para esto: también cuenta leases que un worker actualmente en ejecución todavía sostiene legítimamente. Un backlog distinto de cero con un worker vivo drenándolo no está degradado; un valor desconocido (`null`) nunca degrada esta verificación por sí solo (solo duplicaría una falla de postgres/timeout que ya produjo ese `null`).
+- **`GET /health` sigue respondiendo HTTP 200 mientras `status` es `"degraded"`** (preexistente, sin cambios por #141) — `status` en el cuerpo, no el código de estado HTTP, es lo que quien llama debe revisar. Una sonda de liveness de infraestructura que solo mira el código de estado HTTP no verá un backlog degradado; una que inspeccione el cuerpo sí.
+
+Esto complementa la verificación de arranque de arriba en lugar de reemplazarla: la verificación de arranque atrapa un despliegue de WhatsApp que nunca pudo haber arrancado el worker; `/health` atrapa uno que sí pudo, y después se detuvo.
+
+> Espejo en inglés: `docs/architecture/webhook-delivery.md` (mantener ambos al día juntos).
+
+## W2b2 (continuación) — mecánica del ciclo de vida del worker
+
+El resto de esta sección describe `DeferredWebhookWorker.start()`/`.stop()` en sí, independientemente de las adiciones de arranque/salud de #141 de arriba.
 
 `webhook_worker.stop` se apila al final en el `AsyncExitStack` del lifespan, así que su teardown LIFO ejecuta el stop del worker **primero**, antes de que se destruya el engine, se cierre el cliente de WhatsApp o se cierre el pool de Redis — al worker nunca se le retira una dependencia debajo de una iteración en curso.
 

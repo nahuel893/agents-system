@@ -255,7 +255,9 @@ uv run uvicorn agentsys.main:app --host 0.0.0.0 --port 8000 --workers 4
 The platform exposes an **OpenAI-compatible adapter** at `/v1/*` — any OpenAI SDK client can point to it and get agent responses. This lets you use the platform as a drop-in replacement for OpenAI with your own roles and tools.
 
 ```bash
-# Health check
+# Health check — also reports webhook-worker liveness and the outbox
+# backlog ("webhook_worker": {"running": ..., "outbox_pending": ..., "outbox_leased": ...}),
+# degraded when work is pending and no worker is running to drain it (#141)
 curl http://localhost:8000/health
 
 # Via the adapter (OpenAI-compatible)
@@ -286,7 +288,7 @@ Environment variables (loaded from `.env`). Key settings:
 | `OPENAI_API_KEY` | — | OpenAI API key — **embeddings only** (see `OPENAI_COMPATIBLE_API_KEY` for chat) |
 | `ADAPTER_PROVIDER` | `ollama` | LLM provider: `ollama`, `groq`, `anthropic`, `openai_compatible` |
 | `ADAPTER_RUNTIMES` | `[]` | Which runtimes `/v1` publishes. Empty publishes none — the runtime *cache* may hold more, for other channels, and those are never exposed here. Setting any requires `ADAPTER_API_KEY` |
-| `WHATSAPP_RUNTIME_ID` | — | Which runtime inbound WhatsApp routes to, as `{deployment}__{role}`. Unset means the route answers 200 and runs no turn |
+| `WHATSAPP_RUNTIME_ID` | — | Which runtime inbound WhatsApp routes to, as `{deployment}__{role}`. Unset means the route answers 200 and runs no turn. **If `WHATSAPP_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID` are both set, this must resolve to a runtime or the app refuses to boot** (#141) — otherwise `/webhook` durably accepts signed messages nothing ever processes |
 | `EMBEDDING_PROVIDER` | `local` | Embedding provider: `local` or `openai` |
 | `OPENAI_COMPATIBLE_BASE_URL` | — | **Required** for `openai_compatible`. Chat endpoint base URL |
 | `OPENAI_COMPATIBLE_MODEL` | — | **Required** for `openai_compatible`. Model id to request |

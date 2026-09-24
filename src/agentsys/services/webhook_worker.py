@@ -116,6 +116,26 @@ class DeferredWebhookWorker:
         self._started = False
         self._loop_task: asyncio.Task[None] | None = None
 
+    @property
+    def is_running(self) -> bool:
+        """Whether the poll loop is spawned, started, and still alive (#141).
+
+        Read by ``GET /health`` to report worker liveness alongside the
+        outbox backlog counts. Tracks ``start``/``stop`` (``_started``), but
+        also requires the loop task to exist and not be ``done()`` (#141
+        review follow-up, BLOCKER) -- ``_started`` alone assumed the loop
+        can only ever end through ``stop()``, which is not true: a task can
+        also die from something ``_run_loop`` does not catch (e.g. a bug
+        raising a ``BaseException`` other than ``CancelledError``, or the
+        event loop itself being torn down), leaving ``_started`` stuck at
+        ``True`` forever while nothing is actually polling the outbox --
+        exactly the silent, invisible-to-``/health`` failure #141 exists to
+        surface. A dead, un-``stop()``-ped task now reads as not running.
+        """
+        return (
+            self._started and self._loop_task is not None and not self._loop_task.done()
+        )
+
     async def start(self) -> None:
         """Spawn the poll loop. Idempotent (can be called multiple times)."""
         if self._started:
