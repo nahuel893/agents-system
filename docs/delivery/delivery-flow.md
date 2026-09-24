@@ -134,6 +134,12 @@ separate `shellcheck` job runs a pinned shellcheck release over every tracked
 fail silently in bash (unquoted expansion, word splitting) fails loudly here
 instead (ADR-002 H.32, H.33).
 
+Dependencies and secrets are checked too: a `dependency-audit` job runs
+`pip-audit` against the locked dependency set and fails the build on any
+known vulnerability that is not explicitly allowlisted, and a `secret-scan`
+job runs `gitleaks` over each pull request's own commit range, with
+Dependabot enabled for `pip`/`uv` and GitHub Actions (ADR-002 H.29, H.30).
+
 ### 5. Review — required, and by the right person
 
 At least one approval from someone who is not the author. **CODEOWNERS routes

@@ -34,8 +34,8 @@
 | 26 | Reasoning persistence — explicit decision | G. Persistence & memory | ⏳ pending | New PR — #124 |
 | 27 | Integration tests that never run | H. CI | ✅ done | CI PR 1 (issue #42) |
 | 28 | Formatting not enforced (`ruff format`) | H. CI | ✅ done | CI PR 2 — #105 |
-| 29 | No dependency vulnerability checks | H. CI | ⏳ pending | CI PR 3 — #115 |
-| 30 | Secret scanning only local | H. CI | ⏳ pending | CI PR 3 — #115 |
+| 29 | No dependency vulnerability checks | H. CI | ✅ done | CI PR 3 — #115 |
+| 30 | Secret scanning only local | H. CI | ✅ done | CI PR 3 — #115 |
 | 31 | Every run executes twice; no cancellation | H. CI | ✅ done | CI PR 1 — #104 |
 | 32 | No coverage measurement | H. CI | ⏳ pending | CI PR 4 — #116 |
 | 33 | Shell scripts not linted in CI | H. CI | ⏳ pending | CI PR 4 — #116 |
@@ -1821,7 +1821,28 @@ where a compromised or vulnerable dependency does the most damage.
 **Alternatives considered.** Periodic manual review — rejected: it does not
 happen reliably, and the advisory databases change daily.
 
-**Status.** ⏳ pending. **Planned slice:** CI PR 3, together with H.30.
+**Status.** ✅ done — `dependency-audit`. `.github/workflows/ci.yml`'s
+`dependency-audit` job runs `uv sync --group dev`, installs
+`pip-audit==2.10.1`, then runs `pip-audit --local` against the locked
+dependency set, failing the build on any known vulnerability not explicitly
+allowlisted. No dependency is bumped in this PR merely to clear a finding:
+seven packages (`anyio`, `click`, `idna`, `pydantic-settings`, `pyjwt`,
+`pytest`, `urllib3`) were bumped to clean versions via `uv lock -P <pkg>`
+because their fixes sat within `pyproject.toml`'s existing constraints and
+the full test suite stayed green afterward. The remaining findings —
+`langchain-core`, `langchain-openai`, `langchain-anthropic`, `langgraph`,
+`langgraph-checkpoint`, `langgraph-sdk`, `langsmith`, `starlette`,
+`transformers`, `setuptools`, 22 unique CVE/PYSEC IDs in total — are
+deliberately not bumped here: the langchain/langgraph family is blocked by
+`pyproject.toml`'s `<1.0` pins and needs a coordinated major-version
+migration, and `starlette`/`transformers`/`setuptools` each have their own
+transitive blockers. Every one of them is `--ignore-vuln`'d in the CI step
+with an inline comment citing its own tracked follow-up issue, grouped by
+root cause into four issues (labels `security,priority:medium`): #151 for
+the langchain/langgraph migration, #152 for `starlette`, #153 for
+`transformers`, and #154 for `setuptools`. Dependabot for
+`pip`/`uv` and GitHub Actions (`.github/dependabot.yml`) is enabled as part
+of this same change — see H.30.
 
 #### H.30 — Secret scanning only on the developer's machine
 
@@ -1841,7 +1862,23 @@ CI is a gate.
 where available and complementary, but it does not cover every token shape
 a custom rule can, and its availability depends on the repository plan.
 
-**Status.** ⏳ pending. **Planned slice:** CI PR 3.
+**Status.** ✅ done — `secret-scan`. `.github/workflows/ci.yml`'s
+`secret-scan` job runs `gitleaks/gitleaks-action@v3` on every
+`pull_request`, scanning exactly the PR's commit range (`baseRef^..headRef`
+from the PR's own commit list, confirmed against the action's source) with
+`fetch-depth: 0` so that range resolves correctly; v3 specifically, because
+v2 is a Node 20 action and GitHub removed Node 20 from hosted runners on
+2026-09-16, before this PR. A one-time full-history scan (pinned `gitleaks`
+CLI v8.30.1) was run against the whole repository history when this job was
+introduced and found exactly one real secret: an Outline API token
+hardcoded in two commits from 2026-05-28, already superseded by commit
+`2d8d509` (2026-08-28), which moved both scripts to read
+`OUTLINE_API_TOKEN` from the environment. The repository owner confirmed on
+2026-09-23 that the token has been rotated. Two `.gitleaksignore` entries
+allowlist exactly those two historical fingerprints, with the rotation
+confirmation recorded as the reason — not a blanket allowlist. Dependabot
+is also enabled for `pip`/`uv` and GitHub Actions (`.github/dependabot.yml`),
+closing the Dependabot half of H.29's own Decision.
 
 #### H.31 — Every run executes twice, and stale runs are not cancelled
 

@@ -1,0 +1,42 @@
+# Gitleaks allowlist. Every entry here is a real, historical finding that has
+# already been triaged -- this is NOT a blanket allowlist, and a new finding
+# must be triaged the same way before it is added: identify the secret, fix
+# the code if it is still live, rotate the credential, then record the
+# rotation here as the reason. See ADR-002 H.30 (docs/architecture/adr-002-
+# agent-model-and-capabilities.md) and issue #115.
+#
+# Format: one gitleaks Fingerprint per line (`commit:file:rule-id:line`),
+# preceded by a comment explaining why it is safe to ignore. Comment lines
+# start with `#`; gitleaks skips them (detect/detect.go, AddGitleaksIgnore).
+
+# Outline API token, hardcoded as a plain literal in scripts/upload_outline.py
+# on 2026-05-28. Fixed in commit 2d8d509 ("security: read Outline credentials
+# from the environment", 2026-08-28), which moved both scripts to read
+# OUTLINE_API_TOKEN from the environment. Token rotated, confirmed by the
+# repository owner 2026-09-23.
+5c632f11f772c1021a9f0f1a4d3a9ba4f4d830bd:scripts/upload_outline.py:generic-api-key:7
+
+# Same Outline API token, hardcoded as a plain literal in
+# scripts/cleanup_outline_duplicates.py on 2026-05-28. Fixed in the same
+# commit 2d8d509 above. Token rotated, confirmed by the repository owner
+# 2026-09-23.
+1f703306b9b1be90dd93dc33d1ab9b55ddb46062:scripts/cleanup_outline_duplicates.py:generic-api-key:7
+
+# NEVER a real secret: a synthetic, high-entropy token deliberately committed
+# in scripts/_ci_gate_demo.txt (commit a38db40) on this same PR (#115) to
+# prove the secret-scan job actually fails a PR that introduces one -- see
+# that job's log for the confirmation. Reverted immediately in commit
+# c891abe, but the revert does not remove the finding: gitleaks scans the
+# PR's full commit RANGE, and a38db40 is still part of it. That is by
+# design -- the same reason .gitleaksignore documents "deleting the commit
+# does not un-leak it" for the real Outline token above -- so this entry,
+# not a force-push or history rewrite, is what restores a clean scan.
+#
+# EXPECTED DEAD after this PR's squash merge: a squashed PR lands on `main`
+# as one new commit, so `a38db40` itself will never exist there, and
+# `main`'s own full-history/push scans will never need this line -- it only
+# matters while `a38db40` is reachable from this open PR's branch. Once
+# merged, this entry matches nothing and is safe to delete on sight (no
+# fingerprint will ever collide with it by accident: the commit hash is
+# half the match).
+a38db40d68ae5b83beba666c8f4657987acd5dda:scripts/_ci_gate_demo.txt:generic-api-key:6
