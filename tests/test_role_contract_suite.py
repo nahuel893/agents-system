@@ -57,8 +57,8 @@ from typing import Any, Callable
 
 import pytest
 
-from agentsys.harness.injector import resolve_tool_surface
-from agentsys.harness.loader import resolve
+from agents_system.harness.injector import resolve_tool_surface
+from agents_system.harness.loader import resolve
 from platform_role_contract import (
     check_base_contract_present_once_and_last,
     check_no_design_notes_leak,

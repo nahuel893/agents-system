@@ -1,11 +1,11 @@
-"""Tests for agentsys.config — Settings loading and singleton."""
+"""Tests for agents_system.config — Settings loading and singleton."""
 
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from agentsys.config import Settings, get_settings
+from agents_system.config import Settings, get_settings
 
 
 def test_settings_loads_with_defaults():
@@ -529,7 +529,7 @@ def test_settings_carries_no_deployment_name() -> None:
     settings = Settings(_env_file=None, allow_insecure=True)
 
     assert "acme" not in settings.database_url
-    assert settings.db_name == "agentsys"
+    assert settings.db_name == "agents_system"
     assert settings.whatsapp_runtime_id == ""
     assert settings.adapter_runtimes == []
 
@@ -541,7 +541,7 @@ def test_a_consumer_can_extend_settings_without_editing_the_library() -> None:
     platform's own `Settings`. Both the subclass's validator and the
     platform's still run.
     """
-    from agentsys.services.medallion import MedallionSettings
+    from agents_system.services.medallion import MedallionSettings
 
     settings = MedallionSettings(
         _env_file=None,

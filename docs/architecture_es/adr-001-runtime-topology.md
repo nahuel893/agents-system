@@ -200,7 +200,7 @@ Registrado para que nadie confunda ausencia con cero:
   afirmaba hasta 3 engines por proceso (operacional, BI, medallion) y concluía
   que PostgreSQL se agota con tres procesos worker. Ambas cosas eran falsas:
   `main.py` nunca construye el engine de medallion
-  (`rg -n medallion src/agentsys/main.py` → sin resultados), así que un proceso
+  (`rg -n medallion src/agents_system/main.py` → sin resultados), así que un proceso
   servidor sostiene 2 como máximo. El techo real son cuatro procesos, no tres.
   El error hacía ver la restricción más ajustada de lo que es, y apareció al
   verificar cada afirmación contra el código en lugar de releer el documento.

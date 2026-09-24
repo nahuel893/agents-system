@@ -57,7 +57,7 @@ def test_a_database_carrying_the_demo_marker_is_a_safe_target() -> None:
     """
     reason = classify_target(
         tables={DEMO_MARKER_TABLE, "facturas", "factura_lineas", "articulos"},
-        views={"agentsys_sales"},
+        views={"agents_system_sales"},
     )
 
     assert reason is None

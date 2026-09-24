@@ -22,13 +22,13 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 from structlog.testing import capture_logs
 
-from agentsys.connectors.order_connector import build_order_writer_tool_spec
-from agentsys.connectors.platform_connectors import (
+from agents_system.connectors.order_connector import build_order_writer_tool_spec
+from agents_system.connectors.platform_connectors import (
     build_conversation_summarizer_tool_spec,
     build_escalation_notifier_tool_spec,
     build_knowledge_retrieval_tool_spec,
 )
-from agentsys.services.reference import (
+from agents_system.services.reference import (
     InMemoryKnowledgeBase,
     InMemoryOrderWriter,
     KnowledgeDocument,

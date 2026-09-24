@@ -6,7 +6,7 @@ prueban que el *mecanismo* funciona: una llamada denegada se deniega, una
 superficie de herramientas resuelve como fue declarada. No pueden probar que
 el *comportamiento* de un rol bajo un modelo real coincida con lo que su
 prompt y su política pretenden. El pipeline de live-eval en
-`src/agentsys/evals/` cierra esa brecha: corre el escenario de un rol N veces
+`src/agents_system/evals/` cierra esa brecha: corre el escenario de un rol N veces
 contra un modelo local real y reporta una tasa de éxito, nunca un único
 pass/fail — la corrección de un sistema probabilístico es una tasa, no un
 booleano.
@@ -48,7 +48,7 @@ configurar no cambia.
 
 El proveedor propio del eval es un switch separado del `ADAPTER_PROVIDER` de
 la aplicación en ejecución: `EVAL_PROVIDER` (`Settings.eval_provider`, por
-defecto `"ollama"`), leído por `agentsys.evals.provider.build_eval_model()`.
+defecto `"ollama"`), leído por `agents_system.evals.provider.build_eval_model()`.
 Elegir otro modelo para una corrida de eval puntual nunca debe cambiar lo que
 la app misma sirve, así que ambos nunca comparten un campo. Acepta los mismos
 valores que despacha `main._build_chat_model`: `ollama`, `groq`, `anthropic`,
@@ -71,7 +71,7 @@ pytest -m live
 (O guardá estos valores en tu `.env` — `Settings` lo carga automáticamente;
 nunca imprimas ni commitees ese archivo.) El nombre de modelo que reporta
 `ScenarioResult` se lee de vuelta del modelo ya construido
-(`agentsys.evals.provider.model_display_name`): las clases de la familia
+(`agents_system.evals.provider.model_display_name`): las clases de la familia
 ChatOpenAI (`groq`, `openai_compatible`) lo exponen como `model_name`, no
 como `model` — reportar un string hardcodeado acá se desincronizaría en
 silencio de lo que el proveedor realmente usó.
@@ -120,7 +120,7 @@ resuelve automáticamente el grafo; `turns` son solo los mensajes propios del
 usuario, enviados de a uno con el historial acumulado del runtime
 retroalimentado.
 
-Cargá un archivo con `agentsys.evals.schema.load_scenario(path)`, o todos
+Cargá un archivo con `agents_system.evals.schema.load_scenario(path)`, o todos
 los `*.yaml`/`*.yml` de un directorio con `load_scenarios(directory)`.
 Cualquiera de los dos lanza `ScenarioError`, nombrando el archivo
 problemático, ante cualquier problema estructural (`role` faltante, `turns`
@@ -141,7 +141,7 @@ un modelo real. Deliberadamente no es una suite de corrección para
 `evals/results/` — **ignorado por git** (la entrada `evals/results/` del
 `.gitignore`; `evals/scenarios/` es un hermano, no un padre, y sigue
 versionado). Cada corrida de
-`agentsys.evals.reporting.write_results(...)` escribe dos archivos con marca
+`agents_system.evals.reporting.write_results(...)` escribe dos archivos con marca
 de tiempo:
 
 - `evals/results/<timestamp UTC>.json` — una entrada por escenario: rol,
@@ -152,14 +152,14 @@ de tiempo:
 
 ## Correrlo como pipeline propio de un rol
 
-`agentsys.evals.runner.run_scenario(scenario, *, model, model_name,
+`agents_system.evals.runner.run_scenario(scenario, *, model, model_name,
 registry, roots=None, runs=1)` resuelve el rol del escenario por el mismo
 camino `resolve()`/`build_runtime()` que usa cualquier otro consumidor (con
 los backends de referencia del rol conectados de la misma forma que
 `build_test_registry` de `tests/conftest.py` lo hace para las pruebas), lo
 corre `runs` veces, y devuelve un `ScenarioResult` con el resultado de cada
 corrida más la `success_rate` agregada.
-`agentsys.evals.runner.evaluate_assertions(assertions, messages)` es el
+`agents_system.evals.runner.evaluate_assertions(assertions, messages)` es el
 motor de aserciones en sí, invocable directamente contra cualquier
 transcripción de mensajes acumulada — esto es lo que ejercitan las pruebas
 unitarias offline en `tests/test_eval_runner.py` con un modelo fake,
@@ -193,7 +193,7 @@ harness está discriminando correctamente, no un bug del pipeline.
 
 - ADR-002 E.18: `docs/architecture/adr-002-agent-model-and-capabilities.md`
 - Backends de referencia que el eval runner conecta: `docs/platform_es/reference-backends.md`
-- Código del runner: `src/agentsys/evals/{schema,runner,reporting,provider}.py`
+- Código del runner: `src/agents_system/evals/{schema,runner,reporting,provider}.py`
 - Pruebas offline: `tests/test_eval_schema.py`, `tests/test_eval_runner.py`,
   `tests/test_eval_reporting.py`, `tests/test_eval_provider.py`
 - Prueba de humo en vivo: `tests/test_live_eval_sales_agent.py`

@@ -35,7 +35,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from agentsys.models.base import get_engine
+from agents_system.models.base import get_engine
 
 pytestmark = pytest.mark.integration
 
@@ -267,7 +267,7 @@ class TestOrmMatchesTheMigration:
         from sqlalchemy import MetaData, Table
         from sqlalchemy.dialects import postgresql
 
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         async with migrated_engine.connect() as conn:
             reflected = await conn.run_sync(
@@ -303,7 +303,7 @@ class TestOrmMatchesTheMigration:
         """
         from sqlalchemy import inspect
 
-        from agentsys.models.audit_event import AuditEvent
+        from agents_system.models.audit_event import AuditEvent
 
         def _unique_columns(sync_conn: object) -> set[str]:
             inspector = inspect(sync_conn)
@@ -349,7 +349,7 @@ class TestAuditSinkWritesThroughTheProductionPath:
         """A mapped row must persist, keep its offset, and land in its month."""
         from sqlalchemy.ext.asyncio import async_sessionmaker
 
-        from agentsys.models.audit_event import map_to_audit_event
+        from agents_system.models.audit_event import map_to_audit_event
 
         occurred = datetime.now(timezone.utc)
         event_id = uuid.uuid4()

@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agentsys.audit.events import ToolCallAttempted
-from agentsys.audit.sink import AuditSink
+from agents_system.audit.events import ToolCallAttempted
+from agents_system.audit.sink import AuditSink
 import uuid
 from datetime import datetime, timezone
 
@@ -68,7 +68,7 @@ class TestAuditSinkQueueOverflow:
         for _ in range(3):
             await sink.record(make_event())
 
-        with patch("agentsys.audit.sink.logger") as mock_logger:
+        with patch("agents_system.audit.sink.logger") as mock_logger:
             await sink.record(make_event())
             mock_logger.warning.assert_called_once()
             args, kwargs = mock_logger.warning.call_args
@@ -256,7 +256,7 @@ class TestAuditSinkCurrent:
 
     def test_current_raises_when_not_registered(self):
         """AuditSink.current() raises RuntimeError when no sink is registered."""
-        from agentsys.audit.sink import _app_ctx
+        from agents_system.audit.sink import _app_ctx
 
         # Isolate by clearing context
         _app_ctx.set({})
@@ -267,7 +267,7 @@ class TestAuditSinkCurrent:
     @pytest.mark.asyncio
     async def test_set_and_get_current(self):
         """AuditSink.set_current() + current() work as a singleton."""
-        from agentsys.audit.sink import _app_ctx
+        from agents_system.audit.sink import _app_ctx
 
         _app_ctx.set({})
 
@@ -309,7 +309,7 @@ class TestAuditSinkSequenceAllocation:
     @pytest.mark.asyncio
     async def test_sequence_distinct_per_correlation_id(self):
         """Two events for same correlation_id get distinct sequences."""
-        from agentsys.audit.recorder import _seq_counter, _allocate_sequence
+        from agents_system.audit.recorder import _seq_counter, _allocate_sequence
 
         # Clean slate for this test
         _seq_counter.clear()
@@ -327,7 +327,7 @@ class TestAuditSinkSequenceAllocation:
     @pytest.mark.asyncio
     async def test_sequence_resets_for_new_correlation_id(self):
         """Different correlation_ids get independent sequences (each starts at 1)."""
-        from agentsys.audit.recorder import _seq_counter, _allocate_sequence
+        from agents_system.audit.recorder import _seq_counter, _allocate_sequence
 
         # Clean slate for this test
         _seq_counter.clear()
@@ -345,7 +345,7 @@ class TestAuditSinkSequenceAllocation:
     @pytest.mark.asyncio
     async def test_sequence_allocator_is_async_safe(self):
         """Concurrent sequence allocations are all distinct (async-safe)."""
-        from agentsys.audit.recorder import _seq_counter, _allocate_sequence
+        from agents_system.audit.recorder import _seq_counter, _allocate_sequence
 
         # Clean slate for this test
         _seq_counter.clear()
@@ -393,7 +393,7 @@ class TestDrainFailureIsDiagnosable:
 
         sink = AuditSink(session_factory=lambda: _ExplodingSession())
 
-        with patch("agentsys.audit.sink.logger") as mock_logger:
+        with patch("agents_system.audit.sink.logger") as mock_logger:
             # Must not raise: the drainer's contract is that it never crashes.
             await sink._flush_batch([make_event()])
 

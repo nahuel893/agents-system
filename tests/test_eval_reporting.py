@@ -6,8 +6,8 @@ import datetime
 import json
 import pathlib
 
-from agentsys.evals.reporting import DEFAULT_RESULTS_DIR, write_results
-from agentsys.evals.runner import AssertionFailure, RunOutcome, ScenarioResult
+from agents_system.evals.reporting import DEFAULT_RESULTS_DIR, write_results
+from agents_system.evals.runner import AssertionFailure, RunOutcome, ScenarioResult
 
 _FIXED_NOW = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
 

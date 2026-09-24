@@ -11,14 +11,14 @@ import pytest
 import structlog.testing
 from langchain_core.messages import AIMessage
 
-from agentsys.models.outbox import InboundMessage, OutboxWork
-from agentsys.services.admission import TurnAdmissionLimiter
-from agentsys.services.outbox import (
+from agents_system.models.outbox import InboundMessage, OutboxWork
+from agents_system.services.admission import TurnAdmissionLimiter
+from agents_system.services.outbox import (
     OutboxClaimOutcome,
     OutboxFailureOutcome,
     OutboxLeaseLostError,
 )
-from agentsys.services.webhook_worker import DeferredWebhookWorker
+from agents_system.services.webhook_worker import DeferredWebhookWorker
 
 
 class _Session:
@@ -108,7 +108,7 @@ def _install_claim(
         return OutboxClaimOutcome(claimed=[work], terminalized=[])
 
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.claim_available_outbox_work", claim
+        "agents_system.services.webhook_worker.claim_available_outbox_work", claim
     )
 
 
@@ -146,10 +146,10 @@ async def test_processor_persists_reply_before_at_least_once_provider_send(
         events.append("sent")
 
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.persist_outbound_intent", persist
+        "agents_system.services.webhook_worker.persist_outbound_intent", persist
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", complete
+        "agents_system.services.webhook_worker.complete_outbox_work", complete
     )
 
     runtime = MagicMock()
@@ -192,10 +192,10 @@ async def test_ambiguous_send_reuses_persisted_reply_without_rerunning_turn(
 
     persist = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.persist_outbound_intent", persist
+        "agents_system.services.webhook_worker.persist_outbound_intent", persist
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", complete
+        "agents_system.services.webhook_worker.complete_outbox_work", complete
     )
     runtime = MagicMock()
     runtime.run_turn = AsyncMock()
@@ -224,7 +224,7 @@ async def test_non_service_directory_outcomes_complete_without_turn_or_send(
 ) -> None:
     completed = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", completed
+        "agents_system.services.webhook_worker.complete_outbox_work", completed
     )
 
     for directory in (_Directory(None), _Directory(_Participant(active=False))):
@@ -258,10 +258,10 @@ async def test_missing_directory_retries_instead_of_discarding_accepted_work(
     failure = AsyncMock(return_value=OutboxFailureOutcome(False, False))
     completion = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.record_outbox_failure", failure
+        "agents_system.services.webhook_worker.record_outbox_failure", failure
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", completion
+        "agents_system.services.webhook_worker.complete_outbox_work", completion
     )
     worker = DeferredWebhookWorker(
         session_factory=_SessionFactory(inbound),
@@ -287,10 +287,10 @@ async def test_normalize_failure_retries_unless_it_is_invalid_input(
     failure = AsyncMock(return_value=OutboxFailureOutcome(False, False))
     completion = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.record_outbox_failure", failure
+        "agents_system.services.webhook_worker.record_outbox_failure", failure
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", completion
+        "agents_system.services.webhook_worker.complete_outbox_work", completion
     )
     directory = _Directory(_Participant())
     directory.normalize_address.side_effect = RuntimeError("directory unavailable")
@@ -329,7 +329,7 @@ async def test_turn_failure_records_retry_and_notifies_only_after_terminal_commi
 
     notifier = AsyncMock(side_effect=lambda work, error: committed.append("notified"))
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.record_outbox_failure", record_failure
+        "agents_system.services.webhook_worker.record_outbox_failure", record_failure
     )
     runtime = MagicMock()
     runtime.run_turn = AsyncMock(side_effect=RuntimeError("runtime unavailable"))
@@ -362,7 +362,7 @@ async def test_committed_terminal_claim_notifies_after_the_claim_commit(
 
     notifier = AsyncMock(side_effect=lambda work, error: events.append("notified"))
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.claim_available_outbox_work", claim
+        "agents_system.services.webhook_worker.claim_available_outbox_work", claim
     )
     worker = DeferredWebhookWorker(
         session_factory=_SessionFactory(None),
@@ -389,13 +389,13 @@ async def test_provider_failure_records_a_retry_after_persisting_the_reply(
     record_failure = AsyncMock(return_value=OutboxFailureOutcome(False, False))
     completed = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.persist_outbound_intent", persisted
+        "agents_system.services.webhook_worker.persist_outbound_intent", persisted
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.record_outbox_failure", record_failure
+        "agents_system.services.webhook_worker.record_outbox_failure", record_failure
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", completed
+        "agents_system.services.webhook_worker.complete_outbox_work", completed
     )
     runtime = MagicMock()
     runtime.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
@@ -424,7 +424,7 @@ async def test_checkpointer_thread_id_is_omitted_when_disabled(
     work = _work(inbound)
     _install_claim(monkeypatch, work)
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", AsyncMock()
+        "agents_system.services.webhook_worker.complete_outbox_work", AsyncMock()
     )
     runtime = MagicMock()
     runtime.run_turn = AsyncMock(return_value=[AIMessage(content="")])
@@ -489,10 +489,10 @@ async def test_shared_envelope_selects_the_inbound_meta_id_not_the_first_message
         persisted.append(body)
 
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.persist_outbound_intent", persist
+        "agents_system.services.webhook_worker.persist_outbound_intent", persist
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", AsyncMock()
+        "agents_system.services.webhook_worker.complete_outbox_work", AsyncMock()
     )
     runtime = MagicMock()
     runtime.run_turn = AsyncMock(
@@ -564,7 +564,7 @@ async def test_shared_envelope_missing_inbound_meta_id_is_non_serviceable(
     )
     completed = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", completed
+        "agents_system.services.webhook_worker.complete_outbox_work", completed
     )
     runtime = MagicMock()
     runtime.run_turn = AsyncMock()
@@ -591,7 +591,7 @@ async def test_runtime_and_send_cancellation_propagate_without_failure_transitio
     inbound = _inbound()
     record_failure = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.record_outbox_failure", record_failure
+        "agents_system.services.webhook_worker.record_outbox_failure", record_failure
     )
     runtime = MagicMock()
     runtime.run_turn = AsyncMock(side_effect=asyncio.CancelledError())
@@ -637,10 +637,10 @@ async def test_lease_loss_stops_without_stale_failure_or_provider_send(
 
     record_failure = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.persist_outbound_intent", persist
+        "agents_system.services.webhook_worker.persist_outbound_intent", persist
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.record_outbox_failure", record_failure
+        "agents_system.services.webhook_worker.record_outbox_failure", record_failure
     )
     runtime = MagicMock()
     runtime.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
@@ -706,7 +706,7 @@ async def test_stop_cancels_an_in_flight_iteration_without_a_failure_transition(
     started = asyncio.Event()
     record_failure = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.record_outbox_failure", record_failure
+        "agents_system.services.webhook_worker.record_outbox_failure", record_failure
     )
 
     async def process_available(self: DeferredWebhookWorker, *, limit: int) -> None:
@@ -828,19 +828,19 @@ async def test_process_claimed_work_does_not_force_empty_permissions(
         FakeMessagesListChatModel,
     )
 
-    from agentsys.agent.graph import AgentRuntime
-    from agentsys.harness.factory import EquippedRuntime
-    from agentsys.harness.loader import AgentDefinition
-    from agentsys.harness.registry import Tier, ToolSpec
+    from agents_system.agent.graph import AgentRuntime
+    from agents_system.harness.factory import EquippedRuntime
+    from agents_system.harness.loader import AgentDefinition
+    from agents_system.harness.registry import Tier, ToolSpec
 
     inbound = _inbound()
     work = _work(inbound)
     _install_claim(monkeypatch, work)
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.persist_outbound_intent", AsyncMock()
+        "agents_system.services.webhook_worker.persist_outbound_intent", AsyncMock()
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", AsyncMock()
+        "agents_system.services.webhook_worker.complete_outbox_work", AsyncMock()
     )
 
     invoked: list[dict[str, Any]] = []
@@ -927,7 +927,7 @@ async def test_directory_resolve_failure_records_a_retry_without_running_a_turn(
     _install_claim(monkeypatch, work)
     record_failure = AsyncMock(return_value=OutboxFailureOutcome(False, False))
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.record_outbox_failure", record_failure
+        "agents_system.services.webhook_worker.record_outbox_failure", record_failure
     )
 
     class _RaisingDirectory:
@@ -963,10 +963,10 @@ async def test_recorder_present_records_the_turn_on_success(
     work = _work(inbound)
     _install_claim(monkeypatch, work)
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.persist_outbound_intent", AsyncMock()
+        "agents_system.services.webhook_worker.persist_outbound_intent", AsyncMock()
     )
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", AsyncMock()
+        "agents_system.services.webhook_worker.complete_outbox_work", AsyncMock()
     )
 
     runtime = MagicMock()
@@ -1026,11 +1026,11 @@ async def test_recorder_failure_logs_a_warning_and_the_turn_still_completes(
     work = _work(inbound)
     _install_claim(monkeypatch, work)
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.persist_outbound_intent", AsyncMock()
+        "agents_system.services.webhook_worker.persist_outbound_intent", AsyncMock()
     )
     complete = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", complete
+        "agents_system.services.webhook_worker.complete_outbox_work", complete
     )
 
     runtime = MagicMock()
@@ -1071,11 +1071,11 @@ async def test_empty_reply_completes_the_work_instead_of_leaving_it_dangling(
     _install_claim(monkeypatch, work)
     complete = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", complete
+        "agents_system.services.webhook_worker.complete_outbox_work", complete
     )
     persist = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.persist_outbound_intent", persist
+        "agents_system.services.webhook_worker.persist_outbound_intent", persist
     )
 
     runtime = MagicMock()
@@ -1137,7 +1137,7 @@ async def test_non_text_message_is_durably_completed_without_a_turn_or_reply(
     _install_claim(monkeypatch, work)
     complete = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.complete_outbox_work", complete
+        "agents_system.services.webhook_worker.complete_outbox_work", complete
     )
 
     runtime = MagicMock()
@@ -1176,7 +1176,7 @@ async def test_process_available_claims_nothing_when_admission_is_saturated(
     is taken and no attempt is spent on a row the worker cannot run yet."""
     claim = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.claim_available_outbox_work", claim
+        "agents_system.services.webhook_worker.claim_available_outbox_work", claim
     )
     limiter = TurnAdmissionLimiter(1)
     await limiter.acquire()  # saturate the only slot
@@ -1209,7 +1209,7 @@ async def test_process_available_resumes_claiming_once_a_slot_frees(
         return OutboxClaimOutcome(claimed=[], terminalized=[])
 
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.claim_available_outbox_work", claim
+        "agents_system.services.webhook_worker.claim_available_outbox_work", claim
     )
     limiter = TurnAdmissionLimiter(1)
     await limiter.acquire()
@@ -1250,7 +1250,7 @@ async def test_process_available_claims_only_the_reserved_slot_count_and_runs_it
         return OutboxClaimOutcome(claimed=list(works[:requested]), terminalized=[])
 
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.claim_available_outbox_work", claim
+        "agents_system.services.webhook_worker.claim_available_outbox_work", claim
     )
 
     in_flight = 0
@@ -1346,7 +1346,7 @@ async def test_process_claimed_work_admitted_releases_slot_on_cancellation(
 
     record_failure = AsyncMock()
     monkeypatch.setattr(
-        "agentsys.services.webhook_worker.record_outbox_failure", record_failure
+        "agents_system.services.webhook_worker.record_outbox_failure", record_failure
     )
 
     started = asyncio.Event()

@@ -1,6 +1,6 @@
 ---
 name: harness-conventions
-description: "Trigger: adding a tool/connector, a role/deployment, or touching the agent runtime, interceptor, or RBAC in agents-system. Load before reading or writing code under src/agentsys/{harness,agent,connectors,integration}."
+description: "Trigger: adding a tool/connector, a role/deployment, or touching the agent runtime, interceptor, or RBAC in agents-system. Load before reading or writing code under src/agents_system/{harness,agent,connectors,integration}."
 license: Apache-2.0
 metadata:
   author: agents-system
@@ -17,12 +17,12 @@ Never hardcode client specifics into the platform — inject them from `deployme
 
 | Layer | Path | Responsibility |
 |-------|------|----------------|
-| Integration | `src/agentsys/integration/` | Entry points: `webhook.py` (WhatsApp), `openai_adapter.py` (Open WebUI). Resolve a cached runtime and call `run_turn`. Never build runtimes per request. |
-| Harness | `src/agentsys/harness/` | `loader → injector → factory → interceptor` + `registry`. Assembles an `EquippedRuntime` and enforces RBAC. |
-| Agent | `src/agentsys/agent/` | `graph.py` (LangGraph), `state.py`. `AgentRuntime.run_turn(...)`. |
-| Connectors | `src/agentsys/connectors/` | Tools behind the interceptor (`rag_connector.py` = `catalog_search`). |
-| Services | `src/agentsys/services/` | Domain logic + I/O (rag, catalog, orders, embeddings, redis, medallion). |
-| Models | `src/agentsys/models/` | `base.py` (async engine), `audit_event.py` (the only platform-owned table, Alembic-managed). |
+| Integration | `src/agents_system/integration/` | Entry points: `webhook.py` (WhatsApp), `openai_adapter.py` (Open WebUI). Resolve a cached runtime and call `run_turn`. Never build runtimes per request. |
+| Harness | `src/agents_system/harness/` | `loader → injector → factory → interceptor` + `registry`. Assembles an `EquippedRuntime` and enforces RBAC. |
+| Agent | `src/agents_system/agent/` | `graph.py` (LangGraph), `state.py`. `AgentRuntime.run_turn(...)`. |
+| Connectors | `src/agents_system/connectors/` | Tools behind the interceptor (`rag_connector.py` = `catalog_search`). |
+| Services | `src/agents_system/services/` | Domain logic + I/O (rag, catalog, orders, embeddings, redis, medallion). |
+| Models | `src/agents_system/models/` | `base.py` (async engine), `audit_event.py` (the only platform-owned table, Alembic-managed). |
 
 Cross-cutting: `config.py` (pydantic Settings — **`.env` overrides code defaults**), `observability/`.
 

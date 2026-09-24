@@ -191,7 +191,7 @@ Recorded so the next person does not mistake absence for zero:
 - **2026-08-27, from review.** The first version of this ADR claimed up to 3
   engines per process (operational, BI, medallion) and concluded that
   PostgreSQL exhausts at three worker processes. Both were wrong: `main.py`
-  never constructs the medallion engine (`rg -n medallion src/agentsys/main.py`
+  never constructs the medallion engine (`rg -n medallion src/agents_system/main.py`
   → no hits), so a server process holds at most 2. The real ceiling is four
   processes, not three. The error made the constraint look tighter than it is,
   and it was found by fact-checking every claim against the code rather than

@@ -10,7 +10,7 @@ metadata:
 ## Infra (Postgres + Redis via Docker)
 
 ```bash
-docker compose up -d          # postgres (postgres:16, db=agentsys) + redis (redis:8-alpine)
+docker compose up -d          # postgres (postgres:16, db=agents_system) + redis (redis:8-alpine)
 docker compose ps             # wait for postgres healthcheck = healthy
 uv sync --group dev           # install deps into .venv (uv manages the venv)
 uv run alembic upgrade head   # create tables
@@ -22,8 +22,8 @@ uv run alembic upgrade head   # create tables
 
 ```bash
 uv run pytest                 # full suite; integration tests are deselected by default
-uv run ruff check src/agentsys tests
-uv run mypy src/agentsys
+uv run ruff check src/agents_system tests
+uv run mypy src/agents_system
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same three on every pull_request.
@@ -47,7 +47,7 @@ None of `scripts/smoke.py`, `scripts/smoke_rag.py`, `scripts/smoke_chat.py` or
 `embed_catalog.py` (an unimplemented stub — do not run it expecting it to do
 anything), `fake_openai_compatible_server.py`, `preflight_local_embeddings.sh`,
 `provision_bi_readonly.sql`, `upload_outline.py` and
-`cleanup_outline_duplicates.py`. `agentsys` is a library now (`deployments/`
+`cleanup_outline_duplicates.py`. `agents_system` is a library now (`deployments/`
 ships empty by design — see `deployments/README.md`), so there is no bundled
 catalog to embed and no bundled client to run a smoke against. What actually
 exercises each path today:
@@ -62,15 +62,15 @@ exercises each path today:
 
 ### Minimal smoke boot (infra wiring only, no roles/tools)
 
-`agentsys.main` has no module-level `app` — it exports the
+`agents_system.main` has no module-level `app` — it exports the
 `create_app(registry_factory=...)` factory a real caller supplies its own
 tools to (`docs/platform/library-usage.md`). This boots one with an empty
 registry: enough to prove Postgres/Redis/FastAPI wiring, not an agent turn.
 
 ```bash
 cat > /tmp/smoke_app.py <<'EOF'
-from agentsys.harness.registry import ToolRegistry
-from agentsys.main import create_app
+from agents_system.harness.registry import ToolRegistry
+from agents_system.main import create_app
 
 app = create_app(registry_factory=lambda *a, **k: ToolRegistry())
 EOF
@@ -92,8 +92,8 @@ auditing the other three roles the same way is ADR-002 E.18, tracked by #52.
 ### Catalog search (lexical, demo data — not vector search)
 
 ```bash
-docker exec agents-system-postgres-1 psql -U postgres -c 'CREATE DATABASE agentsys_demo;'
-DEMO_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/agentsys_demo \
+docker exec agents-system-postgres-1 psql -U postgres -c 'CREATE DATABASE agents_system_demo;'
+DEMO_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/agents_system_demo \
   uv run python demo/load_demo_company.py
 ```
 
@@ -103,7 +103,7 @@ Loads a deterministic fake company (`demo/README.md`). Wire
 `catalog_search` — lexical SKU/description matching only, `similarity` is
 always `null`. There is no generic real vector-RAG smoke: the platform's own
 pgvector-backed catalog was removed in #98, and `CatalogSource` (the vector
-search a role's `catalog_search` actually calls, `src/agentsys/services/rag.py`)
+search a role's `catalog_search` actually calls, `src/agents_system/services/rag.py`)
 is a client-injected port with no platform-shipped implementation — proving
 it end to end needs a real deployment's own catalog, out of scope here (same
 ADR-002 E.18 / #52 tracking as above).
@@ -123,4 +123,4 @@ ADR-002 E.18 / #52 tracking as above).
 
 `.env` / `.env.example` are edited by the human only (protected). Never print credentials.
 `.env` overrides `config.py` defaults — verify effective settings with
-`uv run python -c "from agentsys.config import get_settings; print(get_settings())"`.
+`uv run python -c "from agents_system.config import get_settings; print(get_settings())"`.

@@ -12,7 +12,7 @@ from __future__ import annotations
 import pathlib
 from typing import Any
 
-from agentsys.harness.loader import load_generic, resolve
+from agents_system.harness.loader import load_generic, resolve
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _CLIENT_A_DEPLOYMENTS = (
@@ -21,7 +21,7 @@ _CLIENT_A_DEPLOYMENTS = (
 
 
 def _client_a_roots() -> Any:
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=_REPO_ROOT / "platform",
@@ -90,8 +90,8 @@ def test_every_data_agent_manifest_tool_can_be_equipped() -> None:
     platform's own registry to equip it. Any tool the manifest names and the
     registry lacks raises InjectionError here.
     """
-    from agentsys.harness import loader
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness import loader
+    from agents_system.harness.injector import resolve_tool_surface
     from conftest import build_test_registry
 
     definition = loader.resolve("data-agent", client=None)

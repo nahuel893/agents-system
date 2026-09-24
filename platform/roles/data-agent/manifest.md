@@ -34,7 +34,7 @@ organizational knowledge bases and report data that span beyond a single session
   injected catalog. It consumes the `read:reports` permission, which this role
   has always granted but no tool used. The agent selects a report by name from
   a closed enum and supplies typed parameters; it never composes SQL. See
-  `src/agentsys/services/reports.py`.
+  `src/agents_system/services/reports.py`.
 
 `knowledge_retrieval` was declared here through v1.0 but no connector ever
 existed, so `resolve_tool_surface` raised `InjectionError: Unknown tool` and

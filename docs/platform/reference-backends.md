@@ -1,7 +1,7 @@
 # Reference backends for the platform-generic ports
 
 ADR-002 C.15. `KnowledgeBase`, `ConversationSummarizer`, `EscalationChannel`,
-and `OrderWriter` (`src/agentsys/services/{knowledge,summaries,escalation,orders}.py`)
+and `OrderWriter` (`src/agents_system/services/{knowledge,summaries,escalation,orders}.py`)
 are `Protocol` ports the platform deliberately ships with **no**
 implementation — see each module's own docstring for why. Left with nothing
 behind them, the platform-generic tools bound to those ports
@@ -10,7 +10,7 @@ correctly fail-closed, but that also meant no test anywhere in this
 repository ever exercised a role actually retrieving from a knowledge base,
 summarizing a real conversation, logging an escalation, or writing an order.
 
-`src/agentsys/services/reference.py` ships eight small reference backends that
+`src/agents_system/services/reference.py` ships eight small reference backends that
 close that gap. They are **opt-in**: nothing wires any of them by default, so
 an application that selects none keeps getting the same fail-closed refusals
 as before. They are also **not** production integrations — see "What these
@@ -39,13 +39,13 @@ port implementation. Pass one of these instead, wherever your `registry_factory`
 builds its `ToolRegistry`:
 
 ```python
-from agentsys.connectors.order_connector import build_order_writer_tool_spec
-from agentsys.connectors.platform_connectors import (
+from agents_system.connectors.order_connector import build_order_writer_tool_spec
+from agents_system.connectors.platform_connectors import (
     build_conversation_summarizer_tool_spec,
     build_escalation_notifier_tool_spec,
     build_knowledge_retrieval_tool_spec,
 )
-from agentsys.services.reference import (
+from agents_system.services.reference import (
     InMemoryKnowledgeBase,
     InMemoryOrderWriter,
     KnowledgeDocument,
@@ -95,7 +95,7 @@ import os
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from agentsys.services.reference import ReferenceBackends
+from agents_system.services.reference import ReferenceBackends
 
 # BI_DATABASE_URL targets the guarded loader's disposable database.
 # Its database credentials must be read-only.
@@ -144,6 +144,6 @@ registry.register(backends.message_sender_tool_spec())
 ## Cross-references
 
 - Library integration overview: `docs/platform/library-usage.md`
-- The ports themselves: `src/agentsys/services/{knowledge,summaries,escalation,orders}.py`
-- Fail-closed connector behavior: `src/agentsys/connectors/platform_connectors.py`, `src/agentsys/connectors/order_connector.py`
+- The ports themselves: `src/agents_system/services/{knowledge,summaries,escalation,orders}.py`
+- Fail-closed connector behavior: `src/agents_system/connectors/platform_connectors.py`, `src/agents_system/connectors/order_connector.py`
 - ADR-002 C.15: `docs/architecture/adr-002-agent-model-and-capabilities.md`

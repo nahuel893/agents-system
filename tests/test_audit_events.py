@@ -14,7 +14,7 @@ class TestAuditEventDiscriminatedUnion:
 
     def test_tool_call_attempted_dispatch(self) -> None:
         """Given a valid tool_call_attempted payload, model_validate returns ToolCallAttempted."""
-        from agentsys.audit.events import AuditEvent, ToolCallAttempted
+        from agents_system.audit.events import AuditEvent, ToolCallAttempted
 
         payload = {
             "event_type": "tool_call_attempted",
@@ -40,7 +40,7 @@ class TestAuditEventDiscriminatedUnion:
 
     def test_tool_call_blocked_dispatch(self) -> None:
         """Given a valid tool_call_blocked payload, model_validate returns ToolCallBlocked."""
-        from agentsys.audit.events import AuditEvent, ToolCallBlocked
+        from agents_system.audit.events import AuditEvent, ToolCallBlocked
 
         payload = {
             "event_type": "tool_call_blocked",
@@ -61,7 +61,7 @@ class TestAuditEventDiscriminatedUnion:
 
     def test_unknown_event_type_raises_validation_error(self) -> None:
         """Given an unknown event_type, model_validate raises ValidationError."""
-        from agentsys.audit.events import AuditEvent
+        from agents_system.audit.events import AuditEvent
 
         payload = {
             "event_type": "wat",
@@ -78,7 +78,7 @@ class TestAuditEventDiscriminatedUnion:
 
     def test_tool_call_attempted_serialization_preserves_event_type(self) -> None:
         """Given a ToolCallAttempted model, model_dump preserves event_type."""
-        from agentsys.audit.events import ToolCallAttempted
+        from agents_system.audit.events import ToolCallAttempted
 
         event = ToolCallAttempted(
             event_id=uuid4(),
@@ -117,7 +117,7 @@ class TestAllEventFamilies:
         return base
 
     def test_tool_granted(self) -> None:
-        from agentsys.audit.events import AuditEvent, ToolGranted
+        from agents_system.audit.events import AuditEvent, ToolGranted
 
         payload = self._full_payload("tool_granted", tool_name="catalog_search")
         event = AuditEvent.model_validate(payload)
@@ -125,7 +125,7 @@ class TestAllEventFamilies:
         assert event.tool_name == "catalog_search"
 
     def test_tool_denied(self) -> None:
-        from agentsys.audit.events import AuditEvent, ToolDenied
+        from agents_system.audit.events import AuditEvent, ToolDenied
 
         payload = self._full_payload(
             "tool_denied", tool_name="order_writer", reason="no_permission"
@@ -136,7 +136,7 @@ class TestAllEventFamilies:
         assert event.reason == "no_permission"
 
     def test_unknown_tool(self) -> None:
-        from agentsys.audit.events import AuditEvent, UnknownTool
+        from agents_system.audit.events import AuditEvent, UnknownTool
 
         payload = self._full_payload("unknown_tool", tool_name="nonexistent_tool")
         event = AuditEvent.model_validate(payload)
@@ -144,7 +144,7 @@ class TestAllEventFamilies:
         assert event.tool_name == "nonexistent_tool"
 
     def test_skill_loaded(self) -> None:
-        from agentsys.audit.events import AuditEvent, SkillLoaded
+        from agents_system.audit.events import AuditEvent, SkillLoaded
 
         payload = self._full_payload("skill_loaded", skill="sales-kb")
         event = AuditEvent.model_validate(payload)
@@ -152,7 +152,7 @@ class TestAllEventFamilies:
         assert event.skill == "sales-kb"
 
     def test_skill_missing(self) -> None:
-        from agentsys.audit.events import AuditEvent, SkillMissing
+        from agents_system.audit.events import AuditEvent, SkillMissing
 
         payload = self._full_payload(
             "skill_missing", skill="missing-skill", path="/skills/missing-skill.py"
@@ -163,7 +163,7 @@ class TestAllEventFamilies:
         assert event.path == "/skills/missing-skill.py"
 
     def test_runtime_built(self) -> None:
-        from agentsys.audit.events import AuditEvent, RuntimeBuilt
+        from agents_system.audit.events import AuditEvent, RuntimeBuilt
 
         payload = self._full_payload("runtime_built", tools=5, denied=2, skills=3)
         event = AuditEvent.model_validate(payload)
@@ -173,7 +173,7 @@ class TestAllEventFamilies:
         assert event.skills == 3
 
     def test_runtime_initialized(self) -> None:
-        from agentsys.audit.events import AuditEvent, RuntimeInitialized
+        from agents_system.audit.events import AuditEvent, RuntimeInitialized
 
         payload = self._full_payload("runtime_initialized", tools=5, model_type="groq")
         event = AuditEvent.model_validate(payload)
@@ -182,7 +182,7 @@ class TestAllEventFamilies:
         assert event.model_type == "groq"
 
     def test_runtime_timeout(self) -> None:
-        from agentsys.audit.events import AuditEvent, RuntimeTimeout
+        from agents_system.audit.events import AuditEvent, RuntimeTimeout
 
         payload = self._full_payload("runtime_timeout", total_execution_timeout_s=30.0)
         event = AuditEvent.model_validate(payload)
@@ -195,7 +195,7 @@ class TestAuditEventPayload:
 
     def test_tool_call_attempted_has_payload_field(self) -> None:
         """ToolCallAttempted.payload exists and is a dict (REQ-AUDIT-31)."""
-        from agentsys.audit.events import ToolCallAttempted
+        from agents_system.audit.events import ToolCallAttempted
 
         event = ToolCallAttempted(
             event_id=uuid4(),
@@ -217,8 +217,8 @@ class TestAuditEventPayload:
     def test_recorder_populates_payload(self) -> None:
         """Recorder helpers must populate payload with event-specific data (REQ-AUDIT-31)."""
         import asyncio
-        from agentsys.audit.events import ToolCallAttempted
-        from agentsys.audit.recorder import record_tool_call_attempted
+        from agents_system.audit.events import ToolCallAttempted
+        from agents_system.audit.recorder import record_tool_call_attempted
 
         class FakeDef:
             role_name = "sales-agent"
@@ -247,7 +247,7 @@ class TestAuditEventPayload:
 
     def test_audit_event_model_validate_with_payload_round_trip(self) -> None:
         """AuditEvent.model_validate then model_dump includes payload (REQ-AUDIT-31)."""
-        from agentsys.audit.events import AuditEvent
+        from agents_system.audit.events import AuditEvent
 
         data = {
             "event_type": "skill_loaded",
@@ -272,8 +272,8 @@ class TestAuditEventPayload:
         map_to_audit_event accesses event_data['payload'] directly.
         If payload is absent from model_dump(), this raises KeyError.
         """
-        from agentsys.audit.events import ToolCallAttempted
-        from agentsys.models.audit_event import map_to_audit_event
+        from agents_system.audit.events import ToolCallAttempted
+        from agents_system.models.audit_event import map_to_audit_event
 
         event = ToolCallAttempted(
             event_id=uuid4(),

@@ -1,7 +1,7 @@
 # Backends de referencia para los puertos genéricos de la plataforma
 
 ADR-002 C.15. `KnowledgeBase`, `ConversationSummarizer`, `EscalationChannel`
-y `OrderWriter` (`src/agentsys/services/{knowledge,summaries,escalation,orders}.py`)
+y `OrderWriter` (`src/agents_system/services/{knowledge,summaries,escalation,orders}.py`)
 son puertos `Protocol` que la plataforma entrega deliberadamente **sin**
 implementación — ver el docstring de cada módulo para el porqué. Al no tener
 nada detrás, las herramientas genéricas de plataforma vinculadas a esos
@@ -11,7 +11,7 @@ ninguna prueba en este repositorio ejercitó jamás a un rol recuperando de
 verdad datos de una base de conocimiento, resumiendo una conversación real,
 registrando un escalamiento o escribiendo un pedido.
 
-`src/agentsys/services/reference.py` entrega ocho backends de referencia
+`src/agents_system/services/reference.py` entrega ocho backends de referencia
 pequeños que cierran esa brecha. Son **opcionales** (opt-in): nada conecta
 ninguno por defecto, así que una aplicación que no selecciona ninguno sigue
 recibiendo los mismos rechazos en modo cerrado que antes. Tampoco son
@@ -40,13 +40,13 @@ una implementación del puerto. Pasá una de estas en su lugar, donde sea que
 tu `registry_factory` construya su `ToolRegistry`:
 
 ```python
-from agentsys.connectors.order_connector import build_order_writer_tool_spec
-from agentsys.connectors.platform_connectors import (
+from agents_system.connectors.order_connector import build_order_writer_tool_spec
+from agents_system.connectors.platform_connectors import (
     build_conversation_summarizer_tool_spec,
     build_escalation_notifier_tool_spec,
     build_knowledge_retrieval_tool_spec,
 )
-from agentsys.services.reference import (
+from agents_system.services.reference import (
     InMemoryKnowledgeBase,
     InMemoryOrderWriter,
     KnowledgeDocument,
@@ -98,7 +98,7 @@ import os
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from agentsys.services.reference import ReferenceBackends
+from agents_system.services.reference import ReferenceBackends
 
 # BI_DATABASE_URL apunta a la base descartable del cargador protegido.
 # Sus credenciales de base de datos deben ser de solo lectura.
@@ -150,6 +150,6 @@ registry.register(backends.message_sender_tool_spec())
 ## Referencias cruzadas
 
 - Panorama de integración de la biblioteca: `docs/platform/library-usage.md`
-- Los puertos en sí: `src/agentsys/services/{knowledge,summaries,escalation,orders}.py`
-- Comportamiento en modo cerrado de los conectores: `src/agentsys/connectors/platform_connectors.py`, `src/agentsys/connectors/order_connector.py`
+- Los puertos en sí: `src/agents_system/services/{knowledge,summaries,escalation,orders}.py`
+- Comportamiento en modo cerrado de los conectores: `src/agents_system/connectors/platform_connectors.py`, `src/agents_system/connectors/order_connector.py`
 - ADR-002 C.15: `docs/architecture_es/adr-002-agent-model-and-capabilities.md`

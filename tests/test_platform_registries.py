@@ -80,7 +80,7 @@ class SpyEmbedder:
 
 
 def _settings() -> Any:
-    from agentsys.config import Settings
+    from agents_system.config import Settings
 
     # `_env_file=None` builds Settings without reading the developer's .env, so
     # this suite does not depend on local machine state. It is a real parameter
@@ -141,8 +141,8 @@ def test_platform_role_resolves_its_pinned_tool_surface(
     Grading the resolved surface against the manifest that produced it means
     deleting a tool from a manifest keeps the assertion green (2 == 2).
     """
-    from agentsys.harness import loader
-    from agentsys.harness.injector import resolve_tool_surface
+    from agents_system.harness import loader
+    from agents_system.harness.injector import resolve_tool_surface
 
     definition = loader.resolve(role_type, client=None)
     registry = builder_fn()
@@ -168,7 +168,7 @@ def test_every_tool_declared_on_disk_exists_in_both_registries(
     ``InjectionError`` and the role unbootable — the failure class this branch
     exists to eliminate.
     """
-    from agentsys.harness import loader
+    from agents_system.harness import loader
 
     definition = loader.resolve(role_type, client=None)
     registry_names = set(REGISTRY_BUILDERS[builder_name]().names())
@@ -271,7 +271,7 @@ async def test_order_writer_in_every_registry_refuses_instead_of_fabricating(
 
 def test_test_registry_satisfies_registry_factory_protocol() -> None:
     import inspect
-    from agentsys.harness.registry import ToolRegistry
+    from agents_system.harness.registry import ToolRegistry
     from conftest import TestRegistryFactory, build_test_registry
 
     # RegistryFactory protocol requires: (settings, embedder=None, bi_engine=None) -> ToolRegistry
@@ -309,8 +309,8 @@ def test_test_registry_fakes_are_neutral_and_free_of_client_prose() -> None:
 
 def test_test_registry_custom_policy_and_bindings(tmp_path: Any) -> None:
     import pathlib
-    from agentsys.connectors.operator import SandboxPolicy, TerminalPolicy
-    from agentsys.services.reports import ReportSpec
+    from agents_system.connectors.operator import SandboxPolicy, TerminalPolicy
+    from agents_system.services.reports import ReportSpec
     from conftest import build_test_registry
 
     policy = TerminalPolicy(

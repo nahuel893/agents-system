@@ -2,7 +2,7 @@
 # pyright: reportMissingImports=false, reportCallIssue=false, reportArgumentType=false
 """Unit tests for the generic run_report connector (D-023).
 
-No real Postgres: agentsys.services.reports.run_report is monkeypatched
+No real Postgres: agents_system.services.reports.run_report is monkeypatched
 where needed, so these tests exercise only connector wiring - report-name
 dispatch, error shaping, ToolSpec registration, and that `session` is never
 forwarded to the report engine (AD-3: this tool uses its OWN dedicated
@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agentsys.connectors.sales_reports import CATALOG
-from agentsys.connectors.report_connector import (
+from agents_system.connectors.sales_reports import CATALOG
+from agents_system.connectors.report_connector import (
     build_report_connector,
     build_report_registry,
 )
@@ -62,7 +62,7 @@ async def test_validation_error_from_bad_param_returns_error_dict() -> None:
 
 
 async def test_session_kwarg_is_never_forwarded_to_run_report(monkeypatch: Any) -> None:
-    from agentsys.connectors import report_connector
+    from agents_system.connectors import report_connector
 
     captured: dict[str, Any] = {}
 
@@ -91,7 +91,7 @@ async def test_session_kwarg_is_never_forwarded_to_run_report(monkeypatch: Any) 
 
 
 async def test_happy_path_returns_run_report_output_verbatim(monkeypatch: Any) -> None:
-    from agentsys.connectors import report_connector
+    from agents_system.connectors import report_connector
 
     canned = {
         "report": "top_customers",
@@ -143,8 +143,8 @@ def test_build_report_tool_spec_can_be_added_to_an_existing_registry() -> None:
     registries; the injector resolves every tool the role manifest names from
     ONE registry, so the spec has to be composable into the shared one.
     """
-    from agentsys.connectors.report_connector import build_report_tool_spec
-    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
+    from agents_system.connectors.report_connector import build_report_tool_spec
+    from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
     registry = ToolRegistry()
     registry.register(
@@ -187,7 +187,7 @@ async def test_connector_returns_a_structured_error_when_the_database_fails(
 ) -> None:
     from sqlalchemy.exc import OperationalError
 
-    from agentsys.connectors import report_connector as rc
+    from agents_system.connectors import report_connector as rc
 
     async def exploding_run_report(*_: Any, **__: Any) -> dict[str, Any]:
         raise OperationalError("SELECT 1", {}, Exception("connection refused"))
@@ -215,7 +215,7 @@ async def test_connector_database_error_never_leaks_the_connection_string(
     """
     from sqlalchemy.exc import OperationalError
 
-    from agentsys.connectors import report_connector as rc
+    from agents_system.connectors import report_connector as rc
 
     secret = "sup3rs3cr3t-bi-password"
 
@@ -249,7 +249,7 @@ async def test_connector_marks_an_empty_result_as_a_successful_no_match(
     is worse than an error. The flag lets the agent say "the query ran and
     matched nothing" instead of guessing.
     """
-    from agentsys.connectors import report_connector as rc
+    from agents_system.connectors import report_connector as rc
 
     async def empty_run_report(*_: Any, **__: Any) -> dict[str, Any]:
         return {"report": "sales_by_zone", "rows": [], "row_count": 0, "meta": {}}
@@ -268,7 +268,7 @@ async def test_connector_does_not_mark_a_non_empty_result_as_empty(
     monkeypatch: Any,
 ) -> None:
     """Negative control for the flag above — it must track the row count."""
-    from agentsys.connectors import report_connector as rc
+    from agents_system.connectors import report_connector as rc
 
     async def one_row(*_: Any, **__: Any) -> dict[str, Any]:
         return {
@@ -301,7 +301,7 @@ async def test_connector_does_not_mark_a_non_empty_result_as_empty(
 async def test_adapter_logs_and_reports_a_failed_turn(monkeypatch: Any) -> None:
     from fastapi import HTTPException
 
-    from agentsys.integration import openai_adapter as oa
+    from agents_system.integration import openai_adapter as oa
 
     class _BoomRuntime:
         async def run_turn(self, **_: Any) -> Any:
@@ -344,7 +344,7 @@ async def test_unconfigured_report_tool_reports_it_instead_of_crashing() -> None
     a SQLAlchemyError and so escapes the handler added for finding 2 — landing
     right back at the uncaught-exception behaviour that fix removed.
     """
-    from agentsys.connectors import report_connector as rc
+    from agents_system.connectors import report_connector as rc
 
     connector = rc.build_report_connector(None, _catalog())
     result = await connector({"report": "sales_by_zone", "params": {}})

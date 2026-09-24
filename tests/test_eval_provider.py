@@ -15,9 +15,9 @@ from unittest.mock import patch
 
 from langchain_ollama import ChatOllama
 
-from agentsys.agent.reasoning import ReasoningSanitizedChatOpenAI
-from agentsys.config import Settings
-from agentsys.evals.provider import build_eval_model, model_display_name
+from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI
+from agents_system.config import Settings
+from agents_system.evals.provider import build_eval_model, model_display_name
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -27,12 +27,12 @@ def _settings(**overrides: Any) -> Settings:
 def _patched_settings(settings: Settings) -> tuple[Any, Any]:
     """`build_eval_model` reads `get_settings()` itself, and internally
     calls `main._build_chat_model`, which reads its OWN `get_settings()`
-    reference -- a separate name bound at import time in `agentsys.main`.
+    reference -- a separate name bound at import time in `agents_system.main`.
     Both must be patched to the same settings object for a test to control
     the whole call."""
     return (
-        patch("agentsys.evals.provider.get_settings", return_value=settings),
-        patch("agentsys.main.get_settings", return_value=settings),
+        patch("agents_system.evals.provider.get_settings", return_value=settings),
+        patch("agents_system.main.get_settings", return_value=settings),
     )
 
 

@@ -28,10 +28,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from conftest import create_test_app
 
-from agentsys.agent.reasoning import ReasoningSanitizedChatOpenAI
-from agentsys.config import Settings, get_settings
-from agentsys.harness.loader import DefinitionError
-from agentsys.main import _build_chat_model, lifespan
+from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI
+from agents_system.config import Settings, get_settings
+from agents_system.harness.loader import DefinitionError
+from agents_system.main import _build_chat_model, lifespan
 
 
 @pytest.fixture(autouse=True)
@@ -100,25 +100,25 @@ async def test_lifespan_uses_data_driven_grants() -> None:
     mock_engine.dispose = AsyncMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
-            "agentsys.main._build_checkpointer_cm",
+            "agents_system.main._build_checkpointer_cm",
             side_effect=_fake_checkpointer_cm_factory(MagicMock()),
         ),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
         patch(
-            "agentsys.harness.loader.resolve", return_value=fake_definition
+            "agents_system.harness.loader.resolve", return_value=fake_definition
         ) as mock_resolve,
         patch(
-            "agentsys.harness.factory.build_runtime", return_value=fake_equipped
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ) as mock_build_runtime,
-        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
     ):
         app = create_test_app()
 
@@ -145,14 +145,14 @@ async def test_lifespan_builds_whatsapp_client() -> None:
     mock_engine.dispose = AsyncMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
     ):
         app = create_test_app()
 
         async with lifespan(app):
-            from agentsys.integration.whatsapp_client import WhatsAppClient
+            from agents_system.integration.whatsapp_client import WhatsAppClient
 
             assert isinstance(app.state.whatsapp_client, WhatsAppClient)
 
@@ -176,21 +176,23 @@ async def test_lifespan_injects_checkpointer_into_runtimes() -> None:
     fake_checkpointer = MagicMock(name="fake_checkpointer")
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
-            "agentsys.main._build_checkpointer_cm",
+            "agents_system.main._build_checkpointer_cm",
             side_effect=_fake_checkpointer_cm_factory(fake_checkpointer),
         ) as mock_build_checkpointer_cm,
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
-        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
-        patch("agentsys.agent.graph.AgentRuntime") as mock_agent_runtime,
+        patch("agents_system.harness.loader.resolve", return_value=fake_definition),
+        patch(
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
+        ),
+        patch("agents_system.agent.graph.AgentRuntime") as mock_agent_runtime,
     ):
         app = create_test_app()
 
@@ -215,18 +217,22 @@ async def test_lifespan_skips_checkpointer_when_disabled() -> None:
     mock_engine.dispose = AsyncMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
-        patch("agentsys.main._build_checkpointer_cm") as mock_build_checkpointer_cm,
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.main._build_checkpointer_cm"
+        ) as mock_build_checkpointer_cm,
+        patch(
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
-        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
-        patch("agentsys.agent.graph.AgentRuntime") as mock_agent_runtime,
+        patch("agents_system.harness.loader.resolve", return_value=fake_definition),
+        patch(
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
+        ),
+        patch("agents_system.agent.graph.AgentRuntime") as mock_agent_runtime,
     ):
         app = create_test_app()
 
@@ -257,23 +263,25 @@ async def test_lifespan_resource_teardown_survives_engine_dispose_failure() -> N
     mock_aclose = AsyncMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
-            "agentsys.main._build_checkpointer_cm",
+            "agents_system.main._build_checkpointer_cm",
             side_effect=_fake_checkpointer_cm_factory(fake_checkpointer, aexit_calls),
         ),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
-        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
-        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.harness.loader.resolve", return_value=fake_definition),
         patch(
-            "agentsys.integration.whatsapp_client.WhatsAppClient.aclose",
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
+        ),
+        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch(
+            "agents_system.integration.whatsapp_client.WhatsAppClient.aclose",
             new=mock_aclose,
         ),
     ):
@@ -327,7 +335,7 @@ def test_build_chat_model_dispatches_by_provider(
     monkeypatch.setenv("GROQ_API_KEY", "test")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     with patch(
-        "agentsys.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
     ):
         model = _build_chat_model(provider)
 
@@ -336,7 +344,7 @@ def test_build_chat_model_dispatches_by_provider(
 
 def test_build_chat_model_wires_openai_compatible_from_settings() -> None:
     with patch(
-        "agentsys.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
     ):
         model = _build_chat_model("openai_compatible")
 
@@ -361,7 +369,7 @@ def test_build_chat_model_requires_base_url_and_model(
     API — wrong vendor, wrong credential, opaque auth error later.
     """
     settings = _openai_compatible_settings(**{missing_field: ""})
-    with patch("agentsys.main.get_settings", return_value=settings):
+    with patch("agents_system.main.get_settings", return_value=settings):
         with pytest.raises(ValueError, match=expected_env_var) as excinfo:
             _build_chat_model("openai_compatible")
 
@@ -380,10 +388,10 @@ def test_build_chat_model_accepts_empty_api_key_for_keyless_hosts() -> None:
     fake_logger = MagicMock()
     with (
         patch(
-            "agentsys.main.get_settings",
+            "agents_system.main.get_settings",
             return_value=_openai_compatible_settings(openai_compatible_api_key=""),
         ),
-        patch("agentsys.main.structlog.get_logger", return_value=fake_logger),
+        patch("agents_system.main.structlog.get_logger", return_value=fake_logger),
     ):
         model = _build_chat_model("openai_compatible")
 
@@ -399,7 +407,7 @@ def test_openai_compatible_model_still_supports_bind_tools() -> None:
     stop applying the moment the agent equips a tool.
     """
     with patch(
-        "agentsys.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
     ):
         model = _build_chat_model("openai_compatible")
 
@@ -428,7 +436,7 @@ def test_build_chat_model_ollama_uses_configured_model_and_base_url() -> None:
     settings = _make_settings(
         ollama_model="qwen3:8b", ollama_base_url="http://localhost:11500"
     )
-    with patch("agentsys.main.get_settings", return_value=settings):
+    with patch("agents_system.main.get_settings", return_value=settings):
         model = _build_chat_model("ollama")
 
     assert model.model == "qwen3:8b"
@@ -440,7 +448,7 @@ def test_build_chat_model_ollama_defaults_leave_base_url_unset() -> None:
     treats an empty string base_url differently from "not configured"
     (it would try to hit http://, not fall back to its own default host).
     """
-    with patch("agentsys.main.get_settings", return_value=_make_settings()):
+    with patch("agents_system.main.get_settings", return_value=_make_settings()):
         model = _build_chat_model("ollama")
 
     assert model.model == "qwen2.5:3b"
@@ -474,18 +482,20 @@ def _runtime_lease_invariant_patches(
         mock_engine,
         mock_worker,
         (
-            patch("agentsys.main.get_engine", return_value=mock_engine),
-            patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-            patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+            patch("agents_system.main.get_engine", return_value=mock_engine),
+            patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+            patch("agents_system.main._build_chat_model", return_value=MagicMock()),
             patch(
-                "agentsys.services.embeddings.get_embedding_provider",
+                "agents_system.services.embeddings.get_embedding_provider",
                 return_value=MagicMock(),
             ),
-            patch("agentsys.harness.loader.resolve", return_value=fake_definition),
-            patch("agentsys.harness.factory.build_runtime", return_value=MagicMock()),
-            patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+            patch("agents_system.harness.loader.resolve", return_value=fake_definition),
             patch(
-                "agentsys.services.webhook_worker.DeferredWebhookWorker",
+                "agents_system.harness.factory.build_runtime", return_value=MagicMock()
+            ),
+            patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+            patch(
+                "agents_system.services.webhook_worker.DeferredWebhookWorker",
                 return_value=mock_worker,
             ),
         ),
@@ -513,7 +523,7 @@ async def test_lifespan_enforces_whatsapp_runtime_timeout_within_outbox_lease(
     _, worker, patches = _runtime_lease_invariant_patches(fake_definition)
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_settings", return_value=test_settings),
         _stack(patches),
     ):
         app = create_test_app()
@@ -548,7 +558,7 @@ async def test_lifespan_accepts_default_whatsapp_runtime_limits() -> None:
     _, _, patches = _runtime_lease_invariant_patches(fake_definition)
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_settings", return_value=test_settings),
         _stack(patches),
     ):
         app = create_test_app()
@@ -587,7 +597,7 @@ async def test_lifespan_guard_reads_the_merged_effective_limits(
     _, _, patches = _runtime_lease_invariant_patches(fake_definition)
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_settings", return_value=test_settings),
         _stack(patches),
     ):
         app = create_test_app()
@@ -609,7 +619,7 @@ async def test_lifespan_does_not_apply_webhook_lease_to_adapter_only_runtime() -
 
     _, worker, patches = _runtime_lease_invariant_patches(fake_definition)
 
-    with patch("agentsys.main.get_settings", return_value=test_settings):
+    with patch("agents_system.main.get_settings", return_value=test_settings):
         with _stack(patches):
             app = create_test_app()
             async with lifespan(app):
@@ -632,8 +642,8 @@ async def test_lifespan_uses_full_lease_duration_when_it_exceeds_one_day() -> No
     _, _, patches = _runtime_lease_invariant_patches(definition)
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.DEFAULT_LEASE_DURATION", timedelta(days=1)),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.DEFAULT_LEASE_DURATION", timedelta(days=1)),
         _stack(patches),
     ):
         app = create_test_app()
@@ -694,22 +704,22 @@ def _bi_lifespan_patches(settings: Settings, bi_engine: Any) -> tuple[Any, ...]:
     fake_definition.execution_limits = None
 
     return (
-        patch("agentsys.main.get_settings", return_value=settings),
+        patch("agents_system.main.get_settings", return_value=settings),
         patch(
-            "agentsys.main.get_engine",
+            "agents_system.main.get_engine",
             side_effect=lambda url: (
                 bi_engine if url == settings.bi_database_url else app_engine
             ),
         ),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
-        patch("agentsys.harness.factory.build_runtime", return_value=MagicMock()),
-        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.harness.loader.resolve", return_value=fake_definition),
+        patch("agents_system.harness.factory.build_runtime", return_value=MagicMock()),
+        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
     )
 
 
@@ -820,8 +830,8 @@ async def test_create_app_boots_with_a_caller_supplied_registry() -> None:
     deployment in this repository, and the lifespan calls it with the settings,
     embedder and BI engine it resolved.
     """
-    from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
-    from agentsys.main import create_app
+    from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
+    from agents_system.main import create_app
 
     calls: list[tuple[Any, Any]] = []
 
@@ -861,7 +871,7 @@ def test_create_app_requires_a_registry_factory() -> None:
     A default would be the platform silently choosing one deployment's
     connectors, which is exactly the coupling this seam removes.
     """
-    from agentsys.main import create_app
+    from agents_system.main import create_app
 
     with pytest.raises(TypeError):
         create_app()  # type: ignore[call-arg]
@@ -876,8 +886,8 @@ async def test_create_app_stores_the_ports_it_is_given() -> None:
     turn at all -- silently discarding them is the failure this asserts
     against.
     """
-    from agentsys.harness.registry import ToolRegistry
-    from agentsys.main import create_app
+    from agents_system.harness.registry import ToolRegistry
+    from agents_system.main import create_app
 
     directory = object()
     recorder = object()
@@ -894,9 +904,9 @@ async def test_create_app_stores_the_ports_it_is_given() -> None:
 
 def test_create_app_accepts_and_stores_roots_on_app_state() -> None:
     """`create_app` exposes an explicit `roots: RootConfig | None = None` and stores it on app.state."""
-    from agentsys.harness.loader import RootConfig
-    from agentsys.harness.registry import ToolRegistry
-    from agentsys.main import create_app
+    from agents_system.harness.loader import RootConfig
+    from agents_system.harness.registry import ToolRegistry
+    from agents_system.main import create_app
 
     custom_roots = RootConfig()
     app = create_app(
@@ -915,14 +925,14 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
     """The factory has to be the one the lifespan actually invokes.
 
     Previously only covered incidentally, and that coverage was anchored to
-    `agentsys.connectors.rag_connector` -- the module #70 deletes next. This
+    `agents_system.connectors.rag_connector` -- the module #70 deletes next. This
     drives the real lifespan and asserts the caller's factory was called with
     the settings, embedder and BI engine it resolved.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from agentsys.harness.registry import ToolRegistry
-    from agentsys.main import create_app, lifespan
+    from agents_system.harness.registry import ToolRegistry
+    from agents_system.main import create_app, lifespan
 
     calls: list[tuple[Any, ...]] = []
 
@@ -945,17 +955,17 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
     )
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=MagicMock()),
-        patch("agentsys.audit.sink.AuditSink") as sink_cls,
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=MagicMock()),
+        patch("agents_system.audit.sink.AuditSink") as sink_cls,
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         # Without this the lifespan constructs a real LocalBGEEmbeddingProvider,
         # whose __init__ downloads 4.3 GB from HuggingFace — making this the
         # only test in the default suite that needs live network. pyproject
         # defines an `integration` marker for exactly that and deselects it by
         # default; a unit test must not quietly opt back in.
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
     ):
@@ -999,8 +1009,8 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from agentsys.harness.registry import ToolRegistry
-    from agentsys.main import create_app, lifespan
+    from agents_system.harness.registry import ToolRegistry
+    from agents_system.main import create_app, lifespan
 
     built: list[str] = []
 
@@ -1028,15 +1038,17 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
     application = create_app(registry_factory=lambda *a, **k: ToolRegistry())
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
-        patch("agentsys.audit.sink.AuditSink") as sink_cls,
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=_awaitable_engine()),
+        patch("agents_system.audit.sink.AuditSink") as sink_cls,
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.factory.build_runtime", side_effect=spy_build_runtime),
+        patch(
+            "agents_system.harness.factory.build_runtime", side_effect=spy_build_runtime
+        ),
     ):
         sink_cls.return_value.start = AsyncMock()
         sink_cls.return_value.stop = AsyncMock()
@@ -1061,9 +1073,9 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
     import pathlib as _pathlib
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from agentsys.harness.loader import RootConfig
-    from agentsys.harness.registry import ToolRegistry
-    from agentsys.main import create_app, lifespan
+    from agents_system.harness.loader import RootConfig
+    from agents_system.harness.registry import ToolRegistry
+    from agents_system.main import create_app, lifespan
 
     resolve_roots: list[Any] = []
     build_runtime_roots: list[Any] = []
@@ -1107,16 +1119,18 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
     )
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
-        patch("agentsys.audit.sink.AuditSink") as sink_cls,
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=_awaitable_engine()),
+        patch("agents_system.audit.sink.AuditSink") as sink_cls,
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.loader.resolve", side_effect=spy_resolve),
-        patch("agentsys.harness.factory.build_runtime", side_effect=spy_build_runtime),
+        patch("agents_system.harness.loader.resolve", side_effect=spy_resolve),
+        patch(
+            "agents_system.harness.factory.build_runtime", side_effect=spy_build_runtime
+        ),
     ):
         sink_cls.return_value.start = AsyncMock()
         sink_cls.return_value.stop = AsyncMock()
@@ -1141,14 +1155,14 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
 async def test_client_runtime_without_explicit_roots_raises_definition_error() -> None:
     """A <client>__<role> runtime with no explicit roots raises DefinitionError.
 
-    agentsys does not derive a default deployments root; a consumer must pass
+    agents_system does not derive a default deployments root; a consumer must pass
     RootConfig explicitly to create_app.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from agentsys.harness.loader import DefinitionError
-    from agentsys.harness.registry import ToolRegistry
-    from agentsys.main import create_app, lifespan
+    from agents_system.harness.loader import DefinitionError
+    from agents_system.harness.registry import ToolRegistry
+    from agents_system.main import create_app, lifespan
 
     def _awaitable_engine() -> MagicMock:
         engine = MagicMock()
@@ -1166,12 +1180,12 @@ async def test_client_runtime_without_explicit_roots_raises_definition_error() -
     application = create_app(registry_factory=lambda *a, **k: ToolRegistry())
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
-        patch("agentsys.audit.sink.AuditSink") as sink_cls,
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=_awaitable_engine()),
+        patch("agents_system.audit.sink.AuditSink") as sink_cls,
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
     ):
@@ -1191,9 +1205,9 @@ async def test_client_whatsapp_runtime_without_explicit_roots_raises_definition_
     """A client override in whatsapp_runtime_id with no roots also raises DefinitionError."""
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from agentsys.harness.loader import DefinitionError
-    from agentsys.harness.registry import ToolRegistry
-    from agentsys.main import create_app, lifespan
+    from agents_system.harness.loader import DefinitionError
+    from agents_system.harness.registry import ToolRegistry
+    from agents_system.main import create_app, lifespan
 
     def _awaitable_engine() -> MagicMock:
         engine = MagicMock()
@@ -1212,12 +1226,12 @@ async def test_client_whatsapp_runtime_without_explicit_roots_raises_definition_
     application = create_app(registry_factory=lambda *a, **k: ToolRegistry())
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
-        patch("agentsys.audit.sink.AuditSink") as sink_cls,
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=_awaitable_engine()),
+        patch("agents_system.audit.sink.AuditSink") as sink_cls,
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
     ):
@@ -1234,8 +1248,8 @@ async def test_generic_runtime_boots_without_explicit_roots() -> None:
     """Generic (_generic__role) runtimes remain usable with no explicit roots."""
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from agentsys.harness.registry import ToolRegistry
-    from agentsys.main import create_app, lifespan
+    from agents_system.harness.registry import ToolRegistry
+    from agents_system.main import create_app, lifespan
 
     def _awaitable_engine() -> MagicMock:
         engine = MagicMock()
@@ -1254,16 +1268,18 @@ async def test_generic_runtime_boots_without_explicit_roots() -> None:
 
     fake_equipped = MagicMock()
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=_awaitable_engine()),
-        patch("agentsys.audit.sink.AuditSink") as sink_cls,
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=_awaitable_engine()),
+        patch("agents_system.audit.sink.AuditSink") as sink_cls,
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
-        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
+        ),
     ):
         sink_cls.return_value.start = AsyncMock()
         sink_cls.return_value.stop = AsyncMock()
@@ -1290,7 +1306,7 @@ async def test_create_app_refuses_to_boot_when_whatsapp_role_is_not_untrusted_in
     to boot, naming the role and the channel, before build_runtime runs and
     before app.state.runtimes is ever populated (boot failure, not a runtime
     surprise)."""
-    from agentsys.harness.loader import DefinitionError
+    from agents_system.harness.loader import DefinitionError
 
     test_settings = _make_settings(
         adapter_runtimes=[],
@@ -1309,14 +1325,16 @@ async def test_create_app_refuses_to_boot_when_whatsapp_role_is_not_untrusted_in
         )
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.factory.build_runtime", side_effect=spy_build_runtime),
+        patch(
+            "agents_system.harness.factory.build_runtime", side_effect=spy_build_runtime
+        ),
     ):
         app = create_test_app()
 
@@ -1348,16 +1366,18 @@ async def test_create_app_boots_when_whatsapp_role_is_untrusted_input_true() -> 
     fake_equipped = MagicMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
-        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch(
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
+        ),
+        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
     ):
         app = create_test_app()
 
@@ -1380,16 +1400,18 @@ async def test_boot_check_does_not_apply_to_adapter_only_runtimes() -> None:
     fake_equipped = MagicMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
-        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch(
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
+        ),
+        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
     ):
         app = create_test_app()
 
@@ -1444,23 +1466,25 @@ async def test_lifespan_starts_and_stops_the_webhook_worker_around_dependencies(
     fake_worker.stop = AsyncMock(side_effect=worker_stop)
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.loader.resolve", return_value=fake_definition),
-        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
-        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.harness.loader.resolve", return_value=fake_definition),
         patch(
-            "agentsys.integration.whatsapp_client.WhatsAppClient.aclose",
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
+        ),
+        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch(
+            "agents_system.integration.whatsapp_client.WhatsAppClient.aclose",
             new=aclose,
         ),
         patch(
-            "agentsys.services.webhook_worker.DeferredWebhookWorker",
+            "agents_system.services.webhook_worker.DeferredWebhookWorker",
             return_value=fake_worker,
         ) as mock_worker_cls,
     ):
@@ -1509,11 +1533,11 @@ async def test_lifespan_skips_the_webhook_worker_when_no_runtime_is_resolved() -
     mock_engine.dispose = AsyncMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.webhook_worker.DeferredWebhookWorker"
+            "agents_system.services.webhook_worker.DeferredWebhookWorker"
         ) as mock_worker_cls,
     ):
         app = create_test_app()
@@ -1551,11 +1575,11 @@ async def test_lifespan_fails_closed_when_runtime_id_is_empty_with_credentials()
     mock_engine.dispose = AsyncMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.webhook_worker.DeferredWebhookWorker"
+            "agents_system.services.webhook_worker.DeferredWebhookWorker"
         ) as mock_worker_cls,
     ):
         app = create_test_app()
@@ -1587,11 +1611,11 @@ async def test_lifespan_fails_closed_when_runtime_id_is_malformed_with_credentia
     mock_engine.dispose = AsyncMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.webhook_worker.DeferredWebhookWorker"
+            "agents_system.services.webhook_worker.DeferredWebhookWorker"
         ) as mock_worker_cls,
     ):
         app = create_test_app()
@@ -1620,11 +1644,11 @@ async def test_lifespan_boots_with_only_one_whatsapp_credential_set() -> None:
     mock_engine.dispose = AsyncMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(
-            "agentsys.services.webhook_worker.DeferredWebhookWorker"
+            "agents_system.services.webhook_worker.DeferredWebhookWorker"
         ) as mock_worker_cls,
     ):
         app = create_test_app()
@@ -1654,16 +1678,18 @@ async def test_lifespan_boots_normally_with_credentials_and_valid_runtime_id() -
     mock_engine.dispose = AsyncMock()
 
     with (
-        patch("agentsys.main.get_settings", return_value=test_settings),
-        patch("agentsys.main.get_engine", return_value=mock_engine),
-        patch("agentsys.main.close_redis_pool", new=AsyncMock()),
-        patch("agentsys.main._build_chat_model", return_value=MagicMock()),
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
-            "agentsys.services.embeddings.get_embedding_provider",
+            "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
         ),
-        patch("agentsys.harness.factory.build_runtime", return_value=fake_equipped),
-        patch("agentsys.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch(
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
+        ),
+        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
     ):
         app = create_test_app()
 

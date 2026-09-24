@@ -19,10 +19,10 @@ from typing import Any
 
 import pytest
 
-from agentsys.audit.sink import AuditSink
-from agentsys.harness.injector import resolve_tool_surface
-from agentsys.harness.loader import AgentDefinition
-from agentsys.harness.registry import Tier, ToolRegistry, ToolSpec
+from agents_system.audit.sink import AuditSink
+from agents_system.harness.injector import resolve_tool_surface
+from agents_system.harness.loader import AgentDefinition
+from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 
 
 class CapturingSink(AuditSink):
@@ -147,7 +147,7 @@ async def test_a_denied_tool_is_auditable(sink: CapturingSink) -> None:
 @pytest.mark.asyncio
 async def test_emitting_without_a_running_loop_is_not_an_error() -> None:
     """Sync entry points (CLI, unit tests) have no loop. That must not raise."""
-    from agentsys.harness.injector import _emit
+    from agents_system.harness.injector import _emit
 
     def no_loop_here() -> None:
         _emit(
@@ -179,7 +179,7 @@ async def test_stop_does_not_lose_queued_events() -> None:
     AuditSink.set_current(sink)
 
     event = await __import__(
-        "agentsys.audit.recorder", fromlist=["record_tool_denied"]
+        "agents_system.audit.recorder", fromlist=["record_tool_denied"]
     ).record_tool_denied(
         _definition(tools=(), permissions=()), tool_name="order_writer", reason="denied"
     )

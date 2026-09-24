@@ -19,9 +19,9 @@ import pytest
 from sqlalchemy import Integer, String, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-from agentsys.models.audit_event import map_to_audit_event
-from agentsys.models.base import get_engine
-from agentsys.services.reports import (
+from agents_system.models.audit_event import map_to_audit_event
+from agents_system.models.base import get_engine
+from agents_system.services.reports import (
     HARD_ROW_CEILING,
     ParamSpec,
     ReportSpec,

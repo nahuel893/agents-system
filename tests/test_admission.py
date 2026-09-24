@@ -13,7 +13,7 @@ import asyncio
 
 import pytest
 
-from agentsys.services.admission import (
+from agents_system.services.admission import (
     DEFAULT_MAX_CONCURRENT_TURNS,
     TurnAdmissionLimiter,
 )

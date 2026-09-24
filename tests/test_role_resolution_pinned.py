@@ -34,7 +34,7 @@ from typing import Any
 
 import pytest
 
-from agentsys.harness.loader import RootConfig, resolve
+from agents_system.harness.loader import RootConfig, resolve
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _CLIENT_A_DEPLOYMENTS = (
@@ -319,7 +319,7 @@ def test_a_deployment_that_tries_to_widen_is_refused(tmp_path: pathlib.Path) -> 
     """
     import pytest
 
-    from agentsys.harness.loader import DefinitionError, RootConfig
+    from agents_system.harness.loader import DefinitionError, RootConfig
 
     dep = tmp_path / "greedy" / "summary-agent"
     dep.mkdir(parents=True)
@@ -377,7 +377,11 @@ def test_no_role_outside_the_operator_branch_can_reach_the_host() -> None:
     taken back. Grepping the resolved surface — not the manifests — catches a
     grant that arrives by inheritance rather than declaration.
     """
-    from agentsys.harness.loader import RootConfig, _extends_target, _load_role_files
+    from agents_system.harness.loader import (
+        RootConfig,
+        _extends_target,
+        _load_role_files,
+    )
     from platform_role_contract import discover_concrete_platform_roles
 
     host_permissions = {"exec:command", "read:files"}

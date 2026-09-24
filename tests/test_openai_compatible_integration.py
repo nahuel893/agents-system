@@ -26,8 +26,8 @@ from typing import Any
 
 import pytest
 
-from agentsys.config import Settings, get_settings
-from agentsys.main import _build_chat_model
+from agents_system.config import Settings, get_settings
+from agents_system.main import _build_chat_model
 
 _CATALOG_SEARCH_TOOL: dict[str, Any] = {
     "name": "catalog_search",

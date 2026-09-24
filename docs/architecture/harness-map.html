@@ -1383,7 +1383,7 @@ const stageData = {
     title: '🏭 Agent Factory',
     sub: 'Assembles the EquippedRuntime from definition + injector + skills',
     items: [
-      { label: 'Module', val: 'src/agentsys/harness/factory.py' },
+      { label: 'Module', val: 'src/agents_system/harness/factory.py' },
       { label: 'Calls', val: 'loader.resolve() → injector.resolve_tool_surface() → _load_skills() → _compose_prompt()' },
       { label: 'Returns', val: 'EquippedRuntime (frozen): definition · system_prompt · tools · denied_tools · skills' },
       { label: 'Skill loading', val: 'deployments/{client}/{role}/skills/{name}.md — missing file → FactoryError' },
@@ -1395,7 +1395,7 @@ const stageData = {
     title: '💉 Capability Injector — Layer 1',
     sub: 'Build-time RBAC: resolves the granted tool surface',
     items: [
-      { label: 'Module', val: 'src/agentsys/harness/injector.py' },
+      { label: 'Module', val: 'src/agents_system/harness/injector.py' },
       { label: 'Algorithm', val: 'effective = role.permissions ∩ granted_permissions\nFor each tool: required_permissions ⊆ effective → granted; else denied' },
       { label: 'Fail loud', val: 'Unknown tool name (not in registry) → InjectionError immediately' },
       { label: 'Returns', val: 'InjectionResult: granted: tuple[ToolSpec] · denied: tuple[(name, reason)]' },
@@ -1406,7 +1406,7 @@ const stageData = {
     title: '🧠 Agent Runtime',
     sub: 'Provider-agnostic LangGraph runtime — any BaseChatModel',
     items: [
-      { label: 'Module', val: 'src/agentsys/agent/graph.py · src/agentsys/agent/state.py' },
+      { label: 'Module', val: 'src/agents_system/agent/graph.py · src/agents_system/agent/state.py' },
       { label: 'Receives', val: 'EquippedRuntime (from factory) + injected BaseChatModel (ChatOpenAI, ChatAnthropic, etc.)' },
       { label: 'Graph nodes', val: 'call_model: binds tools + invokes model\nexecute_tools: calls intercept() per tool_use block' },
       { label: 'PolicyViolation', val: 'Blocked tool → ToolMessage(status="error") — loop continues, no crash' },
@@ -1419,7 +1419,7 @@ const stageData = {
     title: '🛡️ Tool Call Interceptor — Layer 2',
     sub: 'Call-time validation: blocks anything not in the injected surface',
     items: [
-      { label: 'Module', val: 'src/agentsys/harness/interceptor.py' },
+      { label: 'Module', val: 'src/agents_system/harness/interceptor.py' },
       { label: 'Catches', val: 'Model hallucinations · Prompt injection attempts · Incomplete injection bugs · Revoked permissions' },
       { label: 'Sensitivity rule', val: 'tier T2/T3, or always_revalidate=True → sensitive → revalidate current_permissions at call time (ADR-002 C.10)' },
       { label: 'On block', val: 'log interceptor.call_blocked · raise PolicyViolation(tool_name, reason)' },

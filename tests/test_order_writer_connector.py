@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
-from agentsys.connectors.order_connector import (
+from agents_system.connectors.order_connector import (
     _WRITE_FAILED_MESSAGE,
     build_order_writer_tool_spec,
 )

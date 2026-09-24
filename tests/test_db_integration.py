@@ -14,8 +14,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import text
 
-from agentsys.config import get_settings
-from agentsys.models.base import get_db, get_engine, get_session_factory
+from agents_system.config import get_settings
+from agents_system.models.base import get_db, get_engine, get_session_factory
 
 
 @pytest.mark.integration

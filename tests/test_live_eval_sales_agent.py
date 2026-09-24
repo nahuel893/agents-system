@@ -19,11 +19,11 @@ import pathlib
 
 import pytest
 
-from agentsys.evals.provider import build_eval_model
-from agentsys.evals.reporting import write_results
-from agentsys.evals.runner import run_scenario
-from agentsys.evals.schema import load_scenario
-from agentsys.harness.loader import RootConfig
+from agents_system.evals.provider import build_eval_model
+from agents_system.evals.reporting import write_results
+from agents_system.evals.runner import run_scenario
+from agents_system.evals.schema import load_scenario
+from agents_system.harness.loader import RootConfig
 
 pytestmark = pytest.mark.live
 

@@ -37,7 +37,7 @@ choosing.
 | # | Component | Without it | STATUS |
 |---|---|---|---|
 | 1 | **Objective & identity** | The model has nothing to decide *toward*. A role's `role.md` purpose/scope is the objective; see "Role = class" below for identity. | ✅ implemented (role); ❌ not implemented (per-principal identity — see ADR-002 §A.2) |
-| 2 | **A model that decides** | Nothing chooses the next action; you have a script, not an agent. `AgentRuntime` binds a `BaseChatModel` and lets it choose tool calls (`src/agentsys/agent/graph.py:344-375`). | ✅ implemented |
+| 2 | **A model that decides** | Nothing chooses the next action; you have a script, not an agent. `AgentRuntime` binds a `BaseChatModel` and lets it choose tool calls (`src/agents_system/agent/graph.py:344-375`). | ✅ implemented |
 | 3 | **Tools** | Without tools the loop can still run, but the model can only talk — it cannot act on the world. This is a real, supported edge case on this platform, not a hypothetical: `AgentRuntime.__init__` only calls `model.bind_tools(...)` when the granted tool surface is non-empty (`agent/graph.py:373-375` — "Only call bind_tools when there are tools to bind — some fake models raise NotImplementedError for bind_tools even with an empty list"). A role resolved with zero granted tools degrades to a chatbot at runtime, silently, by this exact code path. | ✅ implemented, including the tool-less edge case |
 | 4 | **A loop with observation** | A single model call with no chance to see the result of its own action cannot correct course. `_build_graph` wires `_call_model → _execute_tools → _call_model → …` until the model stops requesting tools or a limit fires. | ✅ implemented |
 | 5 | **Limits** | An unbounded loop is a runaway cost and safety risk. `PLATFORM_DEFAULT_LIMITS` (`harness/loader.py:139-145`): `tool_call_timeout_s=10`, `total_execution_timeout_s=60`, `max_tool_calls=20`, `max_delegation_depth=2`, `max_clarification_attempts=3`. `_effective_limits` (`agent/graph.py:58-73`) merges a role's overrides over these per-key; `_ENFORCED_LIMIT_KEYS` (`agent/graph.py:51-55`) is the subset the loop itself actually reads today — `max_tool_calls`, `total_execution_timeout_s`, `tool_call_timeout_s`. | ⚠️ partial — the three enforced keys work; `max_delegation_depth` and `max_clarification_attempts` are declared and merged but not read by the loop (`agent/graph.py:50` says so explicitly: "not yet read here") |
@@ -80,7 +80,7 @@ same role.
 Today the platform resolves roles correctly but does not carry a principal
 identity through to the runtime (ADR-002 §A.2): `granted_permissions` at
 startup is `definition.permissions` — the role's own declared permissions,
-not any employee's or customer's (`src/agentsys/main.py:326-333`,
+not any employee's or customer's (`src/agents_system/main.py:326-333`,
 specifically line 329). Concretely: today, every WhatsApp customer talking to
 the `sales-agent` role is served by the *same* `AgentRuntime` object, built
 once at boot (`main.py:334-336`) and cached in `app.state.runtimes`, with the

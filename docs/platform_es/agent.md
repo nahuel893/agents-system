@@ -40,7 +40,7 @@ decide.
 | # | Componente | Sin él | ESTADO |
 |---|---|---|---|
 | 1 | **Objetivo e identidad** | El modelo no tiene nada hacia qué decidir. El propósito/alcance de `role.md` de un rol es el objetivo; ver "Rol = clase" más abajo para identidad. | ✅ implementado (rol); ❌ no implementado (identidad por principal — ver ADR-002 §A.2) |
-| 2 | **Un modelo que decide** | Nada elige la siguiente acción; se tiene un script, no un agente. `AgentRuntime` vincula un `BaseChatModel` y deja que elija las llamadas a herramientas (`src/agentsys/agent/graph.py:344-375`). | ✅ implementado |
+| 2 | **Un modelo que decide** | Nada elige la siguiente acción; se tiene un script, no un agente. `AgentRuntime` vincula un `BaseChatModel` y deja que elija las llamadas a herramientas (`src/agents_system/agent/graph.py:344-375`). | ✅ implementado |
 | 3 | **Herramientas** (*tools*) | Sin herramientas el bucle igual puede correr, pero el modelo solo puede hablar — no puede actuar sobre el mundo. Este es un caso límite real y soportado en esta plataforma, no hipotético: `AgentRuntime.__init__` solo invoca `model.bind_tools(...)` cuando la superficie de herramientas otorgada no está vacía (`agent/graph.py:373-375` — "Only call bind_tools when there are tools to bind — some fake models raise NotImplementedError for bind_tools even with an empty list"). Un rol resuelto con cero herramientas otorgadas degrada a chatbot en tiempo de ejecución, silenciosamente, por este mismo camino de código. | ✅ implementado, incluyendo el caso límite sin herramientas |
 | 4 | **Un bucle con observación** | Una única llamada al modelo sin posibilidad de ver el resultado de su propia acción no puede corregir el rumbo. `_build_graph` conecta `_call_model → _execute_tools → _call_model → …` hasta que el modelo deja de solicitar herramientas o se dispara un límite. | ✅ implementado |
 | 5 | **Límites** | Un bucle sin límites es un riesgo de costo descontrolado y de seguridad. `PLATFORM_DEFAULT_LIMITS` (`harness/loader.py:139-145`): `tool_call_timeout_s=10`, `total_execution_timeout_s=60`, `max_tool_calls=20`, `max_delegation_depth=2`, `max_clarification_attempts=3`. `_effective_limits` (`agent/graph.py:58-73`) mezcla las sobreescrituras de un rol sobre estos valores, campo por campo; `_ENFORCED_LIMIT_KEYS` (`agent/graph.py:51-55`) es el subconjunto que el bucle realmente lee hoy — `max_tool_calls`, `total_execution_timeout_s`, `tool_call_timeout_s`. | ⚠️ parcial — las tres claves aplicadas funcionan; `max_delegation_depth` y `max_clarification_attempts` están declaradas y mezcladas pero no las lee el bucle (`agent/graph.py:50` lo dice explícitamente: "not yet read here") |
@@ -84,7 +84,7 @@ agentes distintos, ambos instancias del mismo rol.
 Hoy la plataforma resuelve roles correctamente pero no propaga una identidad
 de principal hasta el runtime (ADR-002 §A.2): `granted_permissions` al
 arrancar es `definition.permissions` — los permisos propios y declarados del
-rol, no los de ningún empleado o cliente (`src/agentsys/main.py:326-333`,
+rol, no los de ningún empleado o cliente (`src/agents_system/main.py:326-333`,
 específicamente la línea 329). En concreto: hoy, cada cliente de WhatsApp
 que habla con el rol `sales-agent` es atendido por el *mismo* objeto
 `AgentRuntime`, construido una única vez al arrancar (`main.py:334-336`) y

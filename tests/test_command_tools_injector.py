@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentsys.harness.loader import (
+from agents_system.harness.loader import (
     AgentDefinition,
     CommandToolDeclaration,
     CommandToolParam,
@@ -55,7 +55,7 @@ def _definition(
 
 
 def test_command_tool_granted_when_permission_present() -> None:
-    from agentsys.harness.injector import resolve_command_tool_surface
+    from agents_system.harness.injector import resolve_command_tool_surface
 
     decl = _declaration(name="check_stock", tier=Tier.T2, permission="run:check_stock")
     definition = _definition(command_tools=(decl,), permissions=("run:check_stock",))
@@ -69,7 +69,7 @@ def test_command_tool_granted_when_permission_present() -> None:
 
 
 def test_command_tool_denied_when_permission_missing() -> None:
-    from agentsys.harness.injector import resolve_command_tool_surface
+    from agents_system.harness.injector import resolve_command_tool_surface
 
     decl = _declaration(name="check_stock", tier=Tier.T2, permission="run:check_stock")
     definition = _definition(command_tools=(decl,), permissions=("run:check_stock",))
@@ -85,7 +85,7 @@ def test_untrusted_input_role_still_receives_t2_command_tool() -> None:
     """ADR-002 C.11's acceptance criterion, at the injector layer: a
     `run:*`-permissioned, non-T3 command tool is unaffected by
     `untrusted_input`."""
-    from agentsys.harness.injector import resolve_command_tool_surface
+    from agents_system.harness.injector import resolve_command_tool_surface
 
     decl = _declaration(name="check_stock", tier=Tier.T2, permission="run:check_stock")
     definition = _definition(
@@ -106,7 +106,7 @@ def test_untrusted_input_role_denied_t3_command_tool() -> None:
     """ADR-002 C.10's second barrier applies to command tools exactly like it
     already applies to registry-backed tools: an `untrusted_input` role never
     receives a T3-tiered tool, regardless of its permission family."""
-    from agentsys.harness.injector import resolve_command_tool_surface
+    from agents_system.harness.injector import resolve_command_tool_surface
 
     decl = _declaration(
         name="dangerous_tool", tier=Tier.T3, permission="run:dangerous_tool"
@@ -133,7 +133,7 @@ def test_untrusted_input_role_denied_t3_command_tool() -> None:
 def test_trusted_role_still_receives_t3_command_tool() -> None:
     """Regression: the barrier must not overreach for a role that is NOT
     `untrusted_input`."""
-    from agentsys.harness.injector import resolve_command_tool_surface
+    from agents_system.harness.injector import resolve_command_tool_surface
 
     decl = _declaration(
         name="dangerous_tool", tier=Tier.T3, permission="run:dangerous_tool"
@@ -160,10 +160,10 @@ def test_trusted_role_still_receives_t3_command_tool() -> None:
 # gap a T0 command tool left open: T0 is equipped AND never revalidated.
 # ---------------------------------------------------------------------------
 async def test_t2_command_tool_is_equipped_and_revalidated_by_interceptor() -> None:
-    from agentsys.connectors.command_tools import build_command_tool_spec
-    from agentsys.harness.factory import EquippedRuntime
-    from agentsys.harness.injector import resolve_command_tool_surface
-    from agentsys.harness.interceptor import PolicyViolation, intercept
+    from agents_system.connectors.command_tools import build_command_tool_spec
+    from agents_system.harness.factory import EquippedRuntime
+    from agents_system.harness.injector import resolve_command_tool_surface
+    from agents_system.harness.interceptor import PolicyViolation, intercept
 
     decl = _declaration(name="check_stock", tier=Tier.T2, permission="run:check_stock")
     definition = _definition(

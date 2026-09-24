@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
-from agentsys.connectors.platform_connectors import (
+from agents_system.connectors.platform_connectors import (
     build_conversation_summarizer_tool_spec,
     build_escalation_notifier_tool_spec,
     build_knowledge_retrieval_tool_spec,

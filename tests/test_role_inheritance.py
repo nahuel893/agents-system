@@ -33,7 +33,7 @@ from typing import Any
 
 import pytest
 
-from agentsys.harness.loader import DefinitionError, RootConfig, resolve
+from agents_system.harness.loader import DefinitionError, RootConfig, resolve
 
 _FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "agents" / "hierarchy"
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
@@ -129,7 +129,7 @@ def test_a_chain_deeper_than_the_cap_raises_a_depth_error(
     this deep should never exist on disk. It also lets the cycle test above
     rely on the two error messages being distinguishable.
     """
-    from agentsys.harness import loader
+    from agents_system.harness import loader
 
     depth = loader._MAX_ROLE_CHAIN_DEPTH + 2
     roles_dir = tmp_path / "roles"
@@ -299,7 +299,7 @@ def test_a_deployment_declaring_one_limit_keeps_the_roles_others(
     because every key the deployment DECLARED really was stricter — the
     escape is in the keys it did not declare.
     """
-    from agentsys.harness.loader import RootConfig, resolve
+    from agents_system.harness.loader import RootConfig, resolve
 
     dep = tmp_path / "sneaky" / "operator-agent"
     dep.mkdir(parents=True)
@@ -344,7 +344,7 @@ def test_a_deployed_agent_still_sees_its_platform_roles_prose() -> None:
     existed only for a role resolved WITHOUT a deployment, which is not how
     anything runs.
     """
-    from agentsys.harness.loader import resolve as real_resolve
+    from agents_system.harness.loader import resolve as real_resolve
 
     role = real_resolve("sales-agent")
     deployed = real_resolve("sales-agent", client="client-a", roots=_client_a_roots())
@@ -374,7 +374,7 @@ def test_a_deployment_may_not_declare_a_parent_it_does_not_have(
 
     Declaring the truth stays legal. Declaring a lie now fails.
     """
-    from agentsys.harness.loader import DefinitionError, RootConfig, load_override
+    from agents_system.harness.loader import DefinitionError, RootConfig, load_override
 
     dep = tmp_path / "acme" / "sales-agent"
     dep.mkdir(parents=True)
@@ -440,7 +440,7 @@ def test_a_deployment_that_removes_a_permission_actually_loses_it(
     advertises. So an author read their manifest, saw a permission removed,
     and still had it. The failure went in the granting direction.
     """
-    from agentsys.harness.loader import RootConfig, resolve
+    from agents_system.harness.loader import RootConfig, resolve
 
     dep = tmp_path / "narrow" / "sales-agent"
     dep.mkdir(parents=True)
@@ -477,7 +477,7 @@ def test_a_deployment_that_declares_no_autonomy_keeps_the_roles(
     `supervised` — looser than the role, in the one direction that matters.
     Caught by mutation: fixing only the role→role path left this green.
     """
-    from agentsys.harness.loader import RootConfig, resolve
+    from agents_system.harness.loader import RootConfig, resolve
 
     dep = tmp_path / "quiet" / "fx-confirm"
     dep.mkdir(parents=True)
@@ -629,7 +629,7 @@ def test_a_role_naming_a_limit_as_null_still_has_a_ceiling(
     `max_tool_calls` is what stops an operator agent looping on a failing
     command, and every one of those is a subprocess.
     """
-    from agentsys.harness.loader import RootConfig, resolve
+    from agents_system.harness.loader import RootConfig, resolve
 
     roles = tmp_path / "roles"
     d = roles / "p"

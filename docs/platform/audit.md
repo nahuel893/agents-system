@@ -210,10 +210,10 @@ the month differently depending on who ran the migration.
 
 ## Adding a new event type
 
-1. Add the sub-model to `src/agentsys/audit/events.py` and register it in the
+1. Add the sub-model to `src/agents_system/audit/events.py` and register it in the
    dispatch map. Fields go in `payload`, not on the sub-model, unless they need
    to be indexed.
-2. Add a `record_*` coroutine to `src/agentsys/audit/recorder.py`. It must build
+2. Add a `record_*` coroutine to `src/agents_system/audit/recorder.py`. It must build
    the payload and pass it through `_build_and_redact` — never construct the
    event directly, or PII bypasses the redactor.
 3. Call it from the harness through `_emit("record_your_event", ...)`. Never
@@ -258,12 +258,12 @@ so it is filed rather than patched.
 
 ## Implementation
 
-- `src/agentsys/audit/events.py` — the discriminated union
-- `src/agentsys/audit/redactor.py` — default-deny PII policy
-- `src/agentsys/audit/recorder.py` — event builders, one per type
-- `src/agentsys/audit/sink.py` — queue, drainer, batched writes
-- `src/agentsys/harness/injector.py` — `_emit` / `_emit_async`
-- `src/agentsys/models/audit_event.py` — ORM model, Alembic-owned
+- `src/agents_system/audit/events.py` — the discriminated union
+- `src/agents_system/audit/redactor.py` — default-deny PII policy
+- `src/agents_system/audit/recorder.py` — event builders, one per type
+- `src/agents_system/audit/sink.py` — queue, drainer, batched writes
+- `src/agents_system/harness/injector.py` — `_emit` / `_emit_async`
+- `src/agents_system/models/audit_event.py` — ORM model, Alembic-owned
 - `alembic/versions/` — table, partitions, and the `DEFAULT` partition
 - `tests/test_audit_wiring.py` — end-to-end delivery, mutation-verified
 - `tests/test_audit_sink.py`, `tests/test_audit_redactor.py`,

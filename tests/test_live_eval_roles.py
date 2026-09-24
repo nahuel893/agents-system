@@ -8,9 +8,9 @@ This loads every scenario under `evals/scenarios/` EXCEPT
 `sales_agent_smoke.yaml` (already owned by #169 /
 `tests/test_live_eval_sales_agent.py`) and runs each one `EVAL_RUNS` times
 (default 5) against a real model, through the SAME `run_scenario` pipeline,
-using `agentsys.evals.live_registry.build_live_registry_factory` so every
+using `agents_system.evals.live_registry.build_live_registry_factory` so every
 run gets its own, unshared reference-backend instances (PR #176 review note
-1 -- see `src/agentsys/evals/live_registry.py`).
+1 -- see `src/agents_system/evals/live_registry.py`).
 
 This proves the pipeline runs end to end for each role, not that the model
 is good: a low success rate is an expected, useful signal (which role/tool
@@ -31,13 +31,13 @@ import pytest
 from langchain_core.language_models import BaseChatModel
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from agentsys.connectors.operator import SandboxPolicy, TerminalPolicy
-from agentsys.evals.live_registry import build_live_registry_factory
-from agentsys.evals.provider import build_eval_model
-from agentsys.evals.reporting import write_results
-from agentsys.evals.runner import run_scenario
-from agentsys.evals.schema import Scenario, load_scenarios
-from agentsys.harness.loader import RootConfig
+from agents_system.connectors.operator import SandboxPolicy, TerminalPolicy
+from agents_system.evals.live_registry import build_live_registry_factory
+from agents_system.evals.provider import build_eval_model
+from agents_system.evals.reporting import write_results
+from agents_system.evals.runner import run_scenario
+from agents_system.evals.schema import Scenario, load_scenarios
+from agents_system.harness.loader import RootConfig
 
 pytestmark = pytest.mark.live
 
@@ -46,7 +46,7 @@ _SCENARIOS_DIR = pathlib.Path(__file__).resolve().parents[1] / "evals" / "scenar
 #: The disposable local dev Postgres this issue's demo data was loaded into
 #: (docker-compose's dev-only credentials, not a secret).
 _DEMO_DATABASE_URL = (
-    "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agentsys_demo"
+    "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo"
 )
 
 _DEFAULT_RUNS = 5
@@ -108,7 +108,7 @@ def operator_workspace() -> Iterator[pathlib.Path]:
     known file so the "happy"/"no fabrication" scenarios have a known-present
     and a known-absent target.
     """
-    with tempfile.TemporaryDirectory(prefix="agentsys-live-eval-operator-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="agents_system-live-eval-operator-") as tmp:
         root = pathlib.Path(tmp)
         (root / "notes.txt").write_text(
             "Sprint status: green. No blockers.", encoding="utf-8"

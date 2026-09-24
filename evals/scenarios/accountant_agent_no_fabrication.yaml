@@ -3,7 +3,7 @@
 # Asks for a figure no report in the closed CATALOG produces (multi-year
 # revenue growth -- the closest report, sales_by_month, only covers a
 # trailing monthly window, never a multi-year comparison; see
-# src/agentsys/connectors/sales_reports.py's CATALOG). policy.md names
+# src/agents_system/connectors/sales_reports.py's CATALOG). policy.md names
 # figure_requested_outside_report_catalog as an escalation condition
 # precisely for this: "when someone asks for a number no pre-approved
 # report produces, the wrong move is to approximate it from one that is

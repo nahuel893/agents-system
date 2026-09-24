@@ -21,12 +21,12 @@ from typing import Any
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 
-from agentsys.evals.live_registry import (
+from agents_system.evals.live_registry import (
     DEMO_SUMMARY_SESSION_ID,
     build_live_registry,
     build_live_registry_factory,
 )
-from agentsys.harness.registry import Tier
+from agents_system.harness.registry import Tier
 
 # ---------------------------------------------------------------------------
 # Fake AsyncEngine -- same shape as tests/test_reference_backends.py's own
@@ -345,7 +345,7 @@ async def test_build_live_registry_factory_passes_through_terminal_policy() -> N
     import pathlib
     import tempfile
 
-    from agentsys.connectors.operator import SandboxPolicy, TerminalPolicy
+    from agents_system.connectors.operator import SandboxPolicy, TerminalPolicy
 
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)

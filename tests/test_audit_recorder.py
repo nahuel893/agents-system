@@ -6,13 +6,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from agentsys.harness.loader import AgentDefinition
+from agents_system.harness.loader import AgentDefinition
 
 
 class MockDefinition:
     """Minimal stand-in for AgentDefinition for recorder tests.
 
-    Field names mirror the real ``agentsys.harness.loader.AgentDefinition``.
+    Field names mirror the real ``agents_system.harness.loader.AgentDefinition``.
     They did not: this mock used to invent a ``client`` field, which is what
     hid the recorder reading an attribute no real definition has. A mock that
     diverges from the type it stands in for tests the mock, not the code.
@@ -58,8 +58,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_tool_call_attempted(self) -> None:
         """record_tool_call_attempted produces a ToolCallAttempted event."""
-        from agentsys.audit.events import ToolCallAttempted
-        from agentsys.audit.recorder import record_tool_call_attempted
+        from agents_system.audit.events import ToolCallAttempted
+        from agents_system.audit.recorder import record_tool_call_attempted
 
         definition = MockDefinition(role="sales-agent", deployment="acme")
         event = await record_tool_call_attempted(
@@ -83,8 +83,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_tool_call_blocked(self) -> None:
         """record_tool_call_blocked produces a ToolCallBlocked event."""
-        from agentsys.audit.events import ToolCallBlocked
-        from agentsys.audit.recorder import record_tool_call_blocked
+        from agents_system.audit.events import ToolCallBlocked
+        from agents_system.audit.recorder import record_tool_call_blocked
 
         definition = MockDefinition()
         event = await record_tool_call_blocked(
@@ -97,8 +97,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_tool_granted(self) -> None:
         """record_tool_granted produces a ToolGranted event."""
-        from agentsys.audit.events import ToolGranted
-        from agentsys.audit.recorder import record_tool_granted
+        from agents_system.audit.events import ToolGranted
+        from agents_system.audit.recorder import record_tool_granted
 
         definition = MockDefinition()
         event = await record_tool_granted(definition, tool_name="catalog_search")
@@ -108,8 +108,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_tool_denied(self) -> None:
         """record_tool_denied produces a ToolDenied event."""
-        from agentsys.audit.events import ToolDenied
-        from agentsys.audit.recorder import record_tool_denied
+        from agents_system.audit.events import ToolDenied
+        from agents_system.audit.recorder import record_tool_denied
 
         definition = MockDefinition()
         event = await record_tool_denied(
@@ -122,8 +122,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_unknown_tool(self) -> None:
         """record_unknown_tool produces an UnknownTool event."""
-        from agentsys.audit.events import UnknownTool
-        from agentsys.audit.recorder import record_unknown_tool
+        from agents_system.audit.events import UnknownTool
+        from agents_system.audit.recorder import record_unknown_tool
 
         definition = MockDefinition()
         event = await record_unknown_tool(definition, tool_name="nonexistent_tool")
@@ -133,8 +133,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_skill_loaded(self) -> None:
         """record_skill_loaded produces a SkillLoaded event."""
-        from agentsys.audit.events import SkillLoaded
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.events import SkillLoaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         definition = MockDefinition()
         event = await record_skill_loaded(definition, skill="sales-kb")
@@ -144,8 +144,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_skill_missing(self) -> None:
         """record_skill_missing produces a SkillMissing event."""
-        from agentsys.audit.events import SkillMissing
-        from agentsys.audit.recorder import record_skill_missing
+        from agents_system.audit.events import SkillMissing
+        from agents_system.audit.recorder import record_skill_missing
 
         definition = MockDefinition()
         event = await record_skill_missing(
@@ -158,8 +158,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_runtime_built(self) -> None:
         """record_runtime_built produces a RuntimeBuilt event."""
-        from agentsys.audit.events import RuntimeBuilt
-        from agentsys.audit.recorder import record_runtime_built
+        from agents_system.audit.events import RuntimeBuilt
+        from agents_system.audit.recorder import record_runtime_built
 
         definition = MockDefinition()
         event = await record_runtime_built(
@@ -173,8 +173,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_runtime_initialized(self) -> None:
         """record_runtime_initialized produces a RuntimeInitialized event."""
-        from agentsys.audit.events import RuntimeInitialized
-        from agentsys.audit.recorder import record_runtime_initialized
+        from agents_system.audit.events import RuntimeInitialized
+        from agents_system.audit.recorder import record_runtime_initialized
 
         definition = MockDefinition()
         event = await record_runtime_initialized(
@@ -187,8 +187,8 @@ class TestRecorderEventFamilies:
     @pytest.mark.asyncio
     async def test_record_runtime_timeout(self) -> None:
         """record_runtime_timeout produces a RuntimeTimeout event."""
-        from agentsys.audit.events import RuntimeTimeout
-        from agentsys.audit.recorder import record_runtime_timeout
+        from agents_system.audit.events import RuntimeTimeout
+        from agents_system.audit.recorder import record_runtime_timeout
 
         definition = MockDefinition()
         event = await record_runtime_timeout(definition, total_execution_timeout_s=30.0)
@@ -204,8 +204,8 @@ class TestRecorderCorrelationId:
         """When structlog.contextvars has request_id, event has that correlation_id."""
         import structlog.contextvars
 
-        from agentsys.audit.events import SkillLoaded
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.events import SkillLoaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         definition = MockDefinition()
         # Bind a request_id
@@ -217,8 +217,8 @@ class TestRecorderCorrelationId:
     @pytest.mark.asyncio
     async def test_correlation_id_defaults_to_none_when_no_context(self) -> None:
         """When structlog.contextvars has no request_id, correlation_id is 'none'."""
-        from agentsys.audit.events import SkillLoaded
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.events import SkillLoaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         definition = MockDefinition()
         event = await record_skill_loaded(definition, skill="sales-kb")
@@ -234,7 +234,7 @@ class TestRecorderSequence:
         """Two events for the same correlation_id have different sequence numbers."""
         import structlog.contextvars
 
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         definition = MockDefinition()
         with structlog.contextvars.bound_contextvars(request_id="seq-test"):
@@ -249,7 +249,7 @@ class TestRecorderSequence:
         """Different correlation_ids have independent sequence counters."""
         import structlog.contextvars
 
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         definition = MockDefinition()
         with structlog.contextvars.bound_contextvars(request_id="corr-a"):
@@ -269,8 +269,8 @@ class TestRecorderAutoFields:
         """event_id is a UUID (not all zeros or empty)."""
         from uuid import UUID
 
-        from agentsys.audit.events import SkillLoaded
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.events import SkillLoaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         definition = MockDefinition()
         event = await record_skill_loaded(definition, skill="test-skill")
@@ -281,8 +281,8 @@ class TestRecorderAutoFields:
     @pytest.mark.asyncio
     async def test_occurred_at_is_utc(self) -> None:
         """occurred_at is a UTC datetime (tz=timezone.utc)."""
-        from agentsys.audit.events import SkillLoaded
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.events import SkillLoaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         before = datetime.now(tz=timezone.utc)
         definition = MockDefinition()
@@ -306,7 +306,7 @@ class TestRecorderIdentityExtraction:
     @pytest.mark.asyncio
     async def test_role_read_from_role_name(self) -> None:
         """role_name is the primary source for the event's role."""
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         event = await record_skill_loaded(MockDefinition(role="sales-agent"), skill="s")
         assert event.role == "sales-agent"
@@ -314,7 +314,7 @@ class TestRecorderIdentityExtraction:
     @pytest.mark.asyncio
     async def test_role_falls_back_to_unknown(self) -> None:
         """A definition with no role attribute never crashes the recorder."""
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         class Nameless:
             pass
@@ -325,7 +325,7 @@ class TestRecorderIdentityExtraction:
     @pytest.mark.asyncio
     async def test_deployment_is_none_when_absent(self) -> None:
         """A definition without a deployment records None, not a crash."""
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         event = await record_skill_loaded(MockDefinition(deployment=None), skill="s")
         assert event.deployment is None
@@ -334,7 +334,7 @@ class TestRecorderIdentityExtraction:
 class TestRecorderAgentDefinitionContract:
     """The recorder must work against the REAL value object, not the mock.
 
-    ``agentsys.harness.loader.AgentDefinition`` is a frozen dataclass whose
+    ``agents_system.harness.loader.AgentDefinition`` is a frozen dataclass whose
     fields are ``role_name`` and ``deployment``. It has no ``client`` field —
     nothing in ``src/`` does. The other tests in this file pass a mock that
     invents one, which is why the divergence went unnoticed.
@@ -343,7 +343,7 @@ class TestRecorderAgentDefinitionContract:
     @pytest.mark.asyncio
     async def test_role_from_real_definition(self) -> None:
         """role_name matches on the real object."""
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         event = await record_skill_loaded(real_definition(), skill="sales-kb")
         assert event.role == "sales-agent"
@@ -351,7 +351,7 @@ class TestRecorderAgentDefinitionContract:
     @pytest.mark.asyncio
     async def test_deployment_from_real_definition(self) -> None:
         """The deployment must survive onto the event."""
-        from agentsys.audit.recorder import record_skill_loaded
+        from agents_system.audit.recorder import record_skill_loaded
 
         event = await record_skill_loaded(
             real_definition(deployment="acme"), skill="sales-kb"
@@ -370,7 +370,7 @@ class TestRecorderRedaction:
     @pytest.mark.asyncio
     async def test_tool_denied_reason_is_redacted(self) -> None:
         """A denial reason quoting a customer phone must not be stored verbatim."""
-        from agentsys.audit.recorder import record_tool_denied
+        from agents_system.audit.recorder import record_tool_denied
 
         event = await record_tool_denied(
             real_definition(),
@@ -382,7 +382,7 @@ class TestRecorderRedaction:
     @pytest.mark.asyncio
     async def test_tool_call_error_is_redacted(self) -> None:
         """A driver error echoing customer data must not be stored verbatim."""
-        from agentsys.audit.recorder import record_tool_call_attempted
+        from agents_system.audit.recorder import record_tool_call_attempted
 
         event = await record_tool_call_attempted(
             real_definition(),

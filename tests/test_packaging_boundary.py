@@ -7,24 +7,24 @@ import zipfile
 from pathlib import Path
 
 _PLATFORM_ANCHORS = {
-    "agentsys/__init__.py",
-    "agentsys/connectors/sales_reports.py",
-    "agentsys/harness/loader.py",
-    "agentsys/integration/meta_signature.py",
-    "agentsys/integration/webhook.py",
-    "agentsys/integration/whatsapp_client.py",
-    "agentsys/platform/roles/base/manifest.md",
+    "agents_system/__init__.py",
+    "agents_system/connectors/sales_reports.py",
+    "agents_system/harness/loader.py",
+    "agents_system/integration/meta_signature.py",
+    "agents_system/integration/webhook.py",
+    "agents_system/integration/whatsapp_client.py",
+    "agents_system/platform/roles/base/manifest.md",
 }
 _DELETED_CLIENT_PATHS = {
-    "agentsys/connectors/acme_reports.py",
-    "agentsys/connectors/stubs.py",
-    "agentsys/models/tables.py",
-    "agentsys/services/catalog.py",
-    "agentsys/services/clients.py",
-    "agentsys/services/conversation_log.py",
-    "agentsys/services/seed_data.py",
-    "agentsys/services/sync_articles.py",
-    "agentsys/services/sync_clients.py",
+    "agents_system/connectors/acme_reports.py",
+    "agents_system/connectors/stubs.py",
+    "agents_system/models/tables.py",
+    "agents_system/services/catalog.py",
+    "agents_system/services/clients.py",
+    "agents_system/services/conversation_log.py",
+    "agents_system/services/seed_data.py",
+    "agents_system/services/sync_articles.py",
+    "agents_system/services/sync_clients.py",
 }
 
 
@@ -37,7 +37,7 @@ def test_wheel_contains_only_platform_owned_modules(tmp_path: Path) -> None:
         check=True,
     )
 
-    wheel = next(tmp_path.glob("agentsys-*.whl"))
+    wheel = next(tmp_path.glob("agents_system-*.whl"))
     with zipfile.ZipFile(wheel) as archive:
         members = set(archive.namelist())
 

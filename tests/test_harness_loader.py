@@ -1,4 +1,4 @@
-"""Tests for the agent definition loader (src/agentsys/harness/loader.py).
+"""Tests for the agent definition loader (src/agents_system/harness/loader.py).
 
 Tests follow strict TDD: written BEFORE the implementation, intentionally fail
 until the module exists and passes all invariants.
@@ -34,7 +34,7 @@ OVERRIDE_ROOTS_DIR = FIXTURE_BASE / "overrides"
 
 def _generic_roots() -> Any:
     """RootConfig pointing at the fixture generic-role tree."""
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=GENERIC_ROOTS_DIR,
@@ -44,7 +44,7 @@ def _generic_roots() -> Any:
 
 def _override_roots() -> Any:
     """RootConfig pointing at the fixture override tree."""
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=GENERIC_ROOTS_DIR,
@@ -54,7 +54,7 @@ def _override_roots() -> Any:
 
 def _real_roots() -> Any:
     """RootConfig for platform roles and generic client deployment fixtures."""
-    from agentsys.harness.loader import RootConfig
+    from agents_system.harness.loader import RootConfig
 
     return RootConfig(
         platform_root=REPO_ROOT / "platform",
@@ -66,7 +66,7 @@ def _real_roots() -> Any:
 # Test 1 — Loading a generic role produces a fully-populated AgentDefinition
 # ---------------------------------------------------------------------------
 def test_load_generic_produces_agent_definition() -> None:
-    from agentsys.harness.loader import AgentDefinition, resolve
+    from agents_system.harness.loader import AgentDefinition, resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -77,7 +77,7 @@ def test_load_generic_produces_agent_definition() -> None:
 
 
 def test_load_generic_tools_parsed() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -85,7 +85,7 @@ def test_load_generic_tools_parsed() -> None:
 
 
 def test_load_generic_permissions_parsed() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -93,7 +93,7 @@ def test_load_generic_permissions_parsed() -> None:
 
 
 def test_load_generic_autonomy_parsed() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -101,7 +101,7 @@ def test_load_generic_autonomy_parsed() -> None:
 
 
 def test_load_generic_delegation_policy_parsed() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -113,7 +113,7 @@ def test_load_generic_delegation_policy_parsed() -> None:
 # Test 2 — role.md prose body captured verbatim as system_prompt
 # ---------------------------------------------------------------------------
 def test_role_md_body_captured_as_system_prompt() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -128,7 +128,7 @@ def test_role_md_body_captured_as_system_prompt() -> None:
 # Test 3 — resolve with no client returns the generic definition unchanged
 # ---------------------------------------------------------------------------
 def test_resolve_no_client_returns_generic() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -140,7 +140,7 @@ def test_resolve_no_client_returns_generic() -> None:
 # Test 4 — resolve with a client that has an override merges correctly
 # ---------------------------------------------------------------------------
 def test_resolve_with_client_merges_override() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", client="client-a", roots=_override_roots())
 
@@ -160,7 +160,7 @@ def test_resolve_with_client_merges_override() -> None:
 # Test 5 — permissions: inherit keyword resolves to the parent's full set
 # ---------------------------------------------------------------------------
 def test_permissions_inherit_keyword_resolves_to_parent() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", client="client-a", roots=_override_roots())
 
@@ -172,7 +172,7 @@ def test_permissions_inherit_keyword_resolves_to_parent() -> None:
 # Test 6 — {inherit: true, add: [...]} appends to parent list (dedup, order)
 # ---------------------------------------------------------------------------
 def test_escalation_rules_inherit_add_appends() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", client="client-a", roots=_override_roots())
 
@@ -189,7 +189,7 @@ def test_escalation_rules_inherit_add_appends() -> None:
 # Test 7 — Invariant: override tool NOT in parent raises DefinitionError
 # ---------------------------------------------------------------------------
 def test_override_tool_not_in_parent_raises_definition_error() -> None:
-    from agentsys.harness.loader import DefinitionError, resolve
+    from agents_system.harness.loader import DefinitionError, resolve
 
     with pytest.raises(DefinitionError, match="tools"):
         resolve("simple-role", client="bad-tools", roots=_override_roots())
@@ -199,7 +199,7 @@ def test_override_tool_not_in_parent_raises_definition_error() -> None:
 # Test 8 — Invariant: override autonomy above parent ceiling raises DefinitionError
 # ---------------------------------------------------------------------------
 def test_override_autonomy_elevation_raises_definition_error() -> None:
-    from agentsys.harness.loader import DefinitionError, resolve
+    from agents_system.harness.loader import DefinitionError, resolve
 
     with pytest.raises(DefinitionError, match="autonomy"):
         resolve("simple-role", client="bad-autonomy", roots=_override_roots())
@@ -209,7 +209,7 @@ def test_override_autonomy_elevation_raises_definition_error() -> None:
 # Test 9 — Override folder absent → resolve returns generic without error
 # ---------------------------------------------------------------------------
 def test_resolve_absent_override_folder_returns_generic() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     # "nonexistent-client" has no folder under the override deployments root
     definition = resolve(
@@ -226,7 +226,7 @@ def test_resolve_absent_override_folder_returns_generic() -> None:
 # Test 10 — Generic client sales-agent merge (happy-path integration test)
 # ---------------------------------------------------------------------------
 def test_client_a_sales_agent_merge() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("sales-agent", client="client-a", roots=_real_roots())
 
@@ -275,7 +275,7 @@ def test_client_a_sales_agent_merge() -> None:
 # (when a deployment role.md exists, it is the effective system prompt)
 # ---------------------------------------------------------------------------
 def test_client_a_system_prompt_is_override_role_body() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("sales-agent", client="client-a", roots=_real_roots())
 
@@ -286,7 +286,7 @@ def test_client_a_system_prompt_is_override_role_body() -> None:
 # Test 13 — execution_limits: stricter limit merges successfully
 # ---------------------------------------------------------------------------
 def test_execution_limits_stricter_override_merges() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", client="strict-limits", roots=_override_roots())
 
@@ -299,7 +299,7 @@ def test_execution_limits_stricter_override_merges() -> None:
 # Test 14 — execution_limits: looser limit raises DefinitionError
 # ---------------------------------------------------------------------------
 def test_execution_limits_looser_override_raises_definition_error() -> None:
-    from agentsys.harness.loader import DefinitionError, resolve
+    from agents_system.harness.loader import DefinitionError, resolve
 
     with pytest.raises(DefinitionError, match="max_tool_calls"):
         resolve("simple-role", client="loose-limits", roots=_override_roots())
@@ -309,7 +309,7 @@ def test_execution_limits_looser_override_raises_definition_error() -> None:
 # Test 15 — execution_limits: inherit still works (regression guard)
 # ---------------------------------------------------------------------------
 def test_execution_limits_inherit_still_works() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", client="client-a", roots=_override_roots())
 
@@ -322,7 +322,7 @@ def test_execution_limits_inherit_still_works() -> None:
 # Test 12 — AgentDefinition is frozen (immutable after construction)
 # ---------------------------------------------------------------------------
 def test_agent_definition_is_frozen() -> None:
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("simple-role", roots=_generic_roots())
 
@@ -336,7 +336,7 @@ def test_agent_definition_is_frozen() -> None:
 def test_platform_default_limits_public_alias() -> None:
     """`agent/graph.py` resolves effective execution limits against this public
     constant — it must be importable outside the loader module."""
-    from agentsys.harness.loader import PLATFORM_DEFAULT_LIMITS
+    from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS
 
     assert PLATFORM_DEFAULT_LIMITS["max_tool_calls"] == 20
     assert PLATFORM_DEFAULT_LIMITS["total_execution_timeout_s"] == 60
@@ -357,7 +357,7 @@ def test_platform_default_limits_public_alias() -> None:
 def test_default_platform_root_prefers_packaged_location(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import agentsys.harness.loader as loader_module
+    import agents_system.harness.loader as loader_module
 
     packaged = tmp_path / "packaged" / "platform"
     packaged.mkdir(parents=True)
@@ -374,7 +374,7 @@ def test_default_platform_root_prefers_packaged_location(
 def test_default_platform_root_falls_back_to_checkout_location(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import agentsys.harness.loader as loader_module
+    import agents_system.harness.loader as loader_module
 
     packaged = tmp_path / "packaged" / "platform"  # deliberately absent
     checkout = tmp_path / "checkout" / "platform"
@@ -398,8 +398,8 @@ def test_default_platform_root_both_missing_defers_instead_of_raising(
     directory the caller never reads. The "names both paths" guarantee moved
     to `_require_platform_root` and is asserted below.
     """
-    import agentsys.harness.loader as loader_module
-    from agentsys.harness.loader import DefinitionError
+    import agents_system.harness.loader as loader_module
+    from agents_system.harness.loader import DefinitionError
 
     packaged = tmp_path / "packaged" / "platform"
     checkout = tmp_path / "checkout" / "platform"
@@ -422,7 +422,7 @@ def test_root_config_default_uses_packaged_then_checkout_resolution(
 ) -> None:
     """RootConfig() with no explicit platform_root must go through the same
     resolution — not a hardcoded single default."""
-    import agentsys.harness.loader as loader_module
+    import agents_system.harness.loader as loader_module
 
     packaged = tmp_path / "packaged" / "platform"
     packaged.mkdir(parents=True)
@@ -442,7 +442,7 @@ def test_root_config_deployments_root_default_untouched_by_resolution(
     """`deployments_root` keeps its dev-checkout default regardless of the
     platform_root packaged/checkout resolution — a consumer's deployments are
     never shipped inside the package."""
-    import agentsys.harness.loader as loader_module
+    import agents_system.harness.loader as loader_module
 
     packaged = tmp_path / "packaged" / "platform"
     packaged.mkdir(parents=True)
@@ -459,7 +459,7 @@ def test_root_config_deployments_root_default_untouched_by_resolution(
 #
 # Before this, `deployments_root` had no existence check at all, unlike
 # `platform_root`. A client override requested against a missing root (e.g.
-# agentsys installed as a dependency, with no co-located `deployments/`)
+# agents_system installed as a dependency, with no co-located `deployments/`)
 # silently fell through `load_override`'s "not found" warning straight to the
 # generic role — WIDENING tools/autonomy/permissions past what the (absent)
 # override would have restricted, since a deployment may only NARROW the
@@ -469,8 +469,8 @@ def test_root_config_deployments_root_default_untouched_by_resolution(
 def test_require_deployments_root_raises_naming_the_path(
     tmp_path: pathlib.Path,
 ) -> None:
-    import agentsys.harness.loader as loader_module
-    from agentsys.harness.loader import DefinitionError
+    import agents_system.harness.loader as loader_module
+    from agents_system.harness.loader import DefinitionError
 
     missing = tmp_path / "no-such-deployments"
 
@@ -483,7 +483,7 @@ def test_require_deployments_root_raises_naming_the_path(
 def test_require_deployments_root_returns_existing_directory(
     tmp_path: pathlib.Path,
 ) -> None:
-    import agentsys.harness.loader as loader_module
+    import agents_system.harness.loader as loader_module
 
     existing = tmp_path / "deployments"
     existing.mkdir()
@@ -496,7 +496,7 @@ def test_resolve_with_client_and_missing_deployments_root_raises(
 ) -> None:
     """consumer-root-configuration spec, scenario 'Installed as a dependency,
     no co-located deployments/'."""
-    from agentsys.harness.loader import DefinitionError, RootConfig, resolve
+    from agents_system.harness.loader import DefinitionError, RootConfig, resolve
 
     missing = tmp_path / "no-such-deployments"
     roots = RootConfig(platform_root=GENERIC_ROOTS_DIR, deployments_root=missing)
@@ -512,7 +512,7 @@ def test_resolve_no_client_ignores_missing_deployments_root(
 ) -> None:
     """consumer-root-configuration spec, scenario 'No client override
     requested' — resolve(role) must not require a deployments_root at all."""
-    from agentsys.harness.loader import RootConfig, resolve
+    from agents_system.harness.loader import RootConfig, resolve
 
     missing = tmp_path / "no-such-deployments"
     roots = RootConfig(platform_root=GENERIC_ROOTS_DIR, deployments_root=missing)
@@ -551,7 +551,7 @@ def _evil_role_tree(tmp_path: pathlib.Path) -> pathlib.Path:
 
 def test_resolve_refuses_a_traversing_role_type(tmp_path: pathlib.Path) -> None:
     """The headline case: ../../ escapes platform_root and grants everything."""
-    from agentsys.harness.loader import DefinitionError, RootConfig, resolve
+    from agents_system.harness.loader import DefinitionError, RootConfig, resolve
 
     _evil_role_tree(tmp_path)
     platform = tmp_path / "platform"
@@ -569,7 +569,7 @@ def test_resolve_refuses_a_traversing_role_type(tmp_path: pathlib.Path) -> None:
 def test_load_generic_refuses_traversing_and_absolute_role_types(
     tmp_path: pathlib.Path,
 ) -> None:
-    from agentsys.harness.loader import DefinitionError, RootConfig, load_generic
+    from agents_system.harness.loader import DefinitionError, RootConfig, load_generic
 
     # The platform root EXISTS here on purpose. With a missing root, _read_md
     # raises DefinitionError anyway and the test would pass without validating
@@ -603,7 +603,7 @@ def test_load_override_refuses_traversing_client_and_role(
     audited the two tests that went red and missed this one, which stayed
     green.
     """
-    from agentsys.harness.loader import DefinitionError, RootConfig, load_override
+    from agents_system.harness.loader import DefinitionError, RootConfig, load_override
 
     (tmp_path / "deployments").mkdir()
     roots = RootConfig(
@@ -622,7 +622,7 @@ def test_load_override_refuses_traversing_client_and_role(
 
 def test_real_role_and_client_names_still_load() -> None:
     """Regression guard: the validator must not reject legitimate names."""
-    from agentsys.harness.loader import resolve
+    from agents_system.harness.loader import resolve
 
     definition = resolve("sales-agent", client="client-a", roots=_real_roots())
     assert definition.role_name == "sales-agent"
@@ -640,7 +640,7 @@ def test_real_role_and_client_names_still_load() -> None:
 def test_load_override_works_without_any_platform_directory(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from agentsys.harness import loader as loader_module
+    from agents_system.harness import loader as loader_module
 
     monkeypatch.setattr(
         loader_module, "_PACKAGED_PLATFORM_ROOT", tmp_path / "no" / "packaged"
@@ -665,7 +665,7 @@ def test_missing_platform_root_still_fails_loudly_naming_both_paths(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Deferring the check must not weaken the error when it does matter."""
-    from agentsys.harness import loader as loader_module
+    from agents_system.harness import loader as loader_module
 
     packaged = tmp_path / "no" / "packaged"
     checkout = tmp_path / "no" / "checkout"
@@ -699,7 +699,7 @@ def test_missing_deployment_emits_a_warning(tmp_path: pathlib.Path) -> None:
     """
     import structlog
 
-    from agentsys.harness.loader import RootConfig, load_override
+    from agents_system.harness.loader import RootConfig, load_override
 
     (tmp_path / "deployments").mkdir()
     roots = RootConfig(
@@ -728,7 +728,7 @@ def test_load_override_raises_when_the_deployments_root_is_absent(
     sits at the point of use, mirroring `_require_platform_root` in
     `load_generic`.
     """
-    from agentsys.harness.loader import DefinitionError, RootConfig, load_override
+    from agents_system.harness.loader import DefinitionError, RootConfig, load_override
 
     roots = RootConfig(
         platform_root=tmp_path / "platform",

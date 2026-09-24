@@ -21,9 +21,9 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-from agentsys.models.base import get_engine
-from agentsys.models.outbox import OutboxWork
-from agentsys.services.outbox import (
+from agents_system.models.base import get_engine
+from agents_system.models.outbox import OutboxWork
+from agents_system.services.outbox import (
     MAX_OUTBOX_ATTEMPTS,
     OutboxClaimOutcome,
     OutboxLeaseLostError,
