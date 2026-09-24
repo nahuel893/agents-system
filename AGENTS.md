@@ -4,7 +4,7 @@ Shared instructions for every AI agent working on this repository (Claude Code, 
 
 ## Project
 
-`agents-system` is a reusable AI agent platform (formerly `agents-acme`). The first delivery is a WhatsApp sales bot for a regional beverage distributor Architecture and specs live in `docs/`. Start with `docs/architecture/agent-platform.md`.
+`agents-system` is a reusable AI agent platform (formerly `agents-acme`). The first delivery is a WhatsApp sales bot for a regional beverage distributor. Architecture and specs live in `docs/`. Start with `docs/architecture/agent-platform.md`.
 
 ## Golden rule — CodeGraph before you read code
 

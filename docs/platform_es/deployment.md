@@ -226,7 +226,7 @@ scope: order-taking, catalog-lookup, order-confirmation
 ### `deployments/acme/sales-agent/role.md` (sobreescritura)
 ```
 extends: platform/roles/sales-agent
-company: a regional beverage distributor (its parent group)
+company: a regional beverage distributor
 language: es-AR (Español Rioplatense)
 domain: distribución de cerveza y bebidas — Argentina
 vocabulary:
