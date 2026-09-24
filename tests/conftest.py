@@ -27,13 +27,36 @@ pass ``allow_insecure=False`` as an init kwarg, which outranks the env var.
 import inspect
 import itertools
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any
+
+import pytest
 
 os.environ["ALLOW_INSECURE"] = "true"
 
 _test_msg_counter = itertools.count(1)
+
+
+@pytest.fixture
+def reset_permission_registry() -> Generator[None, None, None]:
+    """Snapshot the package-global `permission_registry` before a test and
+    restore it after (design.md's Test Isolation note), so a throwaway
+    registration in one `test_permissions_*.py` test cannot leak into the
+    next. NOT autouse/global -- most tests never touch the permission
+    registry -- applied only via `pytestmark =
+    [pytest.mark.usefixtures("reset_permission_registry")]` at the top of
+    `test_permissions_base.py`, `test_permissions_builtins.py`, and
+    `test_permissions_registry.py`.
+    """
+    from agents_system.permissions.permission_registry import permission_registry
+
+    snapshot = permission_registry._snapshot()
+    try:
+        yield
+    finally:
+        permission_registry._restore(snapshot)
+
 
 _NEUTRAL_TEST_CATALOG: list[dict[str, Any]] = [
     {"id": "item-001", "name": "Item Alpha", "price": 100.0, "stock": 50},
