@@ -113,11 +113,9 @@ repos:
         # PRIVATE KEY, and PuTTY-User-Key-File. That is all. It does NOT catch
         # API tokens, bearer tokens, passwords, or connection strings.
         #
-        # This is not hypothetical. While reviewing this very PR, an Outline
-        # API token was found as a plain literal in scripts/upload_outline.py
-        # and scripts/cleanup_outline_duplicates.py, public since 2026-05-28.
-        # This hook ran over both files and passed, because a bearer token
-        # looks nothing like a PEM header.
+        # This is not hypothetical: an API token once committed as a plain
+        # literal passed this hook, because a bearer token looks nothing like
+        # a PEM header.
         #
         # So: real value against the key class it covers, and NO coverage for
         # the token class -- which is the one that actually leaked here. The

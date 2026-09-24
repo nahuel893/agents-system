@@ -46,8 +46,7 @@ None of `scripts/smoke.py`, `scripts/smoke_rag.py`, `scripts/smoke_chat.py` or
 `scripts/chat.py` exist anymore — `scripts/` today only holds
 `embed_catalog.py` (an unimplemented stub — do not run it expecting it to do
 anything), `fake_openai_compatible_server.py`, `preflight_local_embeddings.sh`,
-`provision_bi_readonly.sql`, `upload_outline.py` and
-`cleanup_outline_duplicates.py`. `agents_system` is a library now (`deployments/`
+and `provision_bi_readonly.sql`. `agents_system` is a library now (`deployments/`
 ships empty by design — see `deployments/README.md`), so there is no bundled
 catalog to embed and no bundled client to run a smoke against. What actually
 exercises each path today:
