@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     rag_hnsw_ef_search: int = Field(default=40, gt=0)
 
     # WhatsApp / Meta
+    # #140 -- maximum accepted POST /webhook body size, enforced before HMAC
+    # verification and before anything is persisted. Meta's real Cloud API
+    # payloads are a few KB even for a batched envelope (media is fetched by
+    # URL, never embedded), so 1 MiB is a conservative ceiling with generous
+    # headroom, not a tuned-to-the-byte limit.
+    webhook_max_body_bytes: int = Field(default=1_048_576, gt=0)
     meta_webhook_secret: str = ""
     meta_phone_number_id: str = ""
     meta_access_token: str = ""
