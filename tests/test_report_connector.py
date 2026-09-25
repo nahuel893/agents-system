@@ -133,6 +133,73 @@ def test_serialized_input_schema_documents_top_products_order_by_values() -> Non
     assert "units" in params_description
 
 
+def test_shared_parameter_text_is_described_exactly_once() -> None:
+    """months_back and status carry identical text on every report that
+    accepts them (5 and 6 of the 7 reports respectively) - each sentence
+    documents the shared meaning once, not once per report (issue #56).
+    """
+    registry = build_report_registry(object(), _catalog())
+    schema = registry.get("run_report").to_langchain_tool_schema()
+    params_description = schema["function"]["parameters"]["properties"]["params"][
+        "description"
+    ]
+
+    assert params_description.count("How many trailing months of sales to include") == 1
+    assert params_description.count("EXCLUDES cancelled") == 1
+
+
+def test_report_sections_follow_the_same_sorted_order_as_the_report_enum() -> None:
+    """The params description used to walk the catalog in insertion order
+    while the `report` enum is sorted alphabetically (issue #56)."""
+    registry = build_report_registry(object(), _catalog())
+    spec = registry.get("run_report")
+    schema = spec.to_langchain_tool_schema()
+    params_description = schema["function"]["parameters"]["properties"]["params"][
+        "description"
+    ]
+    enum_order = spec.input_schema["properties"]["report"]["enum"]
+
+    assert enum_order == sorted(_catalog().keys())
+    positions = [params_description.index(f"{name}:") for name in enum_order]
+    assert positions == sorted(positions)
+
+
+def test_reports_without_a_shared_param_do_not_list_it() -> None:
+    """`low_stock` takes neither `months_back` nor `status` - the dedup
+    must not make it look like every report accepts every shared param."""
+    registry = build_report_registry(object(), _catalog())
+    schema = registry.get("run_report").to_langchain_tool_schema()
+    params_description = schema["function"]["parameters"]["properties"]["params"][
+        "description"
+    ]
+
+    low_stock_start = params_description.index("low_stock:")
+    next_header = params_description.find("\n\n", low_stock_start)
+    low_stock_section = params_description[low_stock_start:next_header]
+
+    assert "threshold_ratio" in low_stock_section
+    assert "months_back" not in low_stock_section
+    assert "status" not in low_stock_section
+
+
+def test_params_description_size_has_an_upper_bound() -> None:
+    """Regression guard against reintroducing per-report duplication.
+
+    Before issue #56, this description was 3473 characters (about 70% of it
+    duplicate `months_back` / `limit` / `status` text repeated across 5-7
+    reports). This bound is set comfortably above the deduplicated size and
+    comfortably below the pre-fix size, so either a returning duplication or
+    an unrelated bloat trips it.
+    """
+    registry = build_report_registry(object(), _catalog())
+    schema = registry.get("run_report").to_langchain_tool_schema()
+    params_description = schema["function"]["parameters"]["properties"]["params"][
+        "description"
+    ]
+
+    assert len(params_description) <= 2200
+
+
 def test_registry_registers_run_report_with_expected_permissions_and_revalidation() -> (
     None
 ):
