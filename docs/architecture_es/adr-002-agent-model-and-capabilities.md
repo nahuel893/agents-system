@@ -155,6 +155,8 @@ identidad.
 
 #### A.2 — Identidad por principal
 
+> **Reemplazado por ADR-003:** el comportamiento de auto-grant de AD-5 en esta sección es solo histórico. [ADR-003 — Jerarquía de permisos](adr-003-permission-hierarchy.md) registra el modelo entregado de `DEPLOY_GRANTS` explícito.
+
 **Estado actual.** Al arrancar la aplicación, el `lifespan` de `create_app`
 construye un `AgentRuntime` por cada rol configurado y lo guarda en caché en
 `app.state.runtimes` (`src/agents_system/main.py:326-336`). El permiso otorgado
@@ -731,6 +733,8 @@ documentada en la prosa de un rol.
 
 #### C.10 — Niveles de capacidad (*tiers*)
 
+> **Reemplazado por ADR-003:** los valores de tier no cambian, pero la clasificación ahora se despacha mediante clases de permiso en lugar de coincidencia por prefijo de cadena. Ver [ADR-003 — Jerarquía de permisos](adr-003-permission-hierarchy.md).
+
 **Estado actual.** `ToolSpec` (`harness/registry.py:8-34`) hoy no tiene
 campo `tier` — solo `name`, `required_permissions`, `connector`,
 `description`, `input_schema`, `always_revalidate`. La sensibilidad se
@@ -798,6 +802,8 @@ público de herramientas y verifica que cada una tenga un tier válido —
 ---
 
 #### C.11 — Bandera e invariante `untrusted_input`
+
+> **Reemplazado por ADR-003:** el invariante entregado rechaza toda clase de permiso T3, no solo nombres `exec:*`, y genera `UntrustedInputGrantError`. Ver [ADR-003 — Jerarquía de permisos](adr-003-permission-hierarchy.md).
 
 **Estado actual.** `untrusted_input` no existe hoy en ningún lugar del
 código (una búsqueda exhaustiva en `src/`, `platform/`, `tests/`, `docs/`
@@ -895,6 +901,8 @@ límite de sobreescritura de despliegue (siguiendo el patrón de
 ---
 
 #### C.12 — `command_tools` declarativos en manifiestos
+
+> **Reemplazado por ADR-003:** las herramientas de comando declarativas ahora se limitan exactamente a T2; T3 no se acepta. Ver [ADR-003 — Jerarquía de permisos](adr-003-permission-hierarchy.md).
 
 **Estado actual.** No existe. Hoy la única forma de exponer comandos del
 host es el único conector genérico `use_term`

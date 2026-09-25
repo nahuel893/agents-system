@@ -511,7 +511,7 @@ Scope: `docs/` only — no source or test changes. Depends on PR1-PR3 having
 landed (ADR-003 documents shipped, not proposed, behavior). Estimated
 lines: ~150 (design.md Testing Strategy table).
 
-- [ ] **PR4-T1 — Write `docs/architecture/adr-003-permission-hierarchy.md`.**
+- [x] **PR4-T1 — Write `docs/architecture/adr-003-permission-hierarchy.md`.**
   New ADR, following this repo's existing ADR structure (see
   `adr-001-runtime-topology.md` / `adr-002-agent-model-and-capabilities.md`
   for section conventions: Summary, Context, Decision, Corrections if any).
@@ -534,7 +534,7 @@ lines: ~150 (design.md Testing Strategy table).
   Resolved-Decision item above is present as a heading or named section.
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR4-T2 — Amend ADR-002's superseded sections.**
+- [x] **PR4-T2 — Amend ADR-002's superseded sections.**
   Add a short "Superseded by ADR-003" pointer note at the top of each of
   C.10 (`adr-002-agent-model-and-capabilities.md:652`), C.11 (`:712`), and
   C.12 (`:800`), and at the AD-5 auto-grant design decision
@@ -549,7 +549,7 @@ lines: ~150 (design.md Testing Strategy table).
   should show only small additive hunks at the four cited anchors).
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR4-T3 — Cross-check `docs/architecture/permission-model.md`.**
+- [x] **PR4-T3 — Cross-check `docs/architecture/permission-model.md`.**
   Re-read the file in full against the shipped PR1-PR3 behavior. As
   confirmed during this tasks phase, the file already describes
   tier-based revalidation only (no `exec:`/`write:`/`send:` prefix
@@ -563,7 +563,7 @@ lines: ~150 (design.md Testing Strategy table).
   "Cross-references" section lists `adr-003-permission-hierarchy.md`.
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR4-T4 — PR4 closing: state.yaml + final consistency pass.**
+- [x] **PR4-T4 — PR4 closing: state.yaml + final consistency pass.**
   Update `openspec/changes/permission-model/state.yaml`: `phase: archive`
   is NOT set by this task (archive happens separately, at merge, per
   `AGENTS.md`'s SDD-flow mapping — `Closes #NN`-style issue linkage is a
