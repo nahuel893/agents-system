@@ -123,10 +123,16 @@ registry.register(backends.message_sender_tool_spec())
   claim. An empty query or no match returns `results: []` with
   `classification: "no_match"`.
 - `run_report` exposes the closed portable sales `CATALOG`; its tool schema
-  directly documents every report parameter's type, allowed values, and
-  default from the catalog's `ReportSpec` / `ParamSpec` definitions. A valid
-  report with no rows is an empty report response (`rows: []`,
-  `empty_result: true`).
+  documents every report parameter's type, allowed values, and default from
+  the catalog's `ReportSpec` / `ParamSpec` definitions. A parameter shared by
+  more than one report with the exact same shape (e.g. `months_back`,
+  `status`) is described once, in a "Shared parameters" section; each
+  report's own entry then lists only its parameter names plus what differs
+  from that shared description (an extra, report-specific parameter, or a
+  default that overrides the shared one) — this keeps the schema sent with
+  every completion request from growing with the catalog. A valid report
+  with no rows is an empty report response (`rows: []`, `empty_result:
+  true`).
 
 ## What these are not
 

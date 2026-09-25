@@ -126,10 +126,16 @@ registry.register(backends.message_sender_tool_spec())
   semántica. Una consulta vacía o sin coincidencias devuelve `results: []` con
   `classification: "no_match"`.
 - `run_report` expone el `CATALOG` portátil y cerrado de ventas; su esquema
-  de herramienta documenta directamente el tipo, los valores permitidos y el
-  valor por defecto de cada parámetro desde las definiciones `ReportSpec` /
-  `ParamSpec` del catálogo. Un reporte válido sin filas devuelve una respuesta
-  vacía (`rows: []`, `empty_result: true`).
+  de herramienta documenta el tipo, los valores permitidos y el valor por
+  defecto de cada parámetro desde las definiciones `ReportSpec` / `ParamSpec`
+  del catálogo. Un parámetro compartido por más de un reporte con la misma
+  forma exacta (p. ej. `months_back`, `status`) se describe una sola vez, en
+  una sección "Shared parameters"; la entrada de cada reporte solo lista sus
+  nombres de parámetro más lo que difiere de esa descripción compartida (un
+  parámetro extra propio del reporte, o un valor por defecto que reemplaza
+  al compartido) — esto evita que el esquema enviado en cada solicitud de
+  completado crezca junto con el catálogo. Un reporte válido sin filas
+  devuelve una respuesta vacía (`rows: []`, `empty_result: true`).
 
 ## Qué NO son
 
