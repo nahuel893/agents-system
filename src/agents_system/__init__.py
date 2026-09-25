@@ -29,7 +29,13 @@ The injection flow, end to end::
     roots = agents_system.RootConfig(deployments_root=MY_APP_DEPLOYMENTS_DIR)
 
     # 3. Build the runtime: role + your registry + the permissions this
-    #    caller/identity currently holds.
+    #    caller/identity currently holds. This call is the ONLY path to a
+    #    grant — there is no auto-grant anywhere in this library flow, and
+    #    `granted_permissions` becomes EquippedRuntime.deploy_grant_ceiling
+    #    (issue #38), the bound Layer-2 revalidation enforces. A deployment
+    #    booting through `agents_system.main` instead configures the
+    #    equivalent explicit grant via `DEPLOY_GRANTS` (see the
+    #    permission-model ADR).
     equipped = agents_system.build_runtime(
         "sales-agent",
         registry,

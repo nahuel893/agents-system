@@ -54,7 +54,14 @@ from agents_system.harness.loader import (
     _strip_base_contract,
     resolve,
 )
-from agents_system.harness.registry import ToolRegistry, ToolSpec
+from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
+from agents_system.permissions import (
+    Permission,
+    UnknownPermissionNameError,
+    UntrustedInputGrantError,
+    covers,
+)
+from agents_system.permissions.permission_registry import permission_registry
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -97,6 +104,21 @@ class EquippedRuntime:
     denied_tools: tuple[tuple[str, str], ...]
     skills: tuple[LoadedSkill, ...]
     session_provider: async_sessionmaker[AsyncSession] | None = None
+    deploy_grant_ceiling: frozenset[type[Permission]] = frozenset()
+    """The deploy-time grant ceiling (issue #38, design.md Resolved Decision
+    5): the permission classes this runtime was explicitly granted at boot
+    (`main.py`'s `DEPLOY_GRANTS`, or a library caller's
+    `granted_permissions`), bounded by R3 coverage of `definition.permissions`
+    — what the role DECLARES (PR #55 security review). Layer-2 revalidation
+    (`interceptor.intercept`, `AgentRuntime.run_turn`'s default) bounds
+    itself to THIS set — never to the role's full declared set directly —
+    so a role that merely DECLARES a permission is not the same as a
+    deployment actually GRANTING it, and a grant naming a permission the
+    role never declares neither equips a tool for it nor appears here.
+    `build_runtime` derives this from the SAME R3 computation that bounds
+    `tools`/`denied_tools` (Layer-1), so a class-form and string-form grant
+    of the same permission equip identically.
+    """
 
 
 def _load_skills(
@@ -268,7 +290,7 @@ def _compose_prompt(
 def build_runtime(
     role_type: str,
     registry: ToolRegistry,
-    granted_permissions: Iterable[str],
+    granted_permissions: Iterable[str | type[Permission]],
     *,
     client: str | None = None,
     roots: RootConfig | None = None,
@@ -283,8 +305,18 @@ def build_runtime(
     registry:
         The live tool registry the granted surface is resolved against.
     granted_permissions:
-        The requesting identity's permission grants. The effective tool surface
-        is ``role.permissions ∩ granted_permissions`` (enforced by the injector).
+        The requesting identity's permission grants. Accepts registered
+        wire-name strings, ``Permission`` subclasses, or a mixture of both
+        (spec: "Accepted grant forms"); every entry is resolved through the
+        registry to a class. The effective tool surface (Layer-1, the
+        injector) and ``EquippedRuntime.deploy_grant_ceiling`` (Layer-2,
+        issue #38) are both derived from the SAME R3 coverage computation:
+        ``definition.permissions`` — what the role DECLARES — bounded by
+        whichever of those declared permissions a granted class actually
+        COVERS. A permission the role never declares equips no tool and
+        never appears in the ceiling; an ``untrusted_input`` role granted
+        any T3-tier permission (declared or not) raises
+        ``UntrustedInputGrantError`` (R4) before either is computed.
     client:
         Optional deployment client. When given, the deployment override is
         merged on top of the generic role and its skill files are loaded.
@@ -295,13 +327,78 @@ def build_runtime(
         roots = RootConfig()
 
     # Materialised once: an `Iterable` may be a one-shot generator, and it is
-    # now consumed by TWO surface resolutions below (registry tools, then
-    # ADR-002 C.12 command tools) rather than one.
+    # consumed twice below (resolving to classes, then re-deriving the
+    # declared-name subset the injector needs).
     granted = list(granted_permissions)
 
     definition = resolve(role_type, client=client, roots=roots)
-    surface = resolve_tool_surface(definition, registry, granted)
-    command_surface = resolve_command_tool_surface(definition, granted)
+
+    # Resolve every raw grant entry (string or class) to a class ONCE.
+    # Unknown wire names fail loudly here (registry) before any R3/R4
+    # bounding below, so a typo'd DEPLOY_GRANTS entry cannot silently
+    # disappear as "covers nothing" instead of surfacing the typo.
+    raw_grant_classes = frozenset(
+        permission_registry.resolve(p) if isinstance(p, str) else p for p in granted
+    )
+
+    # PR #55 security review (HIGH) — R4 at grant time (spec scenario:
+    # "Untrusted role cannot be equipped with a T3 grant at deploy time").
+    # Independent of R4 at load time (`harness.loader`) and the injector's
+    # T3 barrier (defense in depth): an untrusted_input role must never be
+    # equipped with a T3-tier deploy grant, even one it doesn't declare.
+    if definition.untrusted_input:
+        for cls in raw_grant_classes:
+            if cls.tier is Tier.T3:
+                try:
+                    offending_name = permission_registry.reverse(cls)
+                except UnknownPermissionNameError:
+                    offending_name = cls.__name__
+                raise UntrustedInputGrantError(
+                    offending_name, cls, definition.role_name
+                )
+
+    # PR #55 security review (MEDIUM-HIGH) — the ceiling is
+    # `definition.permissions ∩ grant` under R3 (a granted class must cover
+    # a permission the role actually DECLARES), never a raw union of the
+    # grant: a DEPLOY_GRANTS entry naming a permission the role never
+    # declares must neither equip a tool for it (below) nor appear in the
+    # persisted ceiling Layer-2 trusts.
+    #
+    # Tolerant resolution here (skip, don't raise) mirrors
+    # `injector._deny_reason`'s established pattern for the SAME reason: a
+    # role's own manifest is validated at LOAD time, not here, and an
+    # unregistered declared name simply covers nothing -- it must not make
+    # `build_runtime` itself the (new, out of scope) enforcement point for
+    # manifest-authoring mistakes in unrelated fixtures/roles.
+    declared_name_to_class: dict[str, type[Permission]] = {}
+    for name in definition.permissions:
+        try:
+            declared_name_to_class[name] = permission_registry.resolve(name)
+        except UnknownPermissionNameError:
+            continue
+    declared_classes = set(declared_name_to_class.values())
+    deploy_grant_ceiling = frozenset(
+        granted_cls
+        for granted_cls in raw_grant_classes
+        if any(covers(granted_cls, declared_cls) for declared_cls in declared_classes)
+    )
+
+    # PR #55 security review (MEDIUM) — the SAME bound, expressed as the
+    # role's own wire-name strings, feeds Layer-1
+    # (`resolve_tool_surface`/`resolve_command_tool_surface`, which are
+    # string-keyed): passing the raw mixed-type `granted` list there let a
+    # class-form grant (e.g. granting the `Write` class directly) silently
+    # equip NO tools, since a class object never equals a wire-name string.
+    # Deriving the covered declared names here makes a class-form grant and
+    # its string-form equivalent equip identically.
+    covered_declared_names = [
+        name
+        for name, declared_cls in declared_name_to_class.items()
+        if any(covers(granted_cls, declared_cls) for granted_cls in raw_grant_classes)
+    ]
+
+    surface = resolve_tool_surface(definition, registry, covered_declared_names)
+    command_surface = resolve_command_tool_surface(definition, covered_declared_names)
     skills = _load_skills(definition, client, roots)
     system_prompt = _compose_prompt(definition, skills)
 
@@ -332,4 +429,5 @@ def build_runtime(
         denied_tools=denied_tools,
         skills=skills,
         session_provider=session_provider,
+        deploy_grant_ceiling=deploy_grant_ceiling,
     )

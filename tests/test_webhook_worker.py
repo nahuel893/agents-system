@@ -821,9 +821,11 @@ async def test_process_claimed_work_does_not_force_empty_permissions(
 ) -> None:
     """Regression (discovery #184): a write:/send: tool call executes through
     the worker's ``run_turn`` call identically to the adapter entry point --
-    the worker must not force an empty permissions tuple. Previously this
-    lived in ``tests/test_webhook.py`` against the synchronous route; W2b2
-    retires that route's own ``run_turn`` call, so the guard moves here."""
+    the worker must not force an empty permissions tuple. Its default now
+    sources from the runtime's deploy grant ceiling (issue #38, design.md
+    Resolved Decision 5), not definition.permissions. Previously this lived
+    in ``tests/test_webhook.py`` against the synchronous route; W2b2 retires
+    that route's own ``run_turn`` call, so the guard moves here."""
     from langchain_core.language_models.fake_chat_models import (
         FakeMessagesListChatModel,
     )
@@ -873,12 +875,18 @@ async def test_process_claimed_work_does_not_force_empty_permissions(
         audit_policy={},
         execution_limits=None,
     )
+    from agents_system.permissions import permission_registry
+
     equipped = EquippedRuntime(
         definition=definition,
         system_prompt="You are a helpful assistant.",
         tools=(order_spec,),
         denied_tools=(),
         skills=(),
+        # issue #38 — run_turn's default now sources from the deploy grant
+        # ceiling, not definition.permissions; this test's whole point is
+        # the worker's default reaching a REAL grant, so it needs one.
+        deploy_grant_ceiling=frozenset({permission_registry.resolve("write:orders")}),
     )
 
     class _ToolAwareFakeModel(FakeMessagesListChatModel):
