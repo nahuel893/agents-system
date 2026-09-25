@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from agents_system.harness.loader import (
+    AgentDefinition,
     DefinitionError,
     InlineLocator,
     RawDefinition,
@@ -189,3 +190,57 @@ def test_normal_platform_chain_regression_sales_agent_extends_agent() -> None:
 
     assert definition.role_name == "sales-agent"
     assert "escalation_notifier" in definition.tools
+
+
+def test_inline_to_inline_cycle_raises_keyed_by_inline_locator() -> None:
+    """Two `InlineLocator`s whose `parent` values point at each other — the
+    `id(raw)`-keyed cycle detection must still catch a cycle that never
+    touches platform-role `str` space at all, and the raised message must
+    show the `inline:` key form, not a bare role name."""
+    raw_a = _raw(role_name="inline-a")
+    raw_b = _raw(role_name="inline-b")
+    locator_a = InlineLocator(raw=raw_a, parent=None)
+    locator_b = InlineLocator(raw=raw_b, parent=locator_a)
+    # Frozen dataclasses cannot be mutually self-referential at construction
+    # time — `locator_a`'s `parent` is rebound to `locator_b` after the fact
+    # (bypassing `frozen=True` deliberately, only to build a fixture
+    # `InlineLocator`'s own public API cannot produce) to prove
+    # `_resolve_role_chain` detects the cycle rather than looping forever.
+    object.__setattr__(locator_a, "parent", locator_b)
+
+    with pytest.raises(DefinitionError) as excinfo:
+        _resolve_role_chain(locator_a, RootConfig())
+
+    message = str(excinfo.value)
+    assert "cycle" in message.lower()
+    assert "inline:" in message
+
+
+def test_resolve_inline_locator_end_to_end_inherits_base_tools() -> None:
+    """PR1a-T4, `InlineLocator` half: `resolve()` composes an inline
+    definition through the real platform chain exactly like a folder or
+    platform locator — its own declared tool plus everything `agent`/`base`
+    contribute (Option B additive inheritance, unchanged by this PR)."""
+    raw = _raw(role_name="inline-agent", tools=["catalog_search"])
+    locator = InlineLocator(raw=raw, parent="agent")
+
+    definition = resolve(locator, roots=RootConfig())
+
+    assert isinstance(definition, AgentDefinition)
+    assert definition.role_name == "inline-agent"
+    assert "catalog_search" in definition.tools
+    assert "escalation_notifier" in definition.tools  # inherited from `agent`
+
+
+def test_resolve_inline_locator_with_client_raises() -> None:
+    """Q5 (design.md D1): same guard as a `FolderLocator` — an inline
+    definition has no deployment tree to look a `client=` override up in."""
+    raw = _raw(role_name="inline-agent")
+    locator = InlineLocator(raw=raw, parent=None)
+
+    with pytest.raises(DefinitionError) as excinfo:
+        resolve(locator, client="acme", roots=RootConfig())
+
+    message = str(excinfo.value)
+    assert "client" in message.lower()
+    assert "InlineLocator" in message

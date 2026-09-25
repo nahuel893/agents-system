@@ -160,5 +160,29 @@ def test_resolve_folder_locator_with_client_raises(tmp_path: pathlib.Path) -> No
         deployments_root=tmp_path / "unused-deployments",
     )
 
-    with pytest.raises(DefinitionError):
+    with pytest.raises(DefinitionError) as excinfo:
         resolve(locator, client="acme", roots=roots)
+
+    message = str(excinfo.value)
+    assert "client" in message.lower()
+    assert "FolderLocator" in message
+
+
+def test_abstract_folder_agent_rejected(tmp_path: pathlib.Path) -> None:
+    """design.md's Open Question, PR1a-T2: `resolve()` rejects a
+    FolderLocator-sourced agent declared abstract in its own manifest,
+    exactly like a platform role — and the error names the agent's own
+    `role_name`, never the locator object's repr (a `FolderLocator` has no
+    human-meaningful string form of its own)."""
+    folder = _write_folder(tmp_path, "abstract-bot", abstract=True)
+    locator = FolderLocator(path=folder, root=tmp_path)
+    roots = RootConfig(
+        platform_root=tmp_path / "unused-platform",
+        deployments_root=tmp_path / "unused-deployments",
+    )
+
+    with pytest.raises(DefinitionError) as excinfo:
+        resolve(locator, roots=roots)
+
+    message = str(excinfo.value)
+    assert "Role 'abstract-bot' is declared abstract" in message

@@ -1341,8 +1341,8 @@ def load_generic(
 
     if is_abstract:
         raise DefinitionError(
-            f"Role '{locator}' is declared abstract and cannot be built "
-            f"directly. Extend it from a concrete role instead."
+            f"Role '{resolved.role_name}' is declared abstract and cannot "
+            f"be built directly. Extend it from a concrete role instead."
         )
 
     return resolved
@@ -1978,7 +1978,18 @@ def resolve(
     generic = load_generic(locator, roots=roots)
 
     if client is not None:
-        assert isinstance(locator, str)  # narrowed by the guard above
+        if not isinstance(locator, str):
+            # Unreachable: the guard above already rejected a non-`str`
+            # locator combined with `client` before any resolution work
+            # began. Re-checked here as a real `raise` — not `assert`, which
+            # `python -O` strips — purely so mypy narrows `locator: str` for
+            # the `load_override` call below without relying on a
+            # runtime-optional statement for type safety.
+            raise DefinitionError(
+                "Invariant violation — client: a deployment override "
+                "(client=) is only valid together with a predefined-role "
+                "(str) locator."
+            )
         override = load_override(client, locator, roots=roots)
         if override is not None:
             merged = merge(generic, override)
