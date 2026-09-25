@@ -57,13 +57,59 @@ a role on `/v1/*`; this entrypoint does not set them. The in-progress permission
 model will additionally require explicit `DEPLOY_GRANTS` once it lands. Do not
 preconfigure that future shape here.
 
-## 3. Run it
+## 3. Satisfy the two startup security checks
+
+`uv run python -m agents_system.demo` boots through `create_app`, and refuses
+to start unless two things hold. Both are enforced fail-closed:
+
+1. **A non-empty webhook secret.** `create_app`'s lifespan runs
+   `Settings.validate_security_fail_closed` at startup, which raises if
+   `META_WEBHOOK_SECRET` is empty — an empty HMAC key makes webhook
+   signatures forgeable. Set it to any non-empty value for a local demo run;
+   it does not need to be a real Meta secret, since this entrypoint never
+   receives WhatsApp webhooks:
+
+   ```bash
+   export META_WEBHOOK_SECRET=local-demo-not-a-real-secret
+   ```
+
+2. **A genuinely read-only `DEMO_DATABASE_URL` role.** Before serving
+   anything, `main()` verifies that the role behind `DEMO_DATABASE_URL` has
+   `default_transaction_read_only = on` — the same check the platform runs
+   for `BI_DATABASE_URL`. A role that can write is refused. Create a
+   dedicated read-only role for the demo database:
+
+   ```sql
+   CREATE ROLE agents_system_demo_ro LOGIN PASSWORD 'change-me';
+   GRANT CONNECT ON DATABASE agents_system_demo TO agents_system_demo_ro;
+   GRANT USAGE ON SCHEMA public TO agents_system_demo_ro;
+   GRANT SELECT ON agents_system_customers, agents_system_sales,
+     agents_system_sale_items, agents_system_stock
+     TO agents_system_demo_ro;
+   ALTER ROLE agents_system_demo_ro SET default_transaction_read_only = on;
+   ```
+
+   Then point `DEMO_DATABASE_URL` at that role instead of the default
+   `postgres` superuser connection, e.g.
+   `postgresql+asyncpg://agents_system_demo_ro:change-me@127.0.0.1:5432/agents_system_demo`.
+
+`ALLOW_INSECURE=true` bypasses both checks, but it is the wider hammer: it
+*also* allows `ADAPTER_RUNTIMES` to be configured without `ADAPTER_API_KEY`
+(an open, unauthenticated `/v1/*`). Prefer `META_WEBHOOK_SECRET` plus a
+genuinely read-only role for a demo run, and keep `ALLOW_INSECURE=true` as
+the local-dev fallback when that is inconvenient:
+
+```bash
+export ALLOW_INSECURE=true
+```
+
+## 4. Run it
 
 ```bash
 uv run python -m agents_system.demo
 ```
 
-## 4. Call the OpenAI-compatible API
+## 5. Call the OpenAI-compatible API
 
 With a role published and the server running, list the available models:
 

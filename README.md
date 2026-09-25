@@ -299,6 +299,11 @@ export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
 uv run python -m agents_system.demo
 ```
 
+The entrypoint also boots through two fail-closed startup checks: a non-empty
+`META_WEBHOOK_SECRET` (or `ALLOW_INSECURE=true`), and a genuinely read-only
+`DEMO_DATABASE_URL` role. Both are explained, with the exact commands, in
+[`docs/platform/demo-entrypoint.md`](docs/platform/demo-entrypoint.md).
+
 `EVAL_PROVIDER` can also be `ollama`, `groq`, or `anthropic`; use that
 provider's required variables instead. See the full walkthrough, provider
 requirements, and `/v1` examples in

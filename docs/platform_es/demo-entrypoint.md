@@ -59,13 +59,61 @@ protegen un rol en `/v1/*`; esta entrada no los define. El modelo de permisos
 en progreso además requerirá grants explícitos con `DEPLOY_GRANTS` cuando esté
 listo. No anticipes esa forma futura de configuración acá.
 
-## 3. Corrélo
+## 3. Cumplí las dos verificaciones de seguridad de arranque
+
+`uv run python -m agents_system.demo` arranca a través de `create_app`, y se
+niega a iniciar salvo que se cumplan dos cosas. Ambas se aplican de forma
+fail-closed (cierran en caso de duda):
+
+1. **Un secreto de webhook no vacío.** El lifespan de `create_app` ejecuta
+   `Settings.validate_security_fail_closed` al arrancar, que lanza un error
+   si `META_WEBHOOK_SECRET` está vacío — una clave HMAC vacía hace que las
+   firmas de webhook sean falsificables. Definila con cualquier valor no
+   vacío para una corrida de demo local; no necesita ser un secreto real de
+   Meta, ya que esta entrada nunca recibe webhooks de WhatsApp:
+
+   ```bash
+   export META_WEBHOOK_SECRET=demo-local-no-es-un-secreto-real
+   ```
+
+2. **Un rol de `DEMO_DATABASE_URL` genuinamente de solo lectura.** Antes de
+   servir nada, `main()` verifica que el rol detrás de `DEMO_DATABASE_URL`
+   tenga `default_transaction_read_only = on` — la misma verificación que la
+   plataforma corre para `BI_DATABASE_URL`. Un rol que puede escribir es
+   rechazado. Creá un rol dedicado de solo lectura para la base demo:
+
+   ```sql
+   CREATE ROLE agents_system_demo_ro LOGIN PASSWORD 'cambiame';
+   GRANT CONNECT ON DATABASE agents_system_demo TO agents_system_demo_ro;
+   GRANT USAGE ON SCHEMA public TO agents_system_demo_ro;
+   GRANT SELECT ON agents_system_customers, agents_system_sales,
+     agents_system_sale_items, agents_system_stock
+     TO agents_system_demo_ro;
+   ALTER ROLE agents_system_demo_ro SET default_transaction_read_only = on;
+   ```
+
+   Después apuntá `DEMO_DATABASE_URL` a ese rol en lugar de la conexión por
+   defecto con el superusuario `postgres`, por ejemplo
+   `postgresql+asyncpg://agents_system_demo_ro:cambiame@127.0.0.1:5432/agents_system_demo`.
+
+`ALLOW_INSECURE=true` evita las dos verificaciones, pero es el martillo más
+grande: *también* permite que `ADAPTER_RUNTIMES` se configure sin
+`ADAPTER_API_KEY` (un `/v1/*` abierto y sin autenticar). Preferí
+`META_WEBHOOK_SECRET` junto con un rol genuinamente de solo lectura para una
+corrida de demo, y dejá `ALLOW_INSECURE=true` como alternativa para desarrollo
+local cuando eso resulte inconveniente:
+
+```bash
+export ALLOW_INSECURE=true
+```
+
+## 4. Corrélo
 
 ```bash
 uv run python -m agents_system.demo
 ```
 
-## 4. Llamá a la API compatible con OpenAI
+## 5. Llamá a la API compatible con OpenAI
 
 Con un rol publicado y el servidor corriendo, listá los modelos disponibles:
 
