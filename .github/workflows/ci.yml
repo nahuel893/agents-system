@@ -552,13 +552,6 @@ jobs:
             --ignore-vuln PYSEC-2026-2582
             --ignore-vuln CVE-2026-59152
 
-            # transformers -- transitive via sentence-transformers>=3.0. A
-            # minor-version bump of a large, actively-changing ML dependency
-            # deserves its own verification pass against the real
-            # BAAI/bge-m3 embedding path, not a drive-by lockfile edit.
-            # Tracked in #153.
-            --ignore-vuln PYSEC-2026-3929
-
             # setuptools -- `uv tree --invert --package setuptools` shows
             # the sole constraint is torch's own metadata (both directly and
             # via sentence-transformers); it will not move until a newer
