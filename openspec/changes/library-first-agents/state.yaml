@@ -1,13 +1,49 @@
 change: library-first-agents
-phase: explore
+phase: tasks
 artifact_store: hybrid
 artifacts:
   exploration: true
-  proposal: false
-  specs: false
-  design: false
-  tasks: false
+  proposal: true
+  specs: true
+  design: true
+  tasks: true
 tasks_progress:
   completed: []
-  pending: []
-last_updated: 2026-09-24T17:59:24Z
+  pending:
+    - PR1a-T1
+    - PR1a-T2
+    - PR1a-T3
+    - PR1a-T4
+    - PR1a-T5
+    - PR1b-T1
+    - PR1b-T2
+    - PR1b-T3
+    - PR2-T1
+    - PR2-T2
+    - PR2-T3
+    - PR2-T4
+    - PR2-T5
+    - PR3-T1
+    - PR3-T2
+    - PR3-T3
+    - PR3-T4
+    - PR4a-i-T1
+    - PR4a-i-T2
+    - PR4a-ii-T1
+    - PR4a-ii-T2
+    - PR4a-ii-T3
+    - PR4a-ii-T4
+    - PR4b-T1
+    - PR4b-T2
+    - PR4b-T3
+    - PR4b-T4
+    - PR5-T1
+    - PR5-T2
+    - PR5-T3
+    - PR6-T1
+    - PR6-T2
+    - PR6-T3
+    - PR7-T1
+    - PR7-T2
+    - PR7-T3
+last_updated: 2026-09-25T00:00:00Z
