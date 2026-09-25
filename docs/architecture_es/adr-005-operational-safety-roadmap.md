@@ -29,7 +29,7 @@ redescubrir el mismo código cada uno por su cuenta.
 
 **Qué existe:** una jerarquía de tiers explícita `T0`–`T3`
 (`harness/registry.py:9-33`); la barrera `untrusted_input` que rechaza
-grants T3 para roles no confiables (`harness/loader.py:1178-1206`, ADR-003
+grants T3 para roles no confiables (`harness/loader.py:1580` al cargar, `harness/factory.py:349-361` al otorgar, ADR-003
 R4). Toda llamada T3 corre dentro de un sandbox `bwrap` con límites vía
 `prlimit` y sin fallback sin sandbox (`docs/operations/sandbox-bwrap.md`,
 ADR-002 C.14). Los secretos se cargan vía `pydantic-settings`

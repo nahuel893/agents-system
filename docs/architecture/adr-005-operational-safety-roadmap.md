@@ -28,7 +28,7 @@ rediscovering the same code.
 
 **What exists:** an explicit `T0`–`T3` tier hierarchy (`harness/registry.py:9-33`);
 the `untrusted_input` barrier rejecting T3 grants for untrusted roles
-(`harness/loader.py:1178-1206`, ADR-003 R4). Every T3 call runs inside a
+(`harness/loader.py:1580` at load, `harness/factory.py:349-361` at grant time, ADR-003 R4). Every T3 call runs inside a
 `bwrap` sandbox with `prlimit` limits and no unsandboxed fallback
 (`docs/operations/sandbox-bwrap.md`, ADR-002 C.14). Secrets load through
 `pydantic-settings` (`config.py:55-91`) and boot fails closed on an empty
