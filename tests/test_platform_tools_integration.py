@@ -317,7 +317,6 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
 
     from agents_system.harness.loader import (
         RootConfig,
-        _extends_target,
         _load_role_files,
     )
 
@@ -326,13 +325,13 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
     for role in discover_platform_roles():
         _, parent, _ = _load_role_files(role, roots)
         if parent:
-            parents.add(_extends_target(parent))
+            parents.add(parent)  # already placed by `_extends_target`
 
     # A CONCRETE descendant, not merely a child. "Something extends it" is
     # satisfied by another abstract role, which would leave a whole abstract
     # subtree that still cannot be built and still grants nothing — the exact
     # dead-file case this exists to catch, one level down.
-    from agents_system.harness.loader import _extends_target, _load_role_files
+    from agents_system.harness.loader import _load_role_files
 
     def reaches_a_concrete_descendant(ancestor: str) -> bool:
         for role in discover_platform_roles():
@@ -345,7 +344,7 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
                     return True
                 seen.add(current)
                 _, parent, _ = _load_role_files(current, roots)
-                current = _extends_target(parent) if parent else None
+                current = parent
         return False
 
     for role in discover_platform_roles():
