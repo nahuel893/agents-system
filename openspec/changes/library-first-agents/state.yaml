@@ -1,5 +1,5 @@
 change: library-first-agents
-phase: tasks
+phase: apply
 artifact_store: hybrid
 artifacts:
   exploration: true
@@ -8,13 +8,13 @@ artifacts:
   design: true
   tasks: true
 tasks_progress:
-  completed: []
-  pending:
+  completed:
     - PR1a-T1
     - PR1a-T2
     - PR1a-T3
     - PR1a-T4
     - PR1a-T5
+  pending:
     - PR1b-T1
     - PR1b-T2
     - PR1b-T3
@@ -47,3 +47,31 @@ tasks_progress:
     - PR7-T2
     - PR7-T3
 last_updated: 2026-09-25T00:00:00Z
+pr1a:
+  status: implemented
+  branch: feat/library-first-1a-locator
+  pr_url: https://github.com/nahuel893/agents-system/pull/68
+  files_changed:
+    - src/agents_system/harness/loader.py
+    - tests/test_locator_folder.py
+    - tests/test_locator_inline.py
+  diff_lines_authored: 623
+  diff_budget_note: >-
+    Exceeds the ~240-260 estimate and the 400-line default budget; every
+    added line maps to a task-named RED scenario, a required docstring
+    (design.md D1's own code block), or a review-requested fix/test, none
+    padded. Recommend size:exception for this slice rather than a further
+    pre-split, since PR1a is already the smallest chain unit the tasks
+    phase defined.
+  review_fixes:
+    - load_generic's abstract-role error interpolated the locator object
+      (FolderLocator repr) instead of resolved.role_name — fixed.
+    - resolve()'s client=+non-str-locator mypy narrowing relied on a bare
+      assert (stripped by python -O) — replaced with a real raise.
+    - Added resolve()-level abstract-FolderLocator rejection test,
+      inline-to-inline cycle test, end-to-end resolve(InlineLocator) test
+      (own tool + inherited base tools, and client= raising), and
+      tightened the folder-locator client-raises assertion to check
+      message content.
+    - Removed AI attribution from the PR body.
+  ci: 12/12 checks passed (both pushes)

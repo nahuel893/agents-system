@@ -139,7 +139,7 @@ stays byte-for-byte unchanged in this slice — `_extends_target` is not
 rewritten here (that is PR1b). Depends on nothing (first slice in the chain).
 Estimated lines: ~240 (design.md Testing Strategy table: PR1a ~220-260).
 
-- [ ] **PR1a-T1 — `RoleLocator`/`FolderLocator`/`InlineLocator` types (D1).**
+- [x] **PR1a-T1 — `RoleLocator`/`FolderLocator`/`InlineLocator` types (D1).**
   RED: create `tests/test_locator_folder.py` and `tests/test_locator_inline.py`
   asserting: `FolderLocator(path=..., root=..., overrides={})` and
   `InlineLocator(raw=..., parent=None)` are frozen dataclasses (mutation
@@ -160,7 +160,7 @@ Estimated lines: ~240 (design.md Testing Strategy table: PR1a ~220-260).
   Satisfies: "Agent locator discriminates exactly three source kinds".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR1a-T2 — `_load_role_files` 3-way dispatch (platform / folder / inline).**
+- [x] **PR1a-T2 — `_load_role_files` 3-way dispatch (platform / folder / inline).**
   RED: extend `tests/test_locator_folder.py` with: a `FolderLocator` pointing
   at a well-formed importer folder (own `role.md`/`manifest.md`/`policy.md`)
   resolves to a `RawDefinition` with the same field set a platform-role
@@ -201,7 +201,7 @@ Estimated lines: ~240 (design.md Testing Strategy table: PR1a ~220-260).
   "An inline locator is used" (part of "Agent locator discriminates exactly
   three source kinds"). <!-- sdd-owner: implementation -->
 
-- [ ] **PR1a-T3 — `_resolve_role_chain` locator-keyed cycle detection + chain walk.**
+- [x] **PR1a-T3 — `_resolve_role_chain` locator-keyed cycle detection + chain walk.**
   RED: extend `tests/test_locator_inline.py` with a cycle scenario built from
   a chain of `InlineLocator`s whose `parent` values eventually repeat (an
   inline locator referencing itself indirectly through a `str` platform name
@@ -229,7 +229,7 @@ Estimated lines: ~240 (design.md Testing Strategy table: PR1a ~220-260).
   shared-pipeline half of that requirement — every locator kind flows through
   the same resolution/merge/injection code path). <!-- sdd-owner: implementation -->
 
-- [ ] **PR1a-T4 — `load_generic`/`resolve()` signature widening.**
+- [x] **PR1a-T4 — `load_generic`/`resolve()` signature widening.**
   RED: extend `tests/platform_role_contract.py`'s existing regression
   coverage (or add `tests/test_locator_folder.py::test_resolve_folder_locator_end_to_end`)
   asserting `resolve(FolderLocator(...), client=None, roots=roots)` produces
@@ -261,7 +261,7 @@ Estimated lines: ~240 (design.md Testing Strategy table: PR1a ~220-260).
   only", "No implicit client-override root is assumed for a registered
   agent" (the `client`-requires-`str`-locator half). <!-- sdd-owner: implementation -->
 
-- [ ] **PR1a-T5 — PR1a closing: docs + full verification.**
+- [x] **PR1a-T5 — PR1a closing: docs + full verification.**
   Add module-level docstring notes to `FolderLocator`/`InlineLocator`/
   `RoleLocator` (already drafted in PR1a-T1) confirming they cross-reference
   `design.md`'s D1; no other doc file changes in this slice (doc updates for
