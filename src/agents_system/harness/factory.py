@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -55,6 +55,8 @@ from agents_system.harness.loader import (
     resolve,
 )
 from agents_system.harness.registry import ToolRegistry, ToolSpec
+from agents_system.permissions import Permission
+from agents_system.permissions.permission_registry import permission_registry
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -97,6 +99,17 @@ class EquippedRuntime:
     denied_tools: tuple[tuple[str, str], ...]
     skills: tuple[LoadedSkill, ...]
     session_provider: async_sessionmaker[AsyncSession] | None = None
+    deploy_grant_ceiling: frozenset[type[Permission]] = frozenset()
+    """The deploy-time grant ceiling (issue #38, design.md Resolved Decision
+    5): the exact permission classes this runtime was explicitly granted at
+    boot (`main.py`'s `DEPLOY_GRANTS`, or a library caller's
+    `granted_permissions`). Layer-2 revalidation (`interceptor.intercept`,
+    `AgentRuntime.run_turn`'s default) bounds itself to THIS set — never to
+    `definition.permissions`, the role's full declared set — so a role that
+    merely DECLARES a permission is not the same as a deployment actually
+    GRANTING it. Independent of, and resolved alongside, the existing
+    `tools`/`denied_tools` computation (unchanged by this field).
+    """
 
 
 def _load_skills(
@@ -268,7 +281,7 @@ def _compose_prompt(
 def build_runtime(
     role_type: str,
     registry: ToolRegistry,
-    granted_permissions: Iterable[str],
+    granted_permissions: Iterable[str | type[Permission]],
     *,
     client: str | None = None,
     roots: RootConfig | None = None,
@@ -283,8 +296,14 @@ def build_runtime(
     registry:
         The live tool registry the granted surface is resolved against.
     granted_permissions:
-        The requesting identity's permission grants. The effective tool surface
-        is ``role.permissions ∩ granted_permissions`` (enforced by the injector).
+        The requesting identity's permission grants — the deploy-time grant
+        ceiling (issue #38). Accepts registered wire-name strings,
+        ``Permission`` subclasses, or a mixture of both (spec: "Accepted
+        grant forms"); every entry is normalized through the registry into
+        ``EquippedRuntime.deploy_grant_ceiling``. The effective tool surface
+        is ``role.permissions ∩ granted_permissions`` (enforced by the
+        injector) — a SEPARATE, string-keyed computation this ceiling does
+        not change.
     client:
         Optional deployment client. When given, the deployment override is
         merged on top of the generic role and its skill files are loaded.
@@ -295,18 +314,36 @@ def build_runtime(
         roots = RootConfig()
 
     # Materialised once: an `Iterable` may be a one-shot generator, and it is
-    # now consumed by TWO surface resolutions below (registry tools, then
-    # ADR-002 C.12 command tools) rather than one.
+    # now consumed by THREE resolutions below (registry tools, ADR-002 C.12
+    # command tools, and the deploy_grant_ceiling below) rather than one.
     granted = list(granted_permissions)
 
     definition = resolve(role_type, client=client, roots=roots)
-    surface = resolve_tool_surface(definition, registry, granted)
-    command_surface = resolve_command_tool_surface(definition, granted)
+    # `resolve_tool_surface`/`resolve_command_tool_surface` are typed
+    # `Iterable[str]` and are UNCHANGED by this task (design.md: "no
+    # behavior change to tool-surface resolution"): their string-set
+    # intersection already tolerates a stray `Permission` class entry
+    # (it simply never matches `definition.permissions`, a str tuple) —
+    # this cast documents that existing tolerance rather than widening
+    # their signature.
+    surface = resolve_tool_surface(definition, registry, cast("list[str]", granted))
+    command_surface = resolve_command_tool_surface(
+        definition, cast("list[str]", granted)
+    )
     skills = _load_skills(definition, client, roots)
     system_prompt = _compose_prompt(definition, skills)
 
     granted_tools = surface.granted + command_surface.granted
     denied_tools = surface.denied + command_surface.denied
+
+    # issue #38 — the deploy-time grant ceiling, persisted independently of
+    # the string-keyed tool-surface resolution above. `resolve_tool_surface`
+    # deliberately keeps consuming the raw string/class values (no behavior
+    # change to tool-surface resolution in this task); this is a SEPARATE,
+    # class-based normalization Layer-2 revalidation bounds itself to.
+    deploy_grant_ceiling = frozenset(
+        permission_registry.resolve(p) if isinstance(p, str) else p for p in granted
+    )
 
     logger.info(
         "factory.runtime_built",
@@ -332,4 +369,5 @@ def build_runtime(
         denied_tools=denied_tools,
         skills=skills,
         session_provider=session_provider,
+        deploy_grant_ceiling=deploy_grant_ceiling,
     )

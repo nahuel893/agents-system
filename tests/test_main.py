@@ -1,9 +1,12 @@
 """Tests for the FastAPI app factory's lifespan (D-014 slices S1 and S4).
 
 Covers:
-  - data-driven grants (design AD-5): lifespan calls harness.loader.resolve()
-    and passes definition.permissions as granted_permissions to build_runtime,
-    instead of a hardcoded role -> permissions map.
+  - explicit deploy grants (permission-model PR3, issue #38, design.md
+    Resolved Decision 5): lifespan calls harness.loader.resolve() for
+    role/untrusted_input/limits facts, then looks up the GRANT itself in
+    settings.deploy_grants (DEPLOY_GRANTS) — never definition.permissions,
+    the role's full declared set. AD-5's auto-grant is gone; a configured
+    runtime with no matching DEPLOY_GRANTS entry fails boot loudly.
   - outbound WhatsApp client (design AD-2): lifespan builds a WhatsAppClient
     and stores it on app.state.whatsapp_client.
   - checkpointer wiring (design AD-1/AD-7): lifespan builds the shared Redis
@@ -41,6 +44,36 @@ def clear_settings_cache() -> Any:
     get_settings.cache_clear()
 
 
+def _default_deploy_grants(model_ids: set[str]) -> dict[str, tuple[str, ...]]:
+    """Best-effort real-permission grant for every model id, so tests using
+    `_make_settings` that are not ABOUT deploy grants keep booting exactly
+    as before permission-model PR3 (issue #38) removed AD-5's
+    auto-grant-of-the-role's-full-permission-set. Resolves each id's role
+    against the REAL platform/deployment roots (the same default `main.py`
+    itself uses when a test passes no explicit `roots`) and grants exactly
+    that role's own declared permissions -- equivalent to the removed
+    auto-grant, for every test that never mocked `harness.loader.resolve`.
+    A model id that fails to resolve here (e.g. one whose test supplies its
+    own non-default `roots=` to `create_test_app`) is simply skipped: that
+    test's own earlier boot-time check fires before DEPLOY_GRANTS would be
+    consulted regardless.
+    """
+    from agents_system.harness.loader import resolve as _resolve
+
+    grants: dict[str, tuple[str, ...]] = {}
+    for model_id in model_ids:
+        if "__" not in model_id:
+            continue
+        prefix, role = model_id.split("__", 1)
+        client = None if prefix == "_generic" else prefix
+        try:
+            definition = _resolve(role, client=client)
+        except Exception:  # noqa: S112 -- best-effort test scaffolding, see docstring
+            continue
+        grants[model_id] = definition.permissions
+    return grants
+
+
 def _make_settings(**overrides: object) -> Settings:
     # #141 review follow-up -- whatsapp_token/whatsapp_phone_number_id are
     # deliberately NOT defaulted to non-empty here: main.py's lifespan now
@@ -56,6 +89,17 @@ def _make_settings(**overrides: object) -> Settings:
         "adapter_runtimes": ["_generic__sales-agent"],
     }
     defaults.update(overrides)
+
+    # permission-model PR3 (issue #38) -- boot now requires an explicit
+    # DEPLOY_GRANTS entry per configured runtime id. A test that IS about
+    # deploy grants passes its own `deploy_grants=` override, which wins.
+    if "deploy_grants" not in overrides:
+        model_ids: set[str] = set(defaults.get("adapter_runtimes") or [])  # type: ignore[arg-type]
+        whatsapp_id = defaults.get("whatsapp_runtime_id")
+        if whatsapp_id:
+            model_ids.add(whatsapp_id)  # type: ignore[arg-type]
+        defaults["deploy_grants"] = _default_deploy_grants(model_ids)
+
     return Settings(**defaults)  # type: ignore[arg-type]
 
 
@@ -86,13 +130,21 @@ def _fake_checkpointer_cm_factory(
 
 
 @pytest.mark.asyncio
-async def test_lifespan_uses_data_driven_grants() -> None:
-    """lifespan resolves the definition FIRST and passes its permissions to
-    build_runtime as granted_permissions — not a hardcoded role map."""
-    test_settings = _make_settings()
+async def test_lifespan_uses_explicit_deploy_grants() -> None:
+    """permission-model PR3 (issue #38, design.md Resolved Decision 5):
+    lifespan resolves the definition to get role/untrusted_input/limits
+    facts, but the GRANT itself comes only from settings.deploy_grants
+    (DEPLOY_GRANTS) — never from definition.permissions (AD-5's auto-grant
+    is gone)."""
+    test_settings = _make_settings(
+        deploy_grants={"_generic__sales-agent": ("read:catalog", "write:orders")}
+    )
 
     fake_definition = MagicMock()
-    fake_definition.permissions = ("read:catalog", "write:orders")
+    # Deliberately WIDER than (and different from) the configured grant, so
+    # a passing assertion below cannot be explained by build_runtime having
+    # received definition.permissions by coincidence.
+    fake_definition.permissions = ("read:catalog", "write:orders", "send:message")
     fake_definition.execution_limits = None
 
     fake_equipped = MagicMock()
@@ -131,10 +183,51 @@ async def test_lifespan_uses_data_driven_grants() -> None:
         )
         assert resolve_call.kwargs.get("client") is None
 
-        # build_runtime received the resolved definition's permissions —
-        # NOT a hardcoded role -> permissions map.
+        # build_runtime received the CONFIGURED DEPLOY_GRANTS entry — not
+        # definition.permissions, the role's full declared set.
         _, kwargs = mock_build_runtime.call_args
         assert tuple(kwargs["granted_permissions"]) == ("read:catalog", "write:orders")
+
+
+@pytest.mark.asyncio
+async def test_lifespan_boot_fails_without_deploy_grants_entry() -> None:
+    """spec: 'Boot failure without an explicit grant' (issue #38) — a
+    configured runtime with no DEPLOY_GRANTS entry fails boot loudly,
+    naming the runtime/role and the env var, instead of defaulting to an
+    empty or full-role-set grant."""
+    test_settings = _make_settings(deploy_grants={})  # no entry for sales-agent
+
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.untrusted_input = False
+    fake_definition.execution_limits = None
+
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agents_system.main._build_checkpointer_cm",
+            side_effect=_fake_checkpointer_cm_factory(MagicMock()),
+        ),
+        patch(
+            "agents_system.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agents_system.harness.loader.resolve", return_value=fake_definition),
+        pytest.raises(DefinitionError) as exc_info,
+    ):
+        app = create_test_app()
+        async with lifespan(app):
+            pass
+
+    message = str(exc_info.value)
+    assert "_generic__sales-agent" in message
+    assert "DEPLOY_GRANTS" in message
 
 
 @pytest.mark.asyncio
@@ -1043,6 +1136,7 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
         allow_insecure=True,
         adapter_runtimes=[],  # nothing published on /v1 ...
         whatsapp_runtime_id="_generic__sales-agent",  # ... but WhatsApp needs one
+        deploy_grants={"_generic__sales-agent": ("read:catalog",)},
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",
@@ -1121,6 +1215,7 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
         _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
         adapter_runtimes=["client-a__sales-agent"],
+        deploy_grants={"client-a__sales-agent": ("read:catalog",)},
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",
@@ -1272,6 +1367,7 @@ async def test_generic_runtime_boots_without_explicit_roots() -> None:
         _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
         adapter_runtimes=["_generic__sales-agent"],
+        deploy_grants={"_generic__sales-agent": ("read:catalog",)},
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",

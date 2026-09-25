@@ -387,7 +387,7 @@ Scope: `config.py`, `harness/factory.py`, `harness/interceptor.py`,
 only). Depends on PR1 and PR2. Estimated lines: ~340 (design.md Testing
 Strategy table).
 
-- [ ] **PR3-T1 — `Settings.deploy_grants` from `DEPLOY_GRANTS` env var.**
+- [x] **PR3-T1 — `Settings.deploy_grants` from `DEPLOY_GRANTS` env var.**
   RED: add tests to `tests/test_config.py` asserting `Settings` exposes a
   `deploy_grants: dict[str, tuple[str, ...]]` field, that setting the
   `DEPLOY_GRANTS` environment variable to a JSON object (e.g.
@@ -405,7 +405,7 @@ Strategy table).
   "Accepted grant forms" requirements are exercised by PR3-T2/T3; this task
   is the config-parsing prerequisite). <!-- sdd-owner: implementation -->
 
-- [ ] **PR3-T2 — `EquippedRuntime.deploy_grant_ceiling` + accepted grant forms.**
+- [x] **PR3-T2 — `EquippedRuntime.deploy_grant_ceiling` + accepted grant forms.**
   RED: add tests to `tests/test_harness_factory.py` covering spec
   Requirement "Accepted grant forms": `build_runtime(..., granted_permissions=
   [Write, "send:message"])` (a mixed list of a `Permission` subclass and a
@@ -430,7 +430,7 @@ Strategy table).
   Verify: `.venv/bin/pytest -q tests/test_harness_factory.py`
   Satisfies: "Accepted grant forms". <!-- sdd-owner: implementation -->
 
-- [ ] **PR3-T3 — `main.py`: explicit `DEPLOY_GRANTS` grant, remove AD-5 auto-grant, boot fails loudly.**
+- [x] **PR3-T3 — `main.py`: explicit `DEPLOY_GRANTS` grant, remove AD-5 auto-grant, boot fails loudly.**
   RED: add tests to `tests/test_main.py` covering spec Requirements "No
   automatic grant" and "Boot failure without an explicit grant": boot with
   a configured runtime whose `model_id` has no `DEPLOY_GRANTS` entry raises
@@ -453,7 +453,7 @@ Strategy table).
   Satisfies: "No automatic grant", "Boot failure without an explicit grant".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR3-T4 — Layer-2 revalidates against the persisted ceiling (issue #38 fix + regression).**
+- [x] **PR3-T4 — Layer-2 revalidates against the persisted ceiling (issue #38 fix + regression).**
   RED: create `tests/test_issue_38_regression.py` with the spec's exact
   scenarios under Requirement "Layer-2 revalidates against the persisted
   deploy grant ceiling (issue #38)": a role declares `Write` among its
@@ -484,7 +484,7 @@ Strategy table).
   Satisfies: "Layer-2 revalidates against the persisted deploy grant
   ceiling (issue #38)". Closes #38. <!-- sdd-owner: implementation -->
 
-- [ ] **PR3-T5 — PR3 closing: docstring update + docs + full verification.**
+- [x] **PR3-T5 — PR3 closing: docstring update + docs + full verification.**
   Update `src/agents_system/__init__.py`'s module docstring code example
   (currently showing `build_runtime(..., granted_permissions=
   ["read:catalog"])`) to make explicit that this call is now the *only*

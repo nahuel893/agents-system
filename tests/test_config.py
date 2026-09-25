@@ -144,6 +144,45 @@ def test_adapter_config_defaults():
 
 
 # ---------------------------------------------------------------------------
+# permission-model PR3 (issue #38, design.md Resolved Decision 5) —
+# Settings.deploy_grants
+# ---------------------------------------------------------------------------
+
+
+def test_deploy_grants_defaults_to_empty_dict() -> None:
+    """An unset DEPLOY_GRANTS yields an empty deploy_grants -- no exception
+    at Settings construction time. The boot-time failure for a specific
+    missing model_id is main.py's lifespan concern, not this field's own
+    validation (spec: 'Boot failure without an explicit grant')."""
+    settings = Settings(_env_file=None)
+    assert settings.deploy_grants == {}
+
+
+def test_deploy_grants_parses_json_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DEPLOY_GRANTS is a JSON object mapping runtime id -> list of wire
+    names, decoded via pydantic-settings' existing JSON-env mechanism (the
+    same one adapter_runtimes above already uses for a structured field)."""
+    monkeypatch.setenv(
+        "DEPLOY_GRANTS",
+        '{"whatsapp__sales-agent": ["read:catalog", "write:orders"]}',
+    )
+    settings = Settings(_env_file=None)
+    assert settings.deploy_grants == {
+        "whatsapp__sales-agent": ("read:catalog", "write:orders")
+    }
+
+
+def test_deploy_grants_accepts_direct_construction() -> None:
+    """Direct kwarg construction (as tests/main.py build settings) accepts a
+    plain dict[str, list[str]] and normalizes values to tuples."""
+    settings = Settings(
+        _env_file=None,
+        deploy_grants={"_generic__sales-agent": ["read:catalog"]},
+    )
+    assert settings.deploy_grants == {"_generic__sales-agent": ("read:catalog",)}
+
+
+# ---------------------------------------------------------------------------
 # #169 (ADR-002 E.18) — configurable Ollama model + base URL
 # ---------------------------------------------------------------------------
 

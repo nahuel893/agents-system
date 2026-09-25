@@ -152,6 +152,108 @@ def test_build_runtime_denies_tools_missing_permissions() -> None:
     assert denied_names == {"message_sender", "order_writer", "client_lookup"}
 
 
+# ---------------------------------------------------------------------------
+# permission-model PR3 (issue #38) — EquippedRuntime.deploy_grant_ceiling
+# ---------------------------------------------------------------------------
+
+
+def test_build_runtime_deploy_grant_ceiling_accepts_mixed_class_and_name_grant() -> (
+    None
+):
+    """Accepted grant forms (spec): `granted_permissions` may mix a
+    `Permission` subclass and a registered wire-name string; every entry
+    normalizes through the registry into the stored `deploy_grant_ceiling`
+    frozenset."""
+    from agents_system.harness.factory import build_runtime
+    from agents_system.permissions import Write, permission_registry
+
+    send_message_cls = permission_registry.resolve("send:message")
+
+    runtime = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        [Write, "send:message"],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    assert runtime.deploy_grant_ceiling == frozenset({Write, send_message_cls})
+
+
+def test_build_runtime_deploy_grant_ceiling_by_class_and_by_name_are_identical() -> (
+    None
+):
+    """Scenario: Grant by class / Grant by name — granting the SAME
+    permission as a class object vs. as its registered wire-name string
+    must normalize to an identical ceiling."""
+    from agents_system.harness.factory import build_runtime
+    from agents_system.permissions import permission_registry
+
+    write_orders_cls = permission_registry.resolve("write:orders")
+    send_message_cls = permission_registry.resolve("send:message")
+
+    by_class = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        [write_orders_cls, send_message_cls],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+    by_name = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        ["write:orders", "send:message"],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    expected = frozenset({write_orders_cls, send_message_cls})
+    assert by_class.deploy_grant_ceiling == expected
+    assert by_name.deploy_grant_ceiling == expected
+
+
+def test_build_runtime_deploy_grant_ceiling_default_empty() -> None:
+    """No `deploy_grant_ceiling` bleeds through when granted_permissions is
+    empty — the dataclass default, not an accident of the resolution loop."""
+    from agents_system.harness.factory import build_runtime
+
+    runtime = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        [],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    assert runtime.deploy_grant_ceiling == frozenset()
+
+
+def test_build_runtime_deploy_grant_ceiling_does_not_affect_granted_tools() -> None:
+    """Existing-behavior regression guard: resolve_tool_surface's tool-grant
+    computation is unaffected by this task — it keeps consuming the raw
+    string/class `granted_permissions` values as before, unchanged by the
+    NEW `deploy_grant_ceiling` bookkeeping added alongside it."""
+    from agents_system.harness.factory import build_runtime
+
+    runtime = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        SALES_PERMISSIONS,
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    granted_names = {t.name for t in runtime.tools}
+    assert granted_names == {
+        "message_sender",
+        "catalog_search",
+        "order_writer",
+        "session_state",
+        "client_lookup",
+    }
+    assert runtime.denied_tools == ()
+
+
 def test_build_runtime_loads_declared_skills_in_order() -> None:
     from agents_system.harness.factory import build_runtime
 

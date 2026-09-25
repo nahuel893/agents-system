@@ -433,8 +433,9 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Regression (discovery #184): a write:/send: tool call succeeds through
-    the adapter using the runtime's own real grants — the adapter must not
-    force ``permissions=()`` at the run_turn call site (design AD-4)."""
+    the adapter using the runtime's own real deploy grant ceiling (issue
+    #38, design.md Resolved Decision 5) — the adapter must not force
+    ``permissions=()`` at the run_turn call site."""
     from agents_system.agent.graph import AgentRuntime
     from agents_system.harness.factory import EquippedRuntime
     from agents_system.harness.loader import AgentDefinition
@@ -471,12 +472,18 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
         audit_policy={},
         execution_limits=None,
     )
+    from agents_system.permissions import permission_registry
+
     equipped = EquippedRuntime(
         definition=definition,
         system_prompt="You are a helpful assistant.",
         tools=(order_spec,),
         denied_tools=(),
         skills=(),
+        # issue #38 — run_turn's default now sources from the deploy grant
+        # ceiling, not definition.permissions; this test's whole point is
+        # the adapter's default reaching a REAL grant, so it needs one.
+        deploy_grant_ceiling=frozenset({permission_registry.resolve("write:orders")}),
     )
 
     tool_call_id = "call_write_001"

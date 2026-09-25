@@ -297,11 +297,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         "which requires an explicit RootConfig(deployments_root=...) passed to create_app(). "
                         "agents_system does not derive a default deployments_root for client overrides."
                     )
-                # D-014 AD-5 — data-driven grants: resolve the definition FIRST so
-                # the role's own resolved permissions become granted_permissions.
-                # No hardcoded role -> permissions map (discovery #184).
                 # `roots` is the exact caller-supplied RootConfig object passed to
-                # create_app (or None for generic roles).
+                # create_app (or None for generic roles). Resolving here only
+                # gets the role/untrusted_input/limits facts this loop needs
+                # below -- the permission GRANT itself is looked up
+                # separately (settings.deploy_grants), immediately before
+                # build_runtime: permission-model PR3 (issue #38) removed
+                # AD-5's auto-grant-of-the-role's-full-permission-set, so
+                # `definition.permissions` (what the role DECLARES it may
+                # need) is no longer treated as what a deployment GRANTS it.
                 definition = resolve(
                     role,
                     client=deployment,
@@ -349,6 +353,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                             f"less than outbox lease_seconds={lease_seconds}"
                         )
 
+                # permission-model PR3 (issue #38, design.md Resolved
+                # Decision 5) -- DEPLOY_GRANTS is the SOLE grant source for
+                # this boot path. A configured runtime with no matching
+                # entry fails boot loudly (same style as the
+                # whatsapp_runtime_id failure below) rather than silently
+                # defaulting to an empty or full-role grant.
+                if model_id not in settings.deploy_grants:
+                    raise DefinitionError(
+                        f"Runtime {model_id!r} (role {role!r}) has no "
+                        "DEPLOY_GRANTS entry. Boot requires an explicit "
+                        "deploy-time grant for every configured runtime -- "
+                        "set DEPLOY_GRANTS to a JSON object mapping this "
+                        "runtime id to its granted permission wire names, "
+                        f'e.g. DEPLOY_GRANTS=\'{{"{model_id}": ["read:catalog"]}}\'. '
+                        "Refusing to boot."
+                    )
+
                 # The SAME explicit root as the `resolve` above. Passing it
                 # to only one of the two was the whole bug in a subtler form:
                 # the definition used for the permission grant came from the
@@ -358,7 +379,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 equipped = build_runtime(
                     role_type=role,
                     registry=registry,
-                    granted_permissions=definition.permissions,
+                    granted_permissions=settings.deploy_grants[model_id],
                     client=deployment,
                     roots=roots,
                     session_provider=session_provider,

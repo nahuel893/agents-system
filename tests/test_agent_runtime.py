@@ -433,9 +433,14 @@ async def test_no_session_provider_backward_compatible() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_turn_permissions_default_to_definition_permissions() -> None:
-    """permissions=None (default) uses the runtime's own resolved grants."""
+async def test_run_turn_permissions_default_to_deploy_grant_ceiling() -> None:
+    """permissions=None (default) uses the equipped runtime's persisted
+    deploy_grant_ceiling (issue #38) — NOT definition.permissions, the
+    role's full declared set. The role below does NOT declare write:orders
+    at all, proving the sensitive tool call below cannot be explained by
+    the (removed) definition.permissions-based default."""
     from agents_system.agent.graph import AgentRuntime
+    from agents_system.permissions import permission_registry
 
     tool_call_id = "call_perm_001"
     first_response = AIMessage(
@@ -443,22 +448,39 @@ async def test_run_turn_permissions_default_to_definition_permissions() -> None:
         tool_calls=[
             {
                 "id": tool_call_id,
-                "name": "catalog_search",
-                "args": {"q": "sugar"},
+                "name": "order_writer",
+                "args": {},
                 "type": "tool_call",
             }
         ],
     )
-    final_response = AIMessage(content="Here are the results.")
+    final_response = AIMessage(content="Order placed.")
     model = ToolAwareFakeModel(responses=[first_response, final_response])
 
-    # _fake_definition().permissions == ("read:catalog",), matching the spec below
-    catalog_spec = _catalog_spec()
-    runtime = _make_runtime(tools=(catalog_spec,))
+    def order_writer(inputs: dict[str, Any]) -> dict[str, Any]:
+        return {"status": "ok"}
+
+    order_spec = ToolSpec(
+        name="order_writer",
+        required_permissions=("write:orders",),
+        connector=order_writer,
+        tier=Tier.T2,
+    )
+    # _fake_definition().permissions == ("read:catalog",) — does NOT include
+    # write:orders, so a passing assertion below cannot come from the role's
+    # own declared set.
+    runtime = EquippedRuntime(
+        definition=_fake_definition(),
+        system_prompt="You are a helpful assistant.",
+        tools=(order_spec,),
+        denied_tools=(),
+        skills=(),
+        deploy_grant_ceiling=frozenset({permission_registry.resolve("write:orders")}),
+    )
     agent = AgentRuntime(runtime, model)
 
-    messages = [HumanMessage(content="Search for sugar")]
-    # No permissions passed at all — must default to the runtime's own grants
+    messages = [HumanMessage(content="Place an order")]
+    # No permissions passed at all — must default to deploy_grant_ceiling
     result = await agent.run_turn(messages, session_id="s1")
 
     tool_messages = [m for m in result if isinstance(m, ToolMessage)]
