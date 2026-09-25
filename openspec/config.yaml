@@ -1,0 +1,33 @@
+---
+schema: spec-driven
+artifactStore: hybrid
+
+context: |
+  Tech stack: Python (FastAPI-style harness), agents_system package
+  Architecture: library-first agent runtime (harness/loader, injector, registry)
+  Testing: pytest
+  Style: ruff + pre-commit
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing code patterns
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

@@ -1,5 +1,5 @@
 change: permission-model
-phase: tasks
+phase: archived
 artifact_store: hybrid
 artifacts:
   exploration: true
@@ -7,6 +7,8 @@ artifacts:
   specs: true
   design: true
   tasks: true
+  verify_report: true
+  archive_report: true
 tasks_progress:
   completed:
     - PR1-T1
@@ -32,3 +34,5 @@ tasks_progress:
     - PR4-T4
   pending: []
 last_updated: 2026-09-25T00:00:00Z
+archived_at: 2026-09-25
+archived_to: openspec/changes/archive/2026-09-25-permission-model

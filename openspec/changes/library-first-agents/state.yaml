@@ -1,0 +1,13 @@
+change: library-first-agents
+phase: explore
+artifact_store: hybrid
+artifacts:
+  exploration: true
+  proposal: false
+  specs: false
+  design: false
+  tasks: false
+tasks_progress:
+  completed: []
+  pending: []
+last_updated: 2026-09-24T17:59:24Z
