@@ -25,6 +25,7 @@
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
   - [Running](#running)
+- [Run the Demo API](#run-the-demo-api)
 - [Configuration](#configuration)
 - [Defining a New Agent Role](#defining-a-new-agent-role)
 - [Creating a Client Deployment](#creating-a-client-deployment)
@@ -276,6 +277,46 @@ curl http://localhost:8000/v1/chat/completions \
     "messages": [{"role": "user", "content": "Show me the catalog"}]
   }'
 ```
+
+---
+
+## Run the Demo API
+
+Load the repeatable demo database first with
+[`demo/load_demo_company.py`](demo/load_demo_company.py). Then configure the
+demo URL, one `EVAL_PROVIDER` and its provider variables, optional
+`DEMO_HOST`/`DEMO_PORT`, plus `ADAPTER_RUNTIMES` and `ADAPTER_API_KEY` to
+publish a role:
+
+```bash
+export DEMO_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo
+export EVAL_PROVIDER=openai_compatible
+export OPENAI_COMPATIBLE_BASE_URL=https://your-compatible-endpoint.example/v1
+export OPENAI_COMPATIBLE_MODEL=your-model-id
+export OPENAI_COMPATIBLE_API_KEY="$YOUR_PROVIDER_API_KEY"
+export DEMO_HOST=127.0.0.1
+export DEMO_PORT=8000
+export ADAPTER_RUNTIMES='["_generic__sales-agent"]'
+export DEPLOY_GRANTS='{"_generic__sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
+export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
+
+uv run python -m agents_system.demo
+```
+
+`DEPLOY_GRANTS` is required for every configured runtime id (issue #38); the
+example above grants `_generic__sales-agent` its full declared permission set,
+which is safe because none of it is a T3 (`exec:`/`run:`) permission and
+`sales-agent` declares `untrusted_input: true`.
+
+The entrypoint also boots through two fail-closed startup checks: a non-empty
+`META_WEBHOOK_SECRET` (or `ALLOW_INSECURE=true`), and a genuinely read-only
+`DEMO_DATABASE_URL` role. Both are explained, with the exact commands, in
+[`docs/platform/demo-entrypoint.md`](docs/platform/demo-entrypoint.md).
+
+`EVAL_PROVIDER` can also be `ollama`, `groq`, or `anthropic`; use that
+provider's required variables instead. See the full walkthrough, provider
+requirements, and `/v1` examples in
+[`docs/platform/demo-entrypoint.md`](docs/platform/demo-entrypoint.md).
 
 ---
 
