@@ -20,7 +20,8 @@ SELECT and never calls either.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections import Counter
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import structlog
@@ -28,7 +29,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
-from agents_system.services.reports import ReportSpec, ReportValidationError, run_report
+from agents_system.services.reports import (
+    ParamSpec,
+    ReportSpec,
+    ReportValidationError,
+    run_report,
+)
 
 _logger = structlog.get_logger(__name__)
 
@@ -80,32 +86,110 @@ _RUN_REPORT_DESCRIPTION = (
 )
 
 
-def _describe_params(spec: ReportSpec) -> str:
-    """Render *spec*'s parameter contract for provider-neutral tool schemas."""
-    lines = [f"{spec.name}:"]
-    for param in spec.params:
-        constraints = [param.type.__name__]
-        if param.minimum is not None and param.maximum is not None:
-            constraints.append(f"{param.minimum}-{param.maximum}")
-        elif param.minimum is not None:
-            constraints.append(f"min {param.minimum}")
-        elif param.maximum is not None:
-            constraints.append(f"max {param.maximum}")
-        if param.allowed is not None:
-            constraints.append(f"one of: {', '.join(map(str, param.allowed))}")
-        if param.default is not None:
-            constraints.append(f"default: {param.default}")
-        lines.append(
-            f"  - {param.name} ({'; '.join(constraints)}): {param.description}"
+def _param_shape(param: ParamSpec) -> tuple[Any, ...]:
+    """Everything about *param* except its default.
+
+    Two `ParamSpec`s with the same name and the same shape describe the SAME
+    parameter (issue #56: `months_back` and `status` are literally identical
+    everywhere they appear); a same-named param with a different shape is a
+    coincidence of naming, never collapsed into one shared description.
+    """
+    return (param.type, param.minimum, param.maximum, param.allowed, param.description)
+
+
+def _describe_param(param: ParamSpec) -> str:
+    """Render one parameter's full contract (name, constraints, prose)."""
+    constraints = [param.type.__name__]
+    if param.minimum is not None and param.maximum is not None:
+        constraints.append(f"{param.minimum}-{param.maximum}")
+    elif param.minimum is not None:
+        constraints.append(f"min {param.minimum}")
+    elif param.maximum is not None:
+        constraints.append(f"max {param.maximum}")
+    if param.allowed is not None:
+        constraints.append(f"one of: {', '.join(map(str, param.allowed))}")
+    if param.default is not None:
+        constraints.append(f"default: {param.default}")
+    return f"{param.name} ({'; '.join(constraints)}): {param.description}"
+
+
+def _shared_param_specs(catalog: Mapping[str, ReportSpec]) -> dict[str, ParamSpec]:
+    """Name -> the canonical `ParamSpec` for every parameter shared by 2+
+    reports with an identical shape (issue #56).
+
+    The canonical default is the most common default among that parameter's
+    occurrences, so a report using the majority default needs no override
+    note; a report using a minority default states just that difference.
+    """
+    occurrences: dict[str, list[ParamSpec]] = {}
+    for spec in catalog.values():
+        for param in spec.params:
+            occurrences.setdefault(param.name, []).append(param)
+
+    shared: dict[str, ParamSpec] = {}
+    for name, params in occurrences.items():
+        if len(params) < 2:
+            continue
+        if len({_param_shape(p) for p in params}) != 1:
+            # Same name, different meaning across reports - never collapse.
+            continue
+        canonical_default, _ = Counter(p.default for p in params).most_common(1)[0]
+        shared[name] = next(p for p in params if p.default == canonical_default)
+    return shared
+
+
+def _describe_shared_params(shared: Mapping[str, ParamSpec]) -> str:
+    lines = [
+        (
+            "Shared parameters (identical on every report listing them below, "
+            "unless a report states its own default):"
         )
+    ]
+    lines.extend(f"  - {_describe_param(shared[name])}" for name in sorted(shared))
     return "\n".join(lines)
 
 
+def _describe_report_params(spec: ReportSpec, shared: Mapping[str, ParamSpec]) -> str:
+    """Render *spec*'s parameter names, plus only what differs from `shared`.
+
+    Every parameter name the report accepts is always listed (so a caller
+    knows what it may pass), with a full re-description only for a param
+    that is not shared (an extra, report-specific parameter, or a same-named
+    one with a different shape) or whose default overrides the shared one.
+    """
+    header_bits: list[str] = []
+    extra_lines: list[str] = []
+    for param in spec.params:
+        canonical = shared.get(param.name)
+        if canonical is not None and _param_shape(param) == _param_shape(canonical):
+            if param.default == canonical.default:
+                header_bits.append(param.name)
+            else:
+                header_bits.append(f"{param.name} (default: {param.default})")
+        else:
+            header_bits.append(param.name)
+            extra_lines.append(f"  - {_describe_param(param)}")
+    header = (
+        f"{spec.name}: {', '.join(header_bits)}"
+        if header_bits
+        else f"{spec.name}: (no parameters)"
+    )
+    return "\n".join([header, *extra_lines])
+
+
 def _input_schema(catalog: dict[str, ReportSpec]) -> dict[str, Any]:
+    shared = _shared_param_specs(catalog)
+    sections = []
+    if shared:
+        sections.append(_describe_shared_params(shared))
+    sections.append(
+        "Per-report parameters (extra params and default overrides only):\n"
+        + "\n\n".join(
+            _describe_report_params(catalog[name], shared) for name in sorted(catalog)
+        )
+    )
     params_description = (
-        "Report-specific parameters:\n"
-        + "\n\n".join(_describe_params(spec) for spec in catalog.values())
-        + "\n\nAn unrecognized key is rejected, not ignored."
+        "\n\n".join(sections) + "\n\nAn unrecognized key is rejected, not ignored."
     )
     return {
         "type": "object",
