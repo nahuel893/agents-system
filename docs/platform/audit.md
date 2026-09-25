@@ -126,6 +126,7 @@ factory.
 | `record(event)` | `put_nowait` onto a bounded queue. Returns within ~5 ms. **Never raises.** |
 | Queue full | Increments `dropped_count`, logs `audit.event_dropped`, drops the event |
 | `record()` before `start()` | Raises `RuntimeError` — a misconfiguration, not a runtime condition |
+| `record()` after the sink closed | Counted in `dropped_count`, logs `audit.event_dropped_shutdown`, never raises. The sink closes at the drainer's final sweep; until then — even while `stop()` waits — events are still accepted and written |
 | Drainer | Batches events and issues one INSERT per batch |
 | `drain()` | Waits for the queue to empty. Does **not** cover the drainer's in-flight batch |
 
@@ -147,10 +148,24 @@ in-flight batch, was discarded on graceful shutdown.
 cancelling it, which is what lets its shutdown-drain tail actually run and
 flush whatever was left. The `timeout` bounds this so a wedged drainer (e.g. a
 stuck DB call) cannot hang shutdown forever: on timeout, `asyncio.wait_for`
-cancels the drainer as a last resort, and `stop()` counts however many events
-were still sitting in the queue into `dropped_count` and logs
+cancels the drainer as a last resort and `stop()` logs
 `audit.shutdown_timeout`. The default is backward compatible with every
 existing no-arg `await sink.stop()` call site.
+
+**Every event handed to the sink is written or counted** (PR #72 review).
+`dropped_count` is the only aggregate loss signal (ADR-001 D-046), so:
+
+- `stop()` counts the batch a cancelled drainer was flushing
+  (`in_flight_events_dropped`) and whatever is still queued because no
+  drainer swept it (`queued_events_dropped`) — after a timeout, or when the
+  drainer died before `stop()` (then logged as
+  `audit.shutdown_events_dropped`). After a clean exit both are zero and
+  nothing is logged.
+- The drainer closes the sink immediately before its final sweep, with no
+  `await` in between: every `record()` accepted before that point is in the
+  final batch, and every later one is rejected and counted
+  (`audit.event_dropped_shutdown`) instead of sitting in a queue nobody reads.
+- A failed flush (`audit.drain_failed`) adds its whole batch.
 
 This was pinned as a `strict=True` xfail in `tests/test_audit_wiring.py`
 (`test_stop_does_not_lose_queued_events`); the marker is now removed and the
@@ -249,28 +264,90 @@ growing one entry per `correlation_id` for the life of the process.
 
 `_allocate_sequence` and `_seq_counter` are gone. Each `record_*` helper now
 writes `PLACEHOLDER_SEQUENCE` (`0`) — a value that is never persisted — and
-the real, authoritative sequence is allocated atomically at flush time, in
-`AuditSink._flush_batch`, one event at a time in batch/queue (FIFO) order:
+the real, authoritative sequence is reserved atomically at flush time, in
+`AuditSink._flush_batch`: one upsert per **distinct** `correlation_id` in the
+batch, in **sorted** order, each reserving that correlation's whole
+contiguous range at once:
 
 ```sql
 INSERT INTO audit_sequence (correlation_id, next_seq)
-VALUES (:correlation_id, 1)
+VALUES (:correlation_id, :count)
 ON CONFLICT (correlation_id)
-DO UPDATE SET next_seq = audit_sequence.next_seq + 1
+DO UPDATE SET next_seq = audit_sequence.next_seq + EXCLUDED.next_seq
 RETURNING next_seq
 ```
 
 `audit_sequence` (migration `005_audit_sequence`) is a small, unpartitioned
-table — one row per `correlation_id`, holding only the next value to hand out.
-The upsert runs on the SAME session the batch's events are added to and
-committed with, so a failed batch rolls its allocation back for free. What
-makes this survive N worker processes, which the in-process counter never
-could: PostgreSQL's own row lock on that one `audit_sequence` row serializes
-concurrent writers from *any* process, not just coroutines sharing one.
+table — one row per `correlation_id`. `next_seq` is the **last** value handed
+out, so a result `r` means the batch owns `r - count + 1 .. r`, handed out in
+queue order so one correlation's events keep their order. The upsert runs on
+the SAME session the batch's events are added to and committed with, so a
+failed batch rolls its reservation back for free. What makes this survive N
+worker processes, which the in-process counter never could: PostgreSQL's own
+row lock on each `audit_sequence` row serializes concurrent writers from
+*any* process, not just coroutines sharing one.
+
+### Why sorted, and one upsert per correlation (PR #72 review)
+
+Each upsert's row lock is held until the batch commits, so the order in which
+a flush issues its upserts is the order in which it takes locks. The first
+version issued one per event, in queue order: a worker holding `c1` and
+waiting for `c2` while another held `c2` and waited for `c1` deadlocked,
+PostgreSQL aborted one transaction, and the drainer dropped that whole batch
+(18 of 20 runs in a probe). Every flush in every process now locks in one
+global order — sorted `correlation_id` — so a later flush queues behind an
+earlier one instead of closing a cycle. One upsert per correlation also locks
+each row once per flush, and costs one round trip per distinct correlation
+instead of one per event.
+
 `tests/test_audit_migration_integration.py::TestAuditSequenceAllocationIsProcessSafe`
-proves this against a real PostgreSQL instance — a mock-based test cannot,
-since mocks share one process's memory and cannot reproduce the cross-process
-race.
+proves this against a real PostgreSQL instance, through separate engines:
+concurrent flushes of one correlation stay gap-free and duplicate-free;
+opposite-order batches, parked by a gate until each holds its first lock,
+deadlock on every run without the sort and never with it; and shuffled
+multi-correlation batches from three workers lose nothing and keep queue
+order. A mock-based test cannot: mocks share one process's memory and take no
+row locks.
+
+### Migration 005 seeds the counters
+
+`upgrade()` seeds `audit_sequence` with `MAX(sequence)` per `correlation_id`
+already in `audit_event`, so no counter restarts at 1 under numbers history
+already used — the shared `"none"` fallback above all. `MAX`, not `count(*)`:
+the old per-process counters restarted on every boot, so history has gaps
+and repeats.
+
+The cost: no index leads with `correlation_id`, so the seed is a sequential
+scan of every partition, `DEFAULT` included, inside the migration's
+transaction, and it writes one `audit_sequence` row per distinct historical
+correlation_id. It takes only `ACCESS SHARE`, so concurrent inserts are not
+blocked, but on a large `audit_event` the upgrade lasts as long as a
+full-table read — run it in a maintenance window. Restart every worker
+afterwards: code from before 005 still numbers from its in-process counter.
+
+### A second, independent writer: the outbox
+
+`services/outbox.py:_terminalize_work` also writes `audit_event` — the
+`webhook_delivery_terminal_failure` event — directly on its own session, with
+`sequence = attempt_count` and `correlation_id = "outbox:<work id>"`. It does
+not go through `audit_sequence`, deliberately:
+
+- **The namespaces cannot overlap.** Everything the sink writes carries the
+  request id (`uuid4().hex[:8]`, bound by `observability/middleware.py`:
+  eight hex characters, never a colon) or `"none"`. Neither can equal
+  `"outbox:<uuid>"`.
+- **Its own namespace cannot collide.** It runs only on the terminal
+  transition, under the `FOR UPDATE` lock of the live-lease row, and it sets
+  `failed_at`, which excludes that row from every later lock — so each
+  `"outbox:<id>"` gets exactly one event, and `attempt_count` is the
+  meaningful number to store.
+- **Routing it through the allocator** would add an `audit_sequence` row per
+  failed work item and a second row lock to the outbox's terminal
+  transaction, to prevent a collision that cannot happen.
+
+The invariant to keep: a writer that shares a correlation_id with any other
+writer must reserve through `audit_sequence` — including `_terminalize_work`,
+the day anything else writes under `"outbox:*"`.
 
 ## Operational signals
 
@@ -278,9 +355,11 @@ race.
 |---|---|---|
 | `audit.event_dropped` | Queue full, event lost | Raise `maxsize`, or investigate drainer stalls |
 | `audit.emit_failed` | The emit path raised | Read `exc_info` — the request itself was unaffected |
-| `audit.drain_failed` | A batch INSERT failed; those events are gone | Read `error` and `exc_info`. Carries `batch_size`, so the loss is quantified |
+| `audit.drain_failed` | A batch INSERT failed; those events are gone | Read `error` and `exc_info`. Carries `batch_size`; the batch is added to `dropped_count` |
 | `audit.emit_skipped_no_loop` | No running event loop | Expected in sync tests and CLI entry points |
-| `audit.shutdown_timeout` | `stop()`'s `timeout` elapsed before the drainer exited on its own; it was cancelled as a last resort | Carries `queued_events_dropped`. Investigate what wedged the drainer (usually a stuck DB call); raise `timeout` only if the drainer is simply slow, not stuck |
+| `audit.shutdown_timeout` | `stop()`'s `timeout` elapsed before the drainer exited on its own; it was cancelled as a last resort | Carries `queued_events_dropped` and `in_flight_events_dropped`, both added to `dropped_count`. Investigate what wedged the drainer (usually a stuck DB call); raise `timeout` only if the drainer is simply slow, not stuck |
+| `audit.shutdown_events_dropped` | `stop()` found events no drainer would flush — the drainer had died before `stop()` | Same fields as above. Find out why the drainer task ended early |
+| `audit.event_dropped_shutdown` | `record()` after the sink closed; the event was counted, not written | Something emits audit events after shutdown began — find the caller (usually a background task outliving the lifespan) |
 
 ## Implementation
 
