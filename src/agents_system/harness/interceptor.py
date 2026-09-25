@@ -17,6 +17,11 @@ whose `tier` correctly marks it dangerous. ``always_revalidate`` lets
 specific T0/T1 read tools opt into the same revalidation without
 reclassifying them.
 
+issue #38 — revalidation bounds ``current_permissions`` to the equipped
+runtime's persisted ``deploy_grant_ceiling``, never to a wider set the
+caller might claim: the deploy-time grant is the hard ceiling Layer-2 can
+never widen back out past.
+
 D-009: intercept() is async-native. Async connectors are awaited directly;
 sync connectors are offloaded via asyncio.to_thread so the event loop stays
 free. Policy enforcement remains synchronous and runs before dispatch.
@@ -34,6 +39,7 @@ import structlog
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.registry import Tier, ToolSpec
+from agents_system.permissions import UnknownPermissionNameError, covers, resolve
 
 logger = structlog.get_logger()
 
@@ -137,8 +143,28 @@ async def intercept(
             )
             raise PolicyViolation(tool_name, "revalidation_required")
 
-        effective = set(current_permissions)
-        if not set(spec.required_permissions) <= effective:
+        # issue #38 — Layer-2 must bound itself to the persisted deploy
+        # grant ceiling (`runtime.deploy_grant_ceiling`), never to whatever
+        # `current_permissions` claims on its own: a class outside the
+        # ceiling is never "effective" here, even if the caller's
+        # current_permissions names it. Resolved to classes and checked via
+        # the same R3 issubclass+tier coverage logic as
+        # `injector._deny_reason` — not a plain set-intersection of strings.
+        current_classes: set[type] = set()
+        for name in current_permissions:
+            try:
+                current_classes.add(resolve(name))
+            except UnknownPermissionNameError:
+                continue
+
+        effective = runtime.deploy_grant_ceiling & current_classes
+
+        missing = sorted(
+            name
+            for name in spec.required_permissions
+            if not any(covers(granted_cls, resolve(name)) for granted_cls in effective)
+        )
+        if missing:
             logger.warning(
                 "interceptor.call_blocked",
                 tool=tool_name,

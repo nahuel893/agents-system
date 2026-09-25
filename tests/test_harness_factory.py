@@ -152,6 +152,198 @@ def test_build_runtime_denies_tools_missing_permissions() -> None:
     assert denied_names == {"message_sender", "order_writer", "client_lookup"}
 
 
+# ---------------------------------------------------------------------------
+# permission-model PR3 (issue #38) — EquippedRuntime.deploy_grant_ceiling
+# ---------------------------------------------------------------------------
+
+
+def test_build_runtime_deploy_grant_ceiling_accepts_mixed_class_and_name_grant() -> (
+    None
+):
+    """Accepted grant forms (spec): `granted_permissions` may mix a
+    `Permission` subclass and a registered wire-name string; every entry
+    normalizes through the registry into the stored `deploy_grant_ceiling`
+    frozenset.
+
+    PR #55 security review (MEDIUM): also proves the class-form grant
+    (`Write`) equips Layer-1 tools identically to how a string-form grant
+    would — `Write` covers sales-agent's own `write:orders`/`write:order_items`
+    (R3), so `order_writer` must be GRANTED, not silently dropped by a
+    string-only tool-surface intersection.
+    """
+    from agents_system.harness.factory import build_runtime
+    from agents_system.permissions import Write, permission_registry
+
+    send_message_cls = permission_registry.resolve("send:message")
+
+    runtime = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        [Write, "send:message"],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    assert runtime.deploy_grant_ceiling == frozenset({Write, send_message_cls})
+
+    granted_names = {t.name for t in runtime.tools}
+    denied_names = {name for name, _reason in runtime.denied_tools}
+    # order_writer requires write:orders + write:order_items, both covered
+    # by the class-form Write grant (R3); message_sender requires
+    # send:message (granted by name); session_state requires nothing.
+    assert granted_names == {"order_writer", "message_sender", "session_state"}
+    # catalog_search (read:catalog) and client_lookup (read:client_registry)
+    # are covered by neither granted entry. escalation_notifier is not part
+    # of this role+client+roots combo's definition.tools at all (see
+    # test_build_runtime_grants_all_tools_when_permitted, which evaluates
+    # only these same 5 tools for sales-agent/client-a).
+    assert denied_names == {"catalog_search", "client_lookup"}
+
+
+def test_build_runtime_deploy_grant_ceiling_by_class_and_by_name_are_identical() -> (
+    None
+):
+    """Scenario: Grant by class / Grant by name — granting the SAME
+    permission as a class object vs. as its registered wire-name string
+    must normalize to an identical ceiling."""
+    from agents_system.harness.factory import build_runtime
+    from agents_system.permissions import permission_registry
+
+    write_orders_cls = permission_registry.resolve("write:orders")
+    send_message_cls = permission_registry.resolve("send:message")
+
+    by_class = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        [write_orders_cls, send_message_cls],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+    by_name = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        ["write:orders", "send:message"],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    expected = frozenset({write_orders_cls, send_message_cls})
+    assert by_class.deploy_grant_ceiling == expected
+    assert by_name.deploy_grant_ceiling == expected
+
+
+def test_build_runtime_deploy_grant_ceiling_default_empty() -> None:
+    """No `deploy_grant_ceiling` bleeds through when granted_permissions is
+    empty — the dataclass default, not an accident of the resolution loop."""
+    from agents_system.harness.factory import build_runtime
+
+    runtime = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        [],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    assert runtime.deploy_grant_ceiling == frozenset()
+
+
+async def test_build_runtime_deploy_grant_ceiling_excludes_permission_role_does_not_declare() -> (
+    None
+):
+    """PR #55 security review (MEDIUM-HIGH): the ceiling is
+    `definition.permissions ∩ grant` under R3 (a granted class must cover a
+    DECLARED permission), never a raw union of the grant. A grant naming a
+    permission sales-agent never declares (`read:reports`) must not appear
+    in `deploy_grant_ceiling`, and a tool requiring it must not pass
+    Layer-2 either — even if the caller's `current_permissions` claims it."""
+    import dataclasses as dc
+
+    from agents_system.harness.factory import build_runtime
+    from agents_system.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import permission_registry
+
+    reports_cls = permission_registry.resolve(
+        "read:reports"
+    )  # NOT in SALES_PERMISSIONS
+
+    runtime = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        [*SALES_PERMISSIONS, "read:reports"],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    assert reports_cls not in runtime.deploy_grant_ceiling
+
+    # ...nor does it pass Layer-2, even when a caller's current_permissions
+    # explicitly claims it: the ceiling is the hard bound.
+    report_reader_spec = ToolSpec(
+        name="report_reader",
+        required_permissions=("read:reports",),
+        connector=lambda inputs: {"ok": True},
+        tier=Tier.T1,
+        always_revalidate=True,
+    )
+    probe_runtime = dc.replace(runtime, tools=(report_reader_spec,))
+
+    with pytest.raises(PolicyViolation) as exc_info:
+        await intercept(
+            "report_reader",
+            {},
+            probe_runtime,
+            current_permissions=["read:reports"],
+        )
+    assert exc_info.value.reason == "permission_revoked"
+
+
+def test_build_runtime_rejects_t3_grant_for_untrusted_input_role() -> None:
+    """PR #55 security review (HIGH) — spec.md R4 scenario 'Untrusted role
+    cannot be equipped with a T3 grant at deploy time': sales-agent
+    declares `untrusted_input: true`; granting it a T3-tier permission
+    (`exec:command`, which it does not even declare) must raise
+    `UntrustedInputGrantError` at build_runtime, not equip silently."""
+    from agents_system.harness.factory import build_runtime
+    from agents_system.permissions import UntrustedInputGrantError
+
+    with pytest.raises(UntrustedInputGrantError):
+        build_runtime(
+            "sales-agent",
+            _sales_registry(),
+            ["exec:command"],
+            client="client-a",
+            roots=_client_a_roots(),
+        )
+
+
+def test_build_runtime_deploy_grant_ceiling_does_not_affect_granted_tools() -> None:
+    """Existing-behavior regression guard: for a pure string-form grant
+    that exactly matches the role's own declared permission names, the
+    granted tool surface is unaffected by the R3-bounded ceiling
+    computation added alongside it (PR #55 security review)."""
+    from agents_system.harness.factory import build_runtime
+
+    runtime = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        SALES_PERMISSIONS,
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    granted_names = {t.name for t in runtime.tools}
+    assert granted_names == {
+        "message_sender",
+        "catalog_search",
+        "order_writer",
+        "session_state",
+        "client_lookup",
+    }
+    assert runtime.denied_tools == ()
+
+
 def test_build_runtime_loads_declared_skills_in_order() -> None:
     from agents_system.harness.factory import build_runtime
 
@@ -222,14 +414,14 @@ def test_build_runtime_missing_skill_file_raises() -> None:
     # client-a/simple-role declares skills [skill_one, skill_two] but the
     # fixture has no skills/ directory → the factory must fail loud.
     reg = ToolRegistry()
-    reg.register(_spec("tool_alpha", ["read:alpha"]))
-    reg.register(_spec("tool_beta", ["read:beta"]))
+    reg.register(_spec("tool_alpha", ["read:catalog"]))
+    reg.register(_spec("tool_beta", ["read:client_registry"]))
 
     with pytest.raises(FactoryError):
         build_runtime(
             "simple-role",
             reg,
-            ["read:alpha", "read:beta", "write:gamma"],
+            ["read:catalog", "read:client_registry"],
             client="client-a",
             roots=_fixture_roots(),
         )
@@ -307,14 +499,14 @@ def test_build_runtime_logs_skill_missing_before_raising() -> None:
     from agents_system.harness.registry import ToolRegistry
 
     reg = ToolRegistry()
-    reg.register(_spec("tool_alpha", ["read:alpha"]))
-    reg.register(_spec("tool_beta", ["read:beta"]))
+    reg.register(_spec("tool_alpha", ["read:catalog"]))
+    reg.register(_spec("tool_beta", ["read:client_registry"]))
 
     with structlog.testing.capture_logs() as logs, pytest.raises(FactoryError):
         build_runtime(
             "simple-role",
             reg,
-            ["read:alpha", "read:beta", "write:gamma"],
+            ["read:catalog", "read:client_registry"],
             client="client-a",
             roots=_fixture_roots(),
         )

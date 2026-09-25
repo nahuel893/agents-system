@@ -156,6 +156,18 @@ class Settings(BaseSettings):
     # e.g. "acme__sales-agent". Generic (no deployment) → "_generic__{role}".
     adapter_runtimes: list[str] = []
 
+    # permission-model PR3 (issue #38, design.md Resolved Decision 5) — the
+    # SOLE grant source for main.py's lifespan. Keyed by the same runtime id
+    # shape as adapter_runtimes/whatsapp_runtime_id ("{deployment}__{role}"),
+    # valued by the wire-name permission strings actually granted to that
+    # runtime. Replaces AD-5's auto-grant-of-the-role's-full-permission-set:
+    # a role's own `definition.permissions` is what the role DECLARES it may
+    # need, never what a deployment GRANTS it. Empty by default; main.py
+    # fails boot loudly (DefinitionError) for any configured runtime with no
+    # matching entry here -- there is no automatic grant.
+    # e.g. DEPLOY_GRANTS='{"acme__sales-agent": ["read:catalog", "write:orders"]}'
+    deploy_grants: dict[str, tuple[str, ...]] = {}
+
     # Any OpenAI-compatible chat endpoint (MiniMax, vLLM, LM Studio, ...),
     # selected with adapter_provider="openai_compatible".
     # Deliberately NOT named openai_* — openai_api_key above is the embeddings

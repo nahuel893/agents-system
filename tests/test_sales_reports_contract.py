@@ -150,6 +150,13 @@ def test_every_report_binds_its_values_instead_of_interpolating_them(
     assert "{" not in sql_text
 
     for param in spec.params:
+        if param.name == spec.order_by_param:
+            # Never bound into SQL text at all: `order_by` selects which
+            # closed, pre-built statement `select_sql` returns (see
+            # `order_by_sql` below) entirely in Python, after the SAME
+            # `ParamSpec.allowed` validation every other parameter gets.
+            # There is nothing for it to bind — that is the point, not a gap.
+            continue
         bind = param.bind_name()
         # An expanding bindparam (the variable-length IN list) does not render
         # as `:name`; SQLAlchemy defers it and prints `[POSTCOMPILE_name]`.
@@ -159,6 +166,52 @@ def test_every_report_binds_its_values_instead_of_interpolating_them(
             f"report '{report_name}' declares parameter '{param.name}' "
             f"(bound as '{bind}') but its SQL never binds it"
         )
+
+
+_ORDER_BY_VARIANTS = [
+    (name, value)
+    for name in sorted(EXPECTED_REPORTS)
+    for value in sorted(CATALOG[name].order_by_sql or {})
+]
+
+
+@pytest.mark.parametrize(("report_name", "order_by_value"), _ORDER_BY_VARIANTS)
+def test_every_order_by_sql_variant_reads_only_from_contract_views(
+    report_name: str, order_by_value: str
+) -> None:
+    """An `order_by_sql` entry is a second static statement for the same
+    report - it must keep the same portability guarantee as `spec.sql`
+    (`test_every_report_reads_only_from_contract_views`), or a variant could
+    quietly start reading a real table nobody checks.
+    """
+    variant_sql = (CATALOG[report_name].order_by_sql or {})[order_by_value]
+    sql_text = str(variant_sql)
+
+    foreign = _relations(sql_text) - set(CONTRACT_VIEWS)
+
+    assert foreign == set(), (
+        f"report '{report_name}' order_by='{order_by_value}' reads from "
+        f"{sorted(foreign)}, which is not a contract view — it is no longer "
+        f"portable across deployments"
+    )
+
+
+@pytest.mark.parametrize(("report_name", "order_by_value"), _ORDER_BY_VARIANTS)
+def test_every_order_by_sql_variant_is_bounded_by_the_same_row_limit(
+    report_name: str, order_by_value: str
+) -> None:
+    """The row ceiling (AD-5) must hold for every ranking, not only the
+    default one - an alternate statement that dropped `LIMIT :limit` could
+    return the whole table into a chat message."""
+    variant_sql = (CATALOG[report_name].order_by_sql or {})[order_by_value]
+
+    assert ":limit" in str(variant_sql)
+
+
+def test_at_least_one_report_actually_exercises_the_order_by_variant_checks() -> None:
+    """Without this, both parametrizations above could collect zero cases
+    (an empty `order_by_sql` everywhere) and pass vacuously."""
+    assert _ORDER_BY_VARIANTS
 
 
 @pytest.mark.parametrize("report_name", sorted(EXPECTED_REPORTS))

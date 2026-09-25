@@ -42,6 +42,7 @@ from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.interceptor import CallResult, PolicyViolation, intercept
 from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS
+from agents_system.permissions.permission_registry import permission_registry
 
 logger = structlog.get_logger()
 
@@ -394,7 +395,14 @@ class AgentRuntime:
 
     @property
     def permissions(self) -> tuple[str, ...]:
-        """The runtime's own resolved permission grants (design AD-4)."""
+        """The role's own DECLARED permission set (``definition.permissions``).
+
+        NOT the deploy-time grant — see ``EquippedRuntime.deploy_grant_ceiling``
+        for what this runtime was actually granted (issue #38). A role
+        merely declaring a permission is not the same as a deployment
+        granting it; ``run_turn``'s own default no longer sources from this
+        property (design.md Resolved Decision 5).
+        """
         return self._equipped.definition.permissions
 
     @property
@@ -435,8 +443,11 @@ class AgentRuntime:
         permissions:
             The caller's current permission grants used by the Layer-2 interceptor
             to validate sensitive tool calls at execution time. Defaults to
-            ``None``, in which case the runtime's own resolved grants
-            (``self.permissions``) are used (design AD-4) — this is the
+            ``None``, in which case the equipped runtime's persisted deploy
+            grant ceiling (``EquippedRuntime.deploy_grant_ceiling``, issue
+            #38) is used — never the role's full declared permission set
+            (``self.permissions``) — so Layer-2 cannot widen back out past
+            what this runtime was actually granted at boot. This is the
             correct default for every entry point that has no separate
             identity of its own (OpenAI adapter, WhatsApp webhook).
         thread_id:
@@ -455,7 +466,18 @@ class AgentRuntime:
             cross-turn accumulation and this return value already reflects it.
         """
         effective_permissions = (
-            permissions if permissions is not None else self.permissions
+            permissions
+            if permissions is not None
+            # issue #38 — default to the persisted deploy grant ceiling, not
+            # the role's full declared permission set (self.permissions):
+            # Layer-2 must not be able to widen back out past what this
+            # runtime was actually granted at boot.
+            else tuple(
+                sorted(
+                    permission_registry.reverse(cls)
+                    for cls in self._equipped.deploy_grant_ceiling
+                )
+            )
         )
         effective_limits = _effective_limits(self._equipped.definition.execution_limits)
         max_tool_calls = effective_limits["max_tool_calls"]

@@ -68,10 +68,40 @@ def resource(
     """Create and register a resource-scoped subclass of `parent` for one
     wire name. `tier` overrides the parent's tier when given.
     """
-    attrs: dict[str, Any] = {} if tier is None else {"tier": tier}
-    cls = cast("type[Permission]", type(_class_name(wire_name), (parent,), attrs))
+    cls = _build_resource_class(parent, wire_name, tier=tier)
     permission_registry.register(cls, wire_name)
     return cls
+
+
+def ensure_resource_registered(
+    parent: type[Permission], wire_name: str, *, tier: Tier | None = None
+) -> type[Permission]:
+    """Atomic get-or-create counterpart to `resource()`: return the class
+    already registered under `wire_name`, or build and register one new
+    resource-scoped subclass of `parent`, all under a single
+    `PermissionRegistry` lock acquisition (`get_or_register`).
+
+    `resource()` alone is fine when a caller's own check-then-create has no
+    concurrent peers (PR1's shipped wire-name table calls it once per name,
+    at import time). This function is for a wire name discovered and
+    registered at runtime, under real concurrency -- e.g. `harness.loader`
+    registering a manifest-declared `command_tools:` permission the first
+    time it is parsed, which two concurrent requests loading the same
+    not-yet-seen role could race on.
+    """
+    return permission_registry.get_or_register(
+        wire_name, lambda: _build_resource_class(parent, wire_name, tier=tier)
+    )
+
+
+def _build_resource_class(
+    parent: type[Permission], wire_name: str, *, tier: Tier | None = None
+) -> type[Permission]:
+    """Build (but do not register) a resource-scoped subclass of `parent`
+    for one wire name. `tier` overrides the parent's tier when given.
+    """
+    attrs: dict[str, Any] = {} if tier is None else {"tier": tier}
+    return cast("type[Permission]", type(_class_name(wire_name), (parent,), attrs))
 
 
 def _class_name(wire_name: str) -> str:

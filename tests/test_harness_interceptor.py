@@ -48,9 +48,25 @@ def _spec(name: str, perms: list[str], connector: Any = None, tier: Any = None) 
     )
 
 
-def _runtime(tools: list[Any]) -> Any:
-    """Minimal EquippedRuntime with only the tools field populated."""
+def _runtime(tools: list[Any], deploy_grant_ceiling: Any = None) -> Any:
+    """Minimal EquippedRuntime with only the tools field populated.
+
+    issue #38: Layer-2 now bounds `current_permissions` to
+    `deploy_grant_ceiling`. Defaulting it to the union of every passed
+    tool's own `required_permissions` (resolved to classes) keeps every
+    pre-existing test in this file -- written to vary only
+    `current_permissions` -- testing exactly what it tested before; the
+    ceiling dimension itself is exercised by the tests that pass an
+    explicit, narrower `deploy_grant_ceiling` (see
+    `test_intercept_denies_when_deploy_grant_ceiling_narrower_than_current_permissions`
+    below and `tests/test_issue_38_regression.py`).
+    """
     from agents_system.harness.factory import EquippedRuntime
+    from agents_system.permissions import permission_registry
+
+    if deploy_grant_ceiling is None:
+        names = {name for spec in tools for name in spec.required_permissions}
+        deploy_grant_ceiling = frozenset(permission_registry.resolve(n) for n in names)
 
     return EquippedRuntime(
         definition=None,  # type: ignore[arg-type]
@@ -58,6 +74,7 @@ def _runtime(tools: list[Any]) -> Any:
         tools=tuple(tools),
         denied_tools=(),
         skills=(),
+        deploy_grant_ceiling=deploy_grant_ceiling,
     )
 
 
@@ -150,6 +167,40 @@ async def test_intercept_sensitive_tool_permission_revoked() -> None:
         )
 
     assert exc_info.value.tool_name == "order_writer"
+
+
+# ---------------------------------------------------------------------------
+# issue #38 — Layer-2 bounds current_permissions to deploy_grant_ceiling
+# ---------------------------------------------------------------------------
+
+
+async def test_intercept_denies_when_deploy_grant_ceiling_narrower_than_current_permissions() -> (
+    None
+):
+    """The deploy grant ceiling is the hard bound: a permission
+    current_permissions claims but the ceiling does not include is never
+    honored (spec: 'Layer-2 revalidates against the persisted deploy grant
+    ceiling (issue #38)')."""
+    from agents_system.harness.interceptor import PolicyViolation, intercept
+    from agents_system.permissions import permission_registry
+
+    spec = _spec("order_writer", ["write:orders", "write:order_items"])
+    # Ceiling covers only write:orders -- write:order_items is outside it,
+    # even though current_permissions (below) claims both.
+    runtime = _runtime(
+        [spec],
+        deploy_grant_ceiling=frozenset({permission_registry.resolve("write:orders")}),
+    )
+
+    with pytest.raises(PolicyViolation) as exc_info:
+        await intercept(
+            "order_writer",
+            {},
+            runtime,
+            current_permissions=["write:orders", "write:order_items"],
+        )
+
+    assert exc_info.value.reason == "permission_revoked"
 
 
 async def test_intercept_logs_blocked_on_permission_revoked() -> None:
@@ -306,7 +357,7 @@ async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
 
     spec = ToolSpec(
         name="sensitive_read",
-        required_permissions=("read:orders",),
+        required_permissions=("read:client_registry",),
         connector=connector,
         always_revalidate=True,
         tier=Tier.T1,
@@ -318,7 +369,7 @@ async def test_always_revalidate_read_blocked_when_permission_missing() -> None:
             "sensitive_read",
             {},
             runtime,
-            current_permissions=["read:catalog"],  # missing read:orders
+            current_permissions=["read:catalog"],  # missing read:client_registry
         )
 
     assert exc_info.value.tool_name == "sensitive_read"
@@ -335,7 +386,7 @@ async def test_always_revalidate_read_allowed_when_permission_present() -> None:
 
     spec = ToolSpec(
         name="sensitive_read",
-        required_permissions=("read:orders",),
+        required_permissions=("read:client_registry",),
         connector=connector,
         always_revalidate=True,
         tier=Tier.T1,
@@ -346,7 +397,7 @@ async def test_always_revalidate_read_allowed_when_permission_present() -> None:
         "sensitive_read",
         {},
         runtime,
-        current_permissions=["read:orders"],
+        current_permissions=["read:client_registry"],
     )
 
     assert result.revalidated is True

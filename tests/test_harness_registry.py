@@ -104,7 +104,7 @@ def test_toolspec_accepts_always_revalidate_true() -> None:
 
     spec = ToolSpec(
         name="sensitive_read",
-        required_permissions=("read:orders",),
+        required_permissions=("read:catalog",),
         connector=_connector,
         tier=Tier.T1,
         always_revalidate=True,

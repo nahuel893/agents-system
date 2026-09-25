@@ -42,6 +42,18 @@ The revalidation check is performed on the same RBAC source that was consulted a
 
 ---
 
+## Grant source at boot (issue #38)
+
+A role's `manifest.md` `permissions` field is what that role **declares it may need** — it is not, by itself, a grant. `agents_system.main`'s boot path grants explicitly via the `DEPLOY_GRANTS` environment variable: a JSON object mapping each configured runtime id (`{deployment}__{role}`, the same shape as `ADAPTER_RUNTIMES`/`WHATSAPP_RUNTIME_ID`) to the list of permission wire names actually granted to it, e.g.:
+
+```bash
+DEPLOY_GRANTS='{"acme__sales-agent": ["read:catalog", "write:orders"]}'
+```
+
+Boot fails loudly, naming the runtime id, when a configured runtime has no matching entry — there is no automatic grant, and a role's declared permissions never silently become its grant. The resulting grant is persisted on the runtime (`EquippedRuntime.deploy_grant_ceiling`) independently of the role's declared set, and it is what bounds execution-time revalidation above: Layer-2 checks a sensitive tool's required permissions against this ceiling, never against the role's full declared set. Library consumers (not booting through `agents_system.main`) grant the same way, explicitly, via `build_runtime(..., granted_permissions=[...])`.
+
+---
+
 ## What permission filtering governs
 
 | Capability | How permissions apply |
