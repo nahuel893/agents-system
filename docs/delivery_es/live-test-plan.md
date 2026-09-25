@@ -39,7 +39,7 @@ vía OpenRouter (`EVAL_PROVIDER=openai_compatible`):
   condiciones nunca llegaban al prompt) ya no aplica: #36 vuelca las
   `escalation_rules` al prompt de sistema
   (`harness/factory.py:_render_escalation_block:199`), y el escenario sigue
-  fallando en todas las corridas. Se sigue en su propio issue.
+  fallando en todas las corridas. Se sigue en #82.
 
 Estos son conteos de corridas, no una compuerta: nada en la suite actual
 falla en CI ni bloquea un merge por una tasa de éxito baja. Ver **Gating**
@@ -100,7 +100,7 @@ más abajo.
 - **`session_state`**: implementar un conector real, ligado al harness (id
   de sesión derivado de la conversación/hilo, no elegido por el modelo), o
   eliminar la herramienta del rol compartido `platform/roles/agent` por
-  completo. No se decide aquí — se rastrea como su propio issue.
+  completo. No se decide aquí.
 
 ## Decisiones ya tomadas (owner, 2026-09-25)
 
@@ -236,6 +236,19 @@ Mantener el marcador `live` opt-in y barato: modelos de OpenRouter
 (`EVAL_PROVIDER=openai_compatible`), sin requerir GPU local. Un job de CI
 programado o manual con un tope de presupuesto es un seguimiento, no parte
 de este plan.
+
+## Seguimiento
+
+| Ítem | Issue |
+|---|---|
+| Fase 0 — observabilidad y harness de la app real | #78 |
+| Fase 1 — el agente funciona de punta a punta | #79 |
+| Fase 2 — los controles detienen al modelo | #76 |
+| Fase 3 — operación bajo carga | #83 |
+| Fase 4 — ciclo de vida completo | #84 |
+| Tool de SQL de solo lectura | #80 |
+| Gating de los tests en vivo con umbrales | #81 |
+| `accountant_agent_no_fabrication` al 0% | #82 |
 
 ## Referencias cruzadas
 

@@ -36,7 +36,7 @@ OpenRouter (`EVAL_PROVIDER=openai_compatible`):
   Root cause unknown. The original explanation (the conditions never reached
   the prompt) no longer holds: #36 renders `escalation_rules` into the
   system prompt (`harness/factory.py:_render_escalation_block:199`), and the
-  scenario still fails every run. Tracked as its own issue.
+  scenario still fails every run. Tracked in #82.
 
 These are run counts, not a gate: nothing in the current suite fails CI or
 blocks a merge on a low success rate. See **Gating** below.
@@ -90,7 +90,7 @@ blocks a merge on a low success rate. See **Gating** below.
 - **`session_state`**: implement a real, harness-bound connector (session id
   derived from the conversation/thread, not chosen by the model), or remove
   the tool from the shared `platform/roles/agent` role entirely. Not decided
-  here — tracked as its own issue.
+  here.
 
 ## Decisions already taken (owner, 2026-09-25)
 
@@ -210,6 +210,19 @@ Keep the `live` marker opt-in and cheap: OpenRouter models
 (`EVAL_PROVIDER=openai_compatible`), no local GPU requirement. A
 scheduled/manual CI job with a budget cap is a follow-up, not part of this
 plan.
+
+## Tracking
+
+| Item | Issue |
+|---|---|
+| Phase 0 — observability and real-app harness | #78 |
+| Phase 1 — the agent works end to end | #79 |
+| Phase 2 — controls stop the model | #76 |
+| Phase 3 — operation under load | #83 |
+| Phase 4 — full lifecycle | #84 |
+| Read-only SQL tool | #80 |
+| Live gating on thresholds | #81 |
+| `accountant_agent_no_fabrication` at 0% | #82 |
 
 ## Cross-references
 
