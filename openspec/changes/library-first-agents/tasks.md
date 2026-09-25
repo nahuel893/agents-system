@@ -290,7 +290,7 @@ This is the actual bug fix `proposal.md`'s Scope item 3 names
 per `design.md`'s Threat Matrix — an importer-supplied folder path and its
 `extends:` chain.
 
-- [ ] **PR1b-T1 — `_extends_target` fail-loud rewrite: all 8 enumerated cases + threat-matrix path/symlink cases.**
+- [x] **PR1b-T1 — `_extends_target` fail-loud rewrite: all 8 enumerated cases + threat-matrix path/symlink cases.**
   RED: create `tests/test_extends_fail_loud.py` covering spec Requirement
   "`extends:` fails loudly when unplaceable in either locator space" and
   every case in `design.md`'s D2 enumerated table: (1) an empty/whitespace-only
@@ -378,7 +378,7 @@ per `design.md`'s Threat Matrix — an importer-supplied folder path and its
   silently extends the wrong parent", "A value that resolves unambiguously
   in exactly one space still succeeds". <!-- sdd-owner: implementation -->
 
-- [ ] **PR1b-T2 — `extends:` resolves generic-or-predefined and importer-relative parents (folder-integration level).**
+- [x] **PR1b-T2 — `extends:` resolves generic-or-predefined and importer-relative parents (folder-integration level).**
   RED: extend `tests/test_extends_fail_loud.py` (or a sibling
   `tests/test_extends_resolution.py`) covering spec Requirements
   "`extends:` resolves a generic-or-predefined parent unchanged" and
@@ -434,7 +434,7 @@ per `design.md`'s Threat Matrix — an importer-supplied folder path and its
   folder-integration half of the escape/absolute cases already unit-tested
   in PR1b-T1). <!-- sdd-owner: implementation -->
 
-- [ ] **PR1b-T3 — PR1b closing: full regression + docs + BREAKING CHANGE marker.**
+- [x] **PR1b-T3 — PR1b closing: full regression + docs + BREAKING CHANGE marker.**
   Run the FULL existing predefined-role/deployment-override regression suite
   and confirm every test still passes unchanged (this is the safety gate
   `proposal.md`'s own Risks table names for the locator-generalization PRs —
