@@ -142,6 +142,8 @@ changes in this item; A.2 is where identity actually gets threaded through.
 
 #### A.2 — Per-principal identity
 
+> **Superseded by ADR-003:** AD-5's auto-grant behavior in this section is historical only. [ADR-003 — Permission hierarchy](adr-003-permission-hierarchy.md) records the shipped explicit `DEPLOY_GRANTS` model.
+
 **Current state.** At application startup, `create_app`'s lifespan builds
 one `AgentRuntime` per configured role and caches it in `app.state.runtimes`
 (`src/agents_system/main.py:326-336`). The permission grant for that runtime is
@@ -651,6 +653,8 @@ not a convention documented in a role's prose.
 
 #### C.10 — Capability tiers
 
+> **Superseded by ADR-003:** tier values remain unchanged, but classification now dispatches through permission classes rather than prefix-string matching. See [ADR-003 — Permission hierarchy](adr-003-permission-hierarchy.md).
+
 **Current state.** `ToolSpec` (`harness/registry.py:8-34`) has no `tier`
 field today — only `name`, `required_permissions`, `connector`,
 `description`, `input_schema`, `always_revalidate`. Sensitivity is currently
@@ -710,6 +714,8 @@ iterates every public tool builder and asserts each has a valid tier — #109.
 ---
 
 #### C.11 — `untrusted_input` flag and invariant
+
+> **Superseded by ADR-003:** the shipped invariant rejects every T3 permission class, not only `exec:*` names, and raises `UntrustedInputGrantError`. See [ADR-003 — Permission hierarchy](adr-003-permission-hierarchy.md).
 
 **Current state.** `untrusted_input` does not exist anywhere in the
 codebase today (exhaustive search across `src/`, `platform/`, `tests/`,
@@ -798,6 +804,8 @@ monotonic-once-true rule enforced at the deployment-override boundary
 ---
 
 #### C.12 — Declarative `command_tools` in manifests
+
+> **Superseded by ADR-003:** declarative command tools are now limited to T2 exactly; T3 is not accepted. See [ADR-003 — Permission hierarchy](adr-003-permission-hierarchy.md).
 
 **Current state.** Does not exist. Today the only way to expose host
 commands is the single generic `use_term` connector
