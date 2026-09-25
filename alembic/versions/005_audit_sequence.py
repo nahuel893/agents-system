@@ -15,25 +15,40 @@ same sequence and collide on
 An in-process counter cannot be patched into correctness for this; the
 counter itself has to move somewhere every process shares — the database.
 
-This table is intentionally tiny and unpartitioned: one row per
-``correlation_id``, holding only the next sequence value to hand out. It is
-NOT audit data itself (no PII, no payload, no history) and carries none of
-``audit_event``'s partitioning requirements. ``AuditSink._flush_batch``
-allocates the real, authoritative sequence for each event here, atomically,
-via the classic PostgreSQL upsert:
+This table is intentionally small and unpartitioned: one row per
+``correlation_id``, holding only ``next_seq`` -- the LAST sequence value
+handed out for it. It is NOT audit data itself (no PII, no payload, no
+history) and carries none of ``audit_event``'s partitioning requirements.
+``AuditSink._flush_batch`` reserves each batch's sequences here, atomically,
+with one upsert per distinct ``correlation_id``, in sorted order:
 
     INSERT INTO audit_sequence (correlation_id, next_seq)
-    VALUES (:correlation_id, 1)
+    VALUES (:correlation_id, :count)
     ON CONFLICT (correlation_id)
-    DO UPDATE SET next_seq = audit_sequence.next_seq + 1
+    DO UPDATE SET next_seq = audit_sequence.next_seq + EXCLUDED.next_seq
     RETURNING next_seq
 
 executed on the SAME session/transaction the batch already commits (or rolls
-back) as a whole. PostgreSQL's own row lock on that one ``audit_sequence`` row
+back) as a whole. PostgreSQL's own row lock on each ``audit_sequence`` row
 serializes concurrent writers -- any process -- so this is the actual fix for
 the cross-process collision, not just a relocation of the old in-process bug.
-A failed batch rolls its allocation back for free, since it shares that
-batch's transaction: no separate reservation/release bookkeeping needed.
+The sorted order is what keeps two flushes from locking the same rows in
+opposite orders and deadlocking. A failed batch rolls its reservation back
+for free, since it shares that batch's transaction.
+
+Backfill and its cost. ``upgrade()`` seeds one row per ``correlation_id``
+already in ``audit_event`` with that correlation's ``MAX(sequence)``, so no
+counter restarts at 1 under history that already used it (the shared
+``"none"`` fallback is the one that matters most, but an 8-hex request id can
+recur too). No index leads with ``correlation_id`` -- the unique index is
+``(occurred_at, correlation_id, sequence)`` -- so this is a sequential scan
+of EVERY partition, including ``DEFAULT``, plus a hash aggregate with one
+group per distinct correlation_id (about one per request ever audited). It
+takes only ACCESS SHARE on ``audit_event``, so concurrent inserts are not
+blocked, but it runs inside the migration's transaction: on a large
+``audit_event``, expect the upgrade to take as long as a full-table read, and
+run it in a maintenance window. Restart every worker after upgrading: code
+from before this migration still numbers from its in-process counter.
 
 Reversible: ``downgrade()`` drops the table. Nothing else in the schema
 references it (no FK — ``correlation_id`` is a free-standing string shared
@@ -41,12 +56,9 @@ with ``audit_event.correlation_id``, not a foreign key, because
 ``audit_event`` is partitioned and PostgreSQL does not support foreign keys
 referencing a partitioned table's columns from an unpartitioned one in a way
 that would help here; the two tables are linked by convention, not by
-constraint). Downgrading loses only the in-flight counters -- restarting
-after a downgrade+upgrade cycle would resume every correlation_id's sequence
-at 1, so this should not be downgraded while entries for the current calendar
-day still matter to sequence ordering. It carries no data worth preserving
-across a rollback: unlike audit_event's own rows, an empty audit_sequence row
-recreates itself correctly on the next event for that correlation_id.
+constraint). It carries no data worth preserving across a rollback: every
+counter is re-derivable, and a later ``upgrade()`` re-seeds each one from the
+``audit_event`` rows persisted by then.
 """
 
 from __future__ import annotations
@@ -61,12 +73,28 @@ depends_on = None
 
 
 def upgrade() -> None:
-    """Create the tiny per-correlation sequence counter table."""
+    """Create the per-correlation sequence counter table and seed it from history."""
     op.execute("""
         CREATE TABLE IF NOT EXISTS audit_sequence (
             correlation_id TEXT PRIMARY KEY,
             next_seq       BIGINT NOT NULL DEFAULT 0
         )
+    """)
+    # Backfill (PR #72 review, finding 2). Without it the first event for an
+    # existing correlation_id -- above all the shared "none" fallback -- is
+    # numbered 1 again. See the module docstring for the scan cost.
+    #
+    # MAX(sequence), not count(*): the old per-process counters restarted at
+    # 1 on every boot, so history has gaps and repeats. GREATEST instead of
+    # DO NOTHING so the seed can only ever raise a counter, even against a
+    # pre-existing table (CREATE TABLE IF NOT EXISTS above).
+    op.execute("""
+        INSERT INTO audit_sequence (correlation_id, next_seq)
+        SELECT correlation_id, COALESCE(MAX(sequence), 0)
+          FROM audit_event
+         GROUP BY correlation_id
+        ON CONFLICT (correlation_id)
+        DO UPDATE SET next_seq = GREATEST(audit_sequence.next_seq, EXCLUDED.next_seq)
     """)
 
 
