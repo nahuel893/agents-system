@@ -24,7 +24,7 @@ Built-in action families are `Read` (T0), `Write` (T2), `Send` (T2), `Exec` (T3)
 
 ### Tool and grant enforcement
 
-`ToolSpec.__post_init__` defers its import of `evaluate_tool_spec` until construction. This avoids the `permissions`/`harness` import cycle: `permissions.base` imports `Tier` from `harness.registry`, while `harness.loader` and other harness modules likewise use function-local permission imports following the existing injector cycle-avoidance pattern.
+`ToolSpec.__post_init__` defers its import of `evaluate_tool_spec` until construction. This avoids the `permissions`/`harness` import cycle: `permissions.base` imports `Tier` from `harness.registry`, and `harness/__init__.py` eagerly imports `harness.loader`, so `harness.loader` also defers its permission imports to function scope. Other harness modules (`injector`, `factory`, `interceptor`) are not in that package-init chain and import `agents_system.permissions` at module level.
 
 `evaluate_tool_spec` enforces both predicates:
 

@@ -24,7 +24,7 @@ Las familias de acción incorporadas son `Read` (T0), `Write` (T2), `Send` (T2),
 
 ### Aplicación en herramientas y grants
 
-`ToolSpec.__post_init__` difiere su importación de `evaluate_tool_spec` hasta la construcción. Esto evita el ciclo de importación entre `permissions` y `harness`: `permissions.base` importa `Tier` desde `harness.registry`, mientras que `harness.loader` y otros módulos del harness también usan imports locales a funciones de permisos siguiendo el patrón existente del injector para evitar ciclos.
+`ToolSpec.__post_init__` difiere su importación de `evaluate_tool_spec` hasta la construcción. Esto evita el ciclo de importación entre `permissions` y `harness`: `permissions.base` importa `Tier` desde `harness.registry`, y `harness/__init__.py` importa `harness.loader` de forma anticipada, por lo que `harness.loader` también difiere sus imports de permisos al ámbito de función. Los demás módulos del harness (`injector`, `factory`, `interceptor`) no forman parte de esa cadena de inicialización del paquete e importan `agents_system.permissions` a nivel de módulo.
 
 `evaluate_tool_spec` aplica ambos predicados:
 
