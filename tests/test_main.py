@@ -35,6 +35,7 @@ from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI
 from agents_system.config import Settings, get_settings
 from agents_system.harness.loader import DefinitionError
 from agents_system.main import _build_chat_model, lifespan
+from agents_system.permissions import UntrustedInputGrantError
 
 
 @pytest.fixture(autouse=True)
@@ -228,6 +229,42 @@ async def test_lifespan_boot_fails_without_deploy_grants_entry() -> None:
     message = str(exc_info.value)
     assert "_generic__sales-agent" in message
     assert "DEPLOY_GRANTS" in message
+
+
+@pytest.mark.asyncio
+async def test_lifespan_boot_fails_for_untrusted_role_granted_t3_permission() -> None:
+    """PR #55 security review (HIGH) — spec.md R4 scenario 'Untrusted role
+    cannot be equipped with a T3 grant at deploy time': the REAL
+    sales-agent role declares untrusted_input: true. A DEPLOY_GRANTS entry
+    granting it a T3-tier permission (exec:command) must fail boot loudly
+    (UntrustedInputGrantError propagating out of build_runtime), not equip
+    the runtime silently. `harness.loader.resolve` is deliberately left
+    unpatched so the REAL resolved untrusted_input applies."""
+    test_settings = _make_settings(
+        deploy_grants={"_generic__sales-agent": ("exec:command",)}
+    )
+
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agents_system.main._build_checkpointer_cm",
+            side_effect=_fake_checkpointer_cm_factory(MagicMock()),
+        ),
+        patch(
+            "agents_system.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        pytest.raises(UntrustedInputGrantError),
+    ):
+        app = create_test_app()
+        async with lifespan(app):
+            pass
 
 
 @pytest.mark.asyncio

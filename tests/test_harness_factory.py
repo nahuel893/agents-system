@@ -163,7 +163,14 @@ def test_build_runtime_deploy_grant_ceiling_accepts_mixed_class_and_name_grant()
     """Accepted grant forms (spec): `granted_permissions` may mix a
     `Permission` subclass and a registered wire-name string; every entry
     normalizes through the registry into the stored `deploy_grant_ceiling`
-    frozenset."""
+    frozenset.
+
+    PR #55 security review (MEDIUM): also proves the class-form grant
+    (`Write`) equips Layer-1 tools identically to how a string-form grant
+    would — `Write` covers sales-agent's own `write:orders`/`write:order_items`
+    (R3), so `order_writer` must be GRANTED, not silently dropped by a
+    string-only tool-surface intersection.
+    """
     from agents_system.harness.factory import build_runtime
     from agents_system.permissions import Write, permission_registry
 
@@ -178,6 +185,19 @@ def test_build_runtime_deploy_grant_ceiling_accepts_mixed_class_and_name_grant()
     )
 
     assert runtime.deploy_grant_ceiling == frozenset({Write, send_message_cls})
+
+    granted_names = {t.name for t in runtime.tools}
+    denied_names = {name for name, _reason in runtime.denied_tools}
+    # order_writer requires write:orders + write:order_items, both covered
+    # by the class-form Write grant (R3); message_sender requires
+    # send:message (granted by name); session_state requires nothing.
+    assert granted_names == {"order_writer", "message_sender", "session_state"}
+    # catalog_search (read:catalog) and client_lookup (read:client_registry)
+    # are covered by neither granted entry. escalation_notifier is not part
+    # of this role+client+roots combo's definition.tools at all (see
+    # test_build_runtime_grants_all_tools_when_permitted, which evaluates
+    # only these same 5 tools for sales-agent/client-a).
+    assert denied_names == {"catalog_search", "client_lookup"}
 
 
 def test_build_runtime_deploy_grant_ceiling_by_class_and_by_name_are_identical() -> (
@@ -228,11 +248,81 @@ def test_build_runtime_deploy_grant_ceiling_default_empty() -> None:
     assert runtime.deploy_grant_ceiling == frozenset()
 
 
+async def test_build_runtime_deploy_grant_ceiling_excludes_permission_role_does_not_declare() -> (
+    None
+):
+    """PR #55 security review (MEDIUM-HIGH): the ceiling is
+    `definition.permissions ∩ grant` under R3 (a granted class must cover a
+    DECLARED permission), never a raw union of the grant. A grant naming a
+    permission sales-agent never declares (`read:reports`) must not appear
+    in `deploy_grant_ceiling`, and a tool requiring it must not pass
+    Layer-2 either — even if the caller's `current_permissions` claims it."""
+    import dataclasses as dc
+
+    from agents_system.harness.factory import build_runtime
+    from agents_system.harness.interceptor import PolicyViolation, intercept
+    from agents_system.harness.registry import Tier, ToolSpec
+    from agents_system.permissions import permission_registry
+
+    reports_cls = permission_registry.resolve(
+        "read:reports"
+    )  # NOT in SALES_PERMISSIONS
+
+    runtime = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        [*SALES_PERMISSIONS, "read:reports"],
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    assert reports_cls not in runtime.deploy_grant_ceiling
+
+    # ...nor does it pass Layer-2, even when a caller's current_permissions
+    # explicitly claims it: the ceiling is the hard bound.
+    report_reader_spec = ToolSpec(
+        name="report_reader",
+        required_permissions=("read:reports",),
+        connector=lambda inputs: {"ok": True},
+        tier=Tier.T1,
+        always_revalidate=True,
+    )
+    probe_runtime = dc.replace(runtime, tools=(report_reader_spec,))
+
+    with pytest.raises(PolicyViolation) as exc_info:
+        await intercept(
+            "report_reader",
+            {},
+            probe_runtime,
+            current_permissions=["read:reports"],
+        )
+    assert exc_info.value.reason == "permission_revoked"
+
+
+def test_build_runtime_rejects_t3_grant_for_untrusted_input_role() -> None:
+    """PR #55 security review (HIGH) — spec.md R4 scenario 'Untrusted role
+    cannot be equipped with a T3 grant at deploy time': sales-agent
+    declares `untrusted_input: true`; granting it a T3-tier permission
+    (`exec:command`, which it does not even declare) must raise
+    `UntrustedInputGrantError` at build_runtime, not equip silently."""
+    from agents_system.harness.factory import build_runtime
+    from agents_system.permissions import UntrustedInputGrantError
+
+    with pytest.raises(UntrustedInputGrantError):
+        build_runtime(
+            "sales-agent",
+            _sales_registry(),
+            ["exec:command"],
+            client="client-a",
+            roots=_client_a_roots(),
+        )
+
+
 def test_build_runtime_deploy_grant_ceiling_does_not_affect_granted_tools() -> None:
-    """Existing-behavior regression guard: resolve_tool_surface's tool-grant
-    computation is unaffected by this task — it keeps consuming the raw
-    string/class `granted_permissions` values as before, unchanged by the
-    NEW `deploy_grant_ceiling` bookkeeping added alongside it."""
+    """Existing-behavior regression guard: for a pure string-form grant
+    that exactly matches the role's own declared permission names, the
+    granted tool surface is unaffected by the R3-bounded ceiling
+    computation added alongside it (PR #55 security review)."""
     from agents_system.harness.factory import build_runtime
 
     runtime = build_runtime(
@@ -331,7 +421,7 @@ def test_build_runtime_missing_skill_file_raises() -> None:
         build_runtime(
             "simple-role",
             reg,
-            ["read:catalog", "read:client_registry", "write:gamma"],
+            ["read:catalog", "read:client_registry"],
             client="client-a",
             roots=_fixture_roots(),
         )
@@ -416,7 +506,7 @@ def test_build_runtime_logs_skill_missing_before_raising() -> None:
         build_runtime(
             "simple-role",
             reg,
-            ["read:catalog", "read:client_registry", "write:gamma"],
+            ["read:catalog", "read:client_registry"],
             client="client-a",
             roots=_fixture_roots(),
         )
