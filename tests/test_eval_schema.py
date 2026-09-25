@@ -86,7 +86,7 @@ assertions:
   permission_denied: false
   escalation_expected: false
 granted_permissions: [read:catalog]
-client: acme
+client: deployment-id
 """
     path = _write(tmp_path, "full.yaml", text)
 
@@ -101,7 +101,7 @@ client: acme
         escalation_expected=False,
     )
     assert scenario.granted_permissions == ("read:catalog",)
-    assert scenario.client == "acme"
+    assert scenario.client == "deployment-id"
 
 
 @pytest.mark.parametrize(
@@ -170,6 +170,49 @@ def test_load_scenario_rejects_a_non_string_client(tmp_path: pathlib.Path) -> No
 
     with pytest.raises(ScenarioError, match="client"):
         load_scenario(path)
+
+
+def test_load_scenario_rejects_an_unknown_granted_permission_name(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = (
+        "role: sales-agent\nturns:\n  - hi\n"
+        "granted_permissions: [not-a-real-permission]\n"
+    )
+    path = _write(tmp_path, "bad.yaml", text)
+
+    with pytest.raises(ScenarioError) as exc_info:
+        load_scenario(path)
+
+    assert str(path) in str(exc_info.value)
+    assert "not-a-real-permission" in str(exc_info.value)
+
+
+def test_load_scenario_rejects_a_non_list_granted_permissions(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(
+        tmp_path,
+        "bad.yaml",
+        "role: sales-agent\nturns:\n  - hi\ngranted_permissions: 5\n",
+    )
+
+    with pytest.raises(ScenarioError, match="granted_permissions"):
+        load_scenario(path)
+
+
+def test_load_scenario_accepts_an_explicit_empty_granted_permissions_list(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(
+        tmp_path,
+        "empty_grants.yaml",
+        "role: sales-agent\nturns:\n  - hi\ngranted_permissions: []\n",
+    )
+
+    scenario = load_scenario(path)
+
+    assert scenario.granted_permissions == ()
 
 
 def test_load_scenario_rejects_a_non_mapping_document(tmp_path: pathlib.Path) -> None:

@@ -432,10 +432,9 @@ async def test_run_scenario_skips_its_own_resolve_when_granted_permissions_is_gi
 async def test_run_scenario_still_resolves_once_when_granted_permissions_is_default() -> (
     None
 ):
-    """The "grant everything the role declares" default still needs exactly
-    one resolve() call from runner.py itself -- there is no other way to
-    learn definition.permissions before build_runtime() can be called with
-    it."""
+    """The named ``all-declared`` compatibility default resolves the role
+    once to derive its complete declared permission set before building the
+    runtime."""
     from conftest import build_test_registry
 
     model = ToolAwareFakeModel(
@@ -445,9 +444,12 @@ async def test_run_scenario_still_resolves_once_when_granted_permissions_is_defa
         ]
     )
 
-    with patch.object(
-        runner_module, "resolve", wraps=runner_module.resolve
-    ) as resolve_spy:
+    with (
+        patch.object(
+            runner_module, "resolve", wraps=runner_module.resolve
+        ) as resolve_spy,
+        patch.object(runner_module.logger, "info") as log_info,
+    ):
         await run_scenario(
             _scenario(tools_called=("catalog_search",)),
             model=model,
@@ -458,6 +460,173 @@ async def test_run_scenario_still_resolves_once_when_granted_permissions_is_defa
         )
 
     resolve_spy.assert_called_once()
+    log_info.assert_any_call(
+        "eval.grants_defaulted",
+        policy="all-declared",
+        scenario="unit-test-scenario",
+        role="sales-agent",
+    )
+
+
+async def test_run_scenario_explicit_grant_excludes_and_denies_an_in_manifest_tool() -> (
+    None
+):
+    """A narrow explicit grant reaches build_runtime unchanged: Layer 1 does
+    not equip ``order_writer`` and Layer 2 denies the fake model's attempted
+    call to that in-manifest tool."""
+    from conftest import build_test_registry
+
+    scenario = Scenario(
+        name="narrow-grant",
+        role="sales-agent",
+        turns=("Create an order.",),
+        assertions=ScenarioAssertions(
+            tools_called=("order_writer",), permission_denied=True
+        ),
+        granted_permissions=("read:catalog",),
+    )
+    bound_tool_names: list[tuple[str, ...]] = []
+
+    class CapturingToolAwareFakeModel(ToolAwareFakeModel):
+        def bind_tools(  # type: ignore[override]
+            self, tools: Sequence[Any], **kwargs: Any
+        ) -> ToolAwareFakeModel:
+            bound_tool_names.append(tuple(tool["function"]["name"] for tool in tools))
+            return self
+
+    model = CapturingToolAwareFakeModel(
+        responses=[
+            _tool_call("order_writer", {"client_id": "c1", "items": []}),
+            AIMessage(content="I cannot create that order."),
+        ]
+    )
+
+    with patch.object(
+        runner_module, "build_runtime", wraps=runner_module.build_runtime
+    ) as build_runtime_spy:
+        result = await run_scenario(
+            scenario,
+            model=model,
+            model_name="fake-model",
+            registry=build_test_registry(),
+            roots=RootConfig(),
+            runs=1,
+        )
+
+    assert build_runtime_spy.call_args.args[2] == ("read:catalog",)
+    assert len(bound_tool_names) == 1
+    assert "catalog_search" in bound_tool_names[0]
+    assert "order_writer" not in bound_tool_names[0]
+    assert result.runs[0].passed
+
+
+async def test_run_scenario_omitted_grant_passes_role_permissions_and_equips_manifest_tools() -> (
+    None
+):
+    """The named ``all-declared`` compatibility default must reach
+    ``build_runtime`` with the role's own declared permissions -- not just
+    trigger a ``resolve()`` call and a log line, which alone would prove
+    nothing about the resulting runtime -- and an in-manifest tool that
+    needs one of those permissions (``order_writer``, gated on
+    ``write:orders``/``write:order_items``) must actually be equipped."""
+    from conftest import build_test_registry
+
+    scenario = _scenario(tools_called=("order_writer",))
+    bound_tool_names: list[tuple[str, ...]] = []
+
+    class CapturingToolAwareFakeModel(ToolAwareFakeModel):
+        def bind_tools(  # type: ignore[override]
+            self, tools: Sequence[Any], **kwargs: Any
+        ) -> ToolAwareFakeModel:
+            bound_tool_names.append(tuple(tool["function"]["name"] for tool in tools))
+            return self
+
+    model = CapturingToolAwareFakeModel(
+        responses=[
+            _tool_call("order_writer", {"client_id": "c1", "items": []}),
+            AIMessage(content="Order created."),
+        ]
+    )
+
+    expected_permissions = runner_module.resolve(
+        "sales-agent", client=None, roots=RootConfig()
+    ).permissions
+
+    with (
+        patch.object(
+            runner_module, "build_runtime", wraps=runner_module.build_runtime
+        ) as build_runtime_spy,
+        patch.object(runner_module.logger, "info") as log_info,
+    ):
+        result = await run_scenario(
+            scenario,
+            model=model,
+            model_name="fake-model",
+            registry=build_test_registry(),
+            roots=RootConfig(),
+            runs=1,
+        )
+
+    assert build_runtime_spy.call_args.args[2] == expected_permissions
+    assert len(bound_tool_names) == 1
+    assert "order_writer" in bound_tool_names[0]
+    log_info.assert_any_call(
+        "eval.grants_defaulted",
+        policy="all-declared",
+        scenario="unit-test-scenario",
+        role="sales-agent",
+    )
+    assert result.runs[0].passed
+
+
+async def test_run_scenario_explicit_empty_grant_equips_only_unpermissioned_tools() -> (
+    None
+):
+    """``granted_permissions=()`` is a deliberate explicit grant of nothing
+    -- distinct from omitting the field -- so it must reach
+    ``build_runtime`` unchanged as an empty tuple (no widening to
+    all-declared), leave every permissioned in-manifest tool unequipped
+    (only ``session_state``, which requires no permission, is equipped),
+    and never emit the all-declared default log."""
+    from conftest import build_test_registry
+
+    scenario = Scenario(
+        name="empty-grant",
+        role="sales-agent",
+        turns=("hi",),
+        assertions=ScenarioAssertions(),
+        granted_permissions=(),
+    )
+    bound_tool_names: list[tuple[str, ...]] = []
+
+    class CapturingToolAwareFakeModel(ToolAwareFakeModel):
+        def bind_tools(  # type: ignore[override]
+            self, tools: Sequence[Any], **kwargs: Any
+        ) -> ToolAwareFakeModel:
+            bound_tool_names.append(tuple(tool["function"]["name"] for tool in tools))
+            return self
+
+    model = CapturingToolAwareFakeModel(responses=[AIMessage(content="hi")])
+
+    with (
+        patch.object(
+            runner_module, "build_runtime", wraps=runner_module.build_runtime
+        ) as build_runtime_spy,
+        patch.object(runner_module.logger, "info") as log_info,
+    ):
+        await run_scenario(
+            scenario,
+            model=model,
+            model_name="fake-model",
+            registry=build_test_registry(),
+            roots=RootConfig(),
+            runs=1,
+        )
+
+    assert build_runtime_spy.call_args.args[2] == ()
+    assert len(bound_tool_names) == 1
+    assert set(bound_tool_names[0]) == {"session_state"}
+    log_info.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

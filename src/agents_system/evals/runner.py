@@ -21,6 +21,7 @@ import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
+import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
@@ -44,6 +45,12 @@ _BLOCKED_PREFIX = "Tool call blocked:"
 #: (it is a one-off literal at that single construction site), so this is
 #: its own local copy for the two `escalation_expected` checks below.
 _ESCALATION_NOTIFIER_TOOL = "escalation_notifier"
+
+#: Compatibility policy applied when a scenario omits ``granted_permissions``.
+#: Kept named and logged so an implicit YAML omission remains observable.
+_ALL_DECLARED_GRANT_POLICY = "all-declared"
+
+logger = structlog.get_logger()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -315,6 +322,13 @@ async def run_scenario(
       against each fresh registry it returns, so every run gets its own,
       unshared backend instances.
 
+    An explicit ``scenario.granted_permissions`` wire-name list is passed
+    unmodified to ``build_runtime``. When omitted, the runner applies and
+    logs the named ``all-declared`` compatibility policy, resolving the role
+    once to pass its declared permissions to ``build_runtime``. In either
+    case, ``build_runtime`` derives the Layer-1 surface and Layer-2 deploy
+    grant ceiling from that same grant under R3/R4 enforcement.
+
     `audit_sink_factory` builds the `AuditSink` registered for the whole
     call (default: an in-memory `_CapturingAuditSink`) so the platform's
     real audit wiring actually delivers during an eval instead of every
@@ -348,13 +362,19 @@ async def run_scenario(
         if scenario.granted_permissions is not None:
             granted_permissions = scenario.granted_permissions
         else:
-            # Needed up front only to compute the "grant everything the role
-            # declares" default -- build_runtime() below resolves the role
-            # again internally regardless of this branch, so a scenario that
-            # names its own granted_permissions skips this call entirely.
+            # `all-declared` preserves existing YAML files that predate
+            # explicit grants. It is named and logged rather than silently
+            # widening: build_runtime() still applies R3/R4 and persists the
+            # same bounded grant ceiling for Layer 2.
             granted_permissions = resolve(
                 scenario.role, client=scenario.client, roots=roots
             ).permissions
+            logger.info(
+                "eval.grants_defaulted",
+                policy=_ALL_DECLARED_GRANT_POLICY,
+                scenario=scenario.name,
+                role=scenario.role,
+            )
 
         def _build_equipped(active_registry: ToolRegistry) -> EquippedRuntime:
             return build_runtime(

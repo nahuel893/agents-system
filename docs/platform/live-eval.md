@@ -84,7 +84,7 @@ role: sales-agent            # required — the role folder name
 name: sales_agent_smoke      # optional — defaults to the file's stem
 description: >               # optional, free text
   A customer asks about a catalog item.
-client: acme                 # optional — resolve under a deployment; omit for the generic role
+client: deployment-id        # optional — resolve under a deployment; omit for the generic role
 turns:                       # required, non-empty — user messages, sent in order
   - "Hi, do you have Item Alpha in stock and how much does it cost?"
 assertions:
@@ -93,10 +93,20 @@ assertions:
   permission_denied: false                          # true/false: was any call blocked by the Layer-2 interceptor
   escalation_expected: false                         # true: a successful escalation_notifier call is required
                                                        # false: escalation_notifier must never be attempted
-granted_permissions: [read:catalog]  # optional — defaults to the role's own declared permissions
+granted_permissions: [read:catalog]  # optional wire-name list; omit for the named all-declared compatibility default
 ```
 
 Every `assertions` field is optional; an omitted field asserts nothing.
+
+When `granted_permissions` is omitted, the runner applies and logs the named
+`all-declared` compatibility default: every permission declared by the
+resolved role is passed to `build_runtime`. This preserves existing scenario
+YAML. When present, the wire-name list passes unmodified to `build_runtime`.
+In both cases, the factory applies R3 coverage and R4 grant validation, then
+uses the resulting grant ceiling for both the Layer-1 tool surface and the
+Layer-2 default revalidation. A narrowed grant therefore excludes an
+in-manifest tool from the model's equipped surface, and an attempted call to
+that excluded tool is denied by Layer 2.
 `tools_called`/`tools_not_called` check whether the model *attempted* the
 call at all (regardless of outcome). `escalation_expected: true` is
 stricter — it additionally requires the call actually succeeded (no

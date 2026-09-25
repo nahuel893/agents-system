@@ -16,6 +16,9 @@ from typing import Any
 
 import yaml
 
+from agents_system.permissions import UnknownPermissionNameError
+from agents_system.permissions.permission_registry import permission_registry
+
 
 class ScenarioError(Exception):
     """Raised when a scenario file is structurally invalid."""
@@ -58,10 +61,10 @@ class Scenario:
     #: `harness.loader.resolve`). ``None`` resolves the generic platform role,
     #: which is what every scenario shipped with the library scope uses.
     client: str | None = None
-    #: ``None`` means "grant everything the role itself declares"
-    #: (``definition.permissions``) -- the correct default for proving normal
-    #: behavior. A scenario that deliberately tests a permission boundary
-    #: narrows this to a strict subset of the role's own permissions.
+    #: ``None`` selects the runner's named ``all-declared`` compatibility
+    #: default: grant every permission the role itself declares
+    #: (``definition.permissions``). A scenario that deliberately tests a
+    #: permission boundary supplies a strict subset of wire-name strings.
     granted_permissions: tuple[str, ...] | None = None
     #: The file this scenario was loaded from, for error messages and result
     #: reporting. ``None`` for a scenario built directly in code (tests).
@@ -152,6 +155,15 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         if raw_granted is not None
         else None
     )
+    if granted_permissions is not None:
+        for name in granted_permissions:
+            try:
+                permission_registry.resolve(name)
+            except UnknownPermissionNameError:
+                raise ScenarioError(
+                    f"{path}: 'granted_permissions' names an unknown permission "
+                    f"{name!r}"
+                ) from None
 
     client = raw.get("client")
     if client is not None and not isinstance(client, str):
