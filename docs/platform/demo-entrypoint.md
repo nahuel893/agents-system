@@ -39,6 +39,7 @@ All entrypoint configuration comes from environment variables (or the project's
 | `DEMO_PORT` | `8000` | HTTP bind port. |
 | `ADAPTER_RUNTIMES` | required to expose a role | JSON list of published runtime IDs, such as `["_generic__sales-agent"]`. Empty (the default) exposes no `/v1/*` models. |
 | `ADAPTER_API_KEY` | required when publishing a role | Bearer token required by `/v1/*`. |
+| `DEPLOY_GRANTS` | required for every configured runtime id | JSON object mapping each `{deployment}__{role}` id to the list of permission wire names actually granted to it, such as `{"_generic__sales-agent": ["read:catalog"]}`. A configured runtime with no matching entry fails boot loudly, naming the runtime id. |
 
 For example, choose one provider and set its variables, then publish a generic
 role without putting any credential values in source control:
@@ -49,13 +50,22 @@ export OPENAI_COMPATIBLE_BASE_URL=https://your-compatible-endpoint.example/v1
 export OPENAI_COMPATIBLE_MODEL=your-model-id
 export OPENAI_COMPATIBLE_API_KEY="$YOUR_PROVIDER_API_KEY"
 export ADAPTER_RUNTIMES='["_generic__sales-agent"]'
+export DEPLOY_GRANTS='{"_generic__sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
 export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
 ```
 
 `ADAPTER_RUNTIMES` and `ADAPTER_API_KEY` are what actually publish and protect
-a role on `/v1/*`; this entrypoint does not set them. The in-progress permission
-model will additionally require explicit `DEPLOY_GRANTS` once it lands. Do not
-preconfigure that future shape here.
+a role on `/v1/*`; this entrypoint does not set them by default. Boot also
+requires an explicit `DEPLOY_GRANTS` entry for every configured runtime id
+(issue #38) — `main.py`'s lifespan raises `DefinitionError` naming the runtime
+otherwise. The example above grants `_generic__sales-agent` its full declared
+permission set (`platform/roles/sales-agent/manifest.md`): `read:catalog`,
+`read:client_registry`, `write:orders`, `write:order_items`,
+`read:price_lists`, `send:message`. `sales-agent` declares
+`untrusted_input: true` (`platform/roles/sales-agent/policy.md`), and none of
+those six permissions is in the `exec:`/`run:` (T3) family, so granting its
+full declared set here never hands a T3 permission to an untrusted-input role
+(ADR-002 C.11/C.13).
 
 ## 3. Satisfy the two startup security checks
 

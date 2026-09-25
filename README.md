@@ -297,10 +297,16 @@ export OPENAI_COMPATIBLE_API_KEY="$YOUR_PROVIDER_API_KEY"
 export DEMO_HOST=127.0.0.1
 export DEMO_PORT=8000
 export ADAPTER_RUNTIMES='["_generic__sales-agent"]'
+export DEPLOY_GRANTS='{"_generic__sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
 export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
 
 uv run python -m agents_system.demo
 ```
+
+`DEPLOY_GRANTS` is required for every configured runtime id (issue #38); the
+example above grants `_generic__sales-agent` its full declared permission set,
+which is safe because none of it is a T3 (`exec:`/`run:`) permission and
+`sales-agent` declares `untrusted_input: true`.
 
 The entrypoint also boots through two fail-closed startup checks: a non-empty
 `META_WEBHOOK_SECRET` (or `ALLOW_INSECURE=true`), and a genuinely read-only

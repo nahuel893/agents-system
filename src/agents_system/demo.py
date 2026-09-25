@@ -5,9 +5,10 @@ with ``demo/load_demo_company.py``; this module is that loader's "serve it"
 half. Configuration is environment-variable only.
 
 Set ``ADAPTER_RUNTIMES`` and ``ADAPTER_API_KEY`` to publish a role on ``/v1/*``;
-this module deliberately does not set either value. The in-progress permission
-model will additionally require explicit ``DEPLOY_GRANTS`` once it lands; this
-module does not anticipate that future configuration shape.
+this module deliberately does not set either value. Boot also requires an
+explicit ``DEPLOY_GRANTS`` entry for every configured runtime id (issue #38) --
+this module does not set that either. See ``docs/platform/demo-entrypoint.md``
+for the exact command.
 
 Two things ``main()`` refuses to boot without, both enforced fail-closed unless
 you explicitly opt out with ``ALLOW_INSECURE=true``:
