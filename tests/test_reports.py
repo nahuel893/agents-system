@@ -283,6 +283,16 @@ async def test_run_report_propagates_validation_error_before_touching_engine() -
 # ---------------------------------------------------------------------------
 
 
+def test_top_products_sql_uses_sku_as_a_deterministic_tie_breaker() -> None:
+    from agents_system.connectors.sales_reports import (
+        _TOP_PRODUCTS_BY_UNITS_SQL,
+        _TOP_PRODUCTS_SQL,
+    )
+
+    assert "ORDER BY revenue DESC, sku ASC" in str(_TOP_PRODUCTS_SQL)
+    assert "ORDER BY total_quantity DESC, sku ASC" in str(_TOP_PRODUCTS_BY_UNITS_SQL)
+
+
 def test_report_spec_defaults_order_by_fields_to_none() -> None:
     """An ordinary report declares neither field - fully backward compatible."""
     spec = _spec()

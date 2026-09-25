@@ -80,7 +80,33 @@ _RUN_REPORT_DESCRIPTION = (
 )
 
 
+def _describe_params(spec: ReportSpec) -> str:
+    """Render *spec*'s parameter contract for provider-neutral tool schemas."""
+    lines = [f"{spec.name}:"]
+    for param in spec.params:
+        constraints = [param.type.__name__]
+        if param.minimum is not None and param.maximum is not None:
+            constraints.append(f"{param.minimum}-{param.maximum}")
+        elif param.minimum is not None:
+            constraints.append(f"min {param.minimum}")
+        elif param.maximum is not None:
+            constraints.append(f"max {param.maximum}")
+        if param.allowed is not None:
+            constraints.append(f"one of: {', '.join(map(str, param.allowed))}")
+        if param.default is not None:
+            constraints.append(f"default: {param.default}")
+        lines.append(
+            f"  - {param.name} ({'; '.join(constraints)}): {param.description}"
+        )
+    return "\n".join(lines)
+
+
 def _input_schema(catalog: dict[str, ReportSpec]) -> dict[str, Any]:
+    params_description = (
+        "Report-specific parameters:\n"
+        + "\n\n".join(_describe_params(spec) for spec in catalog.values())
+        + "\n\nAn unrecognized key is rejected, not ignored."
+    )
     return {
         "type": "object",
         "properties": {
@@ -91,11 +117,7 @@ def _input_schema(catalog: dict[str, ReportSpec]) -> dict[str, Any]:
             },
             "params": {
                 "type": "object",
-                "description": (
-                    "Report-specific parameters. See the chosen report's "
-                    "own description for accepted keys - an unrecognized "
-                    "key is rejected, not ignored."
-                ),
+                "description": params_description,
             },
         },
         "required": ["report"],

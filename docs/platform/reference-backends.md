@@ -122,8 +122,11 @@ registry.register(backends.message_sender_tool_spec())
   Each result has `similarity: null`; it makes no vector or semantic-search
   claim. An empty query or no match returns `results: []` with
   `classification: "no_match"`.
-- `run_report` exposes the closed portable sales `CATALOG`; a valid report
-  with no rows is an empty report response (`rows: []`, `empty_result: true`).
+- `run_report` exposes the closed portable sales `CATALOG`; its tool schema
+  directly documents every report parameter's type, allowed values, and
+  default from the catalog's `ReportSpec` / `ParamSpec` definitions. A valid
+  report with no rows is an empty report response (`rows: []`,
+  `empty_result: true`).
 
 ## What these are not
 

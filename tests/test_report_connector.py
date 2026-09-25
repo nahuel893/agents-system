@@ -120,6 +120,19 @@ def test_input_schema_report_enum_matches_catalog_keys() -> None:
     assert enum_values == set(_catalog().keys())
 
 
+def test_serialized_input_schema_documents_top_products_order_by_values() -> None:
+    registry = build_report_registry(object(), _catalog())
+    schema = registry.get("run_report").to_langchain_tool_schema()
+    params_description = schema["function"]["parameters"]["properties"]["params"][
+        "description"
+    ]
+
+    assert "top_products" in params_description
+    assert "order_by" in params_description
+    assert "revenue" in params_description
+    assert "units" in params_description
+
+
 def test_registry_registers_run_report_with_expected_permissions_and_revalidation() -> (
     None
 ):
