@@ -381,7 +381,6 @@ def test_no_role_outside_the_operator_branch_can_reach_the_host() -> None:
 
     from agents_system.harness.loader import (
         RootConfig,
-        _extends_target,
         _load_role_files,
     )
 
@@ -404,7 +403,7 @@ def test_no_role_outside_the_operator_branch_can_reach_the_host() -> None:
                 return True
             seen.add(current)
             _, parent, _ = _load_role_files(current, roots)
-            current = _extends_target(parent) if parent else None
+            current = parent  # already placed by `_extends_target`
         return False
 
     for role in discover_concrete_platform_roles():

@@ -58,6 +58,7 @@ An agent definition is a folder under `platform/roles/` containing three files. 
 | `skills` | `list[string]` | optional | Names of skill packs this role accepts. Skills shape how the agent reasons and responds. See `docs/platform/skill.md`. |
 | `context` | `object` | required | Context requirements. Specifies what context the runtime must receive at injection time. Sub-fields: `session` (boolean), `user_identity` (boolean), `org_context` (boolean), `private_wiki` (boolean), `tool_derived` (list of tool names whose outputs are required as context). |
 | `permissions` | `list[string]` | required | RBAC permission identifiers required for this role to operate. The platform evaluates these at injection time against the requesting user's permission set. See `docs/architecture/permission-model.md`. |
+| `extends` | `string` | optional | The parent this definition inherits from (additively: tools, permissions, prose). A bare name (`agent`) or `platform/roles/<name>` names a predefined role and is looked up only in `platform/roles/`. Any other value is a folder path relative to this agent's own folder (e.g. `../base-support` for a sibling) and is accepted only if, after following `..` and symlinks, it lands strictly inside the importer's agents root; absolute paths are rejected. A value that fits neither space raises `DefinitionError` — it never falls back to a same-named predefined role. |
 
 ### `policy.md` fields
 

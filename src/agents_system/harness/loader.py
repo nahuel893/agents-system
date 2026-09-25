@@ -909,14 +909,131 @@ def _strip_base_contract(prompt: str) -> str:
     return prompt
 
 
-def _extends_target(raw: Any) -> str:
-    """Normalise an ``extends:`` value to a bare role name.
+_PLATFORM_ROLE_PREFIX = "platform/roles/"
 
-    Every manifest already on disk writes the path form
-    (``extends: platform/roles/sales-agent``), so that form has to keep
-    meaning what it looks like it means. A bare role name works too.
+_EXTENDS_RULE = (
+    "A bare name or 'platform/roles/<name>' resolves only in the predefined "
+    "role tree; any other value is a folder path relative to the declaring "
+    "agent's own folder and must stay inside its importer root."
+)
+
+
+def _platform_role_name_or_none(value: str) -> str | None:
+    """The role name when ``value`` is one of the two platform forms every
+    shipped manifest writes — a bare segment or ``platform/roles/<segment>``
+    — else ``None``. Anything else is never a platform-role reference."""
+    name = value.removeprefix(_PLATFORM_ROLE_PREFIX)
+    return name if _SAFE_SEGMENT.fullmatch(name) else None
+
+
+def _is_absolute_value(value: str) -> bool:
+    # A Windows anchor is non-empty for a POSIX root ("/"), a Windows root,
+    # a drive ("C:") and a UNC share: every form a join would not keep
+    # under its base, whatever OS the loader runs on.
+    return bool(pathlib.PureWindowsPath(value).anchor)
+
+
+def _resolve_within_root(
+    root: pathlib.Path, base: pathlib.Path, relative: str
+) -> pathlib.Path | None:
+    """Resolve ``relative`` against ``base`` (the declaring agent's folder)
+    and return the real path only if it lies strictly inside ``root``.
+
+    Containment is checked AFTER ``Path.resolve()`` has followed every
+    symlink and ``..`` (design.md D2 Resolved Decision), so a sibling such
+    as ``../base-support`` passes while a ``..`` chain or a symlink leading
+    out of ``root`` does not. ``root`` itself is not an agent folder and is
+    rejected too. The comparison is lexical on real paths, so on a
+    case-insensitive filesystem a differently-cased spelling fails closed.
+    Never raises: every rejection is ``None``, reported once by the caller.
     """
-    return str(raw).strip().rstrip("/").rsplit("/", 1)[-1]
+    if _is_absolute_value(relative):
+        return None
+    try:
+        real_root = root.resolve()
+        resolved = (base / relative).resolve()
+    except (OSError, RuntimeError, ValueError):  # loop, NUL byte, ...
+        return None
+    if resolved == real_root or not resolved.is_relative_to(real_root):
+        return None
+    return resolved
+
+
+def _describe_locator(locator: RoleLocator) -> str:
+    """Name the agent declaring an ``extends:`` value, for error messages."""
+    if isinstance(locator, FolderLocator):
+        return f"agent folder '{locator.path}'"
+    if isinstance(locator, InlineLocator):
+        return f"inline agent '{locator.raw.role_name}'"
+    return f"role '{locator}'"
+
+
+def _extends_target(
+    raw: Any, *, current: RoleLocator, roots: RootConfig
+) -> RoleLocator:
+    """Place an ``extends:`` value declared by ``current`` in exactly one
+    locator space, or raise ``DefinitionError`` (design.md D2).
+
+    - bare name / ``platform/roles/<name>``: the predefined role tree only,
+      never an importer folder of the same name;
+    - anything else: a path relative to ``current``'s own folder, accepted
+      only when ``current`` is a ``FolderLocator`` and the fully resolved
+      path is an existing folder strictly inside ``current.root``. The
+      returned locator carries the resolved real path, so later reads use
+      what was checked instead of re-walking symlinks.
+
+    Absolute values are rejected before any filesystem access. Nothing is
+    ever collapsed to its last segment (the pre-ADR-004 behavior), which is
+    what let ``some/importer/path/agent`` silently extend ``agent``. Spec:
+    agent-definition-locator, "`extends:` fails loudly when unplaceable in
+    either locator space".
+    """
+
+    def fail(detail: str) -> DefinitionError:
+        return DefinitionError(
+            f"Invariant violation — extends: {_describe_locator(current)} "
+            f"declares {detail}. {_EXTENDS_RULE}"
+        )
+
+    if not isinstance(raw, str):
+        raise fail(f"an 'extends:' value of type {type(raw).__name__}, not a string")
+    value = raw.strip()
+    if not value:
+        raise fail("an empty 'extends:' value")
+    if _is_absolute_value(value):
+        raise fail(f"'extends: {value}', which is an absolute path")
+    value = value.rstrip("/")
+
+    platform_name = _platform_role_name_or_none(value)
+    if platform_name is not None:
+        folder = _role_folder(
+            _require_platform_root(roots.platform_root), platform_name
+        )
+        if folder.is_dir():
+            return platform_name
+        raise fail(
+            f"'extends: {value}', which names predefined role "
+            f"'{platform_name}', but {folder} does not exist"
+        )
+
+    if not isinstance(current, FolderLocator):
+        raise fail(
+            f"'extends: {value}', a folder path, but it was not loaded from a "
+            "folder, so it has no importer root to resolve the path in"
+        )
+    resolved = _resolve_within_root(current.root, current.path, value)
+    if resolved is None:
+        raise fail(
+            f"'extends: {value}', which escapes the importer root "
+            f"'{current.root}': after following '..' and symlinks it must "
+            "land strictly inside that root"
+        )
+    if not resolved.is_dir():
+        raise fail(
+            f"'extends: {value}', which is not an existing folder inside the "
+            f"importer root '{current.root}'"
+        )
+    return FolderLocator(path=resolved, root=current.root)
 
 
 def _parse_untrusted_input(
@@ -955,17 +1072,17 @@ def _parse_untrusted_input(
 
 def _load_role_files(
     locator: RoleLocator, roots: RootConfig
-) -> tuple[RawDefinition, str | None, bool]:
+) -> tuple[RawDefinition, RoleLocator | None, bool]:
     """Read one role folder, or unwrap an inline definition. Returns its
-    definition, parent, and abstractness.
+    definition, its parent locator (``extends:`` placed by
+    ``_extends_target``), and abstractness.
 
     Dispatches on ``locator``'s kind (design.md D1). An ``InlineLocator``
-    returns its own ``raw`` unchanged, with zero disk I/O — ``is_abstract``
-    is always ``False`` for an inline definition (abstractness is a
-    folder-manifest-only concept), and its ``extends:`` chain
-    (``locator.parent``) is walked directly by ``_resolve_role_chain``, not
-    through this function, since there is no manifest text here to parse it
-    from. A ``FolderLocator`` reads ``role.md``/``manifest.md``/
+    returns its own ``raw`` unchanged, reading nothing for itself —
+    ``is_abstract`` is always ``False`` for an inline definition
+    (abstractness is a folder-manifest-only concept), and a string
+    ``locator.parent`` is placed exactly like a manifest's ``extends:``. A
+    ``FolderLocator`` reads ``role.md``/``manifest.md``/
     ``policy.md`` from ``locator.path``, using the identical parsing this
     function has always applied to a platform role folder. A bare ``str``
     resolves ``platform_root/roles/<name>``, byte-for-byte unchanged from
@@ -974,7 +1091,10 @@ def _load_role_files(
     actually read.
     """
     if isinstance(locator, InlineLocator):
-        return locator.raw, None, False
+        inline_parent = locator.parent
+        if isinstance(inline_parent, str):
+            inline_parent = _extends_target(inline_parent, current=locator, roots=roots)
+        return locator.raw, inline_parent, False
 
     if isinstance(locator, FolderLocator):
         folder = locator.path
@@ -995,7 +1115,11 @@ def _load_role_files(
     version: str = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
 
     parent_raw = manifest_fm.get("extends")
-    parent = _extends_target(parent_raw) if parent_raw else None
+    parent = (
+        None
+        if parent_raw is None
+        else _extends_target(parent_raw, current=locator, roots=roots)
+    )
     is_abstract = bool(manifest_fm.get("abstract", False))
 
     # ADR-002 C.12. Only a platform role's own manifest.md ORIGINATES command
@@ -1224,11 +1348,9 @@ def _resolve_role_chain(
     ``seen`` and the cycle message are keyed by ``_locator_key``, not a bare
     role-type string, so a folder/inline locator is compared by identity
     rather than accidentally colliding with a same-named platform role. The
-    next hop is ``_load_role_files``'s returned ``parent`` for a platform or
-    folder locator (parsed from that folder's own manifest); for an
-    ``InlineLocator`` it is ``locator.parent`` directly, since
-    ``_load_role_files`` never reads a manifest for one (there is none to
-    read an ``extends:`` value from).
+    next hop is always ``_load_role_files``'s returned ``parent``, already
+    placed by ``_extends_target`` (design.md D2). A parent that fails to
+    load is reported with its underlying reason, never as merely missing.
     """
     chain: list[RawDefinition] = []
     seen: list[str] = []
@@ -1253,22 +1375,18 @@ def _resolve_role_chain(
 
         try:
             definition, parent, is_abstract = _load_role_files(current_locator, roots)
-        except DefinitionError:
+        except DefinitionError as exc:
             if key == original_key:
                 raise
             raise DefinitionError(
                 f"Invariant violation — extends: role '{seen[-2]}' extends "
-                f"'{key}', which does not exist."
-            ) from None
+                f"'{key}', which could not be loaded: {exc}"
+            ) from exc
 
         if key == original_key:
             leaf_is_abstract = is_abstract
         chain.append(definition)
-        current_locator = (
-            current_locator.parent
-            if isinstance(current_locator, InlineLocator)
-            else parent
-        )
+        current_locator = parent
 
     # chain is leaf-first; fold root-first so a child composes onto its parent.
     resolved = chain[-1]
@@ -1396,7 +1514,11 @@ def load_override(
     # It is now checked. Declaring the truth is allowed; declaring a lie is not.
     declared_parent = manifest_fm.get("extends")
     if declared_parent is not None:
-        target = _extends_target(declared_parent)
+        # Only CHECKED, never resolved -- the folder already fixes the
+        # parent -- so comparing the last segment cannot select a wrong one,
+        # and existing deployment manifests write `roles/<name>`, a form
+        # `_extends_target` deliberately rejects.
+        target = str(declared_parent).strip().rstrip("/").rsplit("/", 1)[-1]
         if target != role_type:
             raise DefinitionError(
                 f"Invariant violation — extends: deployment "
