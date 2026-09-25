@@ -16,6 +16,9 @@ from typing import Any
 
 import yaml
 
+from agents_system.permissions import UnknownPermissionNameError
+from agents_system.permissions.permission_registry import permission_registry
+
 
 class ScenarioError(Exception):
     """Raised when a scenario file is structurally invalid."""
@@ -152,6 +155,15 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         if raw_granted is not None
         else None
     )
+    if granted_permissions is not None:
+        for name in granted_permissions:
+            try:
+                permission_registry.resolve(name)
+            except UnknownPermissionNameError:
+                raise ScenarioError(
+                    f"{path}: 'granted_permissions' names an unknown permission "
+                    f"{name!r}"
+                ) from None
 
     client = raw.get("client")
     if client is not None and not isinstance(client, str):
