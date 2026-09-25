@@ -26,9 +26,9 @@ tasks_progress:
     - PR3-T3
     - PR3-T4
     - PR3-T5
-  pending:
     - PR4-T1
     - PR4-T2
     - PR4-T3
     - PR4-T4
+  pending: []
 last_updated: 2026-09-25T00:00:00Z

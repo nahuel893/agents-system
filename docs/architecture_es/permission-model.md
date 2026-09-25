@@ -114,3 +114,4 @@ La siguiente tabla detalla qué roles de agente tienen permitido declarar e inye
 - Campo `required_permissions` de la herramienta: `docs/platform_es/tool.md`
 - Pipeline de inyección de capacidades en el harness: `docs/platform_es/harness.md`
 - Restricciones en delegaciones jerárquicas: `docs/architecture_es/delegation-policy.md`
+- Jerarquía de permisos entregada: `docs/architecture_es/adr-003-permission-hierarchy.md`
