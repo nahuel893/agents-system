@@ -86,7 +86,7 @@ assertions:
   permission_denied: false
   escalation_expected: false
 granted_permissions: [read:catalog]
-client: acme
+client: deployment-id
 """
     path = _write(tmp_path, "full.yaml", text)
 
@@ -101,7 +101,7 @@ client: acme
         escalation_expected=False,
     )
     assert scenario.granted_permissions == ("read:catalog",)
-    assert scenario.client == "acme"
+    assert scenario.client == "deployment-id"
 
 
 @pytest.mark.parametrize(
