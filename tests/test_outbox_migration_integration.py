@@ -256,13 +256,21 @@ async def test_downgrade_refuses_pending_or_leased_outbox_work(
     assert remaining_work == 2
     # #46 follow-up: descending from head, 004's OWN guard now refuses
     # first (the same two rows are also "incomplete" by its predicate), so
-    # the chain never reaches 002's guard at all -- it stops one migration
-    # higher than before 004 existed. 002's own guard is unreachable from
-    # head while a newer migration's guard already blocks the same data;
-    # it is still exercised in isolation once 003/004 are already downgraded
-    # (see test_downgrade_003_refuses_recoverable_state_without_partial_schema_loss
+    # the chain never reaches 002's guard at all. 002's own guard is
+    # unreachable from head while a newer migration's guard already blocks
+    # the same data; it is still exercised in isolation once 003/004 are
+    # already downgraded (see
+    # test_downgrade_003_refuses_recoverable_state_without_partial_schema_loss
     # and test_downgrade_004_refuses_pending_or_leased_outbox_work).
-    assert revision == "004"
+    #
+    # #9 follow-up: 005 (audit_sequence) sits above 004 and has no guard of
+    # its own, so its downgrade step always succeeds first -- but the whole
+    # multi-step `downgrade 001` invocation is one transaction, and 004's
+    # guard raising mid-run rolls that step back too. The net effect is that
+    # a refused downgrade leaves the database exactly at head, unchanged --
+    # not at head's-guarded-predecessor -- regardless of how many
+    # unguarded migrations sit above the one that actually refuses.
+    assert revision == "005"
     assert {
         "ix_outbox_work_ready_recoverable",
         "ix_outbox_work_expired_recoverable",
@@ -765,7 +773,10 @@ async def test_downgrade_004_refuses_pending_or_leased_outbox_work(
                 "AND column_name = 'conversation_key')"
             )
         )
-    assert revision == "004"
+    # #9 follow-up: same reasoning as test_downgrade_refuses_pending_or_leased_outbox_work
+    # above -- 005 sits above 004 with no guard of its own, so the refused
+    # multi-step downgrade rolls back to head (005), not to 004.
+    assert revision == "005"
     assert column_exists is True
 
     async with migrated_engine.begin() as conn:
