@@ -320,7 +320,11 @@ def test_every_concrete_platform_role_explicitly_declares_untrusted_input() -> N
                 break
             manifest_fm, _ = _read_md(role_dir / "manifest.md")
             parent_raw = manifest_fm.get("extends")
-            current = _extends_target(parent_raw) if parent_raw else None
+            current = (
+                _extends_target(parent_raw, current=current, roots=roots)
+                if parent_raw
+                else None
+            )
         assert declared, (
             f"'{role}' never explicitly declares untrusted_input anywhere "
             "in its extends chain — it would silently resolve through the "

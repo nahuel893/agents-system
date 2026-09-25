@@ -14,10 +14,10 @@ tasks_progress:
     - PR1a-T3
     - PR1a-T4
     - PR1a-T5
-  pending:
     - PR1b-T1
     - PR1b-T2
     - PR1b-T3
+  pending:
     - PR2-T1
     - PR2-T2
     - PR2-T3
@@ -75,3 +75,48 @@ pr1a:
       message content.
     - Removed AI attribution from the PR body.
   ci: 12/12 checks passed (both pushes)
+pr1b:
+  status: implemented
+  branch: feat/library-first-1b-extends
+  pr_url: https://github.com/nahuel893/agents-system/pull/70
+  files_changed:
+    - src/agents_system/harness/loader.py
+    - tests/test_extends_fail_loud.py
+    - tests/test_platform_tools_integration.py
+    - tests/test_role_resolution_pinned.py
+    - tests/test_untrusted_input_invariant.py
+    - docs/platform/role.md
+    - docs/platform_es/role.md
+  diff_lines_authored: 619
+  diff_budget_note: >-
+    Exceeds the ~215 estimate and the 400-line default budget; the bulk is
+    tests/test_extends_fail_loud.py (410 lines, 53 tests), which maps to
+    the task-named D2 cases, spec scenarios and threat-matrix cases. Nothing
+    was trimmed; recommend size:exception.
+  review_fixes:
+    - MEDIUM - a present extends key with no value (bare, null, ~) was
+      treated as no parent; only an absent key means no parent now, and a
+      valueless key raises. No shipped manifest or fixture declares one.
+    - LOW - a self-reference (., ./., ../self) is rejected in
+      _extends_target instead of surfacing later as a cycle.
+  ci: 12/12 checks passed (run 36172632653)
+  deviations:
+    - Relative extends values resolve against the declaring agent's own
+      folder (current.path), not against root as design.md D2's code block
+      shows; that code block contradicted its own worked example, and the
+      owner/orchestrator resolved rule is child-folder-relative.
+    - _importer_root_of was not added; an isinstance(current, FolderLocator)
+      narrowing is used because the resolution base needs current.path too.
+    - The importer root itself is rejected (strictly inside only).
+    - load_override keeps its last-segment check inline (checked, never
+      resolved; deployment manifests write roles/<name>).
+    - The chain-walk wrap now appends the parent's underlying load error
+      ("could not be loaded", then the cause) instead of "does not exist",
+      so nested extends errors are not masked.
+  follow_ups:
+    - role.md/manifest.md/policy.md symlinks inside an accepted folder are
+      still followed out of the importer root by _read_md.
+    - Residual TOCTOU between the containment check and the read (closing
+      it needs fd-based openat/O_NOFOLLOW reads).
+    - FolderLocator.path is not validated to lie inside FolderLocator.root
+      for the leaf (PR2 sets root=path.parent).
