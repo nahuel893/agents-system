@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
@@ -48,6 +50,20 @@ def _require_isolated_database_url() -> str:
         )
     assert url is not None
     return url
+
+
+def _head_revision() -> str:
+    """Alembic's current head, read from the migration scripts themselves.
+
+    Hardcoding it meant every new migration broke the refused-downgrade
+    assertions below, which only care that a refusal leaves the database
+    exactly at head (PR #72 review, finding 6).
+    """
+    head = ScriptDirectory.from_config(
+        Config(str(_PROJECT_ROOT / "alembic.ini"))
+    ).get_current_head()
+    assert head is not None, "alembic reports no single head revision"
+    return head
 
 
 def _run_alembic(command: str, url: str) -> None:
@@ -270,7 +286,7 @@ async def test_downgrade_refuses_pending_or_leased_outbox_work(
     # a refused downgrade leaves the database exactly at head, unchanged --
     # not at head's-guarded-predecessor -- regardless of how many
     # unguarded migrations sit above the one that actually refuses.
-    assert revision == "005"
+    assert revision == _head_revision()
     assert {
         "ix_outbox_work_ready_recoverable",
         "ix_outbox_work_expired_recoverable",
@@ -774,9 +790,9 @@ async def test_downgrade_004_refuses_pending_or_leased_outbox_work(
             )
         )
     # #9 follow-up: same reasoning as test_downgrade_refuses_pending_or_leased_outbox_work
-    # above -- 005 sits above 004 with no guard of its own, so the refused
-    # multi-step downgrade rolls back to head (005), not to 004.
-    assert revision == "005"
+    # above -- every migration above 004 is unguarded, so the refused
+    # multi-step downgrade rolls back to head, not to 004.
+    assert revision == _head_revision()
     assert column_exists is True
 
     async with migrated_engine.begin() as conn:
