@@ -215,6 +215,14 @@ def test_importer_root_itself_rejected(root: pathlib.Path) -> None:
     assert "escapes the importer root" in message
 
 
+@pytest.mark.parametrize("value", [".", "./", "./.", "../vip-support"])
+def test_self_reference_rejected_before_cycle_detection(
+    root: pathlib.Path, value: str
+) -> None:
+    message = _message(value, current=_vip(root), roots=RootConfig())
+    assert "the declaring agent's own folder" in message
+
+
 def test_missing_folder_inside_root_rejected(root: pathlib.Path) -> None:
     """D2 case 6, folder half."""
     message = _message("../nope", current=_vip(root), roots=RootConfig())
@@ -378,6 +386,17 @@ def test_empty_manifest_value_fails_instead_of_meaning_no_parent(
     _agent(root, "blank", extends='""')
     with pytest.raises(DefinitionError, match="empty 'extends:' value"):
         _resolve_folder(root, "blank")
+
+
+@pytest.mark.parametrize("written", ["", "null", "~"])
+def test_valueless_manifest_extends_rejected(root: pathlib.Path, written: str) -> None:
+    """A present key parsing to None never means "no parent": omit it instead."""
+    _agent(root, "valueless", extends=written)
+    with pytest.raises(DefinitionError) as excinfo:
+        _resolve_folder(root, "valueless")
+    message = str(excinfo.value)
+    assert "'extends:' with no value" in message
+    assert str(root / "valueless") in message
 
 
 def test_untrusted_input_stays_monotonic_across_importer_parents(

@@ -995,6 +995,8 @@ def _extends_target(
             f"declares {detail}. {_EXTENDS_RULE}"
         )
 
+    if raw is None:
+        raise fail("'extends:' with no value (omit the key when there is no parent)")
     if not isinstance(raw, str):
         raise fail(f"an 'extends:' value of type {type(raw).__name__}, not a string")
     value = raw.strip()
@@ -1028,6 +1030,8 @@ def _extends_target(
             f"'{current.root}': after following '..' and symlinks it must "
             "land strictly inside that root"
         )
+    if resolved == current.path.resolve():
+        raise fail(f"'extends: {value}', which is the declaring agent's own folder")
     if not resolved.is_dir():
         raise fail(
             f"'extends: {value}', which is not an existing folder inside the "
@@ -1114,11 +1118,14 @@ def _load_role_files(
     role_name: str = str(role_fm.get("name", manifest_fm.get("role", role_type)))
     version: str = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
 
-    parent_raw = manifest_fm.get("extends")
+    # Key ABSENT means no parent. A key present with no value (`extends:`,
+    # `null`) is not the same thing: it reaches `_extends_target` and fails,
+    # rather than silently dropping the inheritance its author meant to
+    # declare. No shipped manifest writes one; a root role omits the key.
     parent = (
-        None
-        if parent_raw is None
-        else _extends_target(parent_raw, current=locator, roots=roots)
+        _extends_target(manifest_fm["extends"], current=locator, roots=roots)
+        if "extends" in manifest_fm
+        else None
     )
     is_abstract = bool(manifest_fm.get("abstract", False))
 
