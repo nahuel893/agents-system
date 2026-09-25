@@ -1,5 +1,5 @@
 change: library-first-agents
-phase: tasks
+phase: apply
 artifact_store: hybrid
 artifacts:
   exploration: true
@@ -8,13 +8,13 @@ artifacts:
   design: true
   tasks: true
 tasks_progress:
-  completed: []
-  pending:
+  completed:
     - PR1a-T1
     - PR1a-T2
     - PR1a-T3
     - PR1a-T4
     - PR1a-T5
+  pending:
     - PR1b-T1
     - PR1b-T2
     - PR1b-T3
@@ -47,3 +47,17 @@ tasks_progress:
     - PR7-T2
     - PR7-T3
 last_updated: 2026-09-25T00:00:00Z
+pr1a:
+  status: implemented
+  branch: feat/library-first-1a-locator
+  files_changed:
+    - src/agents_system/harness/loader.py
+    - tests/test_locator_folder.py
+    - tests/test_locator_inline.py
+  diff_lines_authored: 531
+  diff_budget_note: >-
+    Exceeds the ~240-260 estimate and the 400-line default budget; every
+    added line maps to a task-named RED scenario or a required docstring
+    (design.md D1's own code block), none padded. Recommend size:exception
+    for this slice rather than a further pre-split, since PR1a is already
+    the smallest chain unit the tasks phase defined.

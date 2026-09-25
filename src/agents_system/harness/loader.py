@@ -296,6 +296,49 @@ class RawDefinition:
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class FolderLocator:
+    """An importer-supplied folder, read the same way `_load_role_files`
+    reads a platform role folder today (role.md/manifest.md/policy.md).
+
+    `root` bounds the importer-space `extends:` search (design.md D2): a
+    relative `extends:` value found while resolving *this* locator's chain
+    may reference a sibling/descendant folder under `root`, never outside
+    it. `overrides` carries `Agent.from_folder(path, **overrides)`'s Python
+    params, applied (field-replace, not merge — see design.md D3) after the
+    folder is read.
+    """
+
+    path: pathlib.Path
+    root: pathlib.Path
+    overrides: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass(frozen=True)
+class InlineLocator:
+    """An already-built `RawDefinition` — skips disk entirely.
+
+    `parent` is the (not yet resolved) `extends:` value: a bare/prefixed
+    platform-role string (resolved exactly like a manifest's own `extends:`
+    frontmatter, lazily, at chain-walk time via design.md D2's algorithm),
+    or `None`. An `Agent(extends=<another Agent>)` is resolved eagerly at
+    `Agent.__init__` time instead (object identity, no string parsing
+    needed — see design.md D3), so `parent` here is only ever `str | None`
+    in practice, but is typed `RoleLocator | None` for uniformity with
+    `_resolve_role_chain`'s walk.
+    """
+
+    raw: RawDefinition
+    parent: RoleLocator | None = None
+
+
+#: design.md D1 — a small discriminated union, not a new wrapper class: a
+#: bare `str` (predefined-role name, today's only locator kind) needs no
+#: wrapping to keep meaning what it already means, and every existing call
+#: site passing one keeps working unchanged.
+RoleLocator = str | FolderLocator | InlineLocator
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -911,14 +954,34 @@ def _parse_untrusted_input(
 
 
 def _load_role_files(
-    role_type: str, roots: RootConfig
+    locator: RoleLocator, roots: RootConfig
 ) -> tuple[RawDefinition, str | None, bool]:
-    """Read one role folder. Returns its definition, parent, and abstractness.
+    """Read one role folder, or unwrap an inline definition. Returns its
+    definition, parent, and abstractness.
 
-    This is the old body of ``load_generic``, with the two directives the
-    frontmatter has always been allowed to carry now actually read.
+    Dispatches on ``locator``'s kind (design.md D1). An ``InlineLocator``
+    returns its own ``raw`` unchanged, with zero disk I/O — ``is_abstract``
+    is always ``False`` for an inline definition (abstractness is a
+    folder-manifest-only concept), and its ``extends:`` chain
+    (``locator.parent``) is walked directly by ``_resolve_role_chain``, not
+    through this function, since there is no manifest text here to parse it
+    from. A ``FolderLocator`` reads ``role.md``/``manifest.md``/
+    ``policy.md`` from ``locator.path``, using the identical parsing this
+    function has always applied to a platform role folder. A bare ``str``
+    resolves ``platform_root/roles/<name>``, byte-for-byte unchanged from
+    before this change. This is the old body of ``load_generic``, with the
+    two directives the frontmatter has always been allowed to carry now
+    actually read.
     """
-    folder = _role_folder(_require_platform_root(roots.platform_root), role_type)
+    if isinstance(locator, InlineLocator):
+        return locator.raw, None, False
+
+    if isinstance(locator, FolderLocator):
+        folder = locator.path
+        role_type = folder.name
+    else:
+        role_type = locator
+        folder = _role_folder(_require_platform_root(roots.platform_root), role_type)
 
     if not folder.is_dir():
         raise DefinitionError(f"Role '{role_type}' has no folder at {folder}.")
@@ -1132,26 +1195,55 @@ def _fold_parent_into_child(
     )
 
 
+def _locator_key(locator: RoleLocator) -> str:
+    """Stable cycle-detection identity for a ``RoleLocator`` (design.md D2
+    case #7).
+
+    A platform-role name and an importer-folder path can never collide
+    (distinct prefixes), and two inline definitions are distinguished by
+    Python object identity — the same ``InlineLocator.raw`` object
+    reappearing in a walked chain is the only way an inline definition can
+    cycle, since it carries no path or name of its own to compare by value.
+    """
+    if isinstance(locator, FolderLocator):
+        return f"folder:{locator.path.resolve()}"
+    if isinstance(locator, InlineLocator):
+        return f"inline:{id(locator.raw)}"
+    return f"platform:{locator}"
+
+
 def _resolve_role_chain(
-    role_type: str, roots: RootConfig
+    locator: RoleLocator, roots: RootConfig
 ) -> tuple[RawDefinition, bool]:
     """Walk ``extends:`` to the root and fold the chain back down.
 
     Returns the fully composed definition and whether the LEAF is abstract.
     Ancestors may be abstract — that is what abstract is for.
+
+    Operates over ``RoleLocator`` values (design.md D1): membership in
+    ``seen`` and the cycle message are keyed by ``_locator_key``, not a bare
+    role-type string, so a folder/inline locator is compared by identity
+    rather than accidentally colliding with a same-named platform role. The
+    next hop is ``_load_role_files``'s returned ``parent`` for a platform or
+    folder locator (parsed from that folder's own manifest); for an
+    ``InlineLocator`` it is ``locator.parent`` directly, since
+    ``_load_role_files`` never reads a manifest for one (there is none to
+    read an ``extends:`` value from).
     """
     chain: list[RawDefinition] = []
     seen: list[str] = []
     leaf_is_abstract = False
 
-    current: str | None = role_type
-    while current is not None:
-        if current in seen:
-            cycle = " -> ".join([*seen, current])
+    original_key = _locator_key(locator)
+    current_locator: RoleLocator | None = locator
+    while current_locator is not None:
+        key = _locator_key(current_locator)
+        if key in seen:
+            cycle = " -> ".join([*seen, key])
             raise DefinitionError(
                 f"Invariant violation — extends: role inheritance cycle: {cycle}"
             )
-        seen.append(current)
+        seen.append(key)
 
         if len(seen) > _MAX_ROLE_CHAIN_DEPTH:
             raise DefinitionError(
@@ -1160,19 +1252,23 @@ def _resolve_role_chain(
             )
 
         try:
-            definition, parent, is_abstract = _load_role_files(current, roots)
+            definition, parent, is_abstract = _load_role_files(current_locator, roots)
         except DefinitionError:
-            if current == role_type:
+            if key == original_key:
                 raise
             raise DefinitionError(
                 f"Invariant violation — extends: role '{seen[-2]}' extends "
-                f"'{current}', which does not exist."
+                f"'{key}', which does not exist."
             ) from None
 
-        if current == role_type:
+        if key == original_key:
             leaf_is_abstract = is_abstract
         chain.append(definition)
-        current = parent
+        current_locator = (
+            current_locator.parent
+            if isinstance(current_locator, InlineLocator)
+            else parent
+        )
 
     # chain is leaf-first; fold root-first so a child composes onto its parent.
     resolved = chain[-1]
@@ -1182,8 +1278,10 @@ def _resolve_role_chain(
     return resolved, leaf_is_abstract
 
 
-def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefinition:
-    """Resolve platform/roles/{role_type}/ and everything it extends.
+def load_generic(
+    locator: RoleLocator, *, roots: RootConfig | None = None
+) -> RawDefinition:
+    """Resolve a role locator (design.md D1) and everything it extends.
 
     Returns the FULLY COMPOSED role — the union of its whole ``extends:``
     chain. That placement matters: ``resolve`` hands this straight to
@@ -1194,15 +1292,17 @@ def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefin
 
     Parameters
     ----------
-    role_type:
-        The role folder name (e.g. ``"sales-agent"``).
+    locator:
+        A predefined-role name (``str``, e.g. ``"sales-agent"``), an
+        importer-supplied folder (``FolderLocator``), or an already-built
+        definition (``InlineLocator``).
     roots:
         Injectable path config.  Defaults to the real repo roots.
     """
     if roots is None:
         roots = RootConfig()
 
-    resolved, is_abstract = _resolve_role_chain(role_type, roots)
+    resolved, is_abstract = _resolve_role_chain(locator, roots)
 
     if not resolved.autonomy:
         # Nothing in the chain declared one. `supervised` is the platform
@@ -1241,7 +1341,7 @@ def load_generic(role_type: str, *, roots: RootConfig | None = None) -> RawDefin
 
     if is_abstract:
         raise DefinitionError(
-            f"Role '{role_type}' is declared abstract and cannot be built "
+            f"Role '{locator}' is declared abstract and cannot be built "
             f"directly. Extend it from a concrete role instead."
         )
 
@@ -1841,7 +1941,7 @@ def _merge_validated(
 
 
 def resolve(
-    role_type: str,
+    locator: RoleLocator,
     *,
     client: str | None = None,
     roots: RootConfig | None = None,
@@ -1850,22 +1950,36 @@ def resolve(
 
     Parameters
     ----------
-    role_type:
-        The role folder name (e.g. ``"sales-agent"``).
+    locator:
+        A predefined-role name (``str``, e.g. ``"sales-agent"``), an
+        importer-supplied folder (``FolderLocator``), or an already-built
+        definition (``InlineLocator`` — design.md D1).
     client:
-        Optional deployment client name.  If given and the override folder
-        exists, the override is merged on top of the generic definition.
-        If the folder does not exist, the generic definition is returned.
+        Optional deployment client name.  Only valid together with a ``str``
+        locator (design.md D1 Q5) — a folder- or inline-sourced agent has no
+        deployment tree to look an override up in. If given and the override
+        folder exists, the override is merged on top of the generic
+        definition. If the folder does not exist, the generic definition is
+        returned.
     roots:
         Injectable path config.  Defaults to the real repo roots.
     """
+    if client is not None and not isinstance(locator, str):
+        raise DefinitionError(
+            "Invariant violation — client: a deployment override (client=) "
+            "is only valid together with a predefined-role (str) locator; "
+            f"got {type(locator).__name__}. A folder- or inline-sourced "
+            "agent has no deployment tree to look an override up in."
+        )
+
     if roots is None:
         roots = RootConfig()
 
-    generic = load_generic(role_type, roots=roots)
+    generic = load_generic(locator, roots=roots)
 
     if client is not None:
-        override = load_override(client, role_type, roots=roots)
+        assert isinstance(locator, str)  # narrowed by the guard above
+        override = load_override(client, locator, roots=roots)
         if override is not None:
             merged = merge(generic, override)
             return dataclasses.replace(
