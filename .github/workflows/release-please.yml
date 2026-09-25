@@ -6,13 +6,22 @@ name: release-please
 # cut -- this workflow never pushes to main directly and never publishes to
 # PyPI (issue #18: the owner decided not to publish yet, so there is no
 # publish step at all).
+#
+# The push trigger is disabled: a PR opened with the default GITHUB_TOKEN
+# does not trigger other workflows, so the required CI checks never run, and
+# the owner decided not to store a PAT/GitHub App token as a repository
+# secret just to work around that. Releases are cut locally instead, with
+# `scripts/release.sh` running release-please under a maintainer's own `gh`
+# auth (see docs/operations/release-process.md). The workflow itself is also
+# disabled in the repository's Actions settings; this file is kept, with
+# `workflow_dispatch` only, for optional manual use if that decision changes.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch: {}
 
-# One run per push to main. A second push before the first finishes should
-# not be cancelled mid-way -- release-please's own PR update is idempotent,
-# but an in-flight tag/release creation is not something to interrupt.
+# One run at a time. A second manual dispatch before the first finishes
+# should not be cancelled mid-way -- release-please's own PR update is
+# idempotent, but an in-flight tag/release creation is not something to
+# interrupt.
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
