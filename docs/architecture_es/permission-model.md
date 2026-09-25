@@ -39,6 +39,18 @@ La revalidación consulta la misma fuente RBAC autoritativa que el inyector. Si 
 
 ---
 
+## Origen del grant al arrancar (issue #38)
+
+El campo `permissions` del `manifest.md` de un rol es lo que ese rol **declara que puede necesitar** — no es, por sí solo, un grant. El arranque de `agents_system.main` otorga permisos de forma explícita mediante la variable de entorno `DEPLOY_GRANTS`: un objeto JSON que mapea cada id de runtime configurado (`{deployment}__{role}`, la misma forma que `ADAPTER_RUNTIMES`/`WHATSAPP_RUNTIME_ID`) a la lista de nombres de permiso (wire names) realmente otorgados a ese runtime, por ejemplo:
+
+```bash
+DEPLOY_GRANTS='{"acme__sales-agent": ["read:catalog", "write:orders"]}'
+```
+
+El arranque falla de forma explícita, nombrando el id del runtime, cuando un runtime configurado no tiene una entrada correspondiente — no existe un grant automático, y los permisos declarados por un rol nunca se convierten silenciosamente en su grant. El grant resultante se persiste en el runtime (`EquippedRuntime.deploy_grant_ceiling`) de forma independiente del conjunto declarado por el rol, y es lo que acota la revalidación en tiempo de ejecución descrita arriba: la Capa 2 verifica los permisos requeridos por una herramienta sensible contra este límite (ceiling), nunca contra el conjunto completo declarado por el rol. Los consumidores de la librería (que no arrancan a través de `agents_system.main`) otorgan permisos de la misma forma, explícitamente, mediante `build_runtime(..., granted_permissions=[...])`.
+
+---
+
 ## Qué gobierna el filtrado de permisos
 
 | Capacidad / Recurso | Cómo se aplican los permisos |
