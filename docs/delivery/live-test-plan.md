@@ -33,11 +33,10 @@ OpenRouter (`EVAL_PROVIDER=openai_compatible`):
 - `developer_agent_happy`: 60%.
 - `accountant_agent_no_fabrication`: 0/5 — `escalation_expected` fails every
   run with "expected a successful `escalation_notifier` call; none found".
-  Root cause per the #171 delivery doc: `policy.md`'s
-  `escalation_rules.conditions` are structured data that
-  `harness/factory.py::_compose_prompt()` never renders into the model-facing
-  prompt, and `accountant-agent/role.md` does not restate the condition in
-  prose the way `support-agent`'s and `orchestrator`'s do.
+  Root cause unknown. The original explanation (the conditions never reached
+  the prompt) no longer holds: #36 renders `escalation_rules` into the
+  system prompt (`harness/factory.py:_render_escalation_block:199`), and the
+  scenario still fails every run. Tracked as its own issue.
 
 These are run counts, not a gate: nothing in the current suite fails CI or
 blocks a merge on a low success rate. See **Gating** below.
@@ -215,9 +214,7 @@ plan.
 ## Cross-references
 
 - Live-eval pipeline: `docs/platform/live-eval.md`
-- Feature inventory (source of every file:line above):
-  `.pi/ops/logs/feature-inventory.md`
 - #76 (live guardrail suite, absorbed by Phase 2)
-- #171 delivery doc (role scenarios, baseline methodology):
+- Role eval scenarios and baseline methodology:
   `docs/delivery/171-role-eval-scenarios.md`
 - library-first-agents (blocks Phase 4): `openspec/changes/library-first-agents/`

@@ -35,11 +35,11 @@ vía OpenRouter (`EVAL_PROVIDER=openai_compatible`):
 - `developer_agent_happy`: 60%.
 - `accountant_agent_no_fabrication`: 0/5 — `escalation_expected` falla en
   todas las corridas con "expected a successful `escalation_notifier` call;
-  none found". Causa raíz según el documento de entrega #171: las
-  `escalation_rules.conditions` de `policy.md` son datos estructurados que
-  `harness/factory.py::_compose_prompt()` nunca vuelca al prompt que recibe
-  el modelo, y `accountant-agent/role.md` no repite la condición en prosa
-  como sí lo hacen `support-agent` y `orchestrator`.
+  none found". Causa raíz desconocida. La explicación original (las
+  condiciones nunca llegaban al prompt) ya no aplica: #36 vuelca las
+  `escalation_rules` al prompt de sistema
+  (`harness/factory.py:_render_escalation_block:199`), y el escenario sigue
+  fallando en todas las corridas. Se sigue en su propio issue.
 
 Estos son conteos de corridas, no una compuerta: nada en la suite actual
 falla en CI ni bloquea un merge por una tasa de éxito baja. Ver **Gating**
@@ -240,10 +240,8 @@ de este plan.
 ## Referencias cruzadas
 
 - Pipeline de live-eval: `docs/platform/live-eval.md`
-- Inventario de funcionalidades (fuente de cada file:line de arriba):
-  `.pi/ops/logs/feature-inventory.md`
 - #76 (suite de guardrails en vivo, absorbida por la Fase 2)
-- Documento de entrega #171 (escenarios de rol, metodología de línea base):
-  `docs/delivery/171-role-eval-scenarios.md`
+- Escenarios de evaluación por rol y metodología de línea base:
+  `docs/delivery_es/171-role-eval-scenarios.md`
 - library-first-agents (bloquea la Fase 4):
   `openspec/changes/library-first-agents/`
