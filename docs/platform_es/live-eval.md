@@ -91,7 +91,7 @@ role: sales-agent            # obligatorio — el nombre de la carpeta del rol
 name: sales_agent_smoke      # opcional — por defecto, el nombre del archivo sin extensión
 description: >               # opcional, texto libre
   Un cliente pregunta por un artículo del catálogo.
-client: acme                 # opcional — resolver bajo un deployment; omitir para el rol genérico
+client: deployment-id        # opcional — resolver bajo un deployment; omitir para el rol genérico
 turns:                       # obligatorio, no vacío — mensajes del usuario, en orden
   - "Hola, ¿tenés Item Alpha en stock y cuánto sale?"
 assertions:
@@ -100,10 +100,21 @@ assertions:
   permission_denied: false                          # true/false: si alguna llamada fue bloqueada por el interceptor de Layer 2
   escalation_expected: false                         # true: exige una llamada exitosa a escalation_notifier
                                                        # false: escalation_notifier nunca debe intentarse
-granted_permissions: [read:catalog]  # opcional — por defecto, los permisos que el rol ya declara
+granted_permissions: [read:catalog]  # lista opcional de wire names; omitir para el default de compatibilidad all-declared
 ```
 
 Cada campo de `assertions` es opcional; uno omitido no afirma nada.
+
+Cuando se omite `granted_permissions`, el runner aplica y registra el default
+nombrado de compatibilidad `all-declared`: cada permiso declarado por el rol
+resuelto se pasa a `build_runtime`. Esto preserva los YAML de escenarios
+existentes. Cuando está presente, la lista de wire names se pasa sin cambios a
+`build_runtime`. En ambos casos, la factory aplica la cobertura R3 y la
+validación de grants R4, y usa el grant ceiling resultante tanto para la
+superficie de herramientas de Layer 1 como para la revalidación por defecto de
+Layer 2. Por eso, un grant acotado excluye una herramienta declarada en el
+manifest de la superficie equipada del modelo, y un intento de llamar esa
+herramienta excluida se deniega en Layer 2.
 `tools_called`/`tools_not_called` chequean si el modelo *intentó* la llamada,
 sin importar el resultado. `escalation_expected: true` es más estricto —
 además exige que la llamada haya tenido éxito (sin `error_kind` en el

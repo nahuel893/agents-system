@@ -38,18 +38,15 @@ considered, so `tools_not_called` held **for every possible
 No live model behavior was actually being exercised; the assertion was true
 by construction before any model call happened.
 
-The original write-up additionally reasoned that `permission_denied` couldn't
-be used because `run_scenario` never threads a scenario's narrowed
-`granted_permissions` into `AgentRuntime.run_turn`'s Layer-2 revalidation —
-true as a narrow fact (`runner.py`'s call to `agent.run_turn(...)` passes no
-`permissions=` override, so Layer 2's `current_permissions` is always the
-role's full `definition.permissions`), but **irrelevant to why the scenarios
-were vacuous**, and the reasoning was applied to justify not exercising the
-permission-narrowing mechanism at all. `runner.py`'s Layer-1 threading
-(`build_runtime(scenario.role, registry, granted_permissions, ...)` →
-`resolve_tool_surface` → `harness/injector.py::_deny_reason`) was never
-broken and was never exercised by the old scenarios either — the fix was to
-actually use it, on a tool the role DOES declare.
+`run_scenario` passes an explicit scenario `granted_permissions` list
+unchanged to `build_runtime`. When the field is omitted, it applies and logs
+the named `all-declared` compatibility default. The runtime's Layer-2 default
+then reads the persisted deploy grant ceiling that `build_runtime` derives
+from that same grant under R3/R4; it does not widen to the role's full declared
+permissions. Layer 1 still excludes a denied in-manifest tool before model
+binding. An offline regression uses a fake model to attempt such an excluded
+tool and proves the Layer-2 denial, while live boundary scenarios continue to
+use `tools_not_called` because a normally bound model cannot see that tool.
 
 Every boundary scenario now targets an **in-manifest** tool and narrows
 `granted_permissions` in the YAML to the role's own full permission set minus

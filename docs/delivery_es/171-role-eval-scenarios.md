@@ -44,19 +44,17 @@ defecto del propio rol**. Ningún comportamiento real del modelo se estaba
 ejerciendo; la aserción era verdadera por construcción antes de que ocurriera
 cualquier llamada al modelo.
 
-La redacción original además razonaba que `permission_denied` no podía
-usarse porque `run_scenario` nunca inyecta el `granted_permissions` acotado
-de un escenario en la revalidación de Capa 2 de
-`AgentRuntime.run_turn` — cierto como hecho puntual (la llamada de
-`runner.py` a `agent.run_turn(...)` no pasa un `permissions=` explícito, así
-que `current_permissions` de la Capa 2 siempre es el `definition.permissions`
-completo del rol), pero **irrelevante para explicar por qué los escenarios
-eran vacíos**, y ese razonamiento se usó para justificar no ejercer en
-absoluto el mecanismo de acotación de permisos. La inyección de Capa 1 de
-`runner.py` (`build_runtime(scenario.role, registry, granted_permissions,
-...)` → `resolve_tool_surface` → `harness/injector.py::_deny_reason`) nunca
-estuvo rota y tampoco la ejercían los escenarios anteriores — la corrección
-fue usarla realmente, sobre una herramienta que el rol sí declara.
+`run_scenario` pasa sin cambios a `build_runtime` una lista explícita de
+`granted_permissions` del escenario. Cuando el campo se omite, aplica y
+registra el default de compatibilidad nombrado `all-declared`. El default de
+Layer 2 del runtime lee después el deploy grant ceiling persistido que
+`build_runtime` deriva de ese mismo grant bajo R3/R4; no se amplía a los
+permisos declarados completos del rol. Layer 1 todavía excluye una herramienta
+declarada en el manifest pero denegada antes de vincularla al modelo. Una
+regresión offline usa un modelo fake para intentar esa herramienta excluida y
+prueba la denegación de Layer 2; los escenarios de límite en vivo siguen
+usando `tools_not_called` porque un modelo vinculado normalmente no puede ver
+esa herramienta.
 
 Cada escenario de límite ahora apunta a una herramienta **declarada en el
 manifest** y acota `granted_permissions` en el YAML al conjunto completo de
