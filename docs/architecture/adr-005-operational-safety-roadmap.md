@@ -4,7 +4,7 @@
 
 ## Summary
 
-This is a roadmap, not a design: a survey of eight operational-safety areas
+This is a roadmap, not a design: a survey of nine operational-safety areas
 against the code as it stands today, each with what exists (with file:line
 references, verified against the current tree), the gap, a short proposed
 direction, and a priority. It proposes no implementation and creates no
@@ -179,13 +179,20 @@ reports — when work is pending or lease-expired with no worker running
 it is pull-only; no push-based alerting path (email, Slack, PagerDuty, or
 similar) exists anywhere in the repo. No alert conditions are defined for
 denied-tool spikes, limit trips, or provider errors/cost anomalies, since
-areas 3 and 6 do not yet emit those signals.
+areas 3 and 6 do not yet emit those signals. Once area 9 exists, four more
+conditions have no hook either: sustained admission saturation (`in_flight`
+at `max_concurrent_turns`, `services/admission.py:62-77`), outbox backlog
+age rather than just its count (`count_outbox_backlog` only counts,
+`services/outbox.py:217-264`), per-participant quota-trip counts, and
+tokens/cost per turn.
 
 **Direction:** define 2–3 initial SLOs (webhook processing latency, time
 spent degraded) and wire `/health` into an alerting tool as the first path;
-add denied-tool-spike and limit-trip alerts once areas 3 and 6 land.
+add denied-tool-spike and limit-trip alerts once areas 3 and 6 land, and
+admission-saturation, backlog-age, participant-trip, and cost-per-turn
+alerts once area 9 lands.
 
-**Priority:** P2 · **Dependency:** areas 3 and 6 for the richer alert
+**Priority:** P2 · **Dependency:** areas 3, 6, and 9 for the richer alert
 conditions; the `/health`-based SLO can start independently.
 
 ### 8. Governance of agents
@@ -212,6 +219,61 @@ when they widen; land it alongside ADR-004.
 **Priority:** P2 · **Dependency:** ADR-004 defines the role/version
 contract this check would enforce.
 
+### 9. Concurrency and scale
+
+**What exists:** inbound WhatsApp messages are durably persisted to the
+Postgres outbox and the webhook answers immediately
+(`services/outbox.py:88-143`); the worker claims only as many rows as free
+`TurnAdmissionLimiter` slots allow (`services/webhook_worker.py:194-198`) —
+backpressure, never rejection — and `pending_outbox_statement`
+(`services/outbox.py:164-214`) enforces strict per-`conversation_key`
+ordering, so one sender's messages always run one at a time.
+`TurnAdmissionLimiter` (`services/admission.py:45,48-111`,
+`DEFAULT_MAX_CONCURRENT_TURNS = 10`) is built once per process
+(`main.py:112-114`) and shared, via `app.state`, by the webhook worker and
+the OpenAI adapter. Per-conversation history lives in an `AsyncRedisSaver`
+LangGraph checkpointer keyed by the normalized phone number
+(`services/webhook_worker.py:299`), governed only by a time-based TTL
+(`checkpointer_ttl_s = 86400`, `refresh_on_read: True`, `config.py:106`,
+`main.py:41-47,69-71`) — not a size- or token-based bound. `AgentRuntime`
+binds tool schemas once at construction (`agent/graph.py:379-382`), but
+each `bound_model.ainvoke()` call still carries the system prompt, those
+schemas, and the full accumulated `state["messages"]` fresh over the wire
+(`agent/graph.py:97`).
+
+**Gap:** four compounding risks surface once this is examined at
+100-concurrent-sender scale. (1) Admission is enforced per *process* via an
+in-memory counter (`services/admission.py:56`): N replicas each allow up to
+10 concurrent turns and up to 15 DB connections
+(`pool_size=5 + max_overflow=10`, `models/base.py:86-88`, SQLAlchemy
+defaults), with nothing capping the sum across replicas. (2) No per-sender
+or per-deployment quota exists — a single insistent or abusive sender
+consumes admission slots exactly like everyone else, since
+`TurnAdmissionLimiter` and `pending_outbox_statement` are both
+principal-blind. (3) `AgentState.messages` uses LangGraph's `add_messages`
+reducer with no cap (`agent/state.py:11`); combined with the TTL's
+`refresh_on_read`, an active conversation's checkpointed history is never
+trimmed, windowed, or summarized — it grows unbounded for as long as the
+conversation stays active, raising cost, latency, and eventual
+context-window failure risk. (4) That unbounded, uncached context is resent
+on every model call, so per-turn cost and latency rise with both
+conversation age and concurrent volume; #59 already trimmed one source of
+this for the `run_report` tool (`connectors/report_connector.py:116-148`,
+closes #56), but no broader caching or measurement exists.
+
+**Direction:** (1) a shared, distributed admission limiter (Postgres- or
+Redis-backed) or a claim-time global cap across replicas. (2)
+per-participant and per-deployment quotas enforced at claim time, with an
+operator-visible signal when a quota trips. (3) a windowing or
+summarization policy per role, applied before `_call_model` builds
+`model_input`. (4) provider-side prompt caching for the static prefix,
+further tool-schema trimming, and measuring tokens-per-turn as an actual
+metric.
+
+**Priority:** P1 · **Dependency:** none; each extends an existing seam
+(`TurnAdmissionLimiter`, `pending_outbox_statement`, `_effective_limits`)
+directly.
+
 ## Sequencing
 
 1. Correlation IDs end-to-end — bind a conversation/outbox id into the
@@ -222,11 +284,13 @@ contract this check would enforce.
    policy checks in `intercept()` (area 2).
 4. Per-turn/conversation token and cost budgets, per-principal rate
    limiting, and a circuit breaker (area 3).
-5. Continue closing #32–#35 as their coordinated migrations land (area 1,
+5. Distributed admission limiting, per-participant/deployment quotas,
+   conversation-history windowing, and model-call cost reduction (area 9).
+6. Continue closing #32–#35 as their coordinated migrations land (area 1,
    already tracked).
-6. Audit/outbox retention job and a short data-classification note (area 4).
-7. LangSmith trace flag and a minimal `/metrics` counter set (area 6).
-8. SLOs and `/health`-based alerting, extended with the counters from 4 and
-   7 (area 7).
-9. CI check enforcing a MAJOR bump on role tool/permission changes,
-   alongside ADR-004 (area 8).
+7. Audit/outbox retention job and a short data-classification note (area 4).
+8. LangSmith trace flag and a minimal `/metrics` counter set (area 6).
+9. SLOs and `/health`-based alerting, extended with the counters from 4, 7,
+   and 9 (area 7).
+10. CI check enforcing a MAJOR bump on role tool/permission changes,
+    alongside ADR-004 (area 8).

@@ -4,7 +4,7 @@
 
 ## Resumen
 
-Esta es una hoja de ruta, no un diseño: un relevamiento de ocho áreas de
+Esta es una hoja de ruta, no un diseño: un relevamiento de nueve áreas de
 seguridad operacional contra el código tal como está hoy, cada una con lo que
 existe (con referencias file:line, verificadas contra el árbol actual), el
 vacío, una dirección propuesta breve y una prioridad. No propone
@@ -195,15 +195,22 @@ cuando hay trabajo pendiente o con lease vencido y ningún worker corriendo
 PagerDuty o similar) en ningún lugar del repo. No hay condiciones de alerta
 definidas para picos de denegación de herramientas, límites excedidos, ni
 errores de proveedor/anomalías de costo, porque las áreas 3 y 6 todavía no
-emiten esas señales.
+emiten esas señales. Una vez que exista el área 9, hay otras cuatro
+condiciones sin ningún hook: saturación sostenida de admisión (`in_flight`
+en `max_concurrent_turns`, `services/admission.py:62-77`), antigüedad del
+backlog del outbox más allá de su sola cuenta (`count_outbox_backlog` solo
+cuenta, `services/outbox.py:217-264`), conteos de disparo de cuota por
+participante, y tokens/costo por turno.
 
 **Dirección:** definir 2–3 SLO iniciales (latencia de procesamiento del
 webhook, tiempo en estado degradado) y cablear `/health` a una herramienta de
 alertas como primer camino; agregar alertas de pico de denegación y de
-límite excedido una vez que las áreas 3 y 6 estén resueltas.
+límite excedido una vez que las áreas 3 y 6 estén resueltas, y alertas de
+saturación de admisión, antigüedad de backlog, disparo por participante y
+costo por turno una vez que aterrice el área 9.
 
-**Prioridad:** P2 · **Dependencia:** las áreas 3 y 6 para las condiciones de
-alerta más ricas; el SLO basado en `/health` puede arrancar de forma
+**Prioridad:** P2 · **Dependencia:** las áreas 3, 6 y 9 para las condiciones
+de alerta más ricas; el SLO basado en `/health` puede arrancar de forma
 independiente.
 
 ### 8. Gobernanza de agentes
@@ -232,6 +239,65 @@ ADR-004.
 **Prioridad:** P2 · **Dependencia:** ADR-004 define el contrato de
 rol/versión que este check impondría.
 
+### 9. Concurrencia y escala
+
+**Qué existe:** los mensajes entrantes de WhatsApp se persisten de forma
+durable en el outbox de Postgres y el webhook responde de inmediato
+(`services/outbox.py:88-143`); el worker reclama solo tantas filas como
+slots libres de `TurnAdmissionLimiter` haya
+(`services/webhook_worker.py:194-198`) — backpressure, nunca rechazo — y
+`pending_outbox_statement` (`services/outbox.py:164-214`) impone un orden
+estricto por `conversation_key`, así que los mensajes de un mismo remitente
+siempre corren de a uno. `TurnAdmissionLimiter`
+(`services/admission.py:45,48-111`, `DEFAULT_MAX_CONCURRENT_TURNS = 10`) se
+construye una sola vez por proceso (`main.py:112-114`) y se comparte, vía
+`app.state`, entre el worker del webhook y el adapter de OpenAI. El
+historial por conversación vive en un checkpointer `AsyncRedisSaver` de
+LangGraph, con clave el número de teléfono normalizado
+(`services/webhook_worker.py:299`), gobernado solo por un TTL temporal
+(`checkpointer_ttl_s = 86400`, `refresh_on_read: True`, `config.py:106`,
+`main.py:41-47,69-71`) — no por un límite de tamaño o de tokens.
+`AgentRuntime` liga los schemas de herramientas una sola vez en su
+construcción (`agent/graph.py:379-382`), pero cada llamada a
+`bound_model.ainvoke()` igual transmite el system prompt, esos schemas y el
+`state["messages"]` acumulado completo, de nuevo, por la red
+(`agent/graph.py:97`).
+
+**Vacío:** al examinar esto a escala de 100 remitentes concurrentes
+aparecen cuatro riesgos que se potencian entre sí. (1) La admisión se
+impone por *proceso* vía un contador en memoria
+(`services/admission.py:56`): N réplicas permiten cada una hasta 10 turnos
+concurrentes y hasta 15 conexiones a la base
+(`pool_size=5 + max_overflow=10`, `models/base.py:86-88`, valores por
+defecto de SQLAlchemy), sin nada que acote la suma entre réplicas. (2) No
+existe cuota por remitente ni por deployment — un remitente insistente o
+abusivo consume slots de admisión exactamente igual que cualquier otro,
+porque tanto `TurnAdmissionLimiter` como `pending_outbox_statement` son
+ciegos al principal. (3) `AgentState.messages` usa el reducer
+`add_messages` de LangGraph sin ningún tope (`agent/state.py:11`);
+combinado con el `refresh_on_read` del TTL, el historial checkpointeado de
+una conversación activa nunca se recorta, ventanea ni resume — crece sin
+límite mientras la conversación siga activa, elevando costo, latencia y el
+riesgo eventual de error por ventana de contexto agotada. (4) Ese contexto
+sin límite y sin cachear se reenvía en cada llamada al modelo, así que el
+costo y la latencia por turno crecen tanto con la edad de la conversación
+como con el volumen concurrente; el #59 ya recortó una fuente de esto para
+la tool `run_report` (`connectors/report_connector.py:116-148`, cierra el
+#56), pero no existe caching ni medición más amplios.
+
+**Dirección:** (1) un limitador de admisión compartido y distribuido
+(respaldado en Postgres o Redis), o un techo global al momento del claim
+entre réplicas. (2) cuotas por participante y por deployment impuestas al
+momento del claim, con una señal visible para el operador cuando una cuota
+se dispara. (3) una política de ventaneo o resumen por rol, aplicada antes
+de que `_call_model` arme `model_input`. (4) prompt caching del lado del
+proveedor para el prefijo estático, más recorte de tool schemas, y medir
+tokens por turno como una métrica real.
+
+**Prioridad:** P1 · **Dependencia:** ninguna; cada punto extiende un punto
+de extensión ya existente (`TurnAdmissionLimiter`, `pending_outbox_statement`,
+`_effective_limits`) directamente.
+
 ## Secuenciación
 
 1. IDs de correlación de punta a punta — ligar un id de conversación/outbox
@@ -242,13 +308,16 @@ rol/versión que este check impondría.
    de política sobre argumentos en `intercept()` (área 2).
 4. Presupuestos de tokens y costo por turno/conversación, rate limiting por
    principal, y un circuit breaker (área 3).
-5. Seguir cerrando #32–#35 a medida que aterrizan sus migraciones
+5. Limitador de admisión distribuido, cuotas por participante/deployment,
+   ventaneo del historial de conversación, y reducción de costo por
+   llamada al modelo (área 9).
+6. Seguir cerrando #32–#35 a medida que aterrizan sus migraciones
    coordinadas (área 1, ya rastreado).
-6. Job de retención de audit/outbox y una nota breve de clasificación de
+7. Job de retención de audit/outbox y una nota breve de clasificación de
    datos (área 4).
-7. Flag de tracing de LangSmith y un set mínimo de contadores en `/metrics`
+8. Flag de tracing de LangSmith y un set mínimo de contadores en `/metrics`
    (área 6).
-8. SLOs y alertas basadas en `/health`, extendidas con los contadores de 4
-   y 7 (área 7).
-9. Check de CI que imponga un bump MAJOR ante cambios de tools/permissions
-   de rol, junto con ADR-004 (área 8).
+9. SLOs y alertas basadas en `/health`, extendidas con los contadores de 4,
+   7 y 9 (área 7).
+10. Check de CI que imponga un bump MAJOR ante cambios de tools/permissions
+    de rol, junto con ADR-004 (área 8).
