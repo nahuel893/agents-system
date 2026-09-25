@@ -25,6 +25,7 @@ from agents_system.integration.whatsapp_client import WhatsAppClient
 from agents_system.models.base import get_engine, get_session_factory
 from agents_system.observability import RequestIdMiddleware, setup_logging
 from agents_system.services.admission import TurnAdmissionLimiter
+from agents_system.services.db_role import role_is_read_only
 from agents_system.services.outbox import (
     DEFAULT_LEASE_DURATION,
     OutboxBacklogCounts,
@@ -74,28 +75,15 @@ def _build_checkpointer_cm(settings: Settings) -> Any:
 async def _bi_role_is_read_only(engine: Any) -> bool | None:
     """Ask the database whether the BI role really is read-only.
 
-    Returns True / False, or None when the question could not be answered —
-    those are three different situations and collapsing the third into either
-    of the other two is the bug. "Could not determine" must not read as
-    "determined to be writable" (that would take the app down whenever the
-    reporting replica is briefly unreachable), and it must not read as
-    "determined to be read-only" either (that would restore the very
-    assumption this check exists to remove).
-
-    The dedicated read-only role is the layer that is meant to hold even if
-    parameter validation and the Layer-2 interceptor both have bugs, and
-    nothing anywhere confirmed it was configured. `BI_DATABASE_URL` was
-    trusted to point at a role someone had set up by hand.
+    Thin BI-scoped wrapper over the shared
+    :func:`agents_system.services.db_role.role_is_read_only` (the full
+    True/False/None reasoning lives there — see its docstring). Kept as its
+    own function, rather than calling the shared one directly at the
+    lifespan call site below, so `bi.read_only_check_failed` stays this
+    deployment's own log event name and so any future BI-specific behaviour
+    has a place to live without touching the shared helper.
     """
-    from sqlalchemy.exc import SQLAlchemyError
-
-    try:
-        async with engine.connect() as conn:
-            result = await conn.execute(text("SHOW default_transaction_read_only"))
-            return str(result.scalar()).strip().lower() == "on"
-    except SQLAlchemyError:
-        structlog.get_logger().warning("bi.read_only_check_failed", exc_info=True)
-        return None
+    return await role_is_read_only(engine, log_event="bi.read_only_check_failed")
 
 
 @asynccontextmanager
