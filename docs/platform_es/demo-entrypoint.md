@@ -66,7 +66,7 @@ configurado (issue #38) — si falta, el lifespan de `main.py` lanza
 `read:client_registry`, `write:orders`, `write:order_items`,
 `read:price_lists`, `send:message`. `sales-agent` declara
 `untrusted_input: true` (`platform/roles/sales-agent/policy.md`), y ninguno de
-esos seis permisos pertenece a la familia `exec:`/`run:` (T3), así que otorgar
+esos seis permisos es T3 (como `exec:command` o `read:files`), así que otorgar
 su conjunto completo acá nunca le da un permiso T3 a un rol de entrada no
 confiable (ADR-002 C.11/C.13).
 

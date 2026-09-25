@@ -63,7 +63,7 @@ permission set (`platform/roles/sales-agent/manifest.md`): `read:catalog`,
 `read:client_registry`, `write:orders`, `write:order_items`,
 `read:price_lists`, `send:message`. `sales-agent` declares
 `untrusted_input: true` (`platform/roles/sales-agent/policy.md`), and none of
-those six permissions is in the `exec:`/`run:` (T3) family, so granting its
+those six permissions is T3 (such as `exec:command` or `read:files`), so granting its
 full declared set here never hands a T3 permission to an untrusted-input role
 (ADR-002 C.11/C.13).
 
