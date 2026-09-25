@@ -84,7 +84,9 @@ surfacing later as a wrong build.
 Running `scripts/release.sh pr` keeps exactly one standing pull request
 open, titled something like `chore(main): release 0.2.0`, that:
 
-- bumps `.release-please-manifest.json` and `pyproject.toml`'s `version`;
+- bumps `.release-please-manifest.json`, `pyproject.toml`'s `version`, and
+  the package's own entry in `uv.lock` (an `extra-files` rule), so the
+  lockfile never drifts from the released version;
 - writes the accumulated changes to a new dated `## [0.2.0]` heading in
   `CHANGELOG.md`, grouped into the configured sections (such as **Features**,
   **Bug Fixes**, and **Documentation**) and linked to their originating

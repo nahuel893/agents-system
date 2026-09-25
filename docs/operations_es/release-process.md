@@ -85,7 +85,9 @@ inmediato en vez de aparecer más tarde como un build incorrecto.
 Correr `scripts/release.sh pr` mantiene abierta exactamente una pull
 request permanente, titulada algo como `chore(main): release 0.2.0`, que:
 
-- bumpea `.release-please-manifest.json` y el `version` de `pyproject.toml`;
+- bumpea `.release-please-manifest.json`, el `version` de `pyproject.toml` y
+  la entrada del propio paquete en `uv.lock` (una regla `extra-files`), así
+  el lockfile nunca queda desfasado de la versión publicada;
 - escribe los cambios acumulados bajo un nuevo encabezado con fecha
   `## [0.2.0]` en `CHANGELOG.md`, agrupados en las secciones configuradas
   (por ejemplo, **Features**, **Bug Fixes** y **Documentation**) y enlazados
