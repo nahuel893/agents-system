@@ -2,26 +2,51 @@
 
 This project versions itself automatically from [Conventional
 Commits](https://www.conventionalcommits.org/) using
-[release-please](https://github.com/googleapis/release-please)
-(`.github/workflows/release-please.yml`). Before this (issue #18), `version
-= "0.1.0"` in `pyproject.toml` never moved, there were no tags and no
-releases, and nobody could say what was actually deployed. This closes that
-gap: the version, the tag, and `CHANGELOG.md` are now derived from commit
-history instead of hand-edited.
+[release-please](https://github.com/googleapis/release-please), cut locally
+via `scripts/release.sh`. Before this (issue #18), `version = "0.1.0"` in
+`pyproject.toml` never moved, there were no tags and no releases, and nobody
+could say what was actually deployed. This closes that gap: the version, the
+tag, and `CHANGELOG.md` are now derived from commit history instead of
+hand-edited.
 
-## One-time setup
+## Cutting a release
 
 A PR opened with the default `GITHUB_TOKEN` does not trigger other workflows,
 so the required `ci`, `secret-scan`, and `dependency-audit` checks never run
-and branch protection prevents the release PR from merging. Create a
-fine-grained Personal Access Token (PAT), or a GitHub App token, scoped only
-to this repository with `Contents: read/write` and `Pull requests: read/write`
-permissions, then store it as the repository secret `RELEASE_PLEASE_TOKEN`.
+and branch protection prevents the release PR from merging. Rather than store
+a fine-grained Personal Access Token (PAT) or GitHub App token as a
+repository secret to work around that, `.github/workflows/release-please.yml`
+is disabled (it is kept, `workflow_dispatch`-only, for optional manual use)
+and releases are cut locally by a maintainer instead, using `gh`'s own
+authentication so the release PR is opened under their account and CI runs
+normally.
 
-Without that secret, the `github.token` fallback also requires enabling
-"Allow GitHub Actions to create and approve pull requests" in the repository
-settings. The required checks must then be triggered by hand, for example by
-closing and reopening the release PR.
+**Prerequisites:** `gh auth login` with `repo` scope, and Node.js/`npx`
+available locally.
+
+1. **Open or update the release PR:**
+
+   ```sh
+   scripts/release.sh pr
+   ```
+
+   This runs `npx --yes release-please release-pr` with `--token` from
+   `gh auth token`, targeting `main`. It keeps exactly one standing release
+   PR open/updated, as described below.
+
+2. **Review and merge the release PR** (squash merge). Because it was opened
+   under the maintainer's own account, the required checks run like any
+   other PR.
+
+3. **Create the tag and GitHub Release:**
+
+   ```sh
+   scripts/release.sh tag
+   ```
+
+   This runs `npx --yes release-please github-release` with the same
+   arguments, creating the `vX.Y.Z` tag and the GitHub Release from the
+   merged `CHANGELOG.md` section.
 
 ## What drives a version bump
 
@@ -56,9 +81,8 @@ surfacing later as a wrong build.
 
 ## What a release PR looks like
 
-Every push to `main` that changes the release-relevant version, `feat`, or
-`fix` state re-runs `release-please-action`. It keeps exactly one standing
-pull request open, titled something like `chore(main): release 0.2.0`, that:
+Running `scripts/release.sh pr` keeps exactly one standing pull request
+open, titled something like `chore(main): release 0.2.0`, that:
 
 - bumps `.release-please-manifest.json` and `pyproject.toml`'s `version`;
 - writes the accumulated changes to a new dated `## [0.2.0]` heading in
@@ -66,23 +90,24 @@ pull request open, titled something like `chore(main): release 0.2.0`, that:
   **Bug Fixes**, and **Documentation**) and linked to their originating
   commits/PRs.
 
-Each subsequent qualifying push amends that same PR in place — it does not
-open a second one. Nothing is released until a human merges it.
+Re-running `scripts/release.sh pr` after more commits land amends that same
+PR in place — it does not open a second one. Nothing is released until a
+human merges it.
 
 ## What merging the release PR does
 
-Merging it is the only trigger for a release: release-please then creates
-the Git tag (`vX.Y.Z`, e.g. `v0.2.0`) and a GitHub Release from the merged
+Merging it does not create the tag or GitHub Release by itself. Run
+`scripts/release.sh tag` afterward: release-please then creates the Git tag
+(`vX.Y.Z`, e.g. `v0.2.0`) and a GitHub Release from the merged
 `CHANGELOG.md` section, on `main`, from the version now committed there.
 
 ## What this does **not** do yet
 
-The workflow has no publish step: it does not build or upload anything to
-PyPI. The owner decided not to publish this package yet (#18) — tagging and
-changelog generation come first, publishing is a separate future decision.
-When that decision is made, it becomes an additional step gated on the
-release-please job's `release_created` output, not a change to how versions
-are decided.
+There is no publish step: nothing builds or uploads to PyPI. The owner
+decided not to publish this package yet (#18) — tagging and changelog
+generation come first, publishing is a separate future decision. When that
+decision is made, it becomes an additional step, not a change to how
+versions are decided.
 
 ## Looking ahead: library-first agents
 

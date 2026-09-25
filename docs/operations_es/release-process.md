@@ -2,27 +2,52 @@
 
 Este proyecto versiona automáticamente a partir de [Conventional
 Commits](https://www.conventionalcommits.org/) usando
-[release-please](https://github.com/googleapis/release-please)
-(`.github/workflows/release-please.yml`). Antes de esto (issue #18),
+[release-please](https://github.com/googleapis/release-please), que se corta
+localmente con `scripts/release.sh`. Antes de esto (issue #18),
 `version = "0.1.0"` en `pyproject.toml` nunca se movía, no había tags ni
 releases, y nadie podía decir con certeza qué estaba desplegado. Esto cierra
 esa brecha: la versión, el tag y `CHANGELOG.md` ahora se derivan del
 historial de commits en lugar de editarse a mano.
 
-## Configuración inicial
+## Cómo cortar un release
 
 Una PR abierta con el `GITHUB_TOKEN` predeterminado no dispara otros
 workflows, por lo que los checks requeridos `ci`, `secret-scan` y
 `dependency-audit` nunca corren y la protección de rama impide mergear la PR
-de release. Creá un Personal Access Token (PAT) fine-grained, o un token de
-GitHub App, limitado a este repositorio y con permisos `Contents: read/write`
-y `Pull requests: read/write`; después guardalo como el secret de repositorio
-`RELEASE_PLEASE_TOKEN`.
+de release. En vez de guardar un Personal Access Token (PAT) fine-grained o
+un token de GitHub App como secret del repositorio para evitar eso,
+`.github/workflows/release-please.yml` está deshabilitado (se mantiene, solo
+con `workflow_dispatch`, para un uso manual opcional) y los releases se
+cortan localmente, a cargo de alguien del equipo, usando la autenticación
+propia de `gh` para que la PR de release quede abierta bajo su cuenta y los
+checks corran con normalidad.
 
-Sin ese secret, el fallback `github.token` también requiere habilitar "Allow
-GitHub Actions to create and approve pull requests" en la configuración del
-repositorio. Los checks requeridos deben dispararse a mano; por ejemplo,
-cerrando y reabriendo la PR de release.
+**Prerrequisitos:** `gh auth login` con scope `repo`, y Node.js/`npx`
+disponibles localmente.
+
+1. **Abrí o actualizá la PR de release:**
+
+   ```sh
+   scripts/release.sh pr
+   ```
+
+   Esto corre `npx --yes release-please release-pr` con `--token` sacado de
+   `gh auth token`, apuntando a `main`. Mantiene abierta o actualizada
+   exactamente una PR de release permanente, como se describe más abajo.
+
+2. **Revisá y mergeá la PR de release** (squash merge). Como quedó abierta
+   bajo tu propia cuenta, los checks requeridos corren como en cualquier
+   otra PR.
+
+3. **Creá el tag y el GitHub Release:**
+
+   ```sh
+   scripts/release.sh tag
+   ```
+
+   Esto corre `npx --yes release-please github-release` con los mismos
+   argumentos, creando el tag `vX.Y.Z` y el GitHub Release a partir de la
+   sección mergeada de `CHANGELOG.md`.
 
 ## Qué determina un bump de versión
 
@@ -57,10 +82,8 @@ inmediato en vez de aparecer más tarde como un build incorrecto.
 
 ## Cómo es una PR de release
 
-Cada push a `main` que cambia el estado relevante para el release (`feat`,
-`fix`, etc.) vuelve a correr `release-please-action`. Mantiene abierta
-exactamente una pull request permanente, titulada algo como
-`chore(main): release 0.2.0`, que:
+Correr `scripts/release.sh pr` mantiene abierta exactamente una pull
+request permanente, titulada algo como `chore(main): release 0.2.0`, que:
 
 - bumpea `.release-please-manifest.json` y el `version` de `pyproject.toml`;
 - escribe los cambios acumulados bajo un nuevo encabezado con fecha
@@ -68,24 +91,25 @@ exactamente una pull request permanente, titulada algo como
   (por ejemplo, **Features**, **Bug Fixes** y **Documentation**) y enlazados
   a sus commits/PRs de origen.
 
-Cada push posterior que califica actualiza esa misma PR en el lugar — no
-abre una segunda. Nada se libera hasta que una persona la mergea.
+Volver a correr `scripts/release.sh pr` cuando entran más commits actualiza
+esa misma PR en el lugar — no abre una segunda. Nada se libera hasta que una
+persona la mergea.
 
 ## Qué pasa al mergear la PR de release
 
-Mergearla es el único disparador de un release: release-please crea
-entonces el tag de Git (`vX.Y.Z`, p. ej. `v0.2.0`) y un GitHub Release a
-partir de la sección de `CHANGELOG.md` mergeada, sobre `main`, desde la
-versión ya commiteada ahí.
+Mergearla no crea el tag ni el GitHub Release por sí sola. Después hay que
+correr `scripts/release.sh tag`: recién ahí release-please crea el tag de
+Git (`vX.Y.Z`, p. ej. `v0.2.0`) y un GitHub Release a partir de la sección
+de `CHANGELOG.md` mergeada, sobre `main`, desde la versión ya commiteada
+ahí.
 
 ## Qué todavía NO hace
 
-El workflow no tiene paso de publicación: no construye ni sube nada a PyPI.
-El dueño del proyecto decidió no publicar este paquete todavía (#18) — tag y
+No hay paso de publicación: no se construye ni se sube nada a PyPI. El
+dueño del proyecto decidió no publicar este paquete todavía (#18) — tag y
 generación de changelog van primero, publicar es una decisión futura
-separada. Cuando esa decisión se tome, se agrega como un paso adicional
-condicionado al output `release_created` del job de release-please, no como
-un cambio en cómo se deciden las versiones.
+separada. Cuando esa decisión se tome, se agrega como un paso adicional, no
+como un cambio en cómo se deciden las versiones.
 
 ## Mirando adelante: library-first agents
 
