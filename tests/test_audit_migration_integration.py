@@ -24,6 +24,7 @@ sat behind the marker and never ran anywhere. It is wired into the
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import uuid
@@ -402,4 +403,102 @@ class TestAuditSinkWritesThroughTheProductionPath:
         assert partition == f"audit_event_{occurred:%Y_%m}", (
             f"row landed in {partition!r}, not its month's partition; "
             "audit_event_default means the monthly bounds are wrong"
+        )
+
+
+class TestAuditSequenceAllocationIsProcessSafe:
+    """Issue #9 (ADR-001 D-042) — the one claim a mock cannot prove.
+
+    The former `_allocate_sequence`/`_seq_counter` was a module-level dict:
+    correct within one process, wrong across N, because every process
+    counted the `"none"` fallback correlation_id from 1 independently. A
+    mock-based unit test cannot show that failure mode -- mocks share one
+    process's memory, so "two workers" collapse into one. Only a real
+    PostgreSQL round trip, through two genuinely separate connections/engines
+    driving concurrent `AuditSink._flush_batch` calls for the SAME
+    correlation_id, proves the atomic upsert (`audit_sequence`, migration
+    005) actually serializes them.
+    """
+
+    async def test_two_concurrent_flushes_allocate_a_gapless_duplicate_free_sequence(
+        self, migrated_engine: AsyncEngine
+    ) -> None:
+        """Two 'workers' flushing concurrently for one correlation_id must not
+        collide, lose rows, or leave gaps in the allocated sequence.
+        """
+        from unittest.mock import patch
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from agents_system.audit.events import ToolCallAttempted
+        from agents_system.audit.sink import AuditSink
+
+        url = _require_test_database_url()
+        correlation_id = f"process-safety-{uuid.uuid4()}"
+        events_per_worker = 5
+        total = events_per_worker * 2
+
+        def _make_batch() -> list[ToolCallAttempted]:
+            return [
+                ToolCallAttempted(
+                    event_id=uuid.uuid4(),
+                    occurred_at=datetime.now(UTC),
+                    correlation_id=correlation_id,
+                    sequence=0,  # placeholder; _flush_batch must overwrite it
+                    role="test-role",
+                    tool_name="test_tool",
+                    payload={"tool_name": "test_tool"},
+                    pii_keys=[],
+                )
+                for _ in range(events_per_worker)
+            ]
+
+        # Two independent engines -- two independent connection pools, the
+        # closest a single test process can get to "two worker processes"
+        # without actually forking. One engine/one connection would let
+        # PostgreSQL trivially serialize the two flushes for free and prove
+        # nothing about the allocator itself.
+        worker_engine_a = get_engine(url)
+        worker_engine_b = get_engine(url)
+        try:
+            sink_a = AuditSink(
+                session_factory=async_sessionmaker(
+                    worker_engine_a, expire_on_commit=False
+                )
+            )
+            sink_b = AuditSink(
+                session_factory=async_sessionmaker(
+                    worker_engine_b, expire_on_commit=False
+                )
+            )
+
+            with patch("agents_system.audit.sink.logger") as mock_logger:
+                await asyncio.gather(
+                    sink_a._flush_batch(_make_batch()),
+                    sink_b._flush_batch(_make_batch()),
+                )
+                # _flush_batch swallows and logs any commit failure (it must
+                # never crash the drainer) -- a unique-constraint collision on
+                # `uq_audit_event_correlation_sequence` would surface here as
+                # a call to `logger.exception`, not as a raised exception.
+                mock_logger.exception.assert_not_called()
+        finally:
+            await worker_engine_a.dispose()
+            await worker_engine_b.dispose()
+
+        async with migrated_engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT sequence FROM audit_event WHERE correlation_id = :cid"),
+                {"cid": correlation_id},
+            )
+            sequences = sorted(row[0] for row in result)
+
+        assert len(sequences) == total, (
+            f"expected {total} rows for {correlation_id!r}, got {len(sequences)}: "
+            f"{sequences} -- a missing row means a batch silently lost a "
+            "unique-constraint collision"
+        )
+        assert len(set(sequences)) == total, f"duplicate sequence values: {sequences}"
+        assert sequences == list(range(1, total + 1)), (
+            f"sequence must be contiguous and gap-free: {sequences}"
         )

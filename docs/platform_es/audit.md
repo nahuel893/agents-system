@@ -141,19 +141,28 @@ dependencia de latencia del camino de la petición, que es exactamente lo que el
 contrato *fire-and-forget* existe para evitar. `dropped_count` y la advertencia
 `audit.event_dropped` son la señal de que hay que subir el tamaño de la cola.
 
-### Hueco conocido: el apagado pierde la cola final
+### El apagado drena la cola final (arreglado — #8)
 
-`stop()` setea `_shutdown` y acto seguido cancela la task del drainer. El flush
-de cierre del drainer vive *después* de su bucle `while not self._shutdown`, pero
-la cancelación lanza `CancelledError` dentro del `queue.get()` esperado, así que
-ese flush nunca se alcanza. Todo evento que siga encolado, más el lote en vuelo
-del drainer, se descarta en un apagado ordenado.
+`stop()` seteaba `_shutdown` y acto seguido cancelaba la task del drainer. El
+flush de cierre del drainer vive *después* de su bucle `while not
+self._shutdown`, pero la cancelación lanzaba `CancelledError` dentro del
+`queue.get()` esperado, así que ese flush nunca se alcanzaba — todo evento que
+siguiera encolado, más el lote en vuelo del drainer, se descartaba en un
+apagado ordenado.
 
-Está fijado como xfail con `strict=True` en `tests/test_audit_wiring.py`.
-Arreglarlo implica cambiar el handshake de apagado — `stop()` debe esperar la
-salida del propio drainer en lugar de cancelarlo — y eso pertenece al trabajo de
-despliegue de W4. Como el marcador es estricto, la suite se pone en rojo en
-cuanto alguien arregle el código sin quitarlo.
+`stop(timeout: float = 5.0)` ahora **espera** la task del drainer en vez de
+cancelarla, que es lo que permite que su flush de cierre corra de verdad y
+vacíe lo que haya quedado. El `timeout` acota esto para que un drainer trabado
+(por ejemplo, una llamada a la DB colgada) no cuelgue el apagado para siempre:
+al vencer el timeout, `asyncio.wait_for` cancela el drainer como último
+recurso, y `stop()` cuenta los eventos que seguían en la cola dentro de
+`dropped_count` y registra `audit.shutdown_timeout`. El valor por defecto es
+compatible hacia atrás con cada sitio de llamada existente `await
+sink.stop()` sin argumentos.
+
+Esto estaba fijado como xfail con `strict=True` en `tests/test_audit_wiring.py`
+(`test_stop_does_not_lose_queued_events`); el marcador ya fue quitado y el test
+pasa de verdad.
 
 ## Almacenamiento
 
@@ -238,23 +247,43 @@ correlation_id, sequence)` es una restricción UNIQUE — así que el contador e
 que garantiza que los eventos de una ejecución puedan ordenarse después, y un
 duplicado hace fallar el INSERT de todo el lote.
 
-El asignador es un diccionario a nivel de módulo detrás de un `asyncio.Lock`.
-Dos consecuencias que no se ven desde el sitio de llamada:
+### La secuencia se asigna en la base de datos (arreglado — #9)
 
-- **El contador es por proceso.** Con más de un worker de uvicorn, cada uno tiene
-  el suyo. Requests distintos llevan `request_id` distintos y por eso no
-  colisionan, pero `_correlation_id_from_context()` cae al literal `"none"`
-  cuando no hay contexto de request — y cada worker cuenta `"none"` desde 1 de
-  forma independiente. Dos workers emitiendo un evento sin contexto en el mismo
-  microsegundo violan la UNIQUE y pierden el lote entero.
-- **El diccionario nunca se poda.** Gana una entrada por `correlation_id` y nada
-  la quita, así que un proceso de larga vida crece sin techo. Solo la suite de
-  tests llama a `_seq_counter.clear()`, que es por lo que la suite no puede
-  verlo.
+El asignador solía ser un diccionario a nivel de módulo detrás de un
+`asyncio.Lock` en `audit/recorder.py` — correcto dentro de un proceso,
+incorrecto entre N: cada proceso contaba el fallback `"none"` de
+`correlation_id` (usado cuando no hay contexto de request) desde 1 de forma
+independiente, así que dos workers emitiendo un evento sin contexto en el
+mismo instante podían asignar la misma secuencia y violar la UNIQUE, perdiendo
+el lote entero. El diccionario tampoco se podaba nunca: ganaba una entrada por
+`correlation_id` durante toda la vida del proceso.
 
-Registrado en el ledger junto a D-041. El arreglo no es obvio — limpieza por
-request, un TTL, o mover la secuencia a la base de datos tienen compromisos
-distintos — así que queda fichado y no parchado.
+`_allocate_sequence` y `_seq_counter` ya no existen. Cada helper `record_*`
+ahora escribe `PLACEHOLDER_SEQUENCE` (`0`) — un valor que nunca se persiste —
+y la secuencia real y autoritativa se asigna atómicamente en el momento del
+flush, en `AuditSink._flush_batch`, un evento a la vez y en el orden del
+lote/cola (FIFO):
+
+```sql
+INSERT INTO audit_sequence (correlation_id, next_seq)
+VALUES (:correlation_id, 1)
+ON CONFLICT (correlation_id)
+DO UPDATE SET next_seq = audit_sequence.next_seq + 1
+RETURNING next_seq
+```
+
+`audit_sequence` (migración `005_audit_sequence`) es una tabla chica y sin
+particionar — una fila por `correlation_id`, que guarda solo el próximo valor
+a entregar. El upsert corre en la MISMA sesión a la que se agregan y con la
+que se commitean los eventos del lote, así que un lote fallido revierte su
+asignación gratis. Lo que hace que esto sobreviva a N procesos worker, algo
+que el contador en memoria nunca pudo: el propio row lock de PostgreSQL sobre
+esa fila de `audit_sequence` serializa a los workers concurrentes de
+*cualquier* proceso, no solo corrutinas que comparten uno.
+`tests/test_audit_migration_integration.py::TestAuditSequenceAllocationIsProcessSafe`
+prueba esto contra una instancia real de PostgreSQL — un test basado en mocks
+no puede, porque los mocks comparten la memoria de un solo proceso y no
+pueden reproducir la carrera entre procesos.
 
 ## Señales operativas
 
@@ -264,6 +293,7 @@ distintos — así que queda fichado y no parchado.
 | `audit.emit_failed` | El camino de emisión lanzó una excepción | Leer `exc_info` — la petición en sí no se vio afectada |
 | `audit.drain_failed` | Falló el INSERT de un lote; esos eventos se perdieron | Leer `error` y `exc_info`. Lleva `batch_size`, así que la pérdida queda cuantificada |
 | `audit.emit_skipped_no_loop` | No hay loop de eventos en ejecución | Esperado en tests síncronos y entrypoints de CLI |
+| `audit.shutdown_timeout` | El `timeout` de `stop()` venció antes de que el drainer saliera solo; se lo canceló como último recurso | Lleva `queued_events_dropped`. Investigar qué trabó al drainer (usualmente una llamada a la DB colgada); subir `timeout` solo si el drainer es lento, no si está trabado |
 
 ## Implementación
 

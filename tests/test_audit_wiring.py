@@ -160,18 +160,6 @@ async def test_emitting_without_a_running_loop_is_not_an_error() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "AuditSink.stop() sets _shutdown and then immediately cancels the drainer "
-        "task. The drainer's own shutdown flush lives after its `while not "
-        "self._shutdown` loop, but the cancellation raises CancelledError inside "
-        "the awaited queue.get(), so that flush is never reached: every event "
-        "still queued or held in the drainer's in-flight batch is discarded. "
-        "stop() also never calls drain(), and drain() cannot see the in-flight "
-        "batch anyway."
-    ),
-)
 async def test_stop_does_not_lose_queued_events() -> None:
     """Shutdown must not drop the tail of the audit log."""
     sink = CapturingSink()

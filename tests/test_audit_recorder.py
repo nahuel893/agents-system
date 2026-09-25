@@ -227,38 +227,53 @@ class TestRecorderCorrelationId:
 
 
 class TestRecorderSequence:
-    """sequence is auto-assigned from a per-correlation counter."""
+    """sequence is a documented placeholder at recorder time (issue #9).
+
+    The former per-process, in-memory counter (`_allocate_sequence` /
+    `_seq_counter`) could not survive N worker processes — every process
+    counted the `"none"` fallback correlation_id from 1 independently, so two
+    workers emitting a contextless event in the same instant could collide on
+    `uq_audit_event_correlation_sequence`. The real, authoritative sequence is
+    now allocated atomically at flush time, in the database, by
+    `AuditSink._flush_batch` (see `tests/test_audit_sink.py`). The recorder
+    itself no longer has a real sequence to give at construction time, so it
+    writes a fixed placeholder instead of counting anything.
+    """
 
     @pytest.mark.asyncio
-    async def test_sequence_auto_incremented(self) -> None:
-        """Two events for the same correlation_id have different sequence numbers."""
+    async def test_sequence_is_the_documented_placeholder(self) -> None:
+        """Every freshly recorded event carries the placeholder, not a count."""
         import structlog.contextvars
 
-        from agents_system.audit.recorder import record_skill_loaded
+        from agents_system.audit.recorder import (
+            PLACEHOLDER_SEQUENCE,
+            record_skill_loaded,
+        )
 
         definition = MockDefinition()
         with structlog.contextvars.bound_contextvars(request_id="seq-test"):
             event1 = await record_skill_loaded(definition, skill="skill-a")
             event2 = await record_skill_loaded(definition, skill="skill-b")
-        assert event1.sequence != event2.sequence
-        assert event1.sequence == 1
-        assert event2.sequence == 2
+        assert event1.sequence == PLACEHOLDER_SEQUENCE
+        assert event2.sequence == PLACEHOLDER_SEQUENCE
 
     @pytest.mark.asyncio
-    async def test_sequence_per_correlation_id(self) -> None:
-        """Different correlation_ids have independent sequence counters."""
+    async def test_sequence_placeholder_is_correlation_independent(self) -> None:
+        """The placeholder does not vary by correlation_id — it carries no count."""
         import structlog.contextvars
 
-        from agents_system.audit.recorder import record_skill_loaded
+        from agents_system.audit.recorder import (
+            PLACEHOLDER_SEQUENCE,
+            record_skill_loaded,
+        )
 
         definition = MockDefinition()
         with structlog.contextvars.bound_contextvars(request_id="corr-a"):
             event_a = await record_skill_loaded(definition, skill="skill-a")
         with structlog.contextvars.bound_contextvars(request_id="corr-b"):
             event_b = await record_skill_loaded(definition, skill="skill-b")
-        # Both have sequence 1 (independent counters)
-        assert event_a.sequence == 1
-        assert event_b.sequence == 1
+        assert event_a.sequence == PLACEHOLDER_SEQUENCE
+        assert event_b.sequence == PLACEHOLDER_SEQUENCE
 
 
 class TestRecorderAutoFields:

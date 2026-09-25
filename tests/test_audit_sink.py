@@ -6,6 +6,7 @@ import asyncio
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -77,6 +78,20 @@ class TestAuditSinkQueueOverflow:
             )
 
 
+class _FakeExecuteResult:
+    """Stands in for the ``Result`` of ``session.execute(_ALLOCATE_SEQUENCE_SQL, ...)``.
+
+    Only ``scalar_one()`` is used by ``_flush_batch`` — the atomic upsert's
+    ``RETURNING next_seq`` gives back exactly one row, one column.
+    """
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def scalar_one(self) -> int:
+        return self._value
+
+
 class _FakeSession:
     """A minimal fake async session that records events.
 
@@ -87,14 +102,35 @@ class _FakeSession:
     SQLAlchemy. Against a real session that await raises TypeError, the
     drainer's ``except Exception`` swallows it, and no audit row is ever
     written. A double that mirrors the defect tests the double.
+
+    ``execute`` mimics the atomic per-correlation-id upsert
+    (``audit_sequence``, migration 005) that ``_flush_batch`` now issues
+    before mapping each event: an in-memory dict standing in for the real
+    table's row-locked ``next_seq`` counter, so sequences it hands out are
+    increasing per ``correlation_id`` and independent across them — the same
+    contract the real upsert holds, minus the cross-process guarantee (which
+    only a real PostgreSQL round trip can prove; see
+    ``tests/test_audit_migration_integration.py``).
     """
 
     def __init__(self) -> None:
         self.added: list = []
         self.commit_count = 0
+        self.executed: list[tuple[Any, dict]] = []
+        self._next_seq: dict[str, int] = {}
 
     def add(self, event) -> None:
         self.added.append(event)
+
+    async def execute(
+        self, statement: Any, params: dict | None = None
+    ) -> _FakeExecuteResult:
+        params = params or {}
+        self.executed.append((statement, params))
+        correlation_id = params["correlation_id"]
+        next_seq = self._next_seq.get(correlation_id, 0) + 1
+        self._next_seq[correlation_id] = next_seq
+        return _FakeExecuteResult(next_seq)
 
     async def commit(self) -> None:
         self.commit_count += 1
@@ -303,65 +339,106 @@ class TestAuditSinkSlowDB:
         await sink.stop()
 
 
-class TestAuditSinkSequenceAllocation:
-    """T-18/19: Sequence allocator gives distinct sequences per correlation_id."""
+class TestAuditSinkFlushBatchSequenceAllocation:
+    """Issue #9: the authoritative sequence is allocated at flush time, in the DB.
+
+    The old `_allocate_sequence`/`_seq_counter` (a module-level dict guarded
+    by an `asyncio.Lock`) was a per-PROCESS counter: correct within one
+    process, wrong across N, because every process counts the `"none"`
+    fallback `correlation_id` from 1 independently — two workers emitting a
+    contextless event in the same instant could allocate the same sequence
+    and collide on `uq_audit_event_correlation_sequence`. Those symbols are
+    gone; `recorder.py`'s `record_*` helpers now write a documented
+    placeholder, and `AuditSink._flush_batch` allocates the real value,
+    atomically, per event, via an upsert against `audit_sequence` (migration
+    005) run on the SAME session the batch commits with.
+
+    These tests exercise `_flush_batch` against `_FakeSession`, whose
+    `execute()` mimics that upsert's per-correlation_id counting contract.
+    They cannot prove the upsert survives concurrent processes — only a real
+    PostgreSQL round trip can, which is what
+    `tests/test_audit_migration_integration.py::TestAuditSequenceAllocationIsProcessSafe`
+    is for.
+    """
 
     @pytest.mark.asyncio
-    async def test_sequence_distinct_per_correlation_id(self):
-        """Two events for same correlation_id get distinct sequences."""
-        from agents_system.audit.recorder import _allocate_sequence, _seq_counter
+    async def test_flush_batch_issues_the_atomic_upsert_per_event(self):
+        """Every event in the batch triggers one upsert, keyed by its correlation_id."""
+        fake_session = _FakeSession()
 
-        # Clean slate for this test
-        _seq_counter.clear()
-        correlation_id = "test-seq-123"
-        seq1 = await _allocate_sequence(correlation_id)
-        seq2 = await _allocate_sequence(correlation_id)
-        seq3 = await _allocate_sequence(correlation_id)
+        def fake_factory():
+            return fake_session
 
-        assert seq2 == seq1 + 1
-        assert seq3 == seq2 + 1
-        assert seq1 != seq2 != seq3
-        # Cleanup
-        _seq_counter.clear()
+        sink = AuditSink(session_factory=fake_factory, maxsize=10)
 
-    @pytest.mark.asyncio
-    async def test_sequence_resets_for_new_correlation_id(self):
-        """Different correlation_ids get independent sequences (each starts at 1)."""
-        from agents_system.audit.recorder import _allocate_sequence, _seq_counter
+        await sink._flush_batch(
+            [make_event(corr_id="corr-a"), make_event(corr_id="corr-a")]
+        )
 
-        # Clean slate for this test
-        _seq_counter.clear()
-        # First allocation for each correlation_id starts at 1
-        seq_a1 = await _allocate_sequence("corr-a")
-        seq_b1 = await _allocate_sequence("corr-b")
-        assert seq_a1 == 1
-        assert seq_b1 == 1  # Both start at 1 independently
-        # Second allocation for same correlation_id increments
-        seq_a2 = await _allocate_sequence("corr-a")
-        assert seq_a2 == seq_a1 + 1
-        # Cleanup
-        _seq_counter.clear()
+        assert len(fake_session.executed) == 2
+        for _statement, params in fake_session.executed:
+            assert params == {"correlation_id": "corr-a"}
 
     @pytest.mark.asyncio
-    async def test_sequence_allocator_is_async_safe(self):
-        """Concurrent sequence allocations are all distinct (async-safe)."""
-        from agents_system.audit.recorder import _allocate_sequence, _seq_counter
+    async def test_flush_batch_assigns_increasing_sequence_same_correlation(self):
+        """Same-correlation events in one batch get 1, 2, 3, ... in FIFO order."""
+        fake_session = _FakeSession()
 
-        # Clean slate for this test
-        _seq_counter.clear()
-        correlation_id = "test-parallel"
+        def fake_factory():
+            return fake_session
 
-        async def allocate_many(n: int) -> list[int]:
-            return [await _allocate_sequence(correlation_id) for _ in range(n)]
+        sink = AuditSink(session_factory=fake_factory, maxsize=10)
 
-        # Allocate 50 concurrently
-        results = await asyncio.gather(*[allocate_many(10) for _ in range(5)])
-        all_seqs = [s for batch in results for s in batch]
+        await sink._flush_batch([make_event(corr_id="corr-b") for _ in range(3)])
 
-        assert len(set(all_seqs)) == 50, "All sequences must be unique"
-        assert sorted(all_seqs) == list(range(1, 51)), "Sequences 1..50 in order"
-        # Cleanup
-        _seq_counter.clear()
+        assert [row.sequence for row in fake_session.added] == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_flush_batch_sequence_continues_across_flushes(self):
+        """A later flush for the same correlation_id continues, never restarts."""
+        fake_session = _FakeSession()
+
+        def fake_factory():
+            return fake_session
+
+        sink = AuditSink(session_factory=fake_factory, maxsize=10)
+
+        await sink._flush_batch([make_event(corr_id="corr-c")])
+        await sink._flush_batch([make_event(corr_id="corr-c")])
+
+        assert [row.sequence for row in fake_session.added] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_flush_batch_sequence_independent_per_correlation(self):
+        """Two different correlation_ids each start their own count at 1."""
+        fake_session = _FakeSession()
+
+        def fake_factory():
+            return fake_session
+
+        sink = AuditSink(session_factory=fake_factory, maxsize=10)
+
+        await sink._flush_batch(
+            [make_event(corr_id="corr-x"), make_event(corr_id="corr-y")]
+        )
+
+        by_corr = {row.correlation_id: row.sequence for row in fake_session.added}
+        assert by_corr == {"corr-x": 1, "corr-y": 1}
+
+    @pytest.mark.asyncio
+    async def test_flush_batch_overwrites_the_recorder_placeholder(self):
+        """The event's own `sequence` (a recorder-time placeholder) is discarded."""
+        fake_session = _FakeSession()
+
+        def fake_factory():
+            return fake_session
+
+        sink = AuditSink(session_factory=fake_factory, maxsize=10)
+
+        placeholder_event = make_event(sequence=0, corr_id="corr-z")
+        await sink._flush_batch([placeholder_event])
+
+        assert fake_session.added[0].sequence == 1
 
 
 class TestDrainFailureIsDiagnosable:
@@ -384,6 +461,11 @@ class TestDrainFailureIsDiagnosable:
 
             async def __aexit__(self, *exc_info):
                 return False
+
+            async def execute(self, statement, params=None):
+                # The atomic sequence upsert succeeds; `add()` below is what
+                # must fail, so this test still proves the ADD failure path.
+                return _FakeExecuteResult(1)
 
             def add(self, row):
                 raise RuntimeError(sentinel)

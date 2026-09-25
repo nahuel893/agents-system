@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from sqlalchemy import text
 
 from agents_system.audit.events import _AuditEventBase
 
@@ -15,6 +16,25 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 logger = structlog.get_logger()
+
+#: Atomic per-correlation sequence allocation (issue #9, ADR-001 D-042).
+#:
+#: ``audit_sequence`` (migration 005) holds one row per ``correlation_id``,
+#: the next value to hand out. This upsert is the classic PostgreSQL atomic
+#: counter pattern: PostgreSQL's own row lock on the ``correlation_id`` row
+#: serializes concurrent writers from ANY process, which is what makes the
+#: allocated value safe across N worker processes — the former
+#: ``recorder._allocate_sequence`` was a per-process, in-memory counter and
+#: could not offer that guarantee no matter how it was implemented.
+_ALLOCATE_SEQUENCE_SQL = text(
+    """
+    INSERT INTO audit_sequence (correlation_id, next_seq)
+    VALUES (:correlation_id, 1)
+    ON CONFLICT (correlation_id)
+    DO UPDATE SET next_seq = audit_sequence.next_seq + 1
+    RETURNING next_seq
+    """
+)
 
 # App-state contextvar for the singleton. No shared mutable default: every
 # `.get(...)` call site below supplies its own fresh `{}`.
@@ -87,17 +107,39 @@ class AuditSink:
         self._started = True
         self._drainer_task = asyncio.create_task(self._drainer_loop())
 
-    async def stop(self) -> None:
-        """Initiate graceful shutdown: signal drainer, flush remaining events, cancel."""
+    async def stop(self, timeout: float = 5.0) -> None:
+        """Initiate graceful shutdown: signal the drainer and AWAIT its own exit.
+
+        Setting ``_shutdown`` makes ``_drainer_loop``'s ``while not self._shutdown``
+        condition false on its next check; its shutdown-drain tail (whatever is
+        left in ``self._queue``, plus any batch already accumulated in-flight)
+        runs right after that loop exits and flushes once. Awaiting the task
+        (instead of cancelling it immediately, the previous bug) is what lets
+        that tail actually run: cancelling almost always lands inside the
+        drainer's ``await asyncio.wait_for(self._queue.get(), ...)``, which
+        raises ``CancelledError`` out of the loop before the shutdown tail is
+        ever reached, discarding every event still queued or in-flight.
+
+        Bounded by ``timeout`` so a wedged flush (e.g. a stuck DB call) cannot
+        hang shutdown forever. On timeout, ``asyncio.wait_for`` cancels the
+        drainer task itself (last resort) and this counts whatever is still
+        sitting in the queue as dropped.
+        """
         if not self._started:
             return
         self._shutdown = True
 
-        # Cancel the drainer task
         if self._drainer_task is not None and not self._drainer_task.done():
-            self._drainer_task.cancel()
             try:
-                await self._drainer_task
+                await asyncio.wait_for(self._drainer_task, timeout=timeout)
+            except TimeoutError:
+                remaining = self._queue.qsize()
+                self.dropped_count += remaining
+                logger.warning(
+                    "audit.shutdown_timeout",
+                    timeout_s=timeout,
+                    queued_events_dropped=remaining,
+                )
             except asyncio.CancelledError:
                 pass
 
@@ -179,13 +221,33 @@ class AuditSink:
             await self._flush_batch(batch)
 
     async def _flush_batch(self, batch: list[_AuditEventBase]) -> None:
-        """Open one AsyncSession, add all events, commit once, close (REQ-AUDIT-33)."""
+        """Open one AsyncSession, add all events, commit once, close (REQ-AUDIT-33).
+
+        Each event's ``sequence`` (a recorder-time placeholder — see
+        ``recorder.py``) is overwritten here with the real, authoritative
+        value, allocated atomically per event via ``_ALLOCATE_SEQUENCE_SQL``:
+        a classic PostgreSQL upsert against ``audit_sequence`` (migration
+        005), executed on THIS SAME session, so it commits or rolls back with
+        the rest of the batch — a failed batch releases its "reserved"
+        numbers for free. PostgreSQL's own row lock on that
+        ``correlation_id``'s ``audit_sequence`` row is what serializes
+        concurrent writers across ANY process (issue #9, ADR-001 D-042) — the
+        actual fix for two workers emitting a contextless event in the same
+        instant. Allocated one event at a time, in batch/queue (FIFO) order,
+        so ordering within one ``correlation_id`` is preserved.
+        """
         from agents_system.models.audit_event import map_to_audit_event
 
         try:
             async with self._session_factory() as session:
                 for event in batch:
-                    orm_row = map_to_audit_event(event.model_dump())
+                    event_data = event.model_dump()
+                    result = await session.execute(
+                        _ALLOCATE_SEQUENCE_SQL,
+                        {"correlation_id": event_data["correlation_id"]},
+                    )
+                    event_data["sequence"] = result.scalar_one()
+                    orm_row = map_to_audit_event(event_data)
                     session.add(orm_row)  # synchronous: awaiting None raises
                 await session.commit()
         except Exception as exc:

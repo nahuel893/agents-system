@@ -135,19 +135,26 @@ request path, which is exactly what the fire-and-forget contract exists to
 prevent. `dropped_count` and the `audit.event_dropped` warning are the signal
 that the queue size needs raising.
 
-### Known gap: shutdown loses the tail
+### Shutdown drains the tail (fixed — #8)
 
-`stop()` sets `_shutdown` and then immediately cancels the drainer task. The
-drainer's shutdown flush lives *after* its `while not self._shutdown` loop, but
-the cancellation raises `CancelledError` inside the awaited `queue.get()`, so
-that flush is never reached. Every event still queued, plus the drainer's
-in-flight batch, is discarded on graceful shutdown.
+`stop()` used to set `_shutdown` and then immediately cancel the drainer task.
+The drainer's shutdown flush lives *after* its `while not self._shutdown` loop,
+but the cancellation raised `CancelledError` inside the awaited `queue.get()`,
+so that flush was never reached — every event still queued, plus the drainer's
+in-flight batch, was discarded on graceful shutdown.
 
-This is pinned as a `strict=True` xfail in `tests/test_audit_wiring.py`. Fixing
-it means changing the shutdown handshake — `stop()` must await the drainer's own
-exit rather than cancel it — and that belongs with the deployment work in W4.
-Because the marker is strict, the suite turns red the moment someone fixes the
-code without removing it.
+`stop(timeout: float = 5.0)` now **awaits** the drainer task instead of
+cancelling it, which is what lets its shutdown-drain tail actually run and
+flush whatever was left. The `timeout` bounds this so a wedged drainer (e.g. a
+stuck DB call) cannot hang shutdown forever: on timeout, `asyncio.wait_for`
+cancels the drainer as a last resort, and `stop()` counts however many events
+were still sitting in the queue into `dropped_count` and logs
+`audit.shutdown_timeout`. The default is backward compatible with every
+existing no-arg `await sink.stop()` call site.
+
+This was pinned as a `strict=True` xfail in `tests/test_audit_wiring.py`
+(`test_stop_does_not_lose_queued_events`); the marker is now removed and the
+test passes for real.
 
 ## Storage
 
@@ -230,22 +237,40 @@ correlation_id, sequence)` is a UNIQUE constraint — so the counter is what
 guarantees an execution's events can be ordered after the fact, and a duplicate
 fails the INSERT for the whole batch.
 
-The allocator is a module-level dict behind an `asyncio.Lock`. Two consequences
-that are not visible from the call site:
+### The sequence is allocated in the database (fixed — #9)
 
-- **The counter is per process.** With more than one uvicorn worker, each has its
-  own. Distinct requests carry distinct `request_id` values so they do not
-  collide, but `_correlation_id_from_context()` falls back to the literal
-  `"none"` when there is no request context — and every worker counts `"none"`
-  from 1 independently. Two workers emitting a contextless event in the same
-  microsecond violate the UNIQUE and lose the entire batch.
-- **The dict is never pruned.** It gains one entry per `correlation_id` and
-  nothing removes it, so a long-lived process grows without bound. Only the test
-  suite calls `_seq_counter.clear()`, which is why the suite cannot see it.
+The allocator used to be a module-level dict behind an `asyncio.Lock` in
+`audit/recorder.py` — correct within one process, wrong across N: every
+process counted the `"none"` fallback `correlation_id` (used whenever there is
+no bound request context) from 1 independently, so two workers emitting a
+contextless event in the same instant could allocate the same sequence and
+violate the UNIQUE, losing the whole batch. The dict was also never pruned,
+growing one entry per `correlation_id` for the life of the process.
 
-Tracked as D-041's sibling in the ledger. The fix is not obvious — per-request
-cleanup, a TTL, or moving the sequence to the database each trade differently —
-so it is filed rather than patched.
+`_allocate_sequence` and `_seq_counter` are gone. Each `record_*` helper now
+writes `PLACEHOLDER_SEQUENCE` (`0`) — a value that is never persisted — and
+the real, authoritative sequence is allocated atomically at flush time, in
+`AuditSink._flush_batch`, one event at a time in batch/queue (FIFO) order:
+
+```sql
+INSERT INTO audit_sequence (correlation_id, next_seq)
+VALUES (:correlation_id, 1)
+ON CONFLICT (correlation_id)
+DO UPDATE SET next_seq = audit_sequence.next_seq + 1
+RETURNING next_seq
+```
+
+`audit_sequence` (migration `005_audit_sequence`) is a small, unpartitioned
+table — one row per `correlation_id`, holding only the next value to hand out.
+The upsert runs on the SAME session the batch's events are added to and
+committed with, so a failed batch rolls its allocation back for free. What
+makes this survive N worker processes, which the in-process counter never
+could: PostgreSQL's own row lock on that one `audit_sequence` row serializes
+concurrent writers from *any* process, not just coroutines sharing one.
+`tests/test_audit_migration_integration.py::TestAuditSequenceAllocationIsProcessSafe`
+proves this against a real PostgreSQL instance — a mock-based test cannot,
+since mocks share one process's memory and cannot reproduce the cross-process
+race.
 
 ## Operational signals
 
@@ -255,6 +280,7 @@ so it is filed rather than patched.
 | `audit.emit_failed` | The emit path raised | Read `exc_info` — the request itself was unaffected |
 | `audit.drain_failed` | A batch INSERT failed; those events are gone | Read `error` and `exc_info`. Carries `batch_size`, so the loss is quantified |
 | `audit.emit_skipped_no_loop` | No running event loop | Expected in sync tests and CLI entry points |
+| `audit.shutdown_timeout` | `stop()`'s `timeout` elapsed before the drainer exited on its own; it was cancelled as a last resort | Carries `queued_events_dropped`. Investigate what wedged the drainer (usually a stuck DB call); raise `timeout` only if the drainer is simply slow, not stuck |
 
 ## Implementation
 
