@@ -232,6 +232,49 @@ def test_resolve_inline_locator_end_to_end_inherits_base_tools() -> None:
     assert "escalation_notifier" in definition.tools  # inherited from `agent`
 
 
+def test_resolve_inline_locator_supplies_condition_description_directly() -> None:
+    """Issue #88: an `InlineLocator`'s `RawDefinition.escalation_rules` can
+    carry a `descriptions` dict directly — no prose parsing needed, since it
+    is already in-memory data rather than a file on disk. `_fold_parent_
+    into_child` deep-merges it with `agent`'s own inherited descriptions,
+    exactly like a `FolderLocator`/platform role."""
+    raw = _raw(
+        role_name="inline-agent",
+        escalation_rules={
+            "escalate_to": "human",
+            "conditions": ["explicit_user_request", "queue_backed_up"],
+            "descriptions": {
+                "queue_backed_up": "more than ten messages are waiting.",
+            },
+        },
+    )
+    locator = InlineLocator(raw=raw, parent="agent")
+
+    definition = resolve(locator, roots=RootConfig())
+
+    descriptions = definition.escalation_rules["descriptions"]
+    assert descriptions["queue_backed_up"] == "more than ten messages are waiting."
+    # Inherited from `agent`'s own policy.md prose -- an InlineLocator needs
+    # no parsing of its own to receive it.
+    assert descriptions["explicit_user_request"]
+
+
+def test_resolve_inline_locator_condition_without_description_still_resolves() -> None:
+    """An InlineLocator supplying no `descriptions` at all must still
+    resolve without error -- the documented fallback (bare name rendered,
+    no failure) for an importer agent that names none."""
+    raw = _raw(
+        role_name="inline-agent",
+        escalation_rules={"escalate_to": "human", "conditions": ["queue_backed_up"]},
+    )
+    locator = InlineLocator(raw=raw, parent=None)
+
+    definition = resolve(locator, roots=RootConfig())  # must not raise
+
+    assert definition.escalation_rules["conditions"] == ["queue_backed_up"]
+    assert not definition.escalation_rules.get("descriptions")
+
+
 def test_resolve_inline_locator_with_client_raises() -> None:
     """Q5 (design.md D1): same guard as a `FolderLocator` — an inline
     definition has no deployment tree to look a `client=` override up in."""

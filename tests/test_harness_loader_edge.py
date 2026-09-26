@@ -175,6 +175,122 @@ def test_mapping_non_dict_falls_back() -> None:
     assert _resolve_mapping_directive({"a": 1}, 42) == {"a": 1}
 
 
+def test_mapping_inherit_overlay_merges_descriptions_instead_of_replacing() -> None:
+    """Issue #88: a deployment `add`ing a condition and supplying its own
+    `descriptions` entry must not erase the generic role's inherited ones."""
+    parent = {"conditions": ["x"], "descriptions": {"x": "parent description"}}
+    out = _resolve_mapping_directive(
+        parent,
+        {"inherit": True, "add": ["y"], "descriptions": {"y": "child description"}},
+    )
+    assert out["descriptions"] == {"x": "parent description", "y": "child description"}
+
+
+# ---------------------------------------------------------------------------
+# _parse_escalation_descriptions (issue #88)
+# ---------------------------------------------------------------------------
+def test_parse_escalation_descriptions_single_line_bullet() -> None:
+    from agents_system.harness.loader import _parse_escalation_descriptions
+
+    body = "- `data_source_unreachable` — the source is unreachable.\n"
+
+    out = _parse_escalation_descriptions(
+        body, known_conditions=["data_source_unreachable"]
+    )
+
+    assert out == {"data_source_unreachable": "the source is unreachable."}
+
+
+def test_parse_escalation_descriptions_joins_wrapped_continuation_lines() -> None:
+    body = (
+        "- `data_source_unreachable` — the required data source is "
+        "unreachable after one\n"
+        "  retry attempt.\n"
+    )
+
+    from agents_system.harness.loader import _parse_escalation_descriptions
+
+    out = _parse_escalation_descriptions(
+        body, known_conditions=["data_source_unreachable"]
+    )
+
+    assert out == {
+        "data_source_unreachable": (
+            "the required data source is unreachable after one retry attempt."
+        )
+    }
+
+
+def test_parse_escalation_descriptions_ignores_unknown_backtick_names() -> None:
+    """A `- `name` — text` bullet describing an unrelated field must never
+    be mistaken for an escalation description."""
+    from agents_system.harness.loader import _parse_escalation_descriptions
+
+    body = "- `read_scope` — where memory reads come from.\n- `known_condition` — the real one.\n"
+
+    out = _parse_escalation_descriptions(body, known_conditions=["known_condition"])
+
+    assert out == {"known_condition": "the real one."}
+
+
+def test_parse_escalation_descriptions_blank_line_ends_continuation() -> None:
+    from agents_system.harness.loader import _parse_escalation_descriptions
+
+    body = "- `a` — first line\n  still first.\n\nUnrelated prose paragraph.\n"
+
+    out = _parse_escalation_descriptions(body, known_conditions=["a"])
+
+    assert out == {"a": "first line still first."}
+
+
+def test_parse_escalation_descriptions_empty_known_conditions_returns_empty() -> None:
+    from agents_system.harness.loader import _parse_escalation_descriptions
+
+    out = _parse_escalation_descriptions("- `a` — text.\n", known_conditions=[])
+
+    assert out == {}
+
+
+# ---------------------------------------------------------------------------
+# _fold_parent_into_child — descriptions accumulate across `extends:` (#88)
+# ---------------------------------------------------------------------------
+def test_fold_parent_into_child_merges_descriptions_deeply() -> None:
+    from agents_system.harness.loader import _fold_parent_into_child
+
+    parent = _raw(
+        escalation_rules={
+            "escalate_to": "human",
+            "conditions": ["x"],
+            "descriptions": {"x": "parent's own description"},
+        }
+    )
+    child = _raw(
+        escalation_rules={
+            "escalate_to": "human",
+            "conditions": ["x", "y"],
+            "descriptions": {"y": "child's own description"},
+        }
+    )
+
+    folded = _fold_parent_into_child(parent, child)
+
+    assert folded.escalation_rules["descriptions"] == {
+        "x": "parent's own description",
+        "y": "child's own description",
+    }
+
+
+def test_fold_parent_into_child_child_description_wins_on_name_collision() -> None:
+    from agents_system.harness.loader import _fold_parent_into_child
+
+    parent = _raw(escalation_rules={"descriptions": {"x": "parent's wording"}})
+    child = _raw(escalation_rules={"descriptions": {"x": "child's sharper wording"}})
+
+    folded = _fold_parent_into_child(parent, child)
+
+    assert folded.escalation_rules["descriptions"]["x"] == "child's sharper wording"
+
+
 # ---------------------------------------------------------------------------
 # _read_md — missing file fails loud
 # ---------------------------------------------------------------------------

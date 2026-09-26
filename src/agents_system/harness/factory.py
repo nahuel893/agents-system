@@ -201,15 +201,15 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     """Render the resolved ``escalation_rules`` into a short, model-facing
     block, or ``""`` when there is nothing to say (issue #36).
 
-    ``escalation_rules`` (``escalate_to`` + ``conditions``) is structured
-    policy data parsed from ``policy.md`` by ``harness.loader.resolve()`` —
-    but before this function existed, nothing ever read it back out.
-    ``policy.md``'s prose explains WHY a condition exists; role.md was the
-    only place its NAME ever reached the model, and only if a role.md author
-    happened to restate it there. ``accountant-agent`` is the case that
-    proved the gap: its ``role.md`` never mentions escalation, so
-    ``figure_requested_outside_report_catalog`` — declared only in its
-    ``policy.md`` — never influenced the model at all.
+    ``escalation_rules`` (``escalate_to`` + ``conditions`` + ``descriptions``)
+    is structured policy data parsed from ``policy.md`` by
+    ``harness.loader.resolve()`` — but before this function existed, nothing
+    ever read it back out. ``policy.md``'s prose explains WHY a condition
+    exists; role.md was the only place its NAME ever reached the model, and
+    only if a role.md author happened to restate it there. ``accountant-agent``
+    is the case that proved the gap: its ``role.md`` never mentions
+    escalation, so ``figure_requested_outside_report_catalog`` — declared
+    only in its ``policy.md`` — never influenced the model at all.
 
     Unknown/empty input renders nothing: a role that declares no escalation
     policy gets no block, so this is a strict addition for roles that do.
@@ -220,6 +220,19 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     than iterated directly. YAML permits a bare scalar
     (``conditions: single_condition``) as well as a list; iterating a bare
     *string* directly yields one bullet per CHARACTER, not one condition.
+
+    Issue #88: ``descriptions`` (``loader._parse_escalation_descriptions``'s
+    output, ``{condition_name: prose}``) renders each condition as
+    ``- name — description`` instead of the bare name alone. #82 showed the
+    bare name was not enough for a model to reliably act on: it understood
+    the data gap but explained it to the user instead of calling
+    ``escalation_notifier``. A condition absent from ``descriptions`` — a
+    deployment-added condition, or an importer agent that supplied none —
+    still renders its bare name rather than being dropped or failing;
+    ``descriptions`` is deliberately treated as a best-effort enrichment, not
+    a requirement this rendering function itself enforces (that requirement,
+    for every PREDEFINED role, is `tests/test_role_contract_suite.py`'s
+    contract test instead).
     """
     escalate_to = str(escalation_rules.get("escalate_to") or "").strip()
     conditions = [
@@ -229,6 +242,10 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
         )
         if condition
     ]
+    raw_descriptions = escalation_rules.get("descriptions")
+    descriptions: Mapping[str, Any] = (
+        raw_descriptions if isinstance(raw_descriptions, Mapping) else {}
+    )
 
     if not escalate_to and not conditions:
         return ""
@@ -240,9 +257,26 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
         if escalate_to:
             lines.append("")
         lines.append(
-            "Escalate immediately, rather than guess, whenever any of these apply:"
+            "Escalate immediately, rather than guess, whenever any of these "
+            "apply. Meeting one means CALLING `escalation_notifier` — "
+            "telling the user is not enough:"
         )
-        lines.extend(f"- {condition}" for condition in conditions)
+        for condition in conditions:
+            # PR #89 review (finding 1): a description value that reaches
+            # this function without passing through the prose parser's
+            # continuation-joining -- a deployment override's frontmatter
+            # `descriptions:`, or an importer's InlineLocator -- is never
+            # validated to be single-line. Collapsing all internal
+            # whitespace (not just leading/trailing) the same way the
+            # parser's continuation-joining already does means an embedded
+            # newline can never fragment one bullet into several
+            # bullet/heading-shaped lines, regardless of which source
+            # supplied it.
+            description = " ".join(str(descriptions.get(condition) or "").split())
+            if description:
+                lines.append(f"- {condition} — {description}")
+            else:
+                lines.append(f"- {condition}")
 
     return "\n".join(lines)
 

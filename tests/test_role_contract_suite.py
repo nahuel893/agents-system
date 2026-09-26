@@ -59,6 +59,7 @@ from typing import Any
 import pytest
 from platform_role_contract import (
     check_base_contract_present_once_and_last,
+    check_escalation_conditions_have_descriptions,
     check_no_design_notes_leak,
     check_permissions_and_tools_survive_inheritance,
     check_ungranted_tools_are_not_injected,
@@ -103,6 +104,11 @@ def test_base_contract_present_once_and_last(role: str) -> None:
 @pytest.mark.parametrize("role", discover_concrete_platform_roles())
 def test_untrusted_input_exec_exclusion(role: str) -> None:
     check_untrusted_input_exec_exclusion(resolve(role))
+
+
+@pytest.mark.parametrize("role", discover_concrete_platform_roles())
+def test_escalation_conditions_have_descriptions(role: str) -> None:
+    check_escalation_conditions_have_descriptions(resolve(role))
 
 
 @pytest.mark.parametrize("role", discover_concrete_platform_roles())
@@ -170,6 +176,19 @@ def test_untrusted_input_exec_exclusion_check_catches_the_lethal_combo() -> None
     )
     with pytest.raises(AssertionError):
         check_untrusted_input_exec_exclusion(broken)
+
+
+def test_escalation_description_check_catches_an_undescribed_condition() -> None:
+    real = resolve("agent")
+    broken = dataclasses.replace(
+        real,
+        escalation_rules={
+            **real.escalation_rules,
+            "conditions": [*real.escalation_rules["conditions"], "made_up_condition"],
+        },
+    )
+    with pytest.raises(AssertionError):
+        check_escalation_conditions_have_descriptions(broken)
 
 
 def test_inheritance_monotonic_check_catches_a_dropped_permission() -> None:
