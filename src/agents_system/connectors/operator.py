@@ -489,6 +489,12 @@ async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutp
     function only spawns (sandboxed), drains bounded output, and enforces
     the timeout.
 
+    Whatever ends the call early -- *policy.timeout_s* here, or a
+    cancellation from outside it (the interceptor's `tool_call_timeout_s`,
+    `task.cancel()`, shutdown) -- kills the whole process group and reaps
+    the child before the result or the exception leaves this function
+    (#105). A cancellation is always re-raised, never turned into a result.
+
     Fails closed: if `bwrap` OR `prlimit` is not on the host, this refuses
     and never falls back to running *argv* unsandboxed, or sandboxed but
     without enforced resource limits (ADR-002 C.14).
@@ -550,9 +556,7 @@ async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutp
         # `TimeoutError` is an `OSError` subclass, so this branch MUST be
         # checked before the `except OSError` below -- listing them in the
         # other order would silently swallow every real timeout as a
-        # "spawn_failed" instead.
-        if process is not None:
-            _kill_group(process)
+        # "spawn_failed" instead. The kill itself happens in `finally`.
         return _refuse(
             "timeout",
             f"'{program}' exceeded {policy.timeout_s}s and was killed.",
@@ -564,6 +568,19 @@ async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutp
             f"could not start '{program}': {error}",
             program=program,
         )
+    finally:
+        # Decided by "is the child still running", never by which exception
+        # got here (#105). The interceptor wraps this whole call in its own
+        # `asyncio.timeout(tool_call_timeout_s)`, normally tighter than
+        # *policy.timeout_s*; when THAT one fires, this function sees
+        # `CancelledError`, not `TimeoutError` -- `asyncio.timeout` only
+        # converts the cancellation it caused itself -- and a kill that
+        # lived in `except TimeoutError` never ran, so the sandboxed command
+        # outlived the timeout the agent had already been told about.
+        # `task.cancel()` and shutdown arrive the same way. A `finally`
+        # cannot swallow the cancellation: it propagates once this is done.
+        if process is not None and process.returncode is None:
+            await _kill_and_reap(process)
 
     assert process is not None  # reached only past a successful spawn above
     return {
@@ -627,6 +644,48 @@ def _kill_group(process: Any) -> None:
             process.kill()
         except ProcessLookupError:
             pass
+
+
+_REAP_TIMEOUT_S = 5.0
+
+
+async def _kill_and_reap(process: asyncio.subprocess.Process) -> None:
+    """Kill the child's process group, then wait until the child is reaped.
+
+    Killed is not the same as gone: until its exit status is collected the
+    child stays a zombie, and returning first let a "was killed" refusal
+    (or a propagating cancellation) race a process table that still showed
+    it. On this Python, `Process.wait()` also waits for the stdout/stderr
+    pipes to close, and a reader cancelled mid-drain stops reading them, so
+    the rest of the output is drained to EOF and discarded first.
+
+    What `bwrap` runs inside its own PID namespace is not in this group
+    (`--new-session` gives it a session of its own), but it dies anyway:
+    killing the outer `bwrap` fires `--die-with-parent` on the namespace's
+    init, and the kernel kills everything in a PID namespace once its init
+    is gone.
+
+    Bounded by `_REAP_TIMEOUT_S`, which after that kill only runs out if a
+    process that escaped it still holds a pipe open; a pipe read failing
+    here is just as unexpected. Either is logged and the call ends anyway,
+    rather than hanging a turn -- or a cancellation -- on it, or replacing
+    the exception already on its way out.
+    """
+    _kill_group(process)
+    try:
+        async with asyncio.timeout(_REAP_TIMEOUT_S):
+            await asyncio.gather(
+                _read_capped(process.stdout, 0),
+                _read_capped(process.stderr, 0),
+            )
+            await process.wait()
+    except OSError as error:  # `TimeoutError` included: it subclasses OSError
+        _logger.error(
+            "operator.reap_incomplete",
+            pid=process.pid,
+            timeout_s=_REAP_TIMEOUT_S,
+            error=repr(error),
+        )
 
 
 def build_file_reader_connector(policy: TerminalPolicy) -> AsyncConnector:

@@ -191,7 +191,10 @@ def build_command_tool_connector(declaration: CommandToolDeclaration) -> AsyncCo
         # touching the platform's own files: it needs somewhere to run,
         # not the repository. Removed unconditionally in `finally`, so a
         # timeout (`_run_argv` returns a normal refusal, not an exception)
-        # and any unexpected exception both still clean it up.
+        # and any unexpected exception both still clean it up. A
+        # cancellation (the interceptor's `tool_call_timeout_s`, shutdown)
+        # reaches this `finally` only after `_run_argv` has killed and
+        # reaped the command (#105), so nothing is still writing here.
         workdir = pathlib.Path(tempfile.mkdtemp(prefix="agents_system-command-tool-"))
         try:
             policy = TerminalPolicy(

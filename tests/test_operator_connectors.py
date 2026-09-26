@@ -347,7 +347,19 @@ async def test_a_timed_out_command_leaves_no_surviving_grandchild(
     assert result["error_kind"] == "timeout"
 
     await asyncio.sleep(0.5)
-    survivors = []
+    survivors = _pids_whose_cmdline_contains(marker)
+
+    assert not survivors, f"grandchild(ren) survived the timeout: {survivors}"
+
+
+def _pids_whose_cmdline_contains(marker: str) -> list[str]:
+    """Host pids whose argv carries *marker*.
+
+    A marker, not the pid the sandboxed command would report: inside the
+    sandbox's own PID namespace that pid is namespace-local (see the
+    grandchild test above).
+    """
+    found = []
     for pid_dir in pathlib.Path("/proc").iterdir():
         if not pid_dir.name.isdigit():
             continue
@@ -356,9 +368,173 @@ async def test_a_timed_out_command_leaves_no_surviving_grandchild(
         except OSError:
             continue
         if marker.encode() in cmdline:
-            survivors.append(pid_dir.name)
+            found.append(pid_dir.name)
+    return found
 
-    assert not survivors, f"grandchild(ren) survived the timeout: {survivors}"
+
+# --- #105: a cancelled call kills and reaps what it spawned ----------------
+#
+# `agent/graph.py` bounds every tool call with its own `asyncio.timeout(
+# tool_call_timeout_s)`. When that OUTER timeout fires, `_run_argv` sees
+# `CancelledError`, not `TimeoutError`, so a kill that only lives in
+# `except TimeoutError` never runs and the sandboxed command keeps running
+# on the host. The same holds for `task.cancel()` and shutdown.
+
+
+def _spy_on_spawns(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Record every `Process` spawned, so a test can check the exact child
+    `_run_argv` started (its host pid and exit status), not only a marker."""
+    spawned: list[object] = []
+    real_spawn = asyncio.create_subprocess_exec
+
+    async def spy(*args: object, **kwargs: object) -> object:
+        process = await real_spawn(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy)
+    return spawned
+
+
+def _sleeper(marker: str) -> list[str]:
+    return [sys.executable, "-c", f"import time; time.sleep(30)  # {marker}"]
+
+
+def _hanging_command_tool(marker: str) -> object:
+    from agents_system.connectors.command_tools import build_command_tool_connector
+    from agents_system.harness.loader import CommandToolDeclaration, Tier
+
+    declaration = CommandToolDeclaration(
+        name="hang",
+        argv=tuple(_sleeper(marker)),
+        params={},
+        tier=Tier.T2,
+        permission="run:hang",
+    )
+    connector = build_command_tool_connector(declaration)
+    return lambda: connector({})
+
+
+def _hanging_use_term(root: pathlib.Path, marker: str) -> object:
+    # The connector's own kill timer is far longer than any cancellation
+    # below, so it is never what ends the call.
+    connector = build_terminal_connector(_policy(root, timeout_s=30.0))
+    return lambda: connector({"argv": _sleeper(marker)})
+
+
+async def _assert_dead_and_reaped(spawned: list[object], marker: str) -> None:
+    [process] = spawned
+    # Checked with no grace period: the cancellation must not leave the
+    # call until the child is gone. asyncio records `returncode` only once
+    # waitpid collected the exit status, and a zombie would still have its
+    # /proc entry.
+    assert process.returncode is not None, "the child was never reaped"
+    assert not pathlib.Path(f"/proc/{process.pid}").exists()
+
+    # What the sandbox ran inside its own PID namespace dies with it; allow
+    # the kernel a moment to tear that namespace down.
+    survivors = _pids_whose_cmdline_contains(marker)
+    for _ in range(20):
+        if not survivors:
+            break
+        await asyncio.sleep(0.1)
+        survivors = _pids_whose_cmdline_contains(marker)
+    assert not survivors, f"the sandboxed command outlived the call: {survivors}"
+
+
+@pytest.mark.parametrize("tool", ["use_term", "command_tool"])
+async def test_an_outer_timeout_kills_and_reaps_the_process(
+    tool: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The interceptor's `tool_call_timeout_s` firing first, as it does in
+    `evals/scenarios/guardrails/06_tool_call_timeout.yaml`."""
+    import uuid
+
+    marker = f"outer-timeout-{uuid.uuid4().hex}"
+    spawned = _spy_on_spawns(monkeypatch)
+    call = (
+        _hanging_use_term(tmp_path, marker)
+        if tool == "use_term"
+        else _hanging_command_tool(marker)
+    )
+
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(1.0):
+            await call()
+
+    await _assert_dead_and_reaped(spawned, marker)
+
+
+async def test_cancelling_the_call_kills_and_reaps_the_process(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`task.cancel()` and shutdown: the cancellation propagates, never
+    swallowed, and only after the process is gone."""
+    import uuid
+
+    marker = f"cancelled-{uuid.uuid4().hex}"
+    spawned = _spy_on_spawns(monkeypatch)
+    task = asyncio.create_task(_hanging_use_term(tmp_path, marker)())
+    for _ in range(50):
+        if spawned:
+            break
+        await asyncio.sleep(0.1)
+    assert spawned, "the command never started"
+    await asyncio.sleep(0.3)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await _assert_dead_and_reaped(spawned, marker)
+
+
+async def test_a_cancelled_call_with_output_still_in_flight_is_reaped_promptly(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A chatty command cancelled mid-drain leaves its pipe full. Nothing
+    reads it any more, so the pipe never reports EOF and `Process.wait()`
+    (which waits for the pipes too) would hang unless the reap drains it."""
+    import time
+    import uuid
+
+    marker = f"chatty-{uuid.uuid4().hex}"
+    spawned = _spy_on_spawns(monkeypatch)
+    chatty = (
+        "import fcntl, sys\n"
+        "fcntl.fcntl(1, 1031, 1 << 20)  # F_SETPIPE_SZ: a 1 MiB pipe\n"
+        "while True:\n"
+        f"    sys.stdout.write('x' * (1 << 20))  # {marker}\n"
+    )
+    connector = build_terminal_connector(
+        _policy(tmp_path, timeout_s=30.0, max_output_bytes=1024)
+    )
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(1.0):
+            await connector({"argv": [sys.executable, "-c", chatty]})
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 3.0, f"the reap hung for {elapsed:.1f}s"
+    await _assert_dead_and_reaped(spawned, marker)
+
+
+async def test_the_connectors_own_timeout_also_reaps_the_process(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Killed is not enough: the refusal must not come back while the child
+    is still an unreaped zombie."""
+    import uuid
+
+    marker = f"own-timeout-{uuid.uuid4().hex}"
+    spawned = _spy_on_spawns(monkeypatch)
+    connector = build_terminal_connector(_policy(tmp_path, timeout_s=1.0))
+
+    result = await connector({"argv": _sleeper(marker)})
+
+    assert result["error_kind"] == "timeout"
+    await _assert_dead_and_reaped(spawned, marker)
 
 
 async def test_the_child_does_not_inherit_the_parents_secrets(
