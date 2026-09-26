@@ -856,7 +856,7 @@ parser at `:280-281`). Depends on PR4a-i (params must exist before
 `lifespan()` can consume them). Estimated lines: ~245. **This PR is
 breaking** — see PR4a-ii-T4.
 
-- [ ] **PR4a-ii-T1 — Predefined-role registration: byte-for-byte equivalent to today.**
+- [x] **PR4a-ii-T1 — Predefined-role registration: byte-for-byte equivalent to today.**
   RED: extend `tests/test_main.py` with a registration-path test asserting
   `create_app(registry_factory=..., agents={"acme-sales": "sales-agent"},
   grants={"acme-sales": ["read:catalog"]}, clients={"acme-sales": "acme"})`

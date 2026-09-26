@@ -4,23 +4,22 @@
 Strict TDD: written BEFORE `create_app` gains these parameters — intentionally
 red until `main.py` is widened.
 
-Signature/validation only. `lifespan()` does not read `agents`/`grants`/
-`clients` yet (that is PR4a-ii) — this file asserts that explicitly: passing
-`agents` has no observable effect on `app.state.runtimes` in this slice.
+Signature/validation only. What `lifespan()` builds from these params
+(PR4a-ii) is covered by `tests/test_main.py`'s "registration" tests; the
+PR4a-i test that pinned "`agents` is not consumed yet" went with that slice.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agents_system.agent.spec import Agent
-from agents_system.config import Settings, get_settings
+from agents_system.config import get_settings
 from agents_system.harness.loader import DefinitionError
 from agents_system.harness.registry import ToolRegistry
-from agents_system.main import _validate_runtime_id, create_app, lifespan
+from agents_system.main import _validate_runtime_id, create_app
 
 
 @pytest.fixture(autouse=True)
@@ -73,34 +72,6 @@ def test_create_app_defaults_the_new_params_to_none() -> None:
     assert app.state.agents is None
     assert app.state.grants is None
     assert app.state.clients is None
-
-
-@pytest.mark.asyncio
-async def test_agents_param_has_no_effect_on_lifespan_yet() -> None:
-    """`lifespan()` still only reads the Settings-driven fallback path in
-    this slice — an `agents` mapping is written to `app.state` but not yet
-    consumed. Booting with `adapter_runtimes=[]` and a non-empty `agents`
-    stays a no-runtimes boot, proving `agents` has no observable effect yet."""
-    test_settings = Settings(
-        _env_file=None,  # type: ignore[call-arg]
-        allow_insecure=True,
-        adapter_runtimes=[],
-    )
-    mock_engine = MagicMock()
-    mock_engine.dispose = AsyncMock()
-
-    app = create_app(
-        registry_factory=lambda *a, **k: ToolRegistry(),
-        agents={"acme-sales": "sales-agent"},
-    )
-
-    with (
-        patch("agents_system.main.get_settings", return_value=test_settings),
-        patch("agents_system.main.get_engine", return_value=mock_engine),
-        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
-    ):
-        async with lifespan(app):
-            assert app.state.runtimes == {}
 
 
 # ---------------------------------------------------------------------------

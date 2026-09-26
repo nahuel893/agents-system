@@ -22,6 +22,7 @@ lazily inside the function body).
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import AsyncIterator
 from contextlib import ExitStack, asynccontextmanager
 from datetime import timedelta
@@ -31,11 +32,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from conftest import create_test_app
 
+import agents_system.harness.factory  # noqa: F401 -- see the note below
 from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI
 from agents_system.config import Settings, get_settings
-from agents_system.harness.loader import DefinitionError
+from agents_system.harness.loader import DefinitionError, RootConfig
 from agents_system.main import _build_chat_model, lifespan
 from agents_system.permissions import UntrustedInputGrantError
+
+# `harness.factory` binds `resolve` from `harness.loader` at import time.
+# Many tests below patch `agents_system.harness.loader.resolve`; if one of
+# them were the first to import the factory, the factory would keep that
+# mock for the rest of the session and every later test that builds a REAL
+# runtime would get a MagicMock definition. Importing it here, unpatched,
+# rules that out whatever order the tests run in.
 
 
 @pytest.fixture(autouse=True)
@@ -1840,3 +1849,147 @@ async def test_lifespan_boots_normally_with_credentials_and_valid_runtime_id() -
 
         async with lifespan(app):
             assert app.state.webhook_worker is not None
+
+
+# ---------------------------------------------------------------------------
+# ADR-004 PR4a-ii — `lifespan()` serves `create_app(agents=, grants=, clients=)`
+#
+# Every test in this section has "registration" in its name, so
+# `pytest tests/test_main.py -k registration` runs exactly this slice.
+# `resolve`/`build_runtime` are REAL unless a test says otherwise; only
+# `AgentRuntime` is replaced, by a stub that keeps its kwargs, so a test can
+# read back the `EquippedRuntime` the lifespan actually built.
+# ---------------------------------------------------------------------------
+
+
+_FIXTURE_DEPLOYMENTS = (
+    pathlib.Path(__file__).resolve().parent
+    / "fixtures"
+    / "agents"
+    / "overrides"
+    / "deployments"
+)
+_SALES_GRANT = ("read:catalog", "write:orders")
+
+
+def _registration_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "_env_file": None,
+        "allow_insecure": True,
+        "database_url": "postgresql+asyncpg://localhost:5432/agentsys_test",
+        "redis_url": "redis://localhost:6379/0",
+        "adapter_runtimes": [],
+        "whatsapp_checkpointer_enabled": False,
+    }
+    values.update(overrides)
+    return Settings(**values)  # type: ignore[arg-type]
+
+
+def _registration_patches(settings: Settings) -> tuple[Any, ...]:
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+    return (
+        patch("agents_system.main.get_settings", return_value=settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agents_system.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        # The stub keeps what it was given: runtimes[id]["runtime"] is the
+        # EquippedRuntime build_runtime returned for that id.
+        patch("agents_system.agent.graph.AgentRuntime", side_effect=lambda **kw: kw),
+    )
+
+
+async def _boot(app: Any, settings: Settings, *extra: Any) -> None:
+    with _stack(_registration_patches(settings)), _stack(extra):
+        async with lifespan(app):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_registration_of_a_predefined_role_matches_the_legacy_id() -> None:
+    """spec: 'A predefined role is registered under a deployer-chosen id' --
+    `agents={"acme-sales": "sales-agent"}` + `clients={"acme-sales":
+    "client-a"}` builds the same runtime, field for field, that the legacy
+    `client-a__sales-agent` id builds for the same role, client and grant."""
+    roots = RootConfig(deployments_root=_FIXTURE_DEPLOYMENTS)
+
+    legacy = create_test_app(roots=roots)
+    await _boot(
+        legacy,
+        _registration_settings(
+            adapter_runtimes=["client-a__sales-agent"],
+            deploy_grants={"client-a__sales-agent": _SALES_GRANT},
+        ),
+    )
+    registered = create_test_app(
+        roots=roots,
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": list(_SALES_GRANT)},
+        clients={"acme-sales": "client-a"},
+    )
+    await _boot(registered, _registration_settings(adapter_runtimes=["acme-sales"]))
+
+    assert set(registered.state.runtimes) == {"acme-sales"}
+    old = legacy.state.runtimes["client-a__sales-agent"]["runtime"]
+    new = registered.state.runtimes["acme-sales"]["runtime"]
+    assert new.definition == old.definition
+    assert new.definition.deployment == "client-a"
+    assert new.system_prompt == old.system_prompt
+    assert [t.name for t in new.tools] == [t.name for t in old.tools]
+    assert new.denied_tools == old.denied_tools
+    assert new.skills == old.skills
+    assert new.deploy_grant_ceiling == old.deploy_grant_ceiling
+    assert registered.state.adapter_model_ids == frozenset({"acme-sales"})
+
+
+@pytest.mark.parametrize("bad_id", ["", "bad id", "-leading-hyphen"])
+@pytest.mark.asyncio
+async def test_registration_rejects_an_invalid_id_before_any_runtime_is_built(
+    bad_id: str,
+) -> None:
+    """spec: 'An empty-string id is rejected' -- raised before build_runtime
+    runs, naming the offending id."""
+    app = create_test_app(
+        agents={"acme-sales": "sales-agent", bad_id: "sales-agent"},
+        grants={"acme-sales": _SALES_GRANT, bad_id: _SALES_GRANT},
+    )
+    build_runtime = MagicMock(side_effect=AssertionError("must not be reached"))
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(
+            app,
+            _registration_settings(),
+            patch("agents_system.harness.factory.build_runtime", build_runtime),
+        )
+
+    assert repr(bad_id) in str(exc_info.value)
+    build_runtime.assert_not_called()
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.parametrize(
+    ("runtime_id", "role"),
+    [("acme-support-v2", "sales-agent"), ("acme__sales-agent", "operator-agent")],
+)
+@pytest.mark.asyncio
+async def test_registration_accepts_an_arbitrary_id_without_parsing_it(
+    runtime_id: str, role: str
+) -> None:
+    """spec: 'An arbitrary id string with no embedded convention is accepted'
+    -- the id is the cache key as given. Even a legacy-shaped id is never
+    split: `acme__sales-agent` here serves operator-agent, with no client."""
+    app = create_test_app(
+        agents={runtime_id: role},
+        grants={runtime_id: ("read:catalog",)},
+    )
+
+    await _boot(app, _registration_settings())
+
+    assert set(app.state.runtimes) == {runtime_id}
+    definition = app.state.runtimes[runtime_id]["runtime"].definition
+    assert definition.role_name == role
+    assert definition.deployment is None
