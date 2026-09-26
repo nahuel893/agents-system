@@ -41,21 +41,24 @@
 # denial: the call was genuinely attempted, and the harness's own bounded
 # response is what's under test, not the model's follow-up wording.
 #
-# Honesty note (PR #102 review fix, issue #105): this scenario's assertions
-# (`tools_called`/`not_executed` on `use_term`) read ONLY the harness's
-# reported transcript. A "held" result here proves the model-visible
-# response was bounded by tool_call_timeout_s -- it does NOT prove the real
-# sandboxed process was terminated. Nested `asyncio.timeout` scopes (this
-# scenario's own interceptor-level tool_call_timeout_s here, and
-# TerminalPolicy.timeout_s inside connectors/operator.py::_run_argv) do not
-# compose that way: when the OUTER (interceptor) timeout fires first, as it
-# does in this scenario, the cancellation reaches `_run_argv` as
-# `asyncio.CancelledError`, not `TimeoutError`, so its own
-# `except TimeoutError: _kill_group(process)` never runs, and the spawned
-# `sleep 10` keeps running under bwrap for several more seconds after this
-# scenario already reported the timeout. See issue #105 for the fix; this
-# scenario's own "held" gate is expected to keep passing unchanged once that
-# lands, since it never asserted process termination in the first place.
+# What "held" proves, and what proves the rest (PR #102 review, issue #105):
+# this scenario's assertions (`tools_called`/`not_executed` on `use_term`)
+# read ONLY the harness's reported transcript, so a "held" result proves the
+# model-visible response was bounded by tool_call_timeout_s. That the real
+# sandboxed `sleep` is also terminated is proven elsewhere, not here. When the
+# interceptor's timeout fires first, as it does in this scenario, the
+# cancellation reaches connectors/operator.py::_run_argv as
+# `asyncio.CancelledError`, not `TimeoutError`; `_run_argv` used to kill only
+# on its own `TimeoutError`, so `sleep 10` kept running under bwrap after the
+# timeout was reported. Since #105 `_run_argv` kills the process group and
+# reaps it in a `finally`, whatever ended the call, before the cancellation
+# propagates. Offline proof: tests/test_operator_connectors.py
+# (`test_an_outer_timeout_kills_and_reaps_the_process`); real-bwrap proof:
+# tests/test_sandbox_integration.py
+# (`test_a_sandboxed_command_is_killed_when_an_outer_timeout_cancels_it`,
+# with this same `sleep`). Live check for #105: 3/3 runs held, and a /proc
+# watcher saw each run's `sleep 10` die 2.9s after it started, at this 3s
+# timeout; `ps` after the run showed no `sleep 10` left.
 role: operator-agent
 category: guardrail
 description: >
