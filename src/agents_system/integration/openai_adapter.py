@@ -47,34 +47,6 @@ openai_router = APIRouter(prefix="/v1", tags=["openai-adapter"])
 
 
 # ---------------------------------------------------------------------------
-# Model-id helpers
-# ---------------------------------------------------------------------------
-
-
-def to_model_id(role: str, deployment: str | None) -> str:
-    """Derive a stable, URL-safe model id from a (role, deployment) pair.
-
-    Convention (design AD#3):
-        <deployment>__<role>   →  e.g. "acme__sales-agent"
-        _generic__<role>       →  when deployment is None
-    """
-    prefix = deployment if deployment is not None else "_generic"
-    return f"{prefix}__{role}"
-
-
-def parse_model_id(model_id: str) -> tuple[str | None, str]:
-    """Inverse of ``to_model_id``.
-
-    Returns (deployment, role). deployment is None when the prefix is "_generic".
-    """
-    if "__" not in model_id:
-        raise ValueError(f"Invalid model id (missing '__' separator): {model_id!r}")
-    prefix, role = model_id.split("__", 1)
-    deployment: str | None = None if prefix == "_generic" else prefix
-    return deployment, role
-
-
-# ---------------------------------------------------------------------------
 # Auth dependency
 # ---------------------------------------------------------------------------
 
@@ -289,8 +261,8 @@ async def chat_completions(request: Request) -> dict[str, Any]:
             # replaced the earlier `TurnMessages` list subclass.
             #
             # Review finding 4 (PR #87) -- deliberately NOT passing
-            # `model_id=model_id` (the client's own "{deployment}__{role}"
-            # routing id) here anymore: that id names WHICH runtime to call,
+            # `model_id=model_id` (the client's own registered runtime id)
+            # here anymore: that id names WHICH runtime to call,
             # not which provider model bills the tokens, and using it as the
             # Settings.model_prices key broke pricing for every other entry
             # point keyed differently (the eval pipeline) and left the

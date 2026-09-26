@@ -1064,7 +1064,7 @@ PR is breaking** — see PR4b-T4.
   deployment'", "An id migrated from the old key format resolves correctly".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR4b-T3 — Delete `to_model_id`/`parse_model_id`; delete obsolete tests.**
+- [x] **PR4b-T3 — Delete `to_model_id`/`parse_model_id`; delete obsolete tests.**
   RED: add `test_to_model_id_import_raises_import_error` (or extend
   `tests/test_openai_adapter.py`) asserting `from agents_system.integration
   .openai_adapter import to_model_id` raises `ImportError` after this task's

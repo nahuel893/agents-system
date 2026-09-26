@@ -943,7 +943,8 @@ def create_app(
     agents:
         Deployer-chosen runtime id -> either an ``Agent`` (a custom,
         library-defined agent) or a bare ``str`` (a predefined platform-role
-        name, resolved exactly as the legacy runtime id resolved it). Every
+        name, resolved with no deployment override unless ``clients`` names
+        one). Every
         id is opaque, never parsed: at most 64 letters, digits, ``_`` or
         ``-``, not starting with ``_`` or ``-``. The lifespan builds a
         runtime for EVERY entry at boot, and one entry that fails to resolve
