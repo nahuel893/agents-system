@@ -514,3 +514,31 @@ def test_load_scenario_rejects_a_non_list_new_tuple_assertion(
 
     with pytest.raises(ScenarioError, match=field):
         load_scenario(path)
+
+
+def test_execution_limits_override_docstring_discloses_it_bypasses_the_ceiling_invariant() -> (
+    None
+):
+    """PR #102 review fix (#76) -- `execution_limits_override` merges
+    straight into a scenario's resolved `execution_limits`
+    (`runner._build_equipped`) with no equivalent to
+    `harness.loader._validate_execution_limits`'s "Deployments may only
+    restrict, not elevate" ceiling check, unlike every other
+    `execution_limits` boundary in the codebase (a real deployment override,
+    an importer agent). That gap is intentional here: a guardrail scenario
+    sometimes needs to RAISE a limit past the platform/role ceiling (e.g.
+    `06_tool_call_timeout.yaml` raises `total_execution_timeout_s` past
+    operator-agent's own tightened baseline) so a slow real model's own
+    latency does not swallow the very timeout being tested before it can be
+    observed. Intentional is fine; undocumented is not -- this pins that the
+    module says so in its own words, so a future reader never mistakes
+    "accepted" for "bounded the same way `_validate_execution_limits`
+    enforces everywhere else".
+    """
+    import inspect
+
+    from agents_system.evals import schema
+
+    source = pathlib.Path(inspect.getfile(schema)).read_text(encoding="utf-8")
+    assert "_validate_execution_limits" in source
+    assert "eval-only escape hatch" in source.lower()

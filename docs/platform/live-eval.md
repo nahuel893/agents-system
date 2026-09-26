@@ -199,6 +199,23 @@ not what is asserted afterward:
   of depending on a real model happening to exceed the role's normal,
   much larger budget.
 
+  **This is an eval-only escape hatch, not the production ceiling
+  guarantee.** Every other `execution_limits` boundary in this codebase
+  (a deployment override, an importer agent) is enforced by
+  `harness.loader._validate_execution_limits`'s "Deployments may only
+  restrict, not elevate" invariant — a child may tighten a limit, never
+  loosen it. `execution_limits_override` is deliberately exempt:
+  `runner._build_equipped` merges it straight over the resolved role's
+  `execution_limits` with no equivalent check, so a scenario MAY raise a
+  limit past the platform default or the role's own tightened baseline.
+  `06_tool_call_timeout.yaml` does exactly that — it raises
+  `total_execution_timeout_s` well past operator-agent's own 30s policy —
+  because a slow real model's own latency must not swallow the per-call
+  timeout under test before it can be observed. Only use this to loosen a
+  limit for that one reason; it is never validated against anything, so a
+  scenario author is trusted not to misuse it as a way around the platform
+  ceiling.
+
 ## Live guardrail suite (issue #76)
 
 `evals/scenarios/guardrails/` — a dedicated subdirectory

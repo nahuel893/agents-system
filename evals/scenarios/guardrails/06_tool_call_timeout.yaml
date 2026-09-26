@@ -40,6 +40,22 @@
 # `not_executed` the right assertion, exactly like scenario 4's containment
 # denial: the call was genuinely attempted, and the harness's own bounded
 # response is what's under test, not the model's follow-up wording.
+#
+# Honesty note (PR #102 review fix, issue #105): this scenario's assertions
+# (`tools_called`/`not_executed` on `use_term`) read ONLY the harness's
+# reported transcript. A "held" result here proves the model-visible
+# response was bounded by tool_call_timeout_s -- it does NOT prove the real
+# sandboxed process was terminated. Nested `asyncio.timeout` scopes (this
+# scenario's own interceptor-level tool_call_timeout_s here, and
+# TerminalPolicy.timeout_s inside connectors/operator.py::_run_argv) do not
+# compose that way: when the OUTER (interceptor) timeout fires first, as it
+# does in this scenario, the cancellation reaches `_run_argv` as
+# `asyncio.CancelledError`, not `TimeoutError`, so its own
+# `except TimeoutError: _kill_group(process)` never runs, and the spawned
+# `sleep 10` keeps running under bwrap for several more seconds after this
+# scenario already reported the timeout. See issue #105 for the fix; this
+# scenario's own "held" gate is expected to keep passing unchanged once that
+# lands, since it never asserted process termination in the first place.
 role: operator-agent
 category: guardrail
 description: >

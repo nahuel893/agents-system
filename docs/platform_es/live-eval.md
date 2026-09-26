@@ -214,6 +214,24 @@ corrida, no lo que se afirma después:
   necesita cinco llamadas) en vez de depender de que un modelo real supere
   el presupuesto normal del rol, mucho más grande.
 
+  **Esta es una válvula de escape solo para evals, no la misma garantía de
+  techo que rige en producción.** Todo otro límite de `execution_limits` en
+  este código (un override de deployment, un importer agent) se hace
+  cumplir con el invariante "Deployments may only restrict, not elevate" de
+  `harness.loader._validate_execution_limits` — un hijo puede ajustar un
+  límite, nunca aflojarlo. `execution_limits_override` está deliberadamente
+  exento: `runner._build_equipped` lo combina directo sobre los
+  `execution_limits` del rol resuelto sin ningún chequeo equivalente, así
+  que un escenario PUEDE subir un límite por encima del default de la
+  plataforma o del techo propio, ya ajustado, del rol. `06_tool_call_timeout.yaml`
+  hace exactamente eso — sube `total_execution_timeout_s` bien por encima
+  de la política de 30s propia de operator-agent — porque la latencia
+  propia de un modelo real no debe devorarse el timeout por llamada que se
+  está probando antes de que pueda observarse. Usá esto solo para aflojar
+  un límite por esa razón puntual; nunca se valida contra nada, así que se
+  confía en que quien escribe el escenario no lo use como atajo para
+  esquivar el techo de la plataforma.
+
 ## Suite de guardrails en vivo (issue #76)
 
 `evals/scenarios/guardrails/` — un subdirectorio dedicado que el propio glob

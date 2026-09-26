@@ -158,6 +158,24 @@ class Scenario:
     #: `max_tool_calls: 2` against a task that naturally takes several
     #: calls) instead of depending on the role's production budget
     #: happening to be small enough for a real model to exceed it.
+    #:
+    #: PR #102 review fix -- deliberately EXEMPT from
+    #: `harness.loader._validate_execution_limits`'s "Deployments may only
+    #: restrict, not elevate" ceiling check, unlike every other
+    #: `execution_limits` boundary in this codebase (a real deployment
+    #: override, an importer agent): `runner._build_equipped` merges this
+    #: mapping straight over the resolved role's `execution_limits` with no
+    #: equivalent validation, so a scenario MAY raise a limit past the
+    #: platform default or the role's own tightened baseline (e.g.
+    #: `evals/scenarios/guardrails/06_tool_call_timeout.yaml` raises
+    #: `total_execution_timeout_s` well past operator-agent's own 30s
+    #: policy). That is intentional: a guardrail scenario often needs MORE
+    #: turn budget than production allows, so a slow real model's own
+    #: latency does not swallow the very timeout under test before it can be
+    #: observed (see that scenario's own header comment). This is an
+    #: eval-only escape hatch for that one purpose -- never the production
+    #: safety guarantee `_validate_execution_limits` enforces everywhere
+    #: else. See `docs/platform/live-eval.md`.
     execution_limits_override: Mapping[str, float] | None = None
 
 
