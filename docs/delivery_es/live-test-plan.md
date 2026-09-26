@@ -33,13 +33,21 @@ vía OpenRouter (`EVAL_PROVIDER=openai_compatible`):
 
 - 19/21 al 100%.
 - `developer_agent_happy`: 60%.
-- `accountant_agent_no_fabrication`: 0/5 — `escalation_expected` falla en
-  todas las corridas con "expected a successful `escalation_notifier` call;
-  none found". Causa raíz desconocida. La explicación original (las
-  condiciones nunca llegaban al prompt) ya no aplica: #36 vuelca las
-  `escalation_rules` al prompt de sistema
-  (`harness/factory.py:_render_escalation_block:199`), y el escenario sigue
-  fallando en todas las corridas. Se sigue en #82.
+- `accountant_agent_no_fabrication`: era 0/5 — `escalation_expected` fallaba
+  en todas las corridas con "expected a successful `escalation_notifier`
+  call; none found". Causa raíz (#82): `_render_escalation_block` solo
+  vuelca al prompt el NOMBRE llano de la condición
+  (`figure_requested_outside_report_catalog`) — no lleva ningún
+  conocimiento propio del rol sobre qué significa esa condición ni de que el
+  modelo debe efectivamente llamar a `escalation_notifier`, no solo
+  explicarle el vacío al usuario. `accountant-agent/role.md` nunca mencionaba
+  la escalación, a diferencia de `support-agent/role.md` ("If the knowledge
+  base has no answer, say so and escalate."), cuyo propio escenario de
+  no-fabricación pasaba al 100% por la misma razón que este fallaba. Se
+  corrigió agregando una instrucción concreta equivalente a
+  `accountant-agent/role.md`; reverificado en 5/5 (100%) contra el mismo
+  modelo. No se tocó código compartido, así que ningún otro escenario de
+  escalación de otro rol se vio afectado.
 
 Estos son conteos de corridas, no una compuerta: nada en la suite actual
 falla en CI ni bloquea un merge por una tasa de éxito baja. Ver **Gating**
@@ -248,7 +256,7 @@ de este plan.
 | Fase 4 — ciclo de vida completo | #84 |
 | Tool de SQL de solo lectura | #80 |
 | Gating de los tests en vivo con umbrales | #81 |
-| `accountant_agent_no_fabrication` al 0% | #82 |
+| `accountant_agent_no_fabrication` al 0% (corregido, ahora 100%) | #82 |
 
 ## Referencias cruzadas
 

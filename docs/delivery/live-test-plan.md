@@ -31,12 +31,19 @@ OpenRouter (`EVAL_PROVIDER=openai_compatible`):
 
 - 19/21 at 100%.
 - `developer_agent_happy`: 60%.
-- `accountant_agent_no_fabrication`: 0/5 — `escalation_expected` fails every
-  run with "expected a successful `escalation_notifier` call; none found".
-  Root cause unknown. The original explanation (the conditions never reached
-  the prompt) no longer holds: #36 renders `escalation_rules` into the
-  system prompt (`harness/factory.py:_render_escalation_block:199`), and the
-  scenario still fails every run. Tracked in #82.
+- `accountant_agent_no_fabrication`: was 0/5 — `escalation_expected` failed
+  every run with "expected a successful `escalation_notifier` call; none
+  found". Root cause (#82): `_render_escalation_block` renders only the bare
+  condition NAME (`figure_requested_outside_report_catalog`) into the
+  prompt — it carries no per-role knowledge of what the condition means or
+  that the model must actually call `escalation_notifier`, not just explain
+  the gap to the user. `accountant-agent/role.md` never mentioned escalation
+  at all, unlike `support-agent/role.md` ("If the knowledge base has no
+  answer, say so and escalate."), whose own no-fabrication scenario passed
+  100% for the same reason this one failed. Fixed by adding an equivalent
+  concrete instruction to `accountant-agent/role.md`; re-verified at 5/5
+  (100%) against the same model. No shared code changed, so no other role's
+  escalation scenario was affected.
 
 These are run counts, not a gate: nothing in the current suite fails CI or
 blocks a merge on a low success rate. See **Gating** below.
@@ -222,7 +229,7 @@ plan.
 | Phase 4 — full lifecycle | #84 |
 | Read-only SQL tool | #80 |
 | Live gating on thresholds | #81 |
-| `accountant_agent_no_fabrication` at 0% | #82 |
+| `accountant_agent_no_fabrication` at 0% (fixed, now 100%) | #82 |
 
 ## Cross-references
 
