@@ -88,9 +88,15 @@ El archivo `policy.md` del despliegue no puede:
 - Eliminar reglas de escalamiento definidas en la política genérica.
 - Incrementar los límites de ejecución más allá de los valores por defecto de la plataforma.
 
-### `skills/` (exclusivo de los despliegues)
+### `skills/`
 
-Las habilidades son siempre específicas del cliente. No existen habilidades genéricas de plataforma. La carpeta `skills/` existe únicamente dentro de los despliegues. Las habilidades son módulos de prompts de comportamiento que definen cómo razona el agente sobre tareas específicas del dominio — codifican el vocabulario del cliente, las reglas de negocio y los patrones de interacción conversacional.
+Las habilidades son módulos de prompts de comportamiento que definen cómo razona el agente sobre tareas específicas del dominio — codifican el vocabulario del cliente, las reglas de negocio y los patrones de interacción conversacional. El contenido de una habilidad se resuelve desde tres fuentes, revisadas en este orden:
+
+1. **Contenido inline en Python** — un agente propio construido con `Agent(skill_contents={...})` (o `Agent.from_folder(path, skill_contents={...})`) provee el contenido de la habilidad directamente, sin leer ningún archivo.
+2. **La carpeta propia del agente** — el `skills/<nombre>.md` de `Agent.from_folder(path)`, para un agente propio que trae su propio contenido por defecto.
+3. **El despliegue** — `deployments/{cliente}/{rol}/skills/<nombre>.md`. Esta es la **única** fuente desde la que un rol predefinido de plataforma resuelve sus habilidades; un rol predefinido no tiene carpeta ni fuente inline propia.
+
+Una habilidad declarada que no se resuelve en ninguna de las tres fuentes falla de forma explícita (`FactoryError`). Un agente propio puede combinar fuentes — por ejemplo, traer un contenido por defecto en su carpeta y dejar que un despliegue o un contenido inline reemplace una habilidad puntual por nombre.
 
 ---
 

@@ -4,7 +4,7 @@
 
 Un rol es una identidad de comportamiento declarativa. Define qué tiene permitido ser y hacer un agente dentro de la plataforma; no es una clase de Python, ni un servicio, ni una cadena de texto (*prompt string*).
 
-Un rol se define mediante una carpeta bajo `platform/roles/` (para las plantillas de roles genéricos) y `deployments/{cliente}/` (para las sobreescrituras específicas del cliente). La carpeta contiene tres archivos: `role.md` (identidad), `manifest.md` (capacidades) y `policy.md` (comportamiento), más un subdirectorio opcional `skills/` en los despliegues. El harness lee esta carpeta de definición del agente en el momento de la instanciación, resuelve las fusiones y ensambla las capacidades a partir de ella.
+Un rol se define mediante una carpeta bajo `platform/roles/` (para las plantillas de roles genéricos) y `deployments/{cliente}/` (para las sobreescrituras específicas del cliente). La carpeta contiene tres archivos: `role.md` (identidad), `manifest.md` (capacidades) y `policy.md` (comportamiento). El harness lee esta carpeta de definición del agente en el momento de la instanciación, resuelve las fusiones y ensambla las capacidades a partir de ella. La carpeta propia de un rol predefinido de plataforma nunca trae su propio subdirectorio `skills/` — sus habilidades se resuelven únicamente desde un despliegue (ver la precedencia de `skills/` en `deployment.md`). Un agente propio construido con `Agent.from_folder(path)` sí puede agregar su propio subdirectorio `skills/` dentro de `path`, revisado antes que cualquier sobreescritura de despliegue.
 
 **Un rol NO es:**
 - Un proceso activo o un hilo de ejecución (*thread*).

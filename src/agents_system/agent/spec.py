@@ -83,11 +83,12 @@ class Agent:
     memory — no I/O, and cycle-free by construction because Python cannot
     build an object before its own dependencies exist).
 
-    ``skill_contents`` carries inline skill text (consumed by the skills
-    capability — PR3); it is validated here (every key must also be listed in
-    ``skills``) but not yet threaded into a resolved ``AgentDefinition`` in
-    this module, per design.md's own Testing Strategy note for this PR ("no
-    ``_load_skills`` wiring here").
+    ``skill_contents`` carries inline skill text (design.md D4, PR3): it is
+    validated here (every key must also be listed in ``skills``) and, at
+    ``_to_locator()`` time, threaded onto the built ``RawDefinition``'s
+    ``inline_skills`` — the carrier ``_load_skills`` (``harness/factory.py``)
+    checks first, ahead of an importer's own folder and any deployment
+    override.
     """
 
     name: str
@@ -190,6 +191,7 @@ class Agent:
             audit_policy=_thaw(self.audit_policy),
             execution_limits=_thaw(self.execution_limits),
             untrusted_input=self.untrusted_input,
+            inline_skills=dict(self.skill_contents),
         )
         parent: RoleLocator | None
         if isinstance(self.extends, Agent):

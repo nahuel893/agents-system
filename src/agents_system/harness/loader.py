@@ -223,6 +223,17 @@ class AgentDefinition:
     #: build a `ToolSpec` for — see `CommandToolDeclaration`. Empty for every
     #: role that declares none, which is the overwhelming majority.
     command_tools: tuple[CommandToolDeclaration, ...] = ()
+    #: design.md D4 (PR3). An importer agent's own `skills/` subdirectory
+    #: (`Agent.from_folder(path)`'s `path/skills/`) — always a
+    #: `FolderLocator.path` derivative, never a caller-suppliable separate
+    #: value, so `_load_skills`'s containment holds the same way the
+    #: locator's own path does. `None` for a platform role or an inline-only
+    #: agent with no folder of its own.
+    skills_folder: pathlib.Path | None = None
+    #: design.md D4 (PR3). `{name: content}` supplied directly as Python
+    #: parameters (`Agent(skill_contents=...)`). Empty for a platform role
+    #: or a folder-only agent with no inline content of its own.
+    inline_skills: Mapping[str, str] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -299,6 +310,14 @@ class RawDefinition:
     command_tool_declarations: dict[str, CommandToolDeclaration] = dataclasses.field(
         default_factory=dict
     )
+    #: design.md D4 (PR3). Set only by `_load_role_files`'s `FolderLocator`
+    #: branch, to that folder's own `skills/` subdirectory — `None` for a
+    #: platform role and for an inline definition with no folder of its own.
+    skills_folder: pathlib.Path | None = None
+    #: design.md D4 (PR3). `{name: content}`, populated only by an
+    #: `InlineLocator`'s own `raw` (`Agent._to_locator()`'s `skill_contents`).
+    #: Empty for a platform role or a folder-only definition.
+    inline_skills: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1171,22 +1190,26 @@ def _apply_agent_folder_overrides(
     folder declared.
 
     `overrides` keys are `Agent`'s own field names (validated against
-    `agent.spec._AGENT_OVERRIDABLE_FIELDS` at `Agent.__init__` time); `name`
-    is the one renamed key (`Agent.name` -> `RawDefinition.role_name`, so an
-    overridden name is reflected consistently in both places). `extends` is
-    not a `RawDefinition` field: it replaces the manifest's `extends:` as
-    the parent locator, in `_load_role_files` (`_extends_override_target`).
-    `skill_contents` is not threaded into `RawDefinition` in this PR (see
-    design.md's own Testing Strategy note), so it is left unapplied here.
+    `agent.spec._AGENT_OVERRIDABLE_FIELDS` at `Agent.__init__` time); two are
+    renamed onto a differently-named `RawDefinition` field: `name` ->
+    `role_name` (so an overridden name is reflected consistently in both
+    places), and `skill_contents` -> `inline_skills` (design.md D4, PR3 —
+    the same carrier an `Agent(skill_contents=...)` populates via
+    `_to_locator`'s `InlineLocator` branch, so `Agent.from_folder(path,
+    skill_contents={...})` overrides a same-named folder skill the same
+    way). `extends` is not a `RawDefinition` field: it replaces the
+    manifest's `extends:` as the parent locator, in `_load_role_files`
+    (`_extends_override_target`).
     """
     if not overrides:
         return definition
     raw_field_names = {field.name for field in dataclasses.fields(RawDefinition)}
+    renames = {"name": "role_name", "skill_contents": "inline_skills"}
     changes: dict[str, Any] = {}
     for key, value in overrides.items():
-        target = "role_name" if key == "name" else key
+        target = renames.get(key, key)
         if target in raw_field_names:
-            changes[target] = value
+            changes[target] = dict(value) if target == "inline_skills" else value
     return dataclasses.replace(definition, **changes) if changes else definition
 
 
@@ -1343,6 +1366,12 @@ def _load_role_files(
         # ADR-002 C.12. Dict preserves manifest declaration order.
         command_tools=list(command_tool_declarations),
         command_tool_declarations=command_tool_declarations,
+        # design.md D4 (PR3). Only a `FolderLocator` has an importer-owned
+        # folder to resolve `skills/` from; a bare platform-role string
+        # leaves this `None` (the default), so a platform role's own
+        # `platform_root/roles/<name>/skills/`, if one happened to exist, is
+        # never treated as a skills source (design.md's own requirement).
+        skills_folder=folder / "skills" if isinstance(locator, FolderLocator) else None,
     )
     if isinstance(locator, FolderLocator) and locator.overrides:
         definition = _apply_agent_folder_overrides(definition, locator.overrides)
@@ -1537,6 +1566,16 @@ def _fold_parent_into_child(
             parent.command_tools, child.command_tools
         ),
         command_tool_declarations=merged_declarations,
+        # design.md D4 (PR3). NOT additive like `tools`/`skills` above: these
+        # two are "this locator's own folder/inline source", not a
+        # capability to inherit down the chain — the CHILD's own value
+        # always wins (a platform-role ancestor's is always `None`/`{}`
+        # anyway, since only a `FolderLocator`/`InlineLocator` ever sets
+        # them). `_resolve_role_chain` folds root-first, so after the last
+        # fold `child` is the original leaf, and its own value is what
+        # survives.
+        skills_folder=child.skills_folder,
+        inline_skills=dict(child.inline_skills),
     )
 
 
@@ -2418,6 +2457,13 @@ def _merge_validated(
         execution_limits=resolved_limits,
         untrusted_input=resolved_untrusted_input,
         command_tools=resolved_command_tools,
+        # design.md D4 (PR3). This branch only runs for a `str` (predefined
+        # role) locator with a deployment override (see `resolve`'s guard),
+        # so `generic.skills_folder`/`inline_skills` are always `None`/`{}`
+        # here — carried through anyway so a future non-`str`-only caller of
+        # `merge()` does not silently lose them.
+        skills_folder=generic.skills_folder,
+        inline_skills=dict(generic.inline_skills),
     )
 
 
@@ -2523,4 +2569,6 @@ def resolve(
         command_tools=tuple(
             generic.command_tool_declarations[name] for name in generic.command_tools
         ),
+        skills_folder=generic.skills_folder,
+        inline_skills=dict(generic.inline_skills),
     )
