@@ -21,3 +21,9 @@
 # itself in this comment -- gitleaks would flag this file's own diff too.)
 24157a189645fc9fc080cd7900ce884f11c21017:docs/platform/observability.md:curl-auth-header:26
 24157a189645fc9fc080cd7900ce884f11c21017:docs/platform_es/observability.md:curl-auth-header:29
+
+# An intermediate commit in the same PR quoted the flagged example string
+# above inside ITS OWN explanatory comment (fixed in the very next commit,
+# which rewrote this comment block to describe rather than quote it) --
+# same non-issue as the two entries above, one commit later.
+35093462d8ba6b83aa10a5efc092377f39eb5ec5:.gitleaksignore:curl-auth-header:12
