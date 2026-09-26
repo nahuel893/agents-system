@@ -1,0 +1,119 @@
+# Production Docker Compose for agents-system (ADR-001 Stage A runtime topology)
+#
+# Process ordering:
+#   1. postgres (becomes healthy via pg_isready)
+#   2. redis (becomes healthy via redis-cli ping)
+#   3. migrate (one-shot: runs alembic upgrade head, exits 0 on success; deploy aborts on failure)
+#   4. app (FastAPI app + in-process AuditSink drainer + DeferredWebhookWorker)
+#
+# Security:
+#   Ports bind to 127.0.0.1 on the host to avoid exposing database or internal API
+#   to public interfaces. TLS and public routing should be handled by a host-level
+#   reverse proxy (e.g. Nginx, Caddy, or cloud load balancer).
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-agents_system}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-agents_system}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  redis:
+    # Redis 8 bundles RediSearch Query Engine required by langgraph-checkpoint-redis
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "notice"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agents-system:latest
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - ${ENV_FILE:-.env.prod}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-agents_system}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agents-system:latest
+    restart: unless-stopped
+    command: ["uvicorn", "agents_system.server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    env_file:
+      - ${ENV_FILE:-.env.prod}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-agents_system}}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PORT: 8000
+    ports:
+      - "127.0.0.1:${PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Liveness check: ensures the Python process and event loop are responsive.
+      # Returns 200 as long as the process is alive. Docker healthcheck monitors
+      # container liveness. Traffic shaping / routing readiness (/ready) belongs
+      # to the upstream load balancer or reverse proxy (e.g. Nginx, Traefik, ALB).
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+volumes:
+  postgres_data:
+  redis_data:

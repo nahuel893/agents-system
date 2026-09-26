@@ -1,0 +1,20 @@
+[Unit]
+Description=agents-system database migration
+Documentation=https://github.com/nahuel893/agents-system
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+User=agents-system
+Group=agents-system
+WorkingDirectory=/opt/agents-system
+Environment="PATH=/opt/agents-system/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+EnvironmentFile=/etc/agents-system/agents-system.env
+ExecStart=/opt/agents-system/.venv/bin/alembic upgrade head
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
