@@ -10,14 +10,14 @@
 # start with `#`; gitleaks skips them.
 
 # Issue #78 Phase 0 Slice 2 (PR #96) -- the curl-auth-header rule matched a
-# documentation EXAMPLE token in the GET /metrics curl example
-# (`curl -H "Authorization: Bearer some-long-random-token" ...` / its ES
-# twin), not a real credential -- there is nothing to rotate. The current
-# file content (as of the follow-up commit right after these) already
-# rewrites the example to reference $METRICS_API_KEY instead of a literal
-# value, the same safe pattern docs/platform/demo-entrypoint.md uses for
-# $ADAPTER_API_KEY; these two entries only silence the now-historical
-# commit's own diff, which gitleaks re-scans on every PR regardless of
-# later fixes.
+# documentation example placeholder value (a made-up, non-live token) in
+# the GET /metrics curl example, EN and ES docs, not a real credential --
+# there is nothing to rotate. The follow-up commit right after these
+# rewrites the example to reference the METRICS_API_KEY env var instead of
+# a literal value, the same safe pattern docs/platform/demo-entrypoint.md
+# uses for ADAPTER_API_KEY; these two entries only silence the
+# now-historical commit's own diff, which gitleaks re-scans on every PR
+# regardless of later fixes. (Do not spell out the flagged example string
+# itself in this comment -- gitleaks would flag this file's own diff too.)
 24157a189645fc9fc080cd7900ce884f11c21017:docs/platform/observability.md:curl-auth-header:26
 24157a189645fc9fc080cd7900ce884f11c21017:docs/platform_es/observability.md:curl-auth-header:29
