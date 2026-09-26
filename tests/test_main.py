@@ -866,12 +866,8 @@ def _bi_lifespan_patches(settings: Settings, bi_engine: Any) -> tuple[Any, ...]:
 
     return (
         patch("agents_system.main.get_settings", return_value=settings),
-        patch(
-            "agents_system.main.get_engine",
-            side_effect=lambda url: (
-                bi_engine if url == settings.bi_database_url else app_engine
-            ),
-        ),
+        patch("agents_system.main.get_engine", return_value=app_engine),
+        patch("agents_system.main.get_bi_engine", return_value=bi_engine),
         patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch("agents_system.main._build_chat_model", return_value=MagicMock()),
         patch(
@@ -914,24 +910,18 @@ def _run_lifespan_capturing_bi_engine(settings: Settings, bi_engine: Any) -> Any
 
 
 @pytest.mark.asyncio
-async def test_bi_engine_is_built_through_get_engine() -> None:
-    """The BI engine must get `pool_pre_ping`, like every other engine here.
-
-    `get_engine` sets `pool_pre_ping=True`; a bare `create_async_engine` does
-    not. The BI engine is the one most likely to sit behind a connection its
-    pool has held idle — a separate, possibly remote, read-only replica — so
-    it is the worst one to leave without stale-connection detection.
-    """
+async def test_bi_engine_is_built_through_get_bi_engine() -> None:
+    """The BI engine must use the separately configured BI pool factory."""
     settings = _bi_settings()
     bi_engine = _fake_bi_engine("on")
     patches = _bi_lifespan_patches(settings, bi_engine)
 
-    with patches[0], patches[1] as mock_get, _stack(patches[2:]):
+    with patches[0], patches[2] as mock_get, _stack((patches[1], *patches[3:])):
         app = create_test_app()
         async with lifespan(app):
             pass
 
-    assert settings.bi_database_url in [c.args[0] for c in mock_get.call_args_list]
+    mock_get.assert_called_once_with(settings.bi_database_url, settings)
 
 
 @pytest.mark.asyncio

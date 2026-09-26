@@ -79,6 +79,31 @@ class Settings(BaseSettings):
     # to `database_url`, because that engine can write and this one must not.
     bi_database_url: str = ""
 
+    # Database connection pools. Each engine has a separate pool in every
+    # process, so their maximum connection counts add together. ``max_overflow``
+    # deliberately permits zero: the SQL tool must not burst beyond its small,
+    # dedicated pool. The remaining limits must be positive to fail malformed
+    # deployment configuration at startup instead of during load.
+    database_pool_size: int = Field(default=5, gt=0)
+    database_max_overflow: int = Field(default=0, ge=0)
+    database_pool_timeout_s: int = Field(default=30, gt=0)
+    database_pool_recycle_s: int = Field(default=1_800, gt=0)
+
+    bi_pool_size: int = Field(default=3, gt=0)
+    bi_max_overflow: int = Field(default=0, ge=0)
+    bi_pool_timeout_s: int = Field(default=30, gt=0)
+    bi_pool_recycle_s: int = Field(default=1_800, gt=0)
+
+    medallion_pool_size: int = Field(default=3, gt=0)
+    medallion_max_overflow: int = Field(default=0, ge=0)
+    medallion_pool_timeout_s: int = Field(default=30, gt=0)
+    medallion_pool_recycle_s: int = Field(default=1_800, gt=0)
+
+    sql_pool_size: int = Field(default=2, gt=0)
+    sql_max_overflow: int = Field(default=0, ge=0)
+    sql_pool_timeout_s: int = Field(default=30, gt=0)
+    sql_pool_recycle_s: int = Field(default=1_800, gt=0)
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 

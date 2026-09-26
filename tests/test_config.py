@@ -444,6 +444,52 @@ def test_checkpointer_ttl_s_accepts_none() -> None:
 
 
 # ---------------------------------------------------------------------------
+# #11 — database connection-pool sizing
+# ---------------------------------------------------------------------------
+
+
+def test_pool_settings_have_conservative_per_engine_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.database_pool_size == 5
+    assert settings.database_max_overflow == 0
+    assert settings.database_pool_timeout_s == 30
+    assert settings.database_pool_recycle_s == 1_800
+    assert settings.bi_pool_size == 3
+    assert settings.medallion_pool_size == 3
+    assert settings.sql_pool_size == 2
+    assert settings.sql_max_overflow == 0
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("database_pool_size", 0),
+        ("database_max_overflow", -1),
+        ("database_pool_timeout_s", 0),
+        ("database_pool_recycle_s", 0),
+        ("bi_pool_size", 0),
+        ("bi_max_overflow", -1),
+        ("bi_pool_timeout_s", 0),
+        ("bi_pool_recycle_s", 0),
+        ("medallion_pool_size", 0),
+        ("medallion_max_overflow", -1),
+        ("medallion_pool_timeout_s", 0),
+        ("medallion_pool_recycle_s", 0),
+        ("sql_pool_size", 0),
+        ("sql_max_overflow", -1),
+        ("sql_pool_timeout_s", 0),
+        ("sql_pool_recycle_s", 0),
+    ],
+)
+def test_settings_reject_invalid_pool_values(field_name: str, value: int) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None, **{field_name: value})
+
+    assert field_name in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
 # D-023 — dedicated read-only BI connection
 # ---------------------------------------------------------------------------
 
