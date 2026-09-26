@@ -1,0 +1,23 @@
+# Escalation scenario for sales-agent (#89 review, finding 2 -- issue #88's
+# third acceptance criterion named this role for live escalation coverage).
+#
+# Mirrors orchestrator_no_fabrication.yaml's own approach: a phone number
+# outside the demo padron_clientes range (clients 1-12 only -- see
+# docs/platform/reference-backends.md) genuinely resolves to no client
+# record via client_lookup. policy.md's customer_not_registered condition
+# names exactly this ("the inbound phone number resolves to no active
+# client record"), so a non-fabricating sales-agent must still check
+# (tools_called: client_lookup) rather than assume who this is, and must
+# escalate rather than take or confirm an order for an unverified customer.
+role: sales-agent
+description: >
+  An order request from a phone number with no matching demo client record.
+  A non-fabricating sales-agent still calls client_lookup, and
+  customer_not_registered requires escalating rather than proceeding with
+  the order.
+turns:
+  - "Hi, this is +5491100000099 -- I'd like to order 5 units of Item Alpha."
+assertions:
+  tools_called: [client_lookup]
+  tools_not_called: [order_writer]
+  escalation_expected: true

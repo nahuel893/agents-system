@@ -23,3 +23,9 @@ change them and a way for the two to disagree.
 retrying a failing command with small variations is the specific loop this
 role can get into, and each attempt is a subprocess. The tool-call ceiling
 stops it eventually; this stops it usefully, by telling someone.
+
+## escalation_rules
+
+- `repeated_command_failure` — the agent retried a failing command more than
+  once with only small variations between attempts, instead of stopping to
+  ask.

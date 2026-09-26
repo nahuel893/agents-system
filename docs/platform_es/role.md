@@ -99,7 +99,26 @@ Todo rol resuelto mediante `resolve()` recibe seis cláusulas de comportamiento 
 
 ### Las reglas de escalamiento en el prompt compuesto
 
-`escalation_rules` (`escalate_to` y `conditions`) son datos de política estructurados, no prosa — declarar una condición en `policy.md` antes no cambiaba nada que el modelo pudiera usar, salvo que quien escribiera el `role.md` la repitiera ahí también (issue #36; el `role.md` de `accountant-agent` nunca menciona el escalamiento, así que su condición `figure_requested_outside_report_catalog` era invisible para el modelo). `harness/factory.py::_compose_prompt` ahora renderiza el `escalation_rules` ya resuelto como un bloque breve ("Escalate to: ...", una viñeta por condición) y lo inserta después del cuerpo del rol y de cualquier contenido de habilidades — siempre antes del contrato base del prompt de arriba, que sigue siendo el último bloque del prompt compuesto en todos los casos. Un rol cuyo `escalation_rules` resuelto no declara ni `escalate_to` ni `conditions` no recibe ningún bloque, así que esto no agrega nada a un rol que no declara nada.
+`escalation_rules` (`escalate_to`, `conditions` y `descriptions`) son datos de política estructurados, no prosa — declarar una condición en `policy.md` antes no cambiaba nada que el modelo pudiera usar, salvo que quien escribiera el `role.md` la repitiera ahí también (issue #36; el `role.md` de `accountant-agent` nunca menciona el escalamiento, así que su condición `figure_requested_outside_report_catalog` era invisible para el modelo). `harness/factory.py::_compose_prompt` renderiza el `escalation_rules` ya resuelto como un bloque breve y lo inserta después del cuerpo del rol y de cualquier contenido de habilidades — siempre antes del contrato base del prompt de arriba, que sigue siendo el último bloque del prompt compuesto en todos los casos. Un rol cuyo `escalation_rules` resuelto no declara ni `escalate_to` ni `conditions` no recibe ningún bloque, así que esto no agrega nada a un rol que no declara nada.
+
+El NOMBRE de la condición solo tampoco alcanzaba (issue #88, a raíz de #82): un modelo que entendía la falta de un dato se lo explicaba al usuario en lugar de llamar realmente a `escalation_notifier`, porque el bloque renderizado nunca decía que cumplir una condición significa llamar a la herramienta. Ahora cada condición se renderiza junto con su propia descripción cuando existe (`- nombre — descripción`), y el bloque afirma explícitamente que cumplir una condición significa **llamar** a `escalation_notifier` — no solo avisarle al usuario:
+
+```
+## escalation rules
+
+Escalate to: human
+
+Escalate immediately, rather than guess, whenever any of these apply.
+Meeting one means calling `escalation_notifier` — telling the user is not
+enough:
+- data_source_unreachable — the required data source is unreachable after
+  one retry attempt.
+- required_tool_missing
+```
+
+Una descripción proviene de la propia prosa de `policy.md` — una viñeta `- \`nombre\` — descripción`, por convención bajo un encabezado `## escalation_rules` — que `harness/loader.py::_parse_escalation_descriptions` extrae de donde `resolve()` ya lee ese archivo (`_load_role_files`). Se escribe **una sola vez**, en el rol que declara la condición por primera vez, y todo descendiente que hereda la condición vía `extends:` hereda también su descripción, sin repetir la prosa: `descriptions` se acumula a lo largo de la cadena (padre ∪ hijo, la redacción propia de un descendiente gana ante una colisión de nombre), a diferencia de `conditions` en sí, que el frontmatter de un hijo debe reescribir por completo (ver la propia nota de `agent/policy.md` al respecto). `base/policy.md` describe `required_tool_missing` y `confidence_below_threshold` una sola vez, en la raíz, y nada por debajo las repite.
+
+Una condición sin descripción en ninguna parte de su cadena igual se renderiza — como su nombre desnudo, exactamente igual que antes de #88 — en lugar de impedir que se componga el prompt. El punto donde esto se hace cumplir es `tests/test_role_contract_suite.py`'s `test_escalation_conditions_have_descriptions`: falla la build para un rol *predefinido* de la plataforma que declara una condición que nadie describió jamás. Un agente importador (`FolderLocator`/`InlineLocator`, `harness/loader.py`) no está sujeto a ese mismo test de contrato; puede suministrar un diccionario `descriptions` directamente en su `escalation_rules` (un `InlineLocator` no necesita parsear prosa, al ser ya datos en memoria) o escribir la misma convención de prosa en su propio `policy.md` (un `FolderLocator` se lee exactamente igual que la carpeta de un rol de la plataforma), pero no nombrar ninguna es una alternativa tolerada, no un error de carga.
 
 > **Decisión abierta (1):** ¿Deben las definiciones de agentes contener únicamente la semántica del rol —propósito, alcance, herramientas, habilidades, reglas de escalamiento— o también las políticas de ejecución, tales como qué modelo utilizar, si se habilita la caché activa y qué tiempos de espera aplicar? Las políticas de ejecución podrían pertenecer a `policy.md` (acoplando el rol a la infraestructura), a la factoría (separando responsabilidades) o a una capa de políticas independiente de la plataforma. Esta decisión afecta la portabilidad de las definiciones de agentes entre diferentes configuraciones de runtime.
 

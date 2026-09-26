@@ -36,3 +36,14 @@ descendant may tighten them and may not raise them.
 
 `delegation_policy.allowed: false` is deliberate. Spawning another agent is
 authority, and authority is granted per role, never inherited by default.
+
+## escalation_rules
+
+- `required_tool_missing` — a tool declared in the role's manifest is absent
+  from the injected surface at execution time.
+- `confidence_below_threshold` — the agent's confidence in its own answer or
+  match falls below the threshold the active skill or deployment defines.
+
+Both are declared at the root, not restated per role, so every descendant
+inherits the same description without repeating it — see `agent/policy.md`
+for why `conditions:` itself still has to be restated in full.

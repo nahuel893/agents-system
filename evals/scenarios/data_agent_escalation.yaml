@@ -1,0 +1,22 @@
+# Escalation scenario for data-agent (#89 review, finding 2 -- issue #88's
+# third acceptance criterion named this role for live escalation coverage).
+#
+# `catalog_search` genuinely returns zero rows for a SKU no `articulos` row
+# holds (`_CATALOG_SEARCH_SQL` is a plain `strpos` match -- a bogus code
+# matches nothing). policy.md's `empty_result_unexpected` condition names
+# exactly this: "the query result is empty and the requesting context
+# suggests the data should exist (possible schema change or data pipeline
+# failure)." The turn supplies that context explicitly (the SKU was ordered
+# before), so a policy-following model still checks (tools_called:
+# catalog_search) and then escalates instead of guessing why it is missing.
+role: data-agent
+description: >
+  Asks about a SKU that matches no catalog row, framed as one the caller has
+  ordered before. A non-fabricating data-agent still calls catalog_search,
+  and an unexpected empty result is grounds to escalate per
+  empty_result_unexpected rather than assume the SKU never existed.
+turns:
+  - "Please pull the current stock for SKU ZZZ-9999-GHOST -- we've ordered it from you before, so it should be in the catalog."
+assertions:
+  tools_called: [catalog_search]
+  escalation_expected: true

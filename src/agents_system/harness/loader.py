@@ -49,7 +49,7 @@ import dataclasses
 import pathlib
 import re
 import shutil
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import structlog
@@ -394,6 +394,77 @@ def _as_str_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
     return [str(value)]
+
+
+#: Issue #88 — matches a `- `name` — description` bullet, the shape
+#: `data-agent`/`orchestrator`/`sales-agent`/`summary-agent`'s
+#: `## escalation_rules` prose sections already used before anything parsed
+#: it back out. Tolerates a plain `--` too, since a human hand-typing prose
+#: reaches for either dash.
+_ESCALATION_DESCRIPTION_RE = re.compile(
+    r"^-\s+`([A-Za-z][A-Za-z0-9_]*)`\s+(?:—|--)\s+(.*)$"
+)
+
+
+def _parse_escalation_descriptions(
+    body: str, *, known_conditions: Iterable[str]
+) -> dict[str, str]:
+    """Parse `- `name` — description` bullets out of a policy.md prose body.
+
+    Issue #88: `escalation_rules.conditions` is structured YAML, but WHY each
+    condition exists lived only in `policy.md`'s prose -- `harness/
+    factory.py::_render_escalation_block` rendered the bare snake_case name
+    and nothing else, which #82 showed was not enough for a model to reliably
+    act on (`accountant-agent`'s `figure_requested_outside_report_catalog`
+    needed a concrete restatement in `role.md` before its live scenario
+    passed reliably). This is the loader half: read the description back out
+    of the SAME prose a human already writes to explain the condition to the
+    next maintainer, instead of requiring it to be duplicated into `role.md`
+    by hand for every condition, on every role.
+
+    Only a bullet whose backtick name matches a condition THIS file's own
+    frontmatter declares is captured -- *known_conditions* -- so unrelated
+    backtick-dash prose elsewhere in a policy.md (there is plenty, e.g. in
+    the autonomy/delegation sections) is never mistaken for an escalation
+    description.
+
+    A description that wraps onto following lines -- every predefined role's
+    policy.md hand-wraps at ~80 columns, indented under the bullet -- is
+    joined back onto one string with single spaces. A blank line, a heading,
+    or a new bullet ends the one being continued.
+    """
+    known = set(known_conditions)
+    if not known:
+        return {}
+
+    descriptions: dict[str, str] = {}
+    current: str | None = None
+    for line in body.splitlines():
+        match = _ESCALATION_DESCRIPTION_RE.match(line)
+        if match:
+            name, text = match.group(1), match.group(2).strip()
+            current = name if name in known else None
+            if current:
+                descriptions[current] = text
+            continue
+
+        stripped = line.strip()
+        is_continuation = (
+            current is not None
+            and line[:1] in (" ", "\t")
+            and bool(stripped)
+            and not stripped.startswith(("-", "#"))
+        )
+        if is_continuation:
+            assert current is not None  # narrows for mypy; guarded above
+            descriptions[current] = f"{descriptions[current]} {stripped}"
+            continue
+
+        # Blank line, heading, unindented prose, or a new bullet: whatever
+        # bullet was being continued is done.
+        current = None
+
+    return descriptions
 
 
 # ---------------------------------------------------------------------------
@@ -1188,7 +1259,7 @@ def _load_role_files(
     role_fm, role_body = _read_md(folder / "role.md")
     role_body = _split_design_notes(role_body, source=folder / "role.md")
     manifest_fm, _ = _read_md(folder / "manifest.md")
-    policy_fm, _ = _read_md(folder / "policy.md")
+    policy_fm, policy_body = _read_md(folder / "policy.md")
 
     role_name: str = str(role_fm.get("name", manifest_fm.get("role", role_type)))
     version: str = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
@@ -1216,6 +1287,32 @@ def _load_role_files(
         for decl in _parse_command_tools(manifest_fm, source=folder / "manifest.md")
     }
 
+    # Issue #88 — `descriptions` (name -> prose) is populated two ways, and
+    # both may be present at once: parsed from this file's own
+    # `## escalation_rules` prose (`_parse_escalation_descriptions`, the
+    # predefined-role convention), and/or declared directly in frontmatter
+    # (`escalation_rules.descriptions:`) -- the shape an importer agent's
+    # `FolderLocator` folder can use instead of hand-formatted prose. An
+    # explicit frontmatter entry wins over a same-named parsed one, since it
+    # is the more deliberate of the two.
+    escalation_rules = dict(policy_fm.get("escalation_rules") or {})
+    parsed_descriptions = _parse_escalation_descriptions(
+        policy_body, known_conditions=_as_str_list(escalation_rules.get("conditions"))
+    )
+    declared_descriptions = escalation_rules.get("descriptions")
+    if parsed_descriptions or isinstance(declared_descriptions, dict):
+        escalation_rules = {
+            **escalation_rules,
+            "descriptions": {
+                **parsed_descriptions,
+                **(
+                    declared_descriptions
+                    if isinstance(declared_descriptions, dict)
+                    else {}
+                ),
+            },
+        }
+
     definition = RawDefinition(
         role_name=role_name,
         version=version,
@@ -1231,7 +1328,7 @@ def _load_role_files(
         # child LOOSENED a `confirm` parent, while `execution_limits`
         # inherited on omission. Same policy file, opposite behaviour.
         autonomy=str(policy_fm.get("autonomy", "")),
-        escalation_rules=dict(policy_fm.get("escalation_rules") or {}),
+        escalation_rules=escalation_rules,
         delegation_policy=dict(policy_fm.get("delegation_policy") or {}),
         memory_policy=dict(policy_fm.get("memory_policy") or {}),
         audit_policy=dict(policy_fm.get("audit_policy") or {}),
@@ -1368,6 +1465,36 @@ def _fold_parent_into_child(
         merged.update(b)
         return merged
 
+    def _merge_escalation_rules(
+        parent_rules: dict[str, Any], child_rules: dict[str, Any]
+    ) -> dict[str, Any]:
+        """`_merge_mapping`, plus one exception (issue #88): `descriptions`
+        accumulates DEEPLY (parent ∪ child, child wins per-name) instead of
+        one side replacing the other wholesale.
+
+        Every other key here keeps the existing shallow rule -- a child
+        `conditions:` list fully replaces the parent's, which is why every
+        role's own frontmatter restates its whole inherited condition list
+        (see `agent/policy.md`'s own docstring). `descriptions` is different
+        on purpose: it is prose, written once at the role that introduces a
+        condition, and every descendant should inherit it without repeating
+        it -- the same shape `command_tool_declarations` already gets one
+        field up in this same function.
+        """
+        merged = _merge_mapping(parent_rules, child_rules)
+        parent_descriptions = parent_rules.get("descriptions")
+        child_descriptions = child_rules.get("descriptions")
+        if isinstance(parent_descriptions, dict) or isinstance(
+            child_descriptions, dict
+        ):
+            merged["descriptions"] = {
+                **(
+                    parent_descriptions if isinstance(parent_descriptions, dict) else {}
+                ),
+                **(child_descriptions if isinstance(child_descriptions, dict) else {}),
+            }
+        return merged
+
     # ADR-002 C.12. Additive, like `tools`/`permissions` above -- but unlike
     # those plain string lists, a NAME collision between two platform roles
     # is a real ambiguity (which entry's argv/params/tier wins?), so it is
@@ -1396,7 +1523,7 @@ def _fold_parent_into_child(
         context=_merge_mapping(parent.context, child.context),
         permissions=resolved_perms,
         autonomy=resolved_autonomy,
-        escalation_rules=_merge_mapping(
+        escalation_rules=_merge_escalation_rules(
             parent.escalation_rules, child.escalation_rules
         ),
         delegation_policy=_merge_mapping(
@@ -1768,6 +1895,21 @@ def _resolve_mapping_directive(
                     result["conditions"] = _resolve_list_directive(
                         parent_conditions, {"inherit": True, "remove": v}
                     )
+                elif k == "descriptions" and isinstance(v, dict):
+                    # Issue #88 — same reasoning as `descriptions`' role-chain
+                    # merge (`_fold_parent_into_child`): a deployment that
+                    # supplies its own descriptions for the conditions it
+                    # `add`s should not silently erase the generic role's
+                    # inherited ones by replacing the whole mapping.
+                    existing_descriptions = result.get("descriptions")
+                    result["descriptions"] = {
+                        **(
+                            existing_descriptions
+                            if isinstance(existing_descriptions, dict)
+                            else {}
+                        ),
+                        **v,
+                    }
                 else:
                     result[k] = v
             return result

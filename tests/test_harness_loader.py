@@ -186,6 +186,40 @@ def test_escalation_rules_inherit_add_appends() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue #88 — escalation condition descriptions reach the resolved
+# definition, and accumulate across the whole `extends:` chain.
+# ---------------------------------------------------------------------------
+def test_resolved_data_agent_has_its_own_condition_descriptions() -> None:
+    from agents_system.harness.loader import resolve
+
+    definition = resolve("data-agent", roots=_real_roots())
+
+    descriptions = definition.escalation_rules["descriptions"]
+    assert "unreachable" in descriptions["data_source_unreachable"]
+
+
+def test_resolved_developer_agent_inherits_descriptions_from_the_whole_chain() -> None:
+    """`developer-agent` extends `operator-agent` extends `agent` extends
+    `base` -- its OWN policy.md only describes `repeated_command_failure`,
+    but every inherited condition must still resolve to a description
+    without developer-agent repeating any of them."""
+    from agents_system.harness.loader import resolve
+
+    definition = resolve("developer-agent", roots=_real_roots())
+
+    descriptions = definition.escalation_rules["descriptions"]
+    # Its own, newly-introduced condition.
+    assert "retried" in descriptions["repeated_command_failure"]
+    # Inherited from operator-agent.
+    assert "allowlist" in descriptions["command_refused_by_policy"]
+    # Inherited from agent.
+    assert descriptions["explicit_user_request"]
+    # Inherited from base, two levels further up the chain.
+    assert descriptions["required_tool_missing"]
+    assert descriptions["confidence_below_threshold"]
+
+
+# ---------------------------------------------------------------------------
 # Test 7 — Invariant: override tool NOT in parent raises DefinitionError
 # ---------------------------------------------------------------------------
 def test_override_tool_not_in_parent_raises_definition_error() -> None:

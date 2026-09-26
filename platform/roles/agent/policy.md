@@ -21,3 +21,12 @@ only equal or tighten, and this role has no argument for more.
 Mapping directives merge key-by-key, so the parent's `escalate_to: human`
 survives and only `conditions` is replaced. A customer asking for a person
 gets one.
+
+## escalation_rules
+
+- `explicit_user_request` — the user has directly asked to speak with a
+  human, or to be routed away from the agent, at any point in the
+  conversation.
+
+`required_tool_missing` and `confidence_below_threshold` keep `base`'s
+description; only the condition this role actually adds needs one here.

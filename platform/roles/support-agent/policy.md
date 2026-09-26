@@ -23,5 +23,13 @@ produces something fluent and wrong.
 `customer_expressed_frustration` is here because the cost of escalating early
 is one human minute, and the cost of escalating late is the customer.
 
+## escalation_rules
+
+- `no_knowledge_base_match` — retrieval came back empty for the customer's
+  question; answering anyway means guessing, not knowing.
+- `customer_expressed_frustration` — the customer's own words signal
+  frustration or anger, regardless of whether their underlying question has
+  already been answered.
+
 `autonomy: supervised`, matching the base. This role talks directly to
 customers; there is no argument for less oversight.

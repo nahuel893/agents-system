@@ -31,3 +31,9 @@ failing command is a fork bomb with good intentions.
 that hits the allowlist boundary has found the edge of what this deployment
 permits, and the right response is to say so — not to look for another way
 around.
+
+## escalation_rules
+
+- `command_refused_by_policy` — the sandbox's own allowlist refused a
+  command this role tried to run; that is the edge of what this deployment
+  permits, not something to route around.
