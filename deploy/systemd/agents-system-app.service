@@ -1,0 +1,29 @@
+[Unit]
+Description=agents-system API server and webhook worker (ADR-001 Stage A)
+Documentation=https://github.com/nahuel893/agents-system
+After=network.target postgresql.service redis.service agents-system-migrate.service
+Requires=agents-system-migrate.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agents-system
+EnvironmentFile=-/etc/agents-system/agents-system.env
+ExecStart=/usr/bin/env uvicorn agents_system.server:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+# Resource limits consistent with ADR-001 Stage A pool sizing
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
