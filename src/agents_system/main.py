@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import uuid
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Literal
 
@@ -574,9 +574,15 @@ async def _outbox_backlog(engine: Any) -> OutboxBacklogCounts | None:
         return None
 
 
+_MAX_RUNTIME_ID_LENGTH = 64
+"""A runtime id lands in URLs, every log line of its turns and /metrics
+labels, so it is short by contract, not only safe by character class."""
+
+
 def _validate_runtime_id(runtime_id: str) -> str:
-    """Reject a runtime id that is empty or contains anything other than
-    letters, digits, underscore or hyphen (design.md D6).
+    """Reject a runtime id that is empty, longer than
+    ``_MAX_RUNTIME_ID_LENGTH``, or contains anything other than letters,
+    digits, underscore or hyphen (design.md D6).
 
     A runtime id is deployer-chosen (design.md D5) and becomes part of
     URLs (``/v1/models``), structured logs and metrics labels once
@@ -588,6 +594,18 @@ def _validate_runtime_id(runtime_id: str) -> str:
     Malformed ids fail here, at registration time, rather than surfacing as
     a confusing lookup miss at first request.
     """
+    if not isinstance(runtime_id, str):
+        raise DefinitionError(
+            f"Invalid runtime id of type {type(runtime_id).__name__}: a "
+            "runtime id must be a str."
+        )
+    if len(runtime_id) > _MAX_RUNTIME_ID_LENGTH:
+        # Never echo the whole value: the length is the problem.
+        raise DefinitionError(
+            f"Invalid runtime id {runtime_id[:_MAX_RUNTIME_ID_LENGTH]!r}... "
+            f"({len(runtime_id)} characters). A runtime id is at most "
+            f"{_MAX_RUNTIME_ID_LENGTH} characters."
+        )
     if not _SAFE_SEGMENT.fullmatch(runtime_id):
         raise DefinitionError(
             f"Invalid runtime id {runtime_id!r}. Must match "
@@ -698,6 +716,16 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
     if settings.whatsapp_runtime_id and settings.whatsapp_runtime_id not in channel_ids:
         channel_ids.append(settings.whatsapp_runtime_id)
 
+    for runtime_id, granted in (grants or {}).items():
+        # A str (or bytes) satisfies Sequence[str] but would be granted one
+        # character at a time; a non-iterable cannot be a grant at all.
+        if isinstance(granted, str | bytes) or not isinstance(granted, Iterable):
+            raise DefinitionError(
+                f"grants[{runtime_id!r}] must be a list of permission wire "
+                f"names, got {type(granted).__name__}. A bare string is not "
+                "a grant list. Refusing to boot."
+            )
+
     if agents is None:
         if clients is not None:
             raise DefinitionError(
@@ -774,22 +802,25 @@ def create_app(
     agents:
         Deployer-chosen runtime id -> either an ``Agent`` (a custom,
         library-defined agent) or a bare ``str`` (a predefined platform-role
-        name, resolved exactly as before this parameter existed). Replaces
-        the old ``{deployment}__{role}`` runtime-id encoding entirely --
-        every id here is an opaque string, never parsed. ``None`` (the
-        default) falls back to the existing ``Settings``-driven boot path,
-        so a caller that never passes it (e.g. ``demo.py``'s ``build_app``)
-        is unaffected. NOTE: in this slice the mapping is only validated and
-        stashed on ``app.state.agents`` -- ``lifespan()`` does not read it
-        yet.
+        name, resolved exactly as the legacy runtime id resolved it). Every
+        id is opaque, never parsed: at most 64 letters, digits, ``_`` or
+        ``-``, not starting with ``_`` or ``-``. The lifespan builds a
+        runtime for EVERY entry at boot, and one entry that fails to resolve
+        or equip fails the whole boot. ``WHATSAPP_RUNTIME_ID`` and each
+        ``ADAPTER_RUNTIMES`` id must be a key here, or boot fails naming it;
+        ``/v1/models`` lists only the ``ADAPTER_RUNTIMES`` ids. ``None`` (the
+        default) keeps the ``Settings``-driven boot path, so a caller that
+        never passes it (e.g. ``demo.py``'s ``build_app``) is unaffected.
     grants:
-        Runtime id -> granted permission wire names, keyed by the same ids
-        as ``agents``. ``None`` falls back to ``settings.deploy_grants``.
-        Stashed on ``app.state.grants``; not yet read by ``lifespan()``.
+        Runtime id -> granted permission wire names (a list, never a bare
+        string), keyed by the same ids as ``agents``. Nothing is granted
+        automatically: a registered id with no entry fails boot. ``None``
+        falls back to ``settings.deploy_grants`` (``DEPLOY_GRANTS``), keyed
+        by the same ids.
     clients:
-        Runtime id -> deployment client name, meaningful only when
-        ``agents[id]`` is a ``str`` (a predefined role). Stashed on
-        ``app.state.clients``; not yet read by ``lifespan()``.
+        Runtime id -> deployment client name, valid only for a registered
+        ``str`` (predefined role) entry. An entry for an ``Agent``, for an
+        id ``agents`` does not register, or without ``agents`` fails boot.
     participant_directory:
         Resolves an inbound channel address to an identity. Absent means the
         inbound route fails closed and runs no turn.
@@ -797,8 +828,9 @@ def create_app(
         Records completed turns. Absent means none are recorded.
     roots:
         Consumer-owned path configuration for platform and deployment roles.
-        Client overrides (<client>__<role>) require an explicit RootConfig
-        specifying deployments_root.
+        A client override (``clients[id]``, or a legacy
+        ``<client>__<role>`` id) requires an explicit RootConfig specifying
+        deployments_root.
     title:
         OpenAPI title.
     """
