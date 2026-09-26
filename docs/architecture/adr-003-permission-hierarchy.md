@@ -65,10 +65,10 @@ This ADR preserves ADR-002's historical text while superseding the following shi
 ## Open follow-ups
 
 - **Issue #47:** evals retain an implicit full-grant default. Resolved Decision 4 deliberately excludes that behavior from this ADR.
-- **Library class-form grants:** `build_runtime(..., granted_permissions=[SomeUnregisteredClass])` does not universally fail at grant time. An unregistered class that R3-covers a role-declared permission can enter `deploy_grant_ceiling`; when `AgentRuntime.run_turn` uses its default permissions, it reverse-resolves that class and raises `UnknownPermissionNameError` before graph execution or a tool call. An unregistered class that covers no declared permission is omitted from the ceiling and does not trigger that deferred failure. Callers that explicitly pass turn permissions avoid the default reverse-resolution path. Registration requirements should be enforced earlier for this library-only case.
 
 ## Corrections
 
 - The shipped root error is `AgentPermissionError`, not `PermissionError`.
 - Tier ordering and registry get-or-create behavior are explicit and lock-protected, respectively; neither relies on incidental enum ordering or a separate resolve-then-register sequence.
 - The persisted grant ceiling is bounded by R3 coverage of the role's declared permissions, not merely normalized from the raw grant list.
+- Class-form grants are reverse-resolved through the registry during `build_runtime`; an unregistered downstream class raises `UnknownPermissionNameError` at build time, including when supplied through `create_app(grants=...)` at boot. The built-in action-family classes remain valid class-form grants despite intentionally having no individual wire names.

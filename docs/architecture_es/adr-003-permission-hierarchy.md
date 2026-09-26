@@ -65,10 +65,10 @@ Este ADR conserva el texto histórico de ADR-002, pero reemplaza las siguientes 
 ## Seguimientos abiertos
 
 - **Issue #47:** los evals conservan un valor por defecto implícito de grant completo. La Decisión resuelta 4 excluye deliberadamente ese comportamiento de este ADR.
-- **Grants por clase en librería:** `build_runtime(..., granted_permissions=[SomeUnregisteredClass])` no falla de forma universal al otorgar. Una clase sin registrar que cubre mediante R3 un permiso declarado por el rol puede entrar en `deploy_grant_ceiling`; cuando `AgentRuntime.run_turn` usa sus permisos por defecto, resuelve esa clase a la inversa y genera `UnknownPermissionNameError` antes de ejecutar el grafo o llamar una herramienta. Una clase sin registrar que no cubre ningún permiso declarado se omite del techo y no activa ese fallo diferido. Los llamadores que pasan permisos de turno explícitos evitan la ruta de resolución inversa por defecto. Este caso solo de librería debe aplicar el requisito de registro antes.
 
 ## Correcciones
 
 - La raíz de error entregada es `AgentPermissionError`, no `PermissionError`.
 - El orden de tiers y el get-or-create del registro son explícitos y están protegidos por lock, respectivamente; ninguno depende del orden incidental de enums ni de una secuencia separada de resolver y luego registrar.
 - El techo de grants persistido está limitado por la cobertura R3 de los permisos declarados por el rol, no se normaliza simplemente a partir de la lista de grants bruta.
+- Los grants por clase se resuelven en sentido inverso mediante el registro durante `build_runtime`; una clase descendiente sin registrar genera `UnknownPermissionNameError` en tiempo de construcción, incluso cuando se entrega mediante `create_app(grants=...)` al arrancar. Las clases incorporadas de familias de acción siguen siendo grants por clase válidos aunque deliberadamente no tengan wire names individuales.

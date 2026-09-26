@@ -65,9 +65,16 @@ from agents_system.harness.loader import (
 )
 from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 from agents_system.permissions import (
+    Exec,
     Permission,
+    Query,
+    Read,
+    Run,
+    Send,
+    Spawn,
     UnknownPermissionNameError,
     UntrustedInputGrantError,
+    Write,
     covers,
 )
 from agents_system.permissions.permission_registry import permission_registry
@@ -79,6 +86,12 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 _SKILL_SEPARATOR = "\n\n---\n\n"
+
+# Action-family grants intentionally have no wire names: their R3 coverage
+# applies across the registered resource permissions below each family.
+_ACTION_FAMILY_GRANTS: frozenset[type[Permission]] = frozenset(
+    {Read, Write, Send, Exec, Run, Spawn, Query}
+)
 
 
 class FactoryError(Exception):
@@ -487,13 +500,22 @@ def build_runtime(
 
     definition = resolve(role_type, client=client, roots=roots)
 
-    # Resolve every raw grant entry (string or class) to a class ONCE.
-    # Unknown wire names fail loudly here (registry) before any R3/R4
-    # bounding below, so a typo'd DEPLOY_GRANTS entry cannot silently
-    # disappear as "covers nothing" instead of surfacing the typo.
-    raw_grant_classes = frozenset(
-        permission_registry.resolve(p) if isinstance(p, str) else p for p in granted
-    )
+    # Resolve every raw grant entry (string or class) to a known class ONCE.
+    # Registered resource classes use the registry's reverse lookup; the
+    # built-in action families intentionally have no wire names but remain
+    # valid class-form grants. Unknown wire names and downstream unregistered
+    # classes fail loudly here before any R3/R4 bounding below, so neither can
+    # silently disappear as "covers nothing" and defer a configuration error
+    # to a later turn.
+    resolved_grant_classes: set[type[Permission]] = set()
+    for grant in granted:
+        if isinstance(grant, str):
+            resolved_grant_classes.add(permission_registry.resolve(grant))
+        else:
+            if grant not in _ACTION_FAMILY_GRANTS:
+                permission_registry.reverse(grant)
+            resolved_grant_classes.add(grant)
+    raw_grant_classes = frozenset(resolved_grant_classes)
 
     # PR #55 security review (HIGH) — R4 at grant time (spec scenario:
     # "Untrusted role cannot be equipped with a T3 grant at deploy time").
