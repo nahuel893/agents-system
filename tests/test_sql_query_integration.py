@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -458,6 +459,25 @@ async def test_an_unreachable_database_is_a_result_not_an_exception() -> None:
         await engine.dispose()
 
     assert result["error_kind"] == "database_unavailable"
+    assert verified is None
+
+
+async def test_a_rejected_password_is_a_result_not_an_exception() -> None:
+    # The right host and role with the wrong password: asyncpg raises
+    # InvalidPasswordError, which SQLAlchemy does not wrap on the connect
+    # path either.
+    url = make_url(_require("SQL_DATABASE_URL")).set(password="not-the-password")
+    engine = get_engine(url.render_as_string(hide_password=False))
+    try:
+        result = await build_sql_query_connector(engine, _CONFIG)(
+            {"sql": "SELECT count(*) FROM sales_v"}
+        )
+        verified = await verify_query_role(engine, _ALLOWED)
+    finally:
+        await engine.dispose()
+
+    assert result["error_kind"] == "database_unavailable"
+    assert "not-the-password" not in json.dumps(result)
     assert verified is None
 
 
