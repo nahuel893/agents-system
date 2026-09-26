@@ -162,22 +162,35 @@ propagarlo a cada llamada `record_*` de ese turno.
 
 ### 6. Observabilidad
 
-**Qué existe:** `langsmith` está presente solo como dependencia transitiva
-de `langchain-core` vía `langgraph` (`uv.lock:956`) — no es una dependencia
-directa de `pyproject.toml`. No existe ningún import de `opentelemetry` ni
-de `langsmith`/`LANGCHAIN_TRACING` en ningún lugar de `src/`. No existe
-librería de métricas ni endpoint `/metrics` en `main.py`.
-`evals/reporting.py::write_results` escribe los resultados de evals a un
-archivo; nada en `src/` vuelve a leer esa salida hacia una señal en tiempo
-de ejecución.
+**Qué existe (actualizado por el issue #78 Phase 0 Slice 2):** `GET
+/metrics` (`main.py`, protegido por `metrics_enabled`/`metrics_api_key`,
+misma postura fail-closed que el adapter de OpenAI) ahora exporta el
+conjunto mínimo de contadores que pedía esta sección — `agent_turns_total`,
+`agent_tool_calls_total` (incluyendo los outcomes denied/blocked),
+`agent_limit_trips_total`, más `agent_tokens_total`/`agent_cost_usd_total`
+e histogramas de duración de turno/llamada a herramienta — vía
+`prometheus_client`, una nueva dependencia directa. La memoria residente y
+el CPU del proceso (`process_resident_memory_bytes`,
+`process_cpu_seconds_total`) también se exportan, a través del
+`ProcessCollector` por defecto de `prometheus_client`. Ver
+`docs/platform_es/observability.md` para la referencia completa de
+métricas y labels. `langsmith` sigue presente solo como dependencia
+transitiva de `langchain-core` vía `langgraph` (`uv.lock`) — no es una
+dependencia directa de `pyproject.toml`; no existe ningún import de
+`opentelemetry` ni de `langsmith`/`LANGCHAIN_TRACING` en ningún lugar de
+`src/`. `evals/reporting.py::write_results` escribe los resultados de
+evals a un archivo, ahora incluyendo la duración de turno por
+corrida/escenario; nada en `src/` vuelve a leer esa salida hacia una señal
+en tiempo de ejecución.
 
-**Vacío:** cero trazas, cero métricas; los resultados de evals son un
-artefacto aislado, desconectado del monitoreo en tiempo de ejecución.
+**Vacío:** cero trazas; los resultados de evals siguen siendo un artefacto
+aislado, desconectado del monitoreo en tiempo de ejecución. El tracing de
+LangSmith todavía no está cableado.
 
 **Dirección:** cablear el tracing de LangSmith detrás de un flag explícito
-de settings primero (la dependencia ya está resuelta), y luego agregar un
-set mínimo de contadores (llamadas a herramientas, denegaciones, límites
-excedidos) antes de cualquier despliegue más amplio de OpenTelemetry.
+de settings (la dependencia ya está resuelta), y luego ampliar más allá
+del conjunto mínimo de contadores de este slice hacia OpenTelemetry cuando
+aparezca una necesidad concreta de trazas (no sólo contadores).
 
 **Prioridad:** P3 · **Dependencia:** ninguna bloqueante; los contadores que
 producirían las áreas 3 y 2 son lo que consumirían las alertas del área 7.

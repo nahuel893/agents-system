@@ -1686,3 +1686,428 @@ def test_compute_turn_cost_still_prices_ordinary_plausible_usage() -> None:
     )
 
     assert _compute_turn_cost(usage, "some-model", settings) == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------------------
+# #78 Phase 0 Slice 2 -- turn/tool-call/limit-trip metrics recorded at the
+# existing choke points (run_turn_with_usage/_finish_turn, _execute_tools,
+# _limit_reached). Every test builds its OWN Metrics from a fresh
+# CollectorRegistry (never DEFAULT_METRICS) so tests never collide with
+# each other -- see tests/test_observability_metrics.py's module docstring.
+# ---------------------------------------------------------------------------
+
+
+def _fresh_metrics() -> Any:
+    from prometheus_client import CollectorRegistry
+
+    from agents_system.observability.metrics import build_metrics
+
+    return build_metrics(CollectorRegistry())
+
+
+@pytest.mark.asyncio
+async def test_ok_turn_records_turn_metrics_and_token_cost() -> None:
+    """A normal turn increments turns_total{outcome="ok"}, observes
+    turn_duration_seconds, and (usage being known) tokens_total/cost_usd_total."""
+    from agents_system.agent.graph import AgentRuntime
+
+    final_reply = AIMessage(
+        content="Hello!",
+        usage_metadata={"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+    )
+    model = FakeMessagesListChatModel(responses=[final_reply])
+    runtime = _make_runtime()
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(
+        runtime, model, runtime_id="acme__sales-agent", metrics=metrics
+    )
+
+    await agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=())
+
+    assert (
+        metrics.turns_total.labels(
+            runtime_id="acme__sales-agent", outcome="ok"
+        )._value.get()
+        == 1
+    )
+    histogram = metrics.turn_duration_seconds.labels(
+        runtime_id="acme__sales-agent", outcome="ok"
+    )
+    assert histogram._sum.get() >= 0
+    assert (
+        metrics.tokens_total.labels(
+            runtime_id="acme__sales-agent", direction="input"
+        )._value.get()
+        == 10
+    )
+    assert (
+        metrics.tokens_total.labels(
+            runtime_id="acme__sales-agent", direction="output"
+        )._value.get()
+        == 4
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_id_defaults_to_derived_model_id_when_not_given() -> None:
+    """Constructing an AgentRuntime with no explicit runtime_id labels its
+    metrics under its own derived provider model id (backward-compatible
+    default -- every existing construction site keeps working unmodified)."""
+    from agents_system.agent.graph import AgentRuntime, model_display_name
+
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
+    runtime = _make_runtime()
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(runtime, model, metrics=metrics)
+
+    await agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=())
+
+    expected_runtime_id = model_display_name(model)
+    assert (
+        metrics.turns_total.labels(
+            runtime_id=expected_runtime_id, outcome="ok"
+        )._value.get()
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_timeout_turn_records_timeout_outcome_with_no_token_counters() -> None:
+    """A turn that hits total_execution_timeout_s records outcome="timeout"
+    and increments no tokens_total/cost_usd_total sample (usage is honestly
+    unknown -- see TurnUsage's own honesty rule)."""
+    from agents_system.agent.graph import AgentRuntime
+
+    model = _SlowFakeModel(responses=[AIMessage(content="unreachable")])
+    definition = _fake_definition(execution_limits={"total_execution_timeout_s": 0.05})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(),
+        denied_tools=(),
+        skills=(),
+    )
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(
+        runtime, model, runtime_id="acme__sales-agent", metrics=metrics
+    )
+
+    await asyncio.wait_for(
+        agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=()),
+        timeout=2.0,
+    )
+
+    assert (
+        metrics.turns_total.labels(
+            runtime_id="acme__sales-agent", outcome="timeout"
+        )._value.get()
+        == 1
+    )
+    families = {f.name: f for f in metrics.registry.collect()}
+    assert families["agent_tokens"].samples == []
+    assert families["agent_cost_usd"].samples == []
+
+
+@pytest.mark.asyncio
+async def test_ok_tool_call_records_ok_outcome() -> None:
+    from agents_system.agent.graph import AgentRuntime
+
+    tool_call_id = "call_metrics_ok"
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": tool_call_id,
+                "name": "catalog_search",
+                "args": {"q": "sugar"},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="Done.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    catalog_spec = _catalog_spec()
+    runtime = _make_runtime(tools=(catalog_spec,))
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(runtime, model, metrics=metrics)
+
+    await agent.run_turn(
+        [HumanMessage(content="Search for sugar")],
+        session_id="s1",
+        permissions=("read:catalog",),
+    )
+
+    assert (
+        metrics.tool_calls_total.labels(
+            tool="catalog_search", outcome="ok"
+        )._value.get()
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_call_to_unknown_tool_records_denied_outcome() -> None:
+    """PolicyViolation(reason="not_in_surface") -- a tool never equipped at
+    all -- is recorded as outcome="denied"."""
+    from agents_system.agent.graph import AgentRuntime
+
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_metrics_denied",
+                "name": "nonexistent_tool",
+                "args": {},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="I cannot use that tool.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    runtime = _make_runtime()  # empty surface
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(runtime, model, metrics=metrics)
+
+    await agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=())
+
+    # The model's own tool name was never a real registered connector (it
+    # never reached the equipped surface), so it carries no monitoring value
+    # -- and, per test_denied_tool_call_never_leaks_attacker_tool_name_below,
+    # it must never become the label verbatim. Only the fixed placeholder is
+    # recorded, regardless of how benign this particular literal looks.
+    assert (
+        metrics.tool_calls_total.labels(
+            tool="_unrecognized_", outcome="denied"
+        )._value.get()
+        == 1
+    )
+    assert (
+        metrics.tool_calls_total.labels(
+            tool="nonexistent_tool", outcome="denied"
+        )._value.get()
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_denied_tool_call_never_leaks_attacker_tool_name() -> None:
+    """Label hygiene for the "denied" (not_in_surface) outcome specifically:
+
+    `tool_name` there comes straight from the model's own `tool_calls`
+    output (`call["name"]`) -- untrusted, since it is never checked against
+    the equipped surface before this point (that IS why it is "denied").
+    A prompt-injected or hallucinating model can put arbitrary text there,
+    including PII, and it must never reach the `agent_tool_calls_total`
+    label or the exported `/metrics` text -- unlike "ok"/"blocked"/
+    "timeout"/"error", where `tool_name` is already bound to a real,
+    equipped `ToolSpec` name and is safe to record as is.
+    """
+    from prometheus_client import generate_latest
+
+    from agents_system.agent.graph import AgentRuntime
+
+    attacker_tool_name = (
+        'leak_+15551234567_session_secret="XYZ"\nagent_turns 999 # injected'
+    )
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_injection_probe",
+                "name": attacker_tool_name,
+                "args": {},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="I cannot use that tool.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    runtime = _make_runtime()  # empty surface -> any call is "not_in_surface"
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(runtime, model, metrics=metrics)
+
+    await agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=())
+
+    output = generate_latest(metrics.registry).decode()
+    assert attacker_tool_name not in output
+    assert "+15551234567" not in output
+    assert (
+        metrics.tool_calls_total.labels(
+            tool="_unrecognized_", outcome="denied"
+        )._value.get()
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_call_revalidation_failure_records_blocked_outcome() -> None:
+    """PolicyViolation(reason="permission_revoked") -- a sensitive tool that
+    WAS equipped but fails Layer-2 revalidation -- is recorded as
+    outcome="blocked", distinct from "denied" above."""
+    from agents_system.agent.graph import AgentRuntime
+
+    def write_order(inputs: dict[str, Any]) -> dict[str, Any]:
+        return {"order_id": "ord-1"}
+
+    sensitive_spec = ToolSpec(
+        name="write_order",
+        required_permissions=("write:orders",),
+        connector=write_order,
+        tier=Tier.T2,
+    )
+
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_metrics_blocked",
+                "name": "write_order",
+                "args": {},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="Could not write the order.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    runtime = _make_runtime(tools=(sensitive_spec,))
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(runtime, model, metrics=metrics)
+
+    # Layer-2 revalidation: current_permissions no longer grants write:orders
+    # (narrowed after equipping) -- required_permissions coverage fails.
+    await agent.run_turn(
+        [HumanMessage(content="Place the order")], session_id="s1", permissions=()
+    )
+
+    assert (
+        metrics.tool_calls_total.labels(
+            tool="write_order", outcome="blocked"
+        )._value.get()
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_slow_tool_call_records_timeout_outcome() -> None:
+    from agents_system.agent.graph import AgentRuntime
+
+    async def slow_connector(
+        inputs: dict[str, Any], *, session: Any = None
+    ) -> dict[str, Any]:
+        await asyncio.sleep(10)
+        return {"status": "should never be reached"}
+
+    slow_spec = ToolSpec(
+        name="slow_tool",
+        required_permissions=(),
+        connector=slow_connector,
+        tier=Tier.T0,
+    )
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_metrics_timeout",
+                "name": "slow_tool",
+                "args": {},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="Done despite the slow tool.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    definition = _fake_definition(execution_limits={"tool_call_timeout_s": 0.05})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(slow_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(runtime, model, metrics=metrics)
+
+    await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Run the slow tool")],
+            session_id="s1",
+            permissions=(),
+        ),
+        timeout=2.0,
+    )
+
+    assert (
+        metrics.tool_calls_total.labels(
+            tool="slow_tool", outcome="timeout"
+        )._value.get()
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_max_tool_calls_breach_records_limit_trip() -> None:
+    from agents_system.agent.graph import AgentRuntime
+
+    def _tool_call(call_id: str) -> dict[str, Any]:
+        return {
+            "id": call_id,
+            "name": "catalog_search",
+            "args": {"q": "sugar"},
+            "type": "tool_call",
+        }
+
+    responses = [
+        AIMessage(content="", tool_calls=[_tool_call("call_limit_metrics_001")]),
+        AIMessage(content="", tool_calls=[_tool_call("call_limit_metrics_002")]),
+    ]
+    model = ToolAwareFakeModel(responses=responses)
+
+    definition = _fake_definition(execution_limits={"max_tool_calls": 1})
+    catalog_spec = _catalog_spec()
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(catalog_spec,),
+        denied_tools=(),
+        skills=(),
+    )
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(runtime, model, metrics=metrics)
+
+    await agent.run_turn(
+        [HumanMessage(content="Search repeatedly")],
+        session_id="s1",
+        permissions=("read:catalog",),
+    )
+
+    assert metrics.limit_trips_total.labels(limit="max_tool_calls")._value.get() == 1
+
+
+@pytest.mark.asyncio
+async def test_session_id_never_reaches_exported_metrics_text() -> None:
+    """Label hygiene, end to end: a session_id shaped like a phone number
+    must never appear in this runtime's recorded metrics."""
+    from prometheus_client import generate_latest
+
+    from agents_system.agent.graph import AgentRuntime
+
+    final_reply = AIMessage(content="Hello!")
+    model = FakeMessagesListChatModel(responses=[final_reply])
+    runtime = _make_runtime()
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(runtime, model, metrics=metrics)
+
+    phone_like_session_id = "+5491112345678"
+    await agent.run_turn(
+        [HumanMessage(content="Hi")],
+        session_id=phone_like_session_id,
+        permissions=(),
+    )
+
+    output = generate_latest(metrics.registry).decode()
+    assert phone_like_session_id not in output

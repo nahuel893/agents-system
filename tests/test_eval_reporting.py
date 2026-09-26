@@ -135,3 +135,54 @@ def test_write_results_markdown_shows_n_a_when_usage_is_unknown(
 
     text = markdown_path.read_text(encoding="utf-8")
     assert "n/a" in text
+
+
+# ---------------------------------------------------------------------------
+# #78 Phase 0 Slice 2 -- turn duration in the live-eval report
+# ---------------------------------------------------------------------------
+
+
+def _timed_result(duration_s: float | None = 2.5) -> ScenarioResult:
+    return ScenarioResult(
+        scenario="timed-scenario",
+        role="sales-agent",
+        model="fake-model",
+        runs=(RunOutcome(passed=True, duration_s=duration_s),),
+    )
+
+
+def test_write_results_json_carries_duration_per_run_and_scenario_total(
+    tmp_path: pathlib.Path,
+) -> None:
+    out_dir = tmp_path / "results"
+
+    json_path, _ = write_results([_timed_result()], out_dir=out_dir, now=_FIXED_NOW)
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))[0]
+    assert payload["total_duration_s"] == 2.5
+    assert payload["run_details"][0]["duration_s"] == 2.5
+
+
+def test_write_results_markdown_shows_duration(tmp_path: pathlib.Path) -> None:
+    out_dir = tmp_path / "results"
+
+    _, markdown_path = write_results([_timed_result()], out_dir=out_dir, now=_FIXED_NOW)
+
+    text = markdown_path.read_text(encoding="utf-8")
+    assert "2.50" in text
+
+
+def test_write_results_markdown_shows_n_a_when_duration_is_unknown(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A run that crashed before its first turn returned has no duration --
+    the report shows 'n/a', never a guessed 0 (same honesty posture as
+    tokens/cost)."""
+    out_dir = tmp_path / "results"
+
+    _, markdown_path = write_results(
+        [_timed_result(duration_s=None)], out_dir=out_dir, now=_FIXED_NOW
+    )
+
+    text = markdown_path.read_text(encoding="utf-8")
+    assert "n/a" in text

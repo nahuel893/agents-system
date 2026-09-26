@@ -33,6 +33,7 @@ dependencies = [
     "langchain-groq>=0.3.8",
     "langchain-ollama>=0.3.10",
     "alembic>=1.13",
+    "prometheus-client>=0.20,<1.0",
 ]
 
 [project.optional-dependencies]

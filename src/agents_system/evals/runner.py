@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -89,6 +90,15 @@ class RunOutcome:
     #: turn `scenario.turns` made (`_sum_turn_usage` below). `None` when the
     #: run raised before any turn returned (see `error` above).
     usage: TurnUsage | None = None
+    #: #78 Phase 0 Slice 2 -- real wall-clock seconds summed across every
+    #: turn this run completed. Unlike `usage`, this is never "partially
+    #: unknown" (there is no honesty-rule complication -- a duration is
+    #: always a measured fact, not a provider-reported value that can be
+    #: missing); it is `None` only when the run raised before its FIRST
+    #: turn returned, mirroring `usage`'s own "no turn completed" case. A
+    #: run that crashes mid-scenario (after >=1 turn) reports the real,
+    #: partial sum of the turns that did complete.
+    duration_s: float | None = None
 
 
 def _sum_turn_usage(turns: Sequence[TurnUsage]) -> TurnUsage:
@@ -168,6 +178,22 @@ class ScenarioResult:
             [run.usage for run in self.runs if run.usage is not None]
         )
 
+    @property
+    def total_duration_s(self) -> float | None:
+        """This scenario's real wall-clock duration, summed across every run
+        (#78 Phase 0 Slice 2) -- `None` only when there are no runs at all.
+
+        Mirrors `total_usage`'s honesty rule at this coarser grain: if even
+        one run's duration is unknown (it crashed before its first turn
+        returned), the whole scenario's total is reported as unknown too,
+        rather than a partial sum across only the runs that completed.
+        """
+        if not self.runs:
+            return None
+        if any(run.duration_s is None for run in self.runs):
+            return None
+        return sum(run.duration_s for run in self.runs)  # type: ignore[misc]
+
     def to_dict(self) -> dict[str, Any]:
         total_usage = self.total_usage
         return {
@@ -180,6 +206,7 @@ class ScenarioResult:
             "audit_events_captured": self.audit_events_captured,
             "total_tokens": total_usage.total_tokens if total_usage else None,
             "total_cost_usd": total_usage.cost_usd if total_usage else None,
+            "total_duration_s": self.total_duration_s,
             "run_details": [
                 {
                     "run": index,
@@ -188,6 +215,7 @@ class ScenarioResult:
                     "failures": [dataclasses.asdict(f) for f in run.failures],
                     "total_tokens": run.usage.total_tokens if run.usage else None,
                     "cost_usd": run.usage.cost_usd if run.usage else None,
+                    "duration_s": run.duration_s,
                 }
                 for index, run in enumerate(self.runs)
             ],
@@ -470,9 +498,20 @@ async def run_scenario(
             # type-safe way to get `.usage` -- see `TurnResult`'s docstring
             # for why this replaced the earlier `TurnMessages` list subclass.
             turn_usages: list[TurnUsage] = []
+            # #78 Phase 0 Slice 2 -- one real wall-clock measurement per
+            # turn, summed into RunOutcome.duration_s below (and cheap: no
+            # extra call, just time.monotonic() around the existing
+            # run_turn_with_usage call). Per-tool-call durations are NOT
+            # threaded through here -- they are available via `/metrics`'s
+            # `agent_tool_call_duration_seconds` histogram instead; getting
+            # them into this per-run report would need TurnResult to also
+            # carry a list of tool-call durations, deferred as out of scope
+            # for "if cheap" (docs/platform/live-eval.md documents this).
+            turn_durations_s: list[float] = []
             try:
                 for turn in scenario.turns:
                     history = [*history, HumanMessage(content=turn)]
+                    turn_start = time.monotonic()
                     turn_result = await agent.run_turn_with_usage(
                         history,
                         session_id=f"eval-{scenario.name}-{index}",
@@ -480,6 +519,7 @@ async def run_scenario(
                         # ScenarioResult.model already reports.
                         model_id=model_name,
                     )
+                    turn_durations_s.append(time.monotonic() - turn_start)
                     turn_usages.append(turn_result.usage)
                     history = turn_result.messages
                 outcome = evaluate_assertions(scenario.assertions, history)
@@ -488,13 +528,24 @@ async def run_scenario(
                         passed=outcome.passed,
                         failures=outcome.failures,
                         usage=_sum_turn_usage(turn_usages) if turn_usages else None,
+                        duration_s=(
+                            sum(turn_durations_s) if turn_durations_s else None
+                        ),
                     )
                 )
             except Exception as exc:
                 # a failed run, not a crashed eval: one bad run must not
                 # abort every remaining one, or a single flaky call would
                 # silently erase the rest of the success-rate signal.
-                outcomes.append(RunOutcome(passed=False, error=str(exc)))
+                outcomes.append(
+                    RunOutcome(
+                        passed=False,
+                        error=str(exc),
+                        duration_s=(
+                            sum(turn_durations_s) if turn_durations_s else None
+                        ),
+                    )
+                )
     finally:
         await _settle_audit_sink(sink)
         await sink.stop()

@@ -210,6 +210,21 @@ class Settings(BaseSettings):
     # MODEL_PRICES='{"acme__sales-agent": {"input_per_million": 0.14, "output_per_million": 0.28}}'
     model_prices: dict[str, ModelPrice] = {}
 
+    # #78 Phase 0 Slice 2 -- GET /metrics (Prometheus text format,
+    # `main.py`'s `metrics()` route, `observability/metrics.py`). Off by
+    # default: an operator must explicitly opt in, the same fail-closed
+    # posture as adapter_runtimes/adapter_api_key above -- an unauthenticated
+    # process/turn/tool metrics endpoint is itself a minor information
+    # disclosure (deployment shape, call volume), so it stays absent
+    # (404, not merely unauthenticated) until turned on.
+    metrics_enabled: bool = False
+    # Optional bearer token protecting /metrics once enabled (same
+    # constant-time-compare mechanism as adapter_api_key/verify_bearer in
+    # integration/openai_adapter.py). Empty + metrics_enabled means an open,
+    # unauthenticated /metrics -- refused at boot unless allow_insecure is
+    # also set (see validate_security_fail_closed below).
+    metrics_api_key: str = ""
+
     # Any OpenAI-compatible chat endpoint (MiniMax, vLLM, LM Studio, ...),
     # selected with adapter_provider="openai_compatible".
     # Deliberately NOT named openai_* — openai_api_key above is the embeddings
@@ -266,6 +281,8 @@ class Settings(BaseSettings):
         - ``adapter_runtimes`` configured with an empty ``adapter_api_key``:
           the ``/v1/*`` endpoints would run with the runtime's full write
           grants for any unauthenticated caller.
+        - ``metrics_enabled`` with an empty ``metrics_api_key`` (#78 Phase 0
+          Slice 2): ``GET /metrics`` would be open to anyone.
         - an empty ``meta_webhook_secret``: HMAC-SHA256 with an empty key is
           attacker-computable, so any webhook signature is forgeable.
 
@@ -279,6 +296,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "adapter_api_key is required when adapter_runtimes is configured; "
                 "set ADAPTER_API_KEY or explicitly set ALLOW_INSECURE=true for dev"
+            )
+
+        if self.metrics_enabled and not self.metrics_api_key:
+            raise ValueError(
+                "metrics_api_key is required when metrics_enabled is set; "
+                "set METRICS_API_KEY or explicitly set ALLOW_INSECURE=true for dev"
             )
 
         if not self.meta_webhook_secret:

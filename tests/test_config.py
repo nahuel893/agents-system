@@ -517,6 +517,68 @@ def test_settings_boots_when_adapter_api_key_set() -> None:
     assert settings.adapter_api_key == "k"
 
 
+# ---------------------------------------------------------------------------
+# #78 Phase 0 Slice 2 -- GET /metrics fail-closed (same posture as
+# adapter_runtimes/adapter_api_key above)
+# ---------------------------------------------------------------------------
+
+
+def test_settings_raises_when_metrics_enabled_and_metrics_api_key_empty() -> None:
+    """metrics_enabled=True + empty metrics_api_key must fail closed."""
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            metrics_enabled=True,
+            metrics_api_key="",
+            meta_webhook_secret="s",  # isolate: only the metrics guard should fire
+            allow_insecure=False,
+        )
+    assert "metrics_api_key" in str(excinfo.value)
+
+
+def test_settings_boots_when_metrics_api_key_set() -> None:
+    """Differential: the ONLY difference between boot and refusal is the key."""
+    common: dict[str, object] = {
+        "_env_file": None,
+        "metrics_enabled": True,
+        "meta_webhook_secret": "s",
+        "allow_insecure": False,
+    }
+
+    with pytest.raises(ValidationError):
+        Settings(metrics_api_key="", **common)  # type: ignore[arg-type]
+
+    settings = Settings(metrics_api_key="k", **common)  # type: ignore[arg-type]
+    assert settings.metrics_api_key == "k"
+
+
+def test_settings_boots_when_metrics_disabled_with_no_key() -> None:
+    """metrics_enabled=False (the default) never requires a key -- /metrics
+    is simply absent (404), not merely unauthenticated."""
+    settings = Settings(
+        _env_file=None,
+        metrics_enabled=False,
+        metrics_api_key="",
+        meta_webhook_secret="s",
+        allow_insecure=False,
+    )
+    assert settings.metrics_enabled is False
+
+
+def test_settings_allows_open_metrics_under_allow_insecure() -> None:
+    """The explicit escape hatch: allow_insecure=True permits an open
+    /metrics, same as it does for adapter_runtimes without a key."""
+    settings = Settings(
+        _env_file=None,
+        metrics_enabled=True,
+        metrics_api_key="",
+        meta_webhook_secret="s",
+        allow_insecure=True,
+    )
+    assert settings.metrics_enabled is True
+    assert settings.metrics_api_key == ""
+
+
 def test_settings_boots_when_adapter_runtimes_empty_and_key_empty() -> None:
     """Differential: an empty adapter key is only fatal WITH runtimes.
 

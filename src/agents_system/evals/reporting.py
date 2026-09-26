@@ -44,8 +44,8 @@ def write_results(
     lines = [
         f"# Live-eval results -- {timestamp}",
         "",
-        "| Scenario | Role | Model | Runs | Success rate | Tokens | Cost (USD) |",
-        "|---|---|---|---|---|---|---|",
+        "| Scenario | Role | Model | Runs | Success rate | Tokens | Cost (USD) | Duration (s) |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for result in results:
         total_usage = result.total_usage
@@ -61,9 +61,18 @@ def write_results(
             if total_usage is None or total_usage.cost_usd is None
             else f"{total_usage.cost_usd:.4f}"
         )
+        # #78 Phase 0 Slice 2 -- "n/a" only when a run crashed before its
+        # first turn returned (ScenarioResult.total_duration_s's own
+        # honesty rule); a real duration is never a guessed 0 either.
+        duration = (
+            "n/a"
+            if result.total_duration_s is None
+            else f"{result.total_duration_s:.2f}"
+        )
         lines.append(
             f"| {result.scenario} | {result.role} | {result.model} | "
-            f"{len(result.runs)} | {result.success_rate:.0%} | {tokens} | {cost} |"
+            f"{len(result.runs)} | {result.success_rate:.0%} | {tokens} | {cost} | "
+            f"{duration} |"
         )
     markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
