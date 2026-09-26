@@ -146,6 +146,65 @@ async def test_a_sandboxed_command_is_killed_at_timeout(
     assert result.get("error_kind") == "timeout"
 
 
+def _sleeps_still_running(duration: str) -> list[str]:
+    """Host pids of `sleep <duration>` -- a unique duration is the marker."""
+    found = []
+    for pid_dir in pathlib.Path("/proc").iterdir():
+        if not pid_dir.name.isdigit():
+            continue
+        try:
+            argv = (pid_dir / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if argv[:1] and argv[0].endswith(b"sleep") and duration.encode() in argv:
+            found.append(pid_dir.name)
+    return found
+
+
+@pytest.mark.parametrize("tool", ["use_term", "command_tool"])
+async def test_a_sandboxed_command_is_killed_when_an_outer_timeout_cancels_it(
+    tool: str, tmp_path: pathlib.Path
+) -> None:
+    """#105: the interceptor's `tool_call_timeout_s` fires before the
+    sandbox's own kill timer -- the shape of
+    `evals/scenarios/guardrails/06_tool_call_timeout.yaml`, with the same
+    real `sleep`. The cancellation used to reach `_run_argv` as
+    `CancelledError`, skip its `except TimeoutError` kill, and leave `sleep`
+    running inside `bwrap` on the host."""
+    import asyncio
+    import random
+    import shutil
+
+    duration = f"30.{random.randrange(10**8):08d}"
+    if tool == "use_term":
+        policy = _policy(tmp_path, allowed_commands=frozenset({"sleep"}))
+        use_term = build_terminal_connector(policy)
+        call = use_term({"argv": ["sleep", duration]})
+    else:
+        sleep_path = shutil.which("sleep")
+        assert sleep_path is not None
+        declaration = CommandToolDeclaration(
+            name="nap",
+            argv=(sleep_path, duration),
+            params={},
+            tier=Tier.T2,
+            permission="run:nap",
+        )
+        call = build_command_tool_connector(declaration)({})
+
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(1.0):
+            await call
+
+    survivors = _sleeps_still_running(duration)
+    for _ in range(20):
+        if not survivors:
+            break
+        await asyncio.sleep(0.1)
+        survivors = _sleeps_still_running(duration)
+    assert not survivors, f"`sleep {duration}` outlived the timeout: {survivors}"
+
+
 async def test_a_sandboxed_command_hitting_the_memory_limit_is_stopped(
     tmp_path: pathlib.Path,
 ) -> None:

@@ -289,18 +289,17 @@ def test_is_known_non_exercised_gap_false_when_the_named_scenario_already_passed
     assert _is_known_non_exercised_gap(scenario_name, result) is False
 
 
-def test_tool_call_timeout_scenario_discloses_it_only_proves_the_transcript_was_bounded() -> (
-    None
-):
-    """PR #102 review fix (issue #105) -- `06_tool_call_timeout.yaml`'s
+def test_tool_call_timeout_scenario_names_what_proves_the_process_was_killed() -> None:
+    """PR #102 review fix, updated for #105 -- `06_tool_call_timeout.yaml`'s
     assertions (`tools_called`/`not_executed` on `use_term`) read only the
     harness's reported transcript, never real host process state, so a
-    "held" result here cannot by itself prove the underlying sandboxed
-    process was actually terminated: nested `asyncio.timeout` scopes do not
-    propagate a kill that way when the OUTER (interceptor) timeout is what
-    fires, as it does in this scenario (see issue #105). The scenario's own
-    header comment must say so explicitly, so a future reader never mistakes
-    "held" for "resource-bounded".
+    "held" result here cannot by itself prove the sandboxed process was
+    terminated. #105 made `_run_argv` kill and reap it when the OUTER
+    (interceptor) timeout fires, and the tests that prove it live elsewhere.
+    The scenario's own header comment must keep both halves: what "held"
+    proves, and where process termination is proven -- so a future reader
+    never mistakes "held" for "resource-bounded", nor goes looking for a
+    proof this scenario never carried.
     """
     source = (_SCENARIOS_DIR / "06_tool_call_timeout.yaml").read_text(encoding="utf-8")
     # Strip each line's leading "# " comment marker before collapsing
@@ -309,5 +308,10 @@ def test_tool_call_timeout_scenario_discloses_it_only_proves_the_transcript_was_
     stripped_lines = (line.lstrip("#").strip() for line in source.splitlines())
     normalized = " ".join(stripped_lines).lower()
 
-    assert "does not prove the real sandboxed process was terminated" in normalized
+    assert "read only the harness's reported transcript" in normalized
+    assert "is proven elsewhere, not here" in normalized
+    assert "test_an_outer_timeout_kills_and_reaps_the_process" in source
+    assert "test_a_sandboxed_command_is_killed_when_an_outer_timeout_cancels_it" in (
+        source
+    )
     assert "#105" in source
