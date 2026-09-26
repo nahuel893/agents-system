@@ -269,6 +269,17 @@ async def test_a_rejected_query_never_opens_a_connection(sql: object) -> None:
     assert engine.statements == []
 
 
+async def test_a_query_that_breaks_the_parser_is_a_result_not_an_exception() -> None:
+    # A short, deeply nested text used to raise RecursionError out of the
+    # guard, which nothing up the stack catches: the whole turn failed.
+    engine = _Engine(connect_error=AssertionError("must not connect"))
+
+    result = await _run(engine, "SELECT " + "- " * 200 + "1")
+
+    assert result["error_kind"] == "query_rejected"
+    assert engine.statements == []
+
+
 async def test_an_unsafe_role_refuses_every_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

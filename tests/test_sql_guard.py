@@ -225,6 +225,46 @@ def test_the_node_budget_applies_to_the_query_not_to_its_qualified_rendering() -
     assert guard_query(sql, policy, row_limit=10).sql
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # Short texts whose trees are deep enough to exhaust Python's
+        # recursion limit in the renderer: unary minus, `::` cast chains and
+        # nested FROM subqueries.
+        "SELECT " + "- " * 200 + "1",
+        "SELECT 1" + "::int" * 170,
+        "SELECT * FROM " + "(SELECT * FROM " * 60 + "sales_v" + ") AS t" * 60,
+    ],
+    ids=["unary-minus-200", "cast-chain-170", "from-subquery-60"],
+)
+def test_a_deeply_nested_query_is_a_rejection_not_an_exception(sql: str) -> None:
+    # An exception escaping the guard aborts the whole agent turn; a
+    # rejection is a tool result the model can act on.
+    assert _reject_code(sql) in {"too_complex", "unparseable"}
+
+
+@pytest.mark.parametrize(
+    "error",
+    [RecursionError("deep"), RuntimeError("secret detail"), KeyError("x")],
+    ids=lambda error: type(error).__name__,
+)
+def test_any_failure_inside_the_guard_is_a_fixed_rejection(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    from agents_system.services import sql_guard
+
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        raise error
+
+    monkeypatch.setattr(sql_guard, "normalize_identifiers", failing)
+
+    with pytest.raises(QueryRejectedError) as excinfo:
+        guard_query("SELECT product FROM sales_v", _SINGLE_SCHEMA_POLICY, row_limit=5)
+
+    assert excinfo.value.code in {"too_complex", "unparseable"}
+    assert "secret detail" not in excinfo.value.message
+
+
 def test_the_node_budget_must_be_positive() -> None:
     with pytest.raises(ValueError):
         QueryPolicy(

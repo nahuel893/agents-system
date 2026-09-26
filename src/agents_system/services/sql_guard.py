@@ -388,15 +388,19 @@ def _parse_single_statement(sql: str) -> exp.Expr:
     return statements[0]
 
 
+def _too_complex(policy: QueryPolicy) -> QueryRejectedError:
+    return _reject(
+        "too_complex",
+        f"The query is too complex for this tool (more than "
+        f"{policy.max_nodes} syntax elements). Simplify it: fewer "
+        "conditions or expressions, or aggregate in fewer steps.",
+    )
+
+
 def _check_size(statement: exp.Expr, policy: QueryPolicy, max_nodes: int) -> None:
     for count, _ in enumerate(statement.walk(), start=1):
         if count > max_nodes:
-            raise _reject(
-                "too_complex",
-                f"The query is too complex for this tool (more than "
-                f"{policy.max_nodes} syntax elements). Simplify it: fewer "
-                "conditions or expressions, or aggregate in fewer steps.",
-            )
+            raise _too_complex(policy)
 
 
 def _check_nodes(statement: exp.Expr) -> None:
@@ -646,6 +650,10 @@ def guard_query(sql: object, policy: QueryPolicy, *, row_limit: int) -> GuardedQ
     is the canonical rendering, wrapped as `SELECT * FROM (...) LIMIT
     row_limit + 1` so the database itself stops producing rows one past the
     cap and the caller can report truncation.
+
+    Every failure inside the guard is a rejection with a fixed text: an
+    exception escaping here would abort the agent's whole turn instead of
+    giving the model a result it can act on.
     """
     if row_limit < 1:
         raise ValueError("row_limit must be positive.")
@@ -657,7 +665,17 @@ def guard_query(sql: object, policy: QueryPolicy, *, row_limit: int) -> GuardedQ
             f"The query is longer than {policy.max_sql_length} characters; "
             "send a shorter one.",
         )
+    try:
+        return _guard(sql, policy, row_limit)
+    except QueryRejectedError:
+        raise
+    except RecursionError as error:
+        raise _too_complex(policy) from error
+    except Exception as error:  # any other failure is a refusal, never a crash
+        raise _reject("unparseable") from error
 
+
+def _guard(sql: str, policy: QueryPolicy, row_limit: int) -> GuardedQuery:
     statement, relations = _validate(sql, policy, max_nodes=policy.max_nodes)
     rendered = _render(statement, policy)
 
