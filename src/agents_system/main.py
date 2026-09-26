@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 import structlog
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agents_system import __version__
 from agents_system.config import Settings, get_settings
-from agents_system.harness.loader import DefinitionError, RootConfig
+from agents_system.harness.loader import _SAFE_SEGMENT, DefinitionError, RootConfig
 from agents_system.harness.registry import RegistryFactory
 from agents_system.integration import openai_router, webhook_router
 from agents_system.integration.whatsapp_client import WhatsAppClient
@@ -36,6 +36,9 @@ from agents_system.services.participants import (
     ParticipantDirectory,
 )
 from agents_system.services.redis import close_redis_pool, get_redis_client
+
+if TYPE_CHECKING:
+    from agents_system.agent.spec import Agent
 
 
 def _checkpointer_ttl_config(checkpointer_ttl_s: int | None) -> dict[str, Any] | None:
@@ -578,9 +581,35 @@ async def _outbox_backlog(engine: Any) -> OutboxBacklogCounts | None:
         return None
 
 
+def _validate_runtime_id(runtime_id: str) -> str:
+    """Reject a runtime id that is empty or contains anything other than
+    letters, digits, underscore or hyphen (design.md D6).
+
+    A runtime id is deployer-chosen (design.md D5) and becomes part of
+    URLs (``/v1/models``), structured logs and metrics labels once
+    registered -- the same class of user-supplied, filesystem-adjacent
+    segment ``loader._SAFE_SEGMENT`` already validates elsewhere in this
+    codebase (a role type, a client/deployment name), reused here for the
+    same reason: consistency, and because an id built from it must be safe
+    to embed in a URL path segment and a log line with no further escaping.
+    Malformed ids fail here, at registration time, rather than surfacing as
+    a confusing lookup miss at first request.
+    """
+    if not _SAFE_SEGMENT.fullmatch(runtime_id):
+        raise DefinitionError(
+            f"Invalid runtime id {runtime_id!r}. Must match "
+            f"{_SAFE_SEGMENT.pattern} -- letters, digits, underscore and "
+            "hyphen only, non-empty, not starting with '-' or '_'."
+        )
+    return runtime_id
+
+
 def create_app(
     *,
     registry_factory: RegistryFactory,
+    agents: Mapping[str, Agent | str] | None = None,
+    grants: Mapping[str, Sequence[str]] | None = None,
+    clients: Mapping[str, str] | None = None,
     participant_directory: ParticipantDirectory | None = None,
     conversation_recorder: ConversationRecorder | None = None,
     roots: RootConfig | None = None,
@@ -591,7 +620,7 @@ def create_app(
     Everything this function knows how to build -- the middleware, the two
     routers, `/health`, and the lifespan's engine, audit sink, Redis pool,
     runtime cache and checkpointer -- is the same for every deployment. The
-    four arguments are the parts that are not, and the platform has no
+    arguments below are the parts that are not, and the platform has no
     default for any of them because it owns no connectors, no identity
     schema and no conversation history.
 
@@ -605,6 +634,25 @@ def create_app(
         Called by the lifespan as ``(settings, embedder, bi_engine)`` once
         those are resolved, and must return the ``ToolRegistry`` the role
         manifests are injected against.
+    agents:
+        Deployer-chosen runtime id -> either an ``Agent`` (a custom,
+        library-defined agent) or a bare ``str`` (a predefined platform-role
+        name, resolved exactly as before this parameter existed). Replaces
+        the old ``{deployment}__{role}`` runtime-id encoding entirely --
+        every id here is an opaque string, never parsed. ``None`` (the
+        default) falls back to the existing ``Settings``-driven boot path,
+        so a caller that never passes it (e.g. ``demo.py``'s ``build_app``)
+        is unaffected. NOTE: in this slice the mapping is only validated and
+        stashed on ``app.state.agents`` -- ``lifespan()`` does not read it
+        yet.
+    grants:
+        Runtime id -> granted permission wire names, keyed by the same ids
+        as ``agents``. ``None`` falls back to ``settings.deploy_grants``.
+        Stashed on ``app.state.grants``; not yet read by ``lifespan()``.
+    clients:
+        Runtime id -> deployment client name, meaningful only when
+        ``agents[id]`` is a ``str`` (a predefined role). Stashed on
+        ``app.state.clients``; not yet read by ``lifespan()``.
     participant_directory:
         Resolves an inbound channel address to an identity. Absent means the
         inbound route fails closed and runs no turn.
@@ -628,6 +676,9 @@ def create_app(
     )
 
     application.state.registry_factory = registry_factory
+    application.state.agents = agents
+    application.state.grants = grants
+    application.state.clients = clients
     application.state.participant_directory = participant_directory
     application.state.conversation_recorder = conversation_recorder
     application.state.roots = roots
