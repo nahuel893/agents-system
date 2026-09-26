@@ -7,12 +7,13 @@ performs, per `docs/delivery/live-test-plan.md`'s Phase 0 and Principle
 three slices; this document tracks all of them so a later slice resumes with
 full context.
 
-## Scope (this document covers all of #78; Slices 1 and 2 are implemented)
+## Scope (this document covers all of #78; every slice is implemented)
 - Slice 1 (done): real token usage and cost per turn.
-- Slice 2 (this work unit, done): process memory/CPU sampling, turn/tool
-  durations, and exposing all of it via `GET /metrics`.
-- Slice 3 (pending): the real-app live harness (API, webhook, Postgres,
-  Redis, audit-to-DB) that later phases (#79, #76-extends) build on.
+- Slice 2 (done): process memory/CPU sampling, turn/tool durations, and
+  exposing all of it via `GET /metrics`.
+- Slice 3 (this work unit, done): the real-app live harness (API, webhook,
+  Postgres, Redis, audit-to-DB) that later phases (#79, #76-extends) build
+  on.
 
 Out of scope for Slices 1/2 (tracked as Slice 3 above): the real-app live
 harness. Out of scope for Slice 2 specifically (per its own PR description):
@@ -357,11 +358,115 @@ global CLAUDE.md). Runner: `pytest -q` from the worktree root with
   - PR #96 all 12 CI checks green again after both commits. Not
     merged.
 
-## Slice 3 — real-app live harness (pending)
-Not started. A harness that boots the actual application (HTTP API, WhatsApp
-webhook, Postgres, Redis, audit-to-DB) instead of calling
-`AgentRuntime.run_turn` directly the way `evals/runner.py:run_scenario` does
-today. Phase 1 (#79) and Phase 2 (extends #76) run on top of this harness.
+## Slice 3 — real-app live harness
+
+### Design
+- `src/agents_system/evals/live_harness.py`: `boot_live_harness()`, an
+  async context manager yielding a `LiveHarness`. Boots the REAL app via
+  `create_app` + `main.lifespan`, entered directly through
+  `app.router.lifespan_context(app)` (the same mechanism Starlette's own
+  `TestClient` uses) rather than a subprocess `uvicorn` -- no port-polling
+  race, no `asgi-lifespan` dependency, and every resource the real
+  deployment boots (engine, audit sink, checkpointer, runtime cache,
+  deferred webhook worker) is genuinely constructed and torn down. Requests
+  go through `httpx.ASGITransport` -- a real ASGI call into the app, not a
+  direct Python call into a handler.
+- A fresh, uniquely-named throwaway Postgres database is created and
+  migrated to `alembic upgrade head` per `boot_live_harness()` call (the CI
+  `audit-migration`/`outbox-migration` jobs' own throwaway-database
+  pattern), and dropped at teardown -- never the operator's own
+  `agents_system` database. Admin connection: `postgres`'s own always-
+  present `postgres` maintenance database (overridable via
+  `LIVE_HARNESS_ADMIN_DATABASE_URL`), since `CREATE DATABASE` cannot target
+  the database being created.
+- Real Redis (`LIVE_HARNESS_REDIS_URL`, default docker-compose's `redis`
+  service) -- `WHATSAPP_CHECKPOINTER_ENABLED` stays at its default `True`,
+  so `LiveHarness.read_thread` reads an actual persisted LangGraph
+  checkpoint.
+- Outbound WhatsApp never reaches Meta: `WhatsAppClient` posts to
+  `Settings.whatsapp_graph_api_url`, an existing configuration seam (no
+  `src/` code change) pointed at `FakeWhatsAppServer`, a real local ASGI
+  server (uvicorn, 127.0.0.1) that records every send.
+- `ADAPTER_PROVIDER` mirrors whatever `EVAL_PROVIDER` names, so the booted
+  application serves the same real model a manual eval run already uses.
+- Registry: `live_registry_factory_adapter` adapts
+  `evals.live_registry.build_live_registry_factory` (already used by
+  `examples/demo/app.py`) to `create_app`'s `(settings, embedder, bi_engine)`
+  factory signature.
+- The smoke scenario deliberately drives the `session_state` tool, not
+  `catalog_search`/`client_lookup`/`order_writer`: those three need the demo
+  company's seeded portable-report contract views (Phase 1 / #79's concern),
+  while `session_state` is a genuinely-functioning in-memory tool every role
+  extending `platform/roles/agent` already declares, needing no seeded data
+  -- so the smoke test can prove the HARNESS's wiring without depending on
+  Phase 1's scope.
+- Correlation id caveat (documented, not fixed): `AuditEvent.correlation_id`
+  comes from `structlog`'s `request_id` contextvar, bound only by
+  `RequestIdMiddleware` for an in-flight HTTP request. A turn the deferred
+  webhook worker runs records `correlation_id="none"`; `LiveHarness.
+  audit_rows` filters a webhook turn's rows by role/event type/timestamp
+  instead of correlation id for that reason.
+- Docs: new "Live harness" section in `docs/platform/live-eval.md` + its
+  `_es` twin.
+
+### Tasks
+- [x] **S3.1 — `sign_payload` + `x-request-id` response header.**
+  `integration/meta_signature.py::sign_payload` (the counterpart to
+  `verify_signature`, used by `LiveHarness.deliver_webhook` to sign a
+  webhook delivery with the exact real HMAC-SHA256 scheme the route
+  verifies) and `observability/middleware.py`'s `RequestIdMiddleware` now
+  echoes `request_id` as the `x-request-id` response header (so
+  `LiveHarness.audit_rows(correlation_id=...)` can correlate an API turn to
+  its audit rows without scraping logs). RED: `tests/test_meta_signature.py`
+  failed to collect (`ImportError: cannot import name 'sign_payload'`); a
+  reverted `middleware.py` failed the new
+  `test_middleware_echoes_request_id_as_response_header` (`assert
+  'x-request-id' in Headers(...)` — false) against pre-implementation code.
+  GREEN: both files' tests pass.
+- [x] **S3.2 — `evals/live_harness.py`.** `FakeWhatsAppServer`,
+  `build_meta_webhook_envelope`, `audit_rows_statement`, `metric_value`,
+  `AcceptAllParticipantDirectory`, `live_registry_factory_adapter`,
+  `LiveHarness`, `boot_live_harness`. RED: `tests/test_live_harness.py`
+  failed to collect (`ModuleNotFoundError: No module named
+  'agents_system.evals.live_harness'`) against pre-implementation code
+  (module temporarily removed and confirmed). GREEN: `pytest -q
+  tests/test_live_harness.py tests/test_meta_signature.py tests/test_health.py`
+  34 passed.
+- [x] **S3.3 — smoke scenario.** `tests/test_live_smoke.py`
+  (`test_smoke_api_turn_and_webhook_turn`, `pytest.mark.live`): one API turn
+  plus one webhook turn, each asserting a `session_state`
+  `tool_call_attempted` audit row, an `agent_turns_total{outcome="ok"}`
+  `/metrics` increment, and (webhook turn) the message
+  `FakeWhatsAppServer` actually received plus a real checkpointed Redis
+  thread. **Live run** (`EVAL_PROVIDER=openai_compatible`,
+  `deepseek/deepseek-v4-flash-0731` over OpenRouter, real local Postgres +
+  Redis): **PASSED in 20.68s** — both turns called `session_state` for
+  real, both audit assertions held, both `/metrics` counters incremented,
+  the fake WhatsApp server recorded the reply, and the Redis-checkpointed
+  thread was read back non-empty. Throwaway database confirmed dropped
+  after teardown (`SELECT datname FROM pg_database WHERE datname LIKE
+  'live_harness_%'` → empty).
+- [x] **S3.4 — offline helper tests.** `tests/test_live_harness.py`: the
+  envelope/`sign_payload`/`verify_signature` round trip (+ wrong-secret
+  rejection), `FakeWhatsAppServer` (records + responds; order preserved
+  across multiple sends), `metric_value` (exact-label match, missing
+  sample, unknown metric name), `audit_rows_statement` (no filters -> no
+  `WHERE`; each filter and all-combined, checked via
+  `compile(compile_kwargs={"literal_binds": True})`), and
+  `AcceptAllParticipantDirectory` (normalizes, rejects empty, resolves
+  active). 15 new tests, all offline (no model/Postgres/Redis).
+- [x] **S3.5 — docs.** `docs/platform/live-eval.md` + its `_es` twin: new
+  "Live harness" section (usage, requirements, `LiveHarness`'s surface, the
+  `session_state`-over-seeded-tools decision, the correlation-id caveat).
+- [x] **S3.6 — full verification.** `ruff check .` all checks passed; `ruff
+  format --check .` 407 files already formatted; `mypy src/` success, 74
+  source files; `pytest -q` (offline) 2280 passed, 185 deselected, 17
+  xfailed. RED evidence for S3.1/S3.2 above; S3.3's live scenario is its
+  own RED-equivalent (it cannot pass without every wired subsystem actually
+  working end to end against real infrastructure).
+- [x] **S3.7 — commit + PR.** Work-unit commit on `feat/78-live-harness`.
+  PR title: `test(live): boot the real app for live tests (#78 3/3)`,
+  `Closes #78` (every slice now implemented).
 
 ## Rollback
 Slice 1 is additive: `TurnMessages`/`TurnUsage`/`model_prices` are new, and

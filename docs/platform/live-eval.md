@@ -431,6 +431,83 @@ this slice did not add. They are available instead via `/metrics`'s
 the `agent_turns_total`/`agent_tool_calls_total`/`agent_limit_trips_total`
 counters, and `GET /metrics`'s own protection model.
 
+## Live harness (issue #78 Phase 0 Slice 3)
+
+`run_scenario` above calls `AgentRuntime.run_turn` directly -- it never boots
+the real application. `agents_system.evals.live_harness.boot_live_harness`
+does: the HTTP API, the WhatsApp webhook route and its deferred worker, a
+real (throwaway) Postgres database migrated to `alembic upgrade head`, a
+real Redis checkpointer, and audit persisted to the real `audit_event`
+table. Phase 1 (#79) and Phase 2 (extends #76) build their own live
+scenarios on top of it.
+
+```python
+from agents_system.evals.live_harness import boot_live_harness
+
+async with boot_live_harness() as harness:
+    response = await harness.send_chat_completion("...")
+    ...
+```
+
+Requires, all local by default (`docker-compose.yml`'s `postgres`/`redis`
+services):
+
+- a reachable Postgres able to `CREATE DATABASE` (override the admin
+  connection with `LIVE_HARNESS_ADMIN_DATABASE_URL`);
+- a reachable Redis (override with `LIVE_HARNESS_REDIS_URL`);
+- a real model reachable through whatever `EVAL_PROVIDER` names (see
+  "Switching providers" above) -- the harness's own `ADAPTER_PROVIDER`
+  mirrors it, so the same provider a manual eval run uses is what the
+  booted application actually serves.
+
+A fresh, uniquely-named database is created and migrated for each
+`boot_live_harness()` call and dropped again at teardown -- never the
+operator's own `agents_system` database. Outbound WhatsApp never reaches
+Meta: `WhatsAppClient` posts to `Settings.whatsapp_graph_api_url`, an
+existing configuration seam this harness points at a real local server
+(`FakeWhatsAppServer`) that records every send instead.
+
+Teardown also deletes every Redis checkpoint thread this run's own
+`deliver_webhook` calls wrote (#113): a checkpoint left behind by an earlier
+run must never let a later run's `read_thread` assertion pass without that
+run's own checkpointing genuinely having worked. Only one `boot_live_harness()`
+call can be "up" at a time per process -- booting mutates the process-global
+`os.environ` and `get_settings()` cache, so a whole call's lifetime (boot
+through teardown) is serialized on a module-level lock; a second concurrent
+call waits for the first to fully finish instead of corrupting its settings.
+Do not `asyncio.gather()` two `boot_live_harness()` calls expecting them to
+run side by side.
+
+`LiveHarness` exposes: `send_chat_completion` (one turn through
+`/v1/chat/completions`), `deliver_webhook` (one signed inbound WhatsApp
+message, HMAC-SHA256'd with the real scheme `verify_signature` checks),
+`wait_until` (poll for the deferred worker to catch up), `audit_rows` (read
+matching rows from the real `audit_event` table), `scrape_metrics` /
+`metric_value` (read one `/metrics` sample), and `read_thread` (read a
+checkpointed LangGraph thread straight out of Redis).
+
+The smoke scenario (`tests/test_live_smoke.py`, `pytest -m live`) proves the
+wiring end to end with one API turn and one webhook turn, both driving the
+`session_state` tool (in-memory, needs no seeded data -- `catalog_search` /
+`client_lookup` / `order_writer` expect the demo company's seeded portable-
+report views, which is Phase 1's (#79) concern, not this harness's), and
+asserts on what the SYSTEM did: audit rows, `/metrics` counters, and the
+message `FakeWhatsAppServer` actually received -- never the model's own
+wording, per this document's live-test Principle.
+
+**Correlation id caveat**: `AuditEvent.correlation_id` comes from
+`structlog`'s `request_id` contextvar, which only `RequestIdMiddleware`
+binds -- only for an in-flight HTTP request. A turn the deferred webhook
+worker runs (no HTTP request of its own) always records
+`correlation_id="none"`; `LiveHarness.audit_rows` filters a webhook turn's
+rows by role/event type/timestamp instead. This is an existing platform gap
+that Slice 3 documents rather than changes.
+
+Offline tests for the harness's own helpers (the envelope/signature round
+trip, the fake outbound server, the `/metrics` sample reader, the audit
+query builder) live in `tests/test_live_harness.py` and need no model,
+Postgres, or Redis.
+
 ## Running it as a role's own pipeline
 
 `agents_system.evals.runner.run_scenario(scenario, *, model, model_name,
