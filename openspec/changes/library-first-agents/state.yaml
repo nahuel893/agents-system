@@ -42,10 +42,10 @@ tasks_progress:
     - PR6-T1
     - PR6-T2
     - PR6-T3
-  pending:
     - PR7-T1
     - PR7-T2
     - PR7-T3
+  pending: []
 last_updated: 2026-09-26T00:00:00Z
 pr1a:
   status: implemented
@@ -477,4 +477,46 @@ pr6:
       RED scope (a pure unit test over commit_messages_carry_breaking_marker
       only; "no CI-integration test command applies for the workflow YAML
       itself").
+  review_fixes: []
+pr7:
+  status: implemented
+  branch: docs/adr-004-7-adr-and-pointers
+  files_changed:
+    - docs/architecture/adr-004-library-first-agents.md
+    - docs/architecture_es/adr-004-library-first-agents.md
+    - docs/architecture/adr-002-agent-model-and-capabilities.md
+    - docs/architecture_es/adr-002-agent-model-and-capabilities.md
+    - openspec/changes/library-first-agents/tasks.md
+    - openspec/changes/library-first-agents/state.yaml
+  diff_lines_authored: 607
+  diff_budget_note: >-
+    Exceeds the ~290 estimate and the ~300-line PR7-T3 consistency-check
+    ceiling, mostly the two new ADR files (216 EN + 244 ES = 460 lines)
+    describing ten merged PRs (#68-#103) plus two hardening PRs (#93, #75)
+    design.md never fully folded in. The ADR-002 pointer amendments stayed
+    exactly additive (31 EN + 33 ES lines, 5 hunks per file, confirmed by
+    `git diff`). Nothing was trimmed; recommend size:exception, matching
+    every earlier PR in this chain.
+  deviations:
+    - PR7-T3's own text requires noting any spec-requirement/`Satisfies:`
+      traceability gap found during the consistency check as a new
+      follow-up task in tasks.md, so tasks.md itself is touched beyond
+      checking PR7's own three boxes, even though PR7-T3's Verify line names
+      only docs/ and state.yaml. Followed the task body's explicit
+      instruction over the narrower Verify wording.
+    - Found and recorded one such gap set -- 5 spec requirement titles never
+      quoted verbatim by any PR1a-PR6 `Satisfies:` line. Direct read of the
+      actual tests showed 4 of the 5 are traceability-only gaps (the
+      behavior is tested, just not cited by title); the 5th (Guard 1's
+      per-role version being independent of the package's own SemVer) has
+      no dedicated test anywhere. See tasks.md's Follow-ups section for the
+      full breakdown and file citations.
+    - >-
+      D8's first draft attributed Guard 1's marker becoming a required
+      status check to PR #103 alone. Reading PR #103's own body and branch
+      protection back (`gh api repos/.../branches/main/protection`) showed
+      PR #103 shipped the job non-required, and issue #104 (a
+      repository-settings change, no PR) is what actually added it to
+      `required_status_checks.contexts`. Corrected D8 and the Corrections
+      section in both EN and ES to attribute this accurately.
   review_fixes: []
