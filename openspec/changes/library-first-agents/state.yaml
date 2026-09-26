@@ -268,6 +268,11 @@ pr4a_ii:
       oversized value, and rejects a non-str id.
     - A grants value that is a str, bytes or non-iterable fails boot naming
       the id.
+  review_fixes:
+    - MEDIUM - a clients value was never validated, so a None value (an
+      unset env var) booted the role generic, without its subtractive
+      override and with no error or log. _validate_client now requires a
+      str matching _SAFE_SEGMENT and fails boot naming the id, not the value.
   follow_ups:
     - PR4b replaces the env source with AGENT_REGISTRATIONS and deletes
       parse_model_id/to_model_id with _settings_registrations; README and
@@ -275,3 +280,6 @@ pr4a_ii:
       correct until then.
     - A library-first app can only name its /v1 surface through
       ADAPTER_RUNTIMES; a create_app parameter for it was not added.
+    - A well-formed client name with no deployments/<client>/<role> folder
+      still serves the generic role, logging only loader.override_not_found.
+      That is the loader's existing rule, shared with legacy ids.

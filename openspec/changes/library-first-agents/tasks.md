@@ -980,6 +980,17 @@ breaking** — see PR4a-ii-T4.
   `permission-model` release already used (v0.1.0 → v0.2.0).
   <!-- sdd-owner: implementation -->
 
+- [x] **PR4a-ii review fixes (PR #95).**
+  1. Unvalidated `clients` values (MEDIUM). `clients={id: None}` (an unset
+     environment variable) passed every `clients` guard, and
+     `clients.get(id)` served the role generic, without its subtractive
+     override, with no error and no log. `_validate_client` now requires a
+     `str` matching `_SAFE_SEGMENT` for every `clients` value before the
+     registration is built, and fails boot naming the id, not the value.
+     Test: `test_registration_rejects_a_clients_value_that_is_not_a_client_name`
+     (`None`, `42`, `""`, `"../client-a"`).
+  <!-- sdd-owner: implementation -->
+
 ---
 
 ## PR4b — Runtime-id deletion + env migration
