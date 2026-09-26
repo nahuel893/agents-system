@@ -19,11 +19,16 @@
 # now-historical commit's own diff, which gitleaks re-scans on every PR
 # regardless of later fixes. (Do not spell out the flagged example string
 # itself in this comment -- gitleaks would flag this file's own diff too.)
-24157a189645fc9fc080cd7900ce884f11c21017:docs/platform/observability.md:curl-auth-header:26
-24157a189645fc9fc080cd7900ce884f11c21017:docs/platform_es/observability.md:curl-auth-header:29
+#
+# Fingerprints embed the commit SHA, so rebasing PR #96 onto a newer
+# origin/main (to pick up a later review-fix commit) rewrote every commit
+# in the branch and invalidated the three fingerprints below; they were
+# refreshed to the rebased SHAs without changing what is allowlisted or why.
+1718f1526f62f9c2fbb7c500b8843bbbcbb5804c:docs/platform/observability.md:curl-auth-header:26
+1718f1526f62f9c2fbb7c500b8843bbbcbb5804c:docs/platform_es/observability.md:curl-auth-header:29
 
 # An intermediate commit in the same PR quoted the flagged example string
 # above inside ITS OWN explanatory comment (fixed in the very next commit,
 # which rewrote this comment block to describe rather than quote it) --
 # same non-issue as the two entries above, one commit later.
-35093462d8ba6b83aa10a5efc092377f39eb5ec5:.gitleaksignore:curl-auth-header:12
+0977b136f6800fb7ce7cf72db735517870eb3444:.gitleaksignore:curl-auth-header:12
