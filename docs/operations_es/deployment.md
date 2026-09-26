@@ -69,6 +69,9 @@ Se proporcionan dos opciones de despliegue:
 
 El stack está definido en `docker-compose.prod.yml` con cuatro servicios coordinados: `postgres`, `redis`, `migrate` y `app`.
 
+#### Inyección de Entorno y Secretos
+La configuración y los secretos se cargan desde `.env.prod` (o una ruta personalizada mediante `ENV_FILE`, por defecto `${ENV_FILE:-.env.prod}`) y se inyectan en los servicios `migrate` y `app` mediante `env_file`.
+
 #### Línea Base de Seguridad
 Todos los puertos externos se vinculan a `127.0.0.1`. Nunca expongas puertos de bases de datos o de la aplicación directamente a `0.0.0.0`. Un proxy inverso en el host (Nginx, Caddy, Cloudflare Tunnel, AWS ALB) debe encargarse de la terminación TLS y enrutar el tráfico externo.
 
@@ -103,6 +106,8 @@ Las unidades de systemd se encuentran en `deploy/systemd/`:
 - `agents-system-migrate.service`: Unidad `Type=oneshot` que ejecuta las migraciones de base de datos antes de que inicie la aplicación.
 - `agents-system-app.service`: Unidad `Type=simple` que gestiona el servidor Uvicorn con reinicio automático ante caídas.
 
+Ambas unidades se ejecutan bajo el usuario y grupo dedicados y sin privilegios `agents-system`, configuran `PATH` para incluir `/opt/agents-system/.venv/bin`, y cargan variables de entorno desde `EnvironmentFile=/etc/agents-system/agents-system.env` (sin el prefijo `-`, garantizando que la ausencia del archivo de configuración falle de inmediato en el arranque).
+
 #### Pasos de Instalación
 
 1. **Crear Usuario de Servicio y Directorios:**
@@ -134,6 +139,15 @@ Las unidades de systemd se encuentran en `deploy/systemd/`:
    sudo systemctl start agents-system-app.service
    ```
 
+### Punto de Entrada de la Aplicación y Resolución del Registro de Herramientas (`REGISTRY_FACTORY`)
+
+Los despliegues en producción ejecutan el servidor ASGI Uvicorn apuntando a `agents_system.server:app`. La fábrica de la aplicación resuelve las herramientas de los conectores según las siguientes reglas:
+
+1. **Cero Agentes Registrados:** Si `AGENT_REGISTRATIONS` está vacío o no configurado, la aplicación arranca limpiamente con un cache de runtimes vacío (atendiendo `/health` e ingesta de webhooks).
+2. **Agentes Registrados Requieren `REGISTRY_FACTORY`:** Cuando `AGENT_REGISTRATIONS` (o `create_app(agents=...)`) especifica uno o más agentes, el despliegue **debe** configurar `REGISTRY_FACTORY` apuntando a un ejecutable (formato: `modulo.submodulo:nombre_funcion`) que retorne un `ToolRegistry` equipando todas las herramientas declaradas por dichos agentes.
+3. **Registro por Defecto con Fallo Cerrado:** Cuando `REGISTRY_FACTORY` no está configurado, se utiliza `default_registry_factory`. Dado que `default_registry_factory` solo registra herramientas base de la plataforma (`order_writer`, `knowledge_retrieval`, `conversation_summarizer`, `escalation_notifier`, `run_report`) y no puede equipar roles predefinidos que requieren herramientas específicas (como `session_state`, `catalog_search`, `client_lookup` o `message_sender`), el arranque aborta inmediatamente con un `DefinitionError` que detalla las herramientas faltantes.
+4. **Implementación de Referencia:** Consultá `examples/demo/app.py` para ver cómo un despliegue real conecta los conectores a su almacenamiento y modelo de lenguaje mediante `build_live_registry_factory`.
+
 ---
 
 ## 4. Chequeos de Salud y Políticas de Reinicio
@@ -142,15 +156,15 @@ Según el issue #109 y ADR-001, el monitoreo de salud utiliza dos endpoints dist
 
 ### `/health` — Sonda de Vitalidad (Liveness)
 - **Contrato:** Devuelve siempre HTTP 200 con diagnóstico estructurado de componentes mientras el proceso Python y el bucle de eventos sigan respondiendo.
-- **Consumidor:** Gestores de procesos (demonio Docker, watchdog de systemd, sondas liveness de Kubernetes).
+- **Consumidor:** Gestores de procesos (chequeo de salud del demonio Docker en `docker-compose.prod.yml`, watchdog de systemd, sondas liveness de Kubernetes).
 - **Garantía de Reinicio:** Si un proveedor externo de modelos (Anthropic, Groq, OpenAI) se degrada o cae, el estado reportado en el JSON refleja la degradación, pero **nunca** devuelve un error HTTP 5xx. Los supervisores no reiniciarán una aplicación sana cuando las APIs externas sufran cortes transitorios.
 
 ### `/ready` — Sonda de Disponibilidad (Readiness)
 - **Contrato:**
   - Devuelve HTTP 200 cuando PostgreSQL, Redis y el proveedor de modelos están saludables y no hay backlog pendiente desatendido.
   - Devuelve HTTP 503 cuando alguna dependencia central está caída, el proveedor de modelos es inalcanzable o existen tareas en la outbox con leases vencidos sin un worker activo para procesarlas.
-- **Consumidor:** Balanceadores de carga, proxies inversos y sondas readiness de Kubernetes.
-- **Garantía de Tráfico:** El enrutamiento de tráfico hacia la instancia se pausa durante la degradación de dependencias sin matar ni reiniciar el proceso.
+- **Consumidor:** Balanceadores de carga, proxies inversos (por ejemplo, Nginx, Traefik, AWS ALB) y sondas readiness de Kubernetes para el enrutamiento y control de tráfico.
+- **Garantía de Tráfico:** El enrutamiento de tráfico hacia la instancia se pausa durante la degradación de dependencias sin matar ni reiniciar el proceso. `/ready` pertenece exclusivamente a las capas de ruteo, nunca a los supervisores de procesos o contenedores.
 
 ### Script de Chequeo de Salud
 Ejecutá el script de prueba automatizado:

@@ -7,9 +7,12 @@ Wants=postgresql.service redis.service
 
 [Service]
 Type=simple
+User=agents-system
+Group=agents-system
 WorkingDirectory=/opt/agents-system
-EnvironmentFile=-/etc/agents-system/agents-system.env
-ExecStart=/usr/bin/env uvicorn agents_system.server:app --host 127.0.0.1 --port 8000 --workers 1
+Environment="PATH=/opt/agents-system/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+EnvironmentFile=/etc/agents-system/agents-system.env
+ExecStart=/opt/agents-system/.venv/bin/uvicorn agents_system.server:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=on-failure
 RestartSec=5s
 

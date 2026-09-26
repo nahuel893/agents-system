@@ -106,3 +106,30 @@ def test_healthcheck_script_readiness_failure_exits_1() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_healthcheck_script_all_mode_reports_both_endpoints_on_failure() -> None:
+    """all mode checks and reports both /health and /ready even if /health fails."""
+    _DummyHandler.status_by_path = {"/health": 500, "/ready": 200}
+    server = http.server.HTTPServer(("127.0.0.1", 0), _DummyHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        env = {"APP_HOST": "127.0.0.1", "APP_PORT": str(port)}
+        res_all = subprocess.run(
+            [str(SCRIPT_PATH), "all"],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res_all.returncode == 1
+        assert "Checking liveness..." in res_all.stdout
+        assert "FAIL: /health returned HTTP 500" in res_all.stderr
+        assert "Checking readiness..." in res_all.stdout
+        assert "OK: /ready returned HTTP 200" in res_all.stdout
+    finally:
+        server.shutdown()
+        server.server_close()

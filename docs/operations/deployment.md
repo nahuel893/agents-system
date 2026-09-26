@@ -69,6 +69,9 @@ We provide two deployment options:
 
 The stack is defined in `docker-compose.prod.yml` with four coordinated services: `postgres`, `redis`, `migrate`, and `app`.
 
+#### Environment Injection & Secrets
+Configuration and secrets are loaded from `.env.prod` (or a custom path via `ENV_FILE`, default `${ENV_FILE:-.env.prod}`) and injected into both the `migrate` and `app` services using `env_file`.
+
 #### Security Baseline
 All external ports are bound to `127.0.0.1`. Never expose database or application ports directly to `0.0.0.0`. A host reverse proxy (Nginx, Caddy, Cloudflare Tunnel, AWS ALB) should terminate TLS and route external traffic.
 
@@ -103,6 +106,8 @@ Systemd units are located in `deploy/systemd/`:
 - `agents-system-migrate.service`: A `Type=oneshot` unit that executes database migrations before the application starts.
 - `agents-system-app.service`: A `Type=simple` unit managing the Uvicorn application server with automatic restarts on crash.
 
+Both units execute as the dedicated unprivileged user and group `agents-system`, set `PATH` to include `/opt/agents-system/.venv/bin`, and load environment variables from `EnvironmentFile=/etc/agents-system/agents-system.env` (without the `-` prefix, ensuring missing configuration files fail fast at boot).
+
 #### Installation Steps
 
 1. **Create Service User and Directories:**
@@ -134,6 +139,15 @@ Systemd units are located in `deploy/systemd/`:
    sudo systemctl start agents-system-app.service
    ```
 
+### Application Entrypoint & Tool Registry Resolution (`REGISTRY_FACTORY`)
+
+Production deployments run the Uvicorn ASGI server against `agents_system.server:app`. The application factory resolves connector tools as follows:
+
+1. **Zero Registered Agents:** If `AGENT_REGISTRATIONS` is empty or unset, the application boots cleanly with an empty runtime cache (serving `/health` and webhook intake).
+2. **Registered Agents Require `REGISTRY_FACTORY`:** When `AGENT_REGISTRATIONS` (or `create_app(agents=...)`) specifies one or more agents, the deployment **must** configure `REGISTRY_FACTORY` pointing to a callable (format: `module.submodule:callable_name`) that returns a `ToolRegistry` equipping every tool those agents declare.
+3. **Fail-Closed Default Registry:** When `REGISTRY_FACTORY` is unset, `default_registry_factory` is used. Because `default_registry_factory` only registers stub platform tools (`order_writer`, `knowledge_retrieval`, `conversation_summarizer`, `escalation_notifier`, `run_report`) and cannot equip predefined roles requiring role-specific tools (such as `session_state`, `catalog_search`, `client_lookup`, or `message_sender`), startup aborts immediately with a clear `DefinitionError` naming the missing tools.
+4. **Reference Implementation:** Check `examples/demo/app.py` for how a real deployment adapts connectors to its storage and language model via `build_live_registry_factory`.
+
 ---
 
 ## 4. Health Checks & Restart Policies
@@ -142,15 +156,15 @@ Per issue #109 and ADR-001, health monitoring uses two distinct endpoints with s
 
 ### `/health` — Liveness Probe
 - **Contract:** Always returns HTTP 200 with structured component diagnostics as long as the Python process and event loop are responsive.
-- **Consumer:** Process managers (Docker daemon, systemd watchdog, Kubernetes liveness probes).
+- **Consumer:** Process managers (Docker daemon healthcheck in `docker-compose.prod.yml`, systemd watchdog, Kubernetes liveness probes).
 - **Restart Guarantee:** A degraded or unreachable external model provider (Anthropic, Groq, OpenAI) degrades the reported status inside the JSON payload, but **never** returns an HTTP 5xx error. Supervisors will not restart a healthy application when upstream LLM APIs experience transient outages.
 
 ### `/ready` — Readiness Probe
 - **Contract:**
   - Returns HTTP 200 when PostgreSQL, Redis, and model provider are healthy and there is no unserviced backlog.
   - Returns HTTP 503 when any core dependency is down, when the model provider is unreachable, or when outbox work has expired/abandoned leases without a running worker.
-- **Consumer:** Load balancers, reverse proxies, and Kubernetes readiness probes.
-- **Traffic Guarantee:** Traffic routing is paused during dependency degradation without killing or restarting the process.
+- **Consumer:** Load balancers, reverse proxies (e.g. Nginx, Traefik, AWS ALB), and Kubernetes readiness probes for traffic routing and shaping.
+- **Traffic Guarantee:** Traffic routing is paused during dependency degradation without killing or restarting the process. `/ready` belongs exclusively to routing layers, never to container or process supervisors.
 
 ### Healthcheck Script
 Run the automated probe script:

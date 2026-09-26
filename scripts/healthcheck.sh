@@ -63,10 +63,15 @@ case "${MODE}" in
         check_endpoint "/ready"
         ;;
     all)
+        live_rc=0
+        ready_rc=0
         echo "Checking liveness..."
-        check_endpoint "/health"
+        check_endpoint "/health" || live_rc=$?
         echo "Checking readiness..."
-        check_endpoint "/ready"
+        check_endpoint "/ready" || ready_rc=$?
+        if [ "${live_rc}" -ne 0 ] || [ "${ready_rc}" -ne 0 ]; then
+            exit 1
+        fi
         ;;
     *)
         echo "Usage: $0 [readiness|liveness|all]" >&2

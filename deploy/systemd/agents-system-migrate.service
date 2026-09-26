@@ -7,9 +7,12 @@ Wants=postgresql.service
 [Service]
 Type=oneshot
 RemainAfterExit=no
+User=agents-system
+Group=agents-system
 WorkingDirectory=/opt/agents-system
-EnvironmentFile=-/etc/agents-system/agents-system.env
-ExecStart=/usr/bin/env alembic upgrade head
+Environment="PATH=/opt/agents-system/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+EnvironmentFile=/etc/agents-system/agents-system.env
+ExecStart=/opt/agents-system/.venv/bin/alembic upgrade head
 StandardOutput=journal
 StandardError=journal
 

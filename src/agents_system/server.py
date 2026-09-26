@@ -6,9 +6,11 @@ for production ASGI servers (such as Uvicorn or Gunicorn).
 Registry resolution:
     In production, a deployment typically wires its own connectors to real systems.
     Configure ``REGISTRY_FACTORY`` with an import path (e.g. ``my_pkg.connectors:build_registry``).
-    When ``REGISTRY_FACTORY`` is unset, ``default_registry_factory`` is used, which equips
-    the standard platform tools (knowledge retrieval, summarizer, escalation notifier,
-    order writer, and report catalog) in fail-closed / unbound mode.
+    When ``REGISTRY_FACTORY`` is unset, ``default_registry_factory`` is used. If registered
+    agents are configured (via ``AGENT_REGISTRATIONS`` or ``create_app(agents=...)``), boot
+    fails with a ``DefinitionError`` explaining that deployments must supply a registry factory
+    providing every tool their agents declare (see ``examples/demo/app.py`` for reference).
+    Booting with zero registered agents succeeds.
 """
 
 from __future__ import annotations
@@ -40,6 +42,11 @@ def default_registry_factory(
 
     Connectors operate in fail-closed / unbound mode unless overridden by a
     custom registry factory or explicitly bound engine.
+
+    When invoked during application boot with registered agents, this default
+    factory fails closed with a DefinitionError because it cannot equip predefined
+    roles (such as session_state or role-specific tools). Deployments must configure
+    REGISTRY_FACTORY to supply a registry providing every tool their agents declare.
     """
     registry = ToolRegistry()
     registry.register(build_knowledge_retrieval_tool_spec(None))
@@ -47,6 +54,33 @@ def default_registry_factory(
     registry.register(build_escalation_notifier_tool_spec(None))
     registry.register(build_order_writer_tool_spec(None))
     registry.register(build_report_tool_spec(bi_engine, CATALOG))
+
+    if settings is not None:
+        from agents_system.harness.loader import DefinitionError, resolve
+
+        missing_tools: set[str] = set()
+        agent_registrations = getattr(settings, "agent_registrations", None) or {}
+        for reg_str in agent_registrations.values():
+            role_name = reg_str.partition("@")[0].strip()
+            try:
+                defn = resolve(role_name)
+                for tool_name in defn.tools:
+                    if tool_name not in registry:
+                        missing_tools.add(tool_name)
+            except DefinitionError:
+                continue
+
+        missing_str = (
+            f" Missing tool(s): {', '.join(sorted(missing_tools))}."
+            if missing_tools
+            else ""
+        )
+        raise DefinitionError(
+            "REGISTRY_FACTORY is not set, but agent registrations are non-empty. "
+            "Deployments must supply a registry factory providing every tool their agents declare."
+            f"{missing_str} See examples/demo/app.py for reference."
+        )
+
     return registry
 
 
@@ -66,6 +100,10 @@ def get_application() -> FastAPI:
             )
         module = importlib.import_module(module_name)
         factory: RegistryFactory = getattr(module, attr_name)
+        if not callable(factory):
+            raise TypeError(
+                f"Invalid REGISTRY_FACTORY {factory_path!r}: resolved attribute is not callable"
+            )
     else:
         factory = default_registry_factory
 

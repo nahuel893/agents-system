@@ -63,6 +63,8 @@ services:
     image: agents-system:latest
     restart: "no"
     command: ["alembic", "upgrade", "head"]
+    env_file:
+      - ${ENV_FILE:-.env.prod}
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-agents_system}}
     depends_on:
@@ -81,6 +83,8 @@ services:
     image: agents-system:latest
     restart: unless-stopped
     command: ["uvicorn", "agents_system.server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    env_file:
+      - ${ENV_FILE:-.env.prod}
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-agents_system}}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -95,13 +99,11 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      # Readiness check: evaluates whether the service is ready to accept turns.
-      # If the model provider is degraded or down, /ready returns 503 so traffic
-      # routing pauses, but `restart: unless-stopped` does NOT restart the process
-      # (Docker only restarts on process crash/exit, never on healthcheck failure).
-      # Liveness monitoring (for process restart decisions) must probe /health instead,
-      # which returns 200 as long as the Python process and event loop are responsive.
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')\" || exit 1"]
+      # Liveness check: ensures the Python process and event loop are responsive.
+      # Returns 200 as long as the process is alive. Docker healthcheck monitors
+      # container liveness. Traffic shaping / routing readiness (/ready) belongs
+      # to the upstream load balancer or reverse proxy (e.g. Nginx, Traefik, ALB).
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
