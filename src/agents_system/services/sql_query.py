@@ -45,13 +45,17 @@ _SESSION_LIMITS = text(
     " pg_catalog.set_config('lock_timeout', :lock_timeout, true),"
     " pg_catalog.set_config('idle_in_transaction_session_timeout',"
     " :idle_timeout, true),"
-    " pg_catalog.set_config('search_path', '', true)"
+    " pg_catalog.set_config('search_path', '', true),"
+    " pg_catalog.set_config('standard_conforming_strings', 'on', true)"
 )
 """Transaction-local limits, set before any model-authored SQL.
 
 An empty `search_path` means an unqualified name can only resolve to a
 built-in: the guard already schema-qualifies every relation, and a
-deployment-owned function or operator can never shadow a built-in. Static
+deployment-owned function or operator can never shadow a built-in.
+`standard_conforming_strings` is pinned because the guard's rendering relies
+on one string-escaping rule (a doubled quote, backslashes literal); a
+session with it turned off would read the same text differently. Static
 text with bound values: AD-2 still holds for everything this module writes."""
 
 

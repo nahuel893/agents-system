@@ -17,15 +17,17 @@ the role were misconfigured:
   (unquoted folds to lower case, quoted is exact, CTE names shadow only
   inside their scope), to an allowlisted `schema.view`.
 - Every function call must be an unqualified name on a function allowlist;
-  qualified calls, custom operators, bind parameters and casts to
-  non-built-in types are refused.
+  qualified calls, custom operators, bind parameters, casts to non-built-in
+  types and string literals other than plain '...' are refused.
 - What reaches the database is NOT the model's text but the canonical
   rendering of the validated tree: every identifier quoted exactly as it was
   resolved, every relation schema-qualified, comments dropped, and the whole
-  statement wrapped as `SELECT * FROM (...) LIMIT n + 1`. A parser
-  differential - text this parser reads one way and PostgreSQL another - can
-  therefore not smuggle anything past the checks: the checked tree is the
-  executed tree.
+  statement wrapped as `SELECT * FROM (...) LIMIT n + 1`. That rendering is
+  parsed and validated a second time and must render back to the identical
+  text, and it stays inside a lexical subset this parser and PostgreSQL agree
+  on (quoted identifiers, plain strings with doubled quotes, no comments). A
+  parser differential - text read one way here and another way by
+  PostgreSQL - therefore cannot smuggle anything past the checks.
 
 Rejections carry a fixed reason `code` and a fixed `message`. A message may
 name the deployment's own configuration (the queryable views) or an
@@ -36,7 +38,6 @@ identifier limit; it never carries database or driver output.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 import sqlglot
@@ -227,6 +228,21 @@ _WRITE_OR_CONTROL_NODES: tuple[type[exp.Expr], ...] = (
 # they render as `KEYWORD(...)`: `EXISTS (subquery)`, `ARRAY(subquery)`.
 _SYNTAX_NODES: tuple[type[exp.Expr], ...] = (exp.Exists, exp.Array)
 
+# String literal forms other than plain '...'. Their escaping rules differ
+# from a standard string's, and the renderer does not re-escape all of them:
+# E'\\' (one backslash) comes back as e'\', where PostgreSQL reads `\'` as
+# an escaped quote and the string swallows the rest of the statement. Plain
+# strings plus the pinned `standard_conforming_strings` leave one escaping
+# rule, doubled quotes, which the renderer and PostgreSQL agree on.
+_NON_STANDARD_LITERALS: tuple[type[exp.Expr], ...] = (
+    exp.ByteString,
+    exp.UnicodeString,
+    exp.BitString,
+    exp.HexString,
+    exp.National,
+    exp.RawString,
+)
+
 _MESSAGES = {
     "invalid_input": (
         "The `sql` input must be a non-empty string holding one SELECT statement."
@@ -255,6 +271,11 @@ _MESSAGES = {
     "type_not_allowed": (
         "Casts are limited to built-in data types (for example numeric, text, "
         "date, timestamp, interval)."
+    ),
+    "unsupported_literal": (
+        "Only plain '...' string literals are supported (double a quote to "
+        "include one). Escape strings (E'...'), Unicode-escape strings "
+        "(U&'...'), and bit or hex strings are not."
     ),
 }
 
@@ -362,6 +383,8 @@ def _check_nodes(statement: exp.Expr, policy: QueryPolicy) -> None:
             raise _reject("forbidden_clause")
         if isinstance(node, exp.Parameter | exp.Placeholder):
             raise _reject("parameter_not_allowed")
+        if isinstance(node, _NON_STANDARD_LITERALS):
+            raise _reject("unsupported_literal")
         if isinstance(node, exp.Operator):
             raise _reject(
                 "function_not_allowed",
@@ -480,6 +503,22 @@ def _check_relations(statement: exp.Expr, policy: QueryPolicy) -> list[str]:
     return relations
 
 
+def _validate(
+    sql: str, policy: QueryPolicy
+) -> tuple[exp.Select | exp.SetOperation, list[str]]:
+    """Parse *sql* and run every check; relations come back schema-qualified."""
+    statement = normalize_identifiers(_parse_single_statement(sql), dialect=_DIALECT)
+    if not isinstance(statement, exp.Select | exp.SetOperation):
+        raise _reject("not_select")
+    _check_nodes(statement, policy)
+    return statement, _check_relations(statement, policy)
+
+
+def _render(statement: exp.Expr) -> str:
+    """Canonical text: every identifier quoted as resolved, no comments."""
+    return statement.sql(dialect=_DIALECT, identify=True, comments=False)
+
+
 def guard_query(sql: object, policy: QueryPolicy, *, row_limit: int) -> GuardedQuery:
     """Validate model-authored *sql* against *policy* and render it for execution.
 
@@ -500,20 +539,24 @@ def guard_query(sql: object, policy: QueryPolicy, *, row_limit: int) -> GuardedQ
             "send a shorter one.",
         )
 
-    statement = normalize_identifiers(_parse_single_statement(sql), dialect=_DIALECT)
-    if not isinstance(statement, exp.Select | exp.SetOperation):
-        raise _reject("not_select")
+    statement, relations = _validate(sql, policy)
+    rendered = _render(statement)
 
-    _check_nodes(statement, policy)
-    relations = _check_relations(statement, policy)
+    # Fixed point: the rendering is what executes, so it must itself pass
+    # every check and render back to exactly the same text. A renderer that
+    # wrote a construct back in a form that reads differently fails here
+    # instead of reaching the database with an unchecked meaning.
+    try:
+        executed, relations = _validate(rendered, policy)
+    except QueryRejectedError as error:
+        raise _reject("unparseable") from error
+    if _render(executed) != rendered:
+        raise _reject("unparseable")
 
     wrapped = (
-        exp.select("*").from_(statement.subquery(_RESULT_ALIAS)).limit(row_limit + 1)
+        exp.select("*").from_(executed.subquery(_RESULT_ALIAS)).limit(row_limit + 1)
     )
-    rendered = wrapped.sql(dialect=_DIALECT, identify=True, comments=False)
-    return GuardedQuery(sql=rendered, relations=tuple(sorted(set(relations))))
-
-
-def relation_allowlist(names: Iterable[str]) -> frozenset[tuple[str, str]]:
-    """Parse deployment-supplied `schema.view` names into an allowlist."""
-    return frozenset(parse_relation_name(name) for name in names)
+    final = wrapped.sql(dialect=_DIALECT, identify=True, comments=False)
+    if f"({rendered})" not in final:
+        raise _reject("unparseable")
+    return GuardedQuery(sql=final, relations=tuple(sorted(set(relations))))

@@ -188,6 +188,66 @@ def test_a_nested_block_comment_is_read_the_way_postgres_reads_it() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The rendering is what executes, so it must mean what was validated
+# ---------------------------------------------------------------------------
+
+# In PostgreSQL, E'\\' is ONE backslash, and the second literal hides a
+# subquery as plain text. A renderer that writes that literal back as e'\'
+# turns `\'` into an escaped quote: the string swallows the text up to the
+# next quote and the "hidden" subquery against `secret` becomes live SQL
+# the guard never checked.
+_ESCAPE_STRING_BREAKOUT = (
+    "SELECT E'\\\\' AS a, ' , note FROM secret) AS t --' FROM sales_v"
+)
+
+
+def test_escape_string_rendering_cannot_smuggle_a_relation() -> None:
+    assert _reject_code(_ESCAPE_STRING_BREAKOUT) == "unsupported_literal"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT E'x' FROM sales_v",
+        "SELECT U&'d\\0061ta' FROM sales_v",
+        "SELECT B'101' FROM sales_v",
+        "SELECT X'1F' FROM sales_v",
+        "SELECT N'abc' FROM sales_v",
+    ],
+)
+def test_only_standard_string_literals_are_accepted(sql: str) -> None:
+    assert _reject_code(sql) == "unsupported_literal"
+
+
+def test_quotes_inside_identifiers_and_strings_stay_escaped() -> None:
+    # An identifier or string holding the text of a subquery must still be
+    # ONE identifier or string after rendering, never live SQL.
+    guarded = guard_query(
+        'SELECT 1 AS "a"" , (SELECT x FROM secret) AS ""b", '
+        "'it''s , (SELECT x FROM secret)' FROM sales_v",
+        _SINGLE_SCHEMA_POLICY,
+        row_limit=10,
+    )
+    assert '"a"" , (SELECT x FROM secret) AS ""b"' in guarded.sql
+    assert "'it''s , (SELECT x FROM secret)'" in guarded.sql
+
+
+def test_a_rendering_that_does_not_revalidate_unchanged_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents_system.services import sql_guard
+
+    real_render = sql_guard._render
+
+    def drifting_render(statement: object) -> str:
+        return real_render(statement) + " UNION SELECT note FROM secret"
+
+    monkeypatch.setattr(sql_guard, "_render", drifting_render)
+
+    assert _reject_code("SELECT product FROM sales_v") == "unparseable"
+
+
+# ---------------------------------------------------------------------------
 # DDL / DML / everything that is not a plain SELECT
 # ---------------------------------------------------------------------------
 

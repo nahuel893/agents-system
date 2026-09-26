@@ -161,6 +161,9 @@ async def test_server_side_limits_are_set_per_statement_and_transaction_local() 
     limits_sql = engine.statements[1]
     assert "set_config('statement_timeout'" in limits_sql
     assert "set_config('search_path'" in limits_sql
+    # The guard's rendering assumes one string-escaping rule; a session that
+    # turned this off would read backslashes in '...' as escapes.
+    assert "set_config('standard_conforming_strings', 'on', true)" in limits_sql
     assert "true" in limits_sql  # is_local: the settings die with the txn
     assert engine.params[0]["statement_timeout"] == "1500ms"
 
