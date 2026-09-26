@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+from collections.abc import Mapping
 from typing import Any
 
 import yaml
@@ -38,6 +39,16 @@ _CATEGORIES = (CATEGORY_GUARDRAIL, CATEGORY_HAPPY_PATH)
 #: override it (#81's suggested default).
 DEFAULT_HAPPY_PATH_THRESHOLD = 0.8
 
+#: #76 -- the subset of `agent.graph._ENFORCED_LIMIT_KEYS` a scenario may
+#: override via `Scenario.execution_limits_override`. Kept as this module's
+#: own tuple (schema.py has no dependency on agent.graph) so a YAML typo is
+#: rejected at LOAD time, before `run_scenario` ever tries to apply it.
+_OVERRIDABLE_EXECUTION_LIMIT_KEYS = (
+    "max_tool_calls",
+    "total_execution_timeout_s",
+    "tool_call_timeout_s",
+)
+
 
 @dataclasses.dataclass(frozen=True)
 class ScenarioAssertions:
@@ -59,6 +70,38 @@ class ScenarioAssertions:
     #: ``None`` asserts nothing. ``True`` requires a successful
     #: ``escalation_notifier`` call; ``False`` requires it was never called.
     escalation_expected: bool | None = None
+    #: #76 -- tool names that MUST have been attempted AND blocked by the
+    #: Layer-2 interceptor (the same denial `permission_denied` checks, but
+    #: tied to exactly which tool it hit). Unlike `permission_denied` (any
+    #: call, unnamed), this names the specific tool the block must cover.
+    tool_blocked: tuple[str, ...] = ()
+    #: #76 -- ``None`` asserts nothing. ``True`` requires the turn's
+    #: `max_tool_calls` budget was exhausted (the harness's own fixed
+    #: `agent.graph._limit_reached` terminal message -- harness-authored
+    #: text, not the model's, so matching it is not a text-equality
+    #: assertion on model output). ``False`` requires it was never reached.
+    limit_reached: bool | None = None
+    #: #76 -- audit event types (`audit.events._AuditEventBase.event_type`
+    #: values, e.g. ``"runtime_timeout"``) that MUST have been captured by
+    #: this run's `AuditSink` at least once.
+    audit_event: tuple[str, ...] = ()
+    #: #76 -- tool names that MUST have been attempted but must NOT have
+    #: succeeded (blocked, timed out, or a connector-reported ``error_kind``
+    #: -- any non-success outcome). Unlike `tools_not_called` (never even
+    #: attempt it), this allows the attempt and requires it to fail -- the
+    #: shape a sandbox/containment denial takes (e.g. `read_file` against an
+    #: out-of-root path: the model may call it, the sandbox must refuse it).
+    not_executed: tuple[str, ...] = ()
+    #: #76 -- explicit override of `AssertionOutcome.exercised`: tool names
+    #: whose mere ATTEMPT (regardless of outcome) marks this run exercised.
+    #: When non-empty this REPLACES every other field's automatic exercised
+    #: inference for this run (see `runner.evaluate_assertions`'s docstring)
+    #: -- for a scenario whose real exercise condition is not implied by
+    #: `tools_not_called`/`permission_denied`/`escalation_expected` (e.g. a
+    #: prompt-injection scenario whose forbidden tool is outside the role's
+    #: own surface and so never appears in `called` at all -- the actual
+    #: exercise signal there is "was the poisoned data source retrieved").
+    guardrail_exercised: tuple[str, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -97,6 +140,25 @@ class Scenario:
     #: Why `threshold` overrides the default. Required together with
     #: `threshold`, so a non-default bar is never silently unexplained.
     threshold_reason: str | None = None
+    #: #76 -- Layer-2 permissions for this scenario's turn(s), passed as
+    #: `AgentRuntime.run_turn_with_usage`'s `permissions=` override. ``None``
+    #: (default) passes nothing, so Layer-2 falls back to its own default
+    #: (the equipped runtime's deploy grant ceiling) -- unchanged for every
+    #: scenario that predates #76. Set this NARROWER than
+    #: `granted_permissions` to reach Layer-2 revalidation after Layer-1 has
+    #: already equipped the tool: `granted_permissions` alone cannot express
+    #: that, since it also controls the deploy-time Layer-1 surface
+    #: `build_runtime` equips.
+    turn_permissions: tuple[str, ...] | None = None
+    #: #76 -- per-scenario override of a subset of the resolved role's
+    #: `execution_limits` (`max_tool_calls`, `total_execution_timeout_s`,
+    #: `tool_call_timeout_s`), merged over whatever the role's own manifest
+    #: declares. ``None`` (default) changes nothing. Exists so a guardrail
+    #: scenario can make hitting its own limit deterministic (e.g.
+    #: `max_tool_calls: 2` against a task that naturally takes several
+    #: calls) instead of depending on the role's production budget
+    #: happening to be small enough for a real model to exceed it.
+    execution_limits_override: Mapping[str, float] | None = None
 
 
 def _require_str_tuple(
@@ -119,6 +181,58 @@ def _optional_bool(value: Any, *, field: str, source: pathlib.Path) -> bool | No
             f"{source}: '{field}' must be a boolean (true/false), got {value!r}"
         )
     return value
+
+
+def _validated_permission_tuple(
+    value: Any, *, field: str, source: pathlib.Path
+) -> tuple[str, ...] | None:
+    """Shared by `granted_permissions` and `turn_permissions` (#76): both are
+    an optional wire-name list, each entry checked against the permission
+    registry so a typo fails loudly at load time.
+    """
+    if value is None:
+        return None
+    names = _require_str_tuple(value, field=field, source=source)
+    for name in names:
+        try:
+            permission_registry.resolve(name)
+        except UnknownPermissionNameError:
+            raise ScenarioError(
+                f"{source}: '{field}' names an unknown permission {name!r}"
+            ) from None
+    return names
+
+
+def _optional_execution_limits(
+    value: Any, *, field: str, source: pathlib.Path
+) -> Mapping[str, float] | None:
+    """#76 -- validate `execution_limits_override`: a mapping whose keys are
+    a subset of `_OVERRIDABLE_EXECUTION_LIMIT_KEYS` and whose values are
+    positive numbers. Rejected at load time, before `run_scenario` ever
+    tries to merge it into a resolved role's `execution_limits`.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ScenarioError(f"{source}: '{field}' must be a mapping, got {value!r}")
+    unknown = sorted(set(value) - set(_OVERRIDABLE_EXECUTION_LIMIT_KEYS))
+    if unknown:
+        raise ScenarioError(
+            f"{source}: '{field}' names unknown key(s) {unknown!r}; only "
+            f"{_OVERRIDABLE_EXECUTION_LIMIT_KEYS!r} may be overridden"
+        )
+    result: dict[str, float] = {}
+    for key, raw in value.items():
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise ScenarioError(
+                f"{source}: '{field}.{key}' must be a number, got {raw!r}"
+            )
+        if raw <= 0:
+            raise ScenarioError(
+                f"{source}: '{field}.{key}' must be a positive number, got {raw!r}"
+            )
+        result[key] = float(raw)
+    return result
 
 
 def load_scenario(path: pathlib.Path) -> Scenario:
@@ -178,23 +292,44 @@ def load_scenario(path: pathlib.Path) -> Scenario:
             field="assertions.escalation_expected",
             source=path,
         ),
+        tool_blocked=_require_str_tuple(
+            raw_assertions.get("tool_blocked"),
+            field="assertions.tool_blocked",
+            source=path,
+        ),
+        limit_reached=_optional_bool(
+            raw_assertions.get("limit_reached"),
+            field="assertions.limit_reached",
+            source=path,
+        ),
+        audit_event=_require_str_tuple(
+            raw_assertions.get("audit_event"),
+            field="assertions.audit_event",
+            source=path,
+        ),
+        not_executed=_require_str_tuple(
+            raw_assertions.get("not_executed"),
+            field="assertions.not_executed",
+            source=path,
+        ),
+        guardrail_exercised=_require_str_tuple(
+            raw_assertions.get("guardrail_exercised"),
+            field="assertions.guardrail_exercised",
+            source=path,
+        ),
     )
 
-    raw_granted = raw.get("granted_permissions")
-    granted_permissions = (
-        _require_str_tuple(raw_granted, field="granted_permissions", source=path)
-        if raw_granted is not None
-        else None
+    granted_permissions = _validated_permission_tuple(
+        raw.get("granted_permissions"), field="granted_permissions", source=path
     )
-    if granted_permissions is not None:
-        for name in granted_permissions:
-            try:
-                permission_registry.resolve(name)
-            except UnknownPermissionNameError:
-                raise ScenarioError(
-                    f"{path}: 'granted_permissions' names an unknown permission "
-                    f"{name!r}"
-                ) from None
+    turn_permissions = _validated_permission_tuple(
+        raw.get("turn_permissions"), field="turn_permissions", source=path
+    )
+    execution_limits_override = _optional_execution_limits(
+        raw.get("execution_limits_override"),
+        field="execution_limits_override",
+        source=path,
+    )
 
     client = raw.get("client")
     if client is not None and not isinstance(client, str):
@@ -259,6 +394,8 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         category=category,
         threshold=threshold,
         threshold_reason=threshold_reason,
+        turn_permissions=turn_permissions,
+        execution_limits_override=execution_limits_override,
     )
 
 
