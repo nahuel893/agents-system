@@ -121,10 +121,11 @@ model id (`model_display_name(model)` — the same default slice 1's
 `model_id` pricing override already uses), so every existing construction
 site (`evals/runner.py`, direct library use via `agents_system.AgentRuntime`)
 is unaffected. `main.py`'s lifespan — the only caller with a more
-meaningful id on hand — passes the operator's own
-`"{deployment}__{role}"` runtime id explicitly, so a real deployment's
-metrics are labeled by the id an operator actually configured, not by
-which underlying model happens to be serving it.
+meaningful id on hand — passes the registered runtime id explicitly: the
+opaque key the runtime was registered under, in `create_app(agents=...)`
+or in `AGENT_REGISTRATIONS`. A real deployment's metrics are therefore
+labeled by the id an operator actually chose, not by which underlying
+model happens to be serving it.
 
 ## Testing pattern
 

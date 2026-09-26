@@ -37,9 +37,10 @@ All entrypoint configuration comes from environment variables (or the project's
 | `OPENAI_COMPATIBLE_API_KEY` | optional | Credential for that endpoint; omit for keyless local servers. |
 | `DEMO_HOST` | `127.0.0.1` | HTTP bind host. |
 | `DEMO_PORT` | `8000` | HTTP bind port. |
-| `ADAPTER_RUNTIMES` | required to expose a role | JSON list of published runtime IDs, such as `["_generic__sales-agent"]`. Empty (the default) exposes no `/v1/*` models. |
+| `AGENT_REGISTRATIONS` | required to serve a role | JSON object mapping each runtime ID you choose to the predefined role it serves, as `"{role}"` or `"{role}@{client}"`, such as `{"demo-sales-agent": "sales-agent"}`. The ID is opaque: nothing parses it. A malformed entry fails boot, naming it. |
+| `ADAPTER_RUNTIMES` | required to expose a role | JSON list of the registered runtime IDs to publish, such as `["demo-sales-agent"]`. Empty (the default) exposes no `/v1/*` models. |
 | `ADAPTER_API_KEY` | required when publishing a role | Bearer token required by `/v1/*`. |
-| `DEPLOY_GRANTS` | required for every configured runtime id | JSON object mapping each `{deployment}__{role}` id to the list of permission wire names actually granted to it, such as `{"_generic__sales-agent": ["read:catalog"]}`. A configured runtime with no matching entry fails boot loudly, naming the runtime id. |
+| `DEPLOY_GRANTS` | required for every registered runtime id | JSON object mapping each registered id to the list of permission wire names actually granted to it, such as `{"demo-sales-agent": ["read:catalog"]}`. A registered runtime with no matching entry fails boot loudly, naming the runtime id. |
 
 For example, choose one provider and set its variables, then publish a generic
 role without putting any credential values in source control:
@@ -49,16 +50,20 @@ export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://your-compatible-endpoint.example/v1
 export OPENAI_COMPATIBLE_MODEL=your-model-id
 export OPENAI_COMPATIBLE_API_KEY="$YOUR_PROVIDER_API_KEY"
-export ADAPTER_RUNTIMES='["_generic__sales-agent"]'
-export DEPLOY_GRANTS='{"_generic__sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
+export AGENT_REGISTRATIONS='{"demo-sales-agent": "sales-agent"}'
+export ADAPTER_RUNTIMES='["demo-sales-agent"]'
+export DEPLOY_GRANTS='{"demo-sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
 export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
 ```
 
-`ADAPTER_RUNTIMES` and `ADAPTER_API_KEY` are what actually publish and protect
-a role on `/v1/*`; this entrypoint does not set them by default. Boot also
-requires an explicit `DEPLOY_GRANTS` entry for every configured runtime id
-(issue #38) — `main.py`'s lifespan raises `DefinitionError` naming the runtime
-otherwise. The example above grants `_generic__sales-agent` its full declared
+`AGENT_REGISTRATIONS` builds the runtime, and `ADAPTER_RUNTIMES` and
+`ADAPTER_API_KEY` are what actually publish and protect it on `/v1/*`; this
+entrypoint sets none of them by default. Boot also requires an explicit
+`DEPLOY_GRANTS` entry for every registered runtime id (issue #38) —
+`main.py`'s lifespan raises `DefinitionError` naming the runtime otherwise.
+Runtime IDs of the old `{deployment}__{role}` shape are no longer parsed; see
+[migrating](deployment.md#migrating-from-the-old-runtime-ids). The example
+above grants `demo-sales-agent` its full declared
 permission set (`platform/roles/sales-agent/manifest.md`): `read:catalog`,
 `read:client_registry`, `write:orders`, `write:order_items`,
 `read:price_lists`, `send:message`. `sales-agent` declares
@@ -135,7 +140,7 @@ curl http://127.0.0.1:8000/v1/chat/completions \
   -H "Authorization: Bearer $ADAPTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "_generic__sales-agent",
+    "model": "demo-sales-agent",
     "messages": [{"role": "user", "content": "What items are available?"}]
   }'
 ```

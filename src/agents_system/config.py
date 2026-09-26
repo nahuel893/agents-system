@@ -123,9 +123,10 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str = ""
 
     # WhatsApp runtime wiring (D-014)
-    # Which cached runtime an inbound WhatsApp delivery is routed to, as
-    # "{deployment}__{role}". No platform default exists: the platform knows
-    # no deployment names. Unset means the route resolves no runtime and
+    # Which cached runtime an inbound WhatsApp delivery is routed to: a
+    # registered runtime id (ADR-004 D5), looked up as an opaque key and
+    # never parsed. No platform default exists: the platform knows no
+    # deployment names. Unset means the route resolves no runtime and
     # answers 200 without running a turn (see integration/webhook.py).
     whatsapp_runtime_id: str = ""
     whatsapp_graph_api_url: str = "https://graph.facebook.com/v21.0"
@@ -183,31 +184,44 @@ class Settings(BaseSettings):
     adapter_provider: Literal["ollama", "groq", "anthropic", "openai_compatible"] = (
         "ollama"
     )
-    # List of model ids to expose via /v1/models. Format: "{deployment}__{role}",
-    # e.g. "acme__sales-agent". Generic (no deployment) → "_generic__{role}".
+    # The registered runtime ids /v1/models publishes (ADR-004 D5), e.g.
+    # ["acme-sales"]. Each is an opaque key into the registration, never
+    # parsed for a role or a deployment.
     adapter_runtimes: list[str] = []
 
+    # ADR-004 D5 -- the runtimes main.py's lifespan builds when create_app
+    # got no `agents=`. Maps each deployer-chosen runtime id to the
+    # predefined role it serves, as "{role}" or "{role}@{client}" (client =
+    # the deployments/<client>/<role>/ override). The id is opaque; the value
+    # has exactly one optional "@" and is parsed strictly by
+    # main._parse_agent_registration -- a malformed entry fails boot.
+    # Replaces the "{deployment}__{role}" encoding ADAPTER_RUNTIMES and
+    # WHATSAPP_RUNTIME_ID used to carry. Ignored when create_app gets
+    # `agents=`. e.g.
+    # AGENT_REGISTRATIONS='{"acme-sales": "sales-agent@acme", "support": "sales-agent"}'
+    agent_registrations: dict[str, str] = {}
+
     # permission-model PR3 (issue #38, design.md Resolved Decision 5) — the
-    # SOLE grant source for main.py's lifespan. Keyed by the same runtime id
-    # shape as adapter_runtimes/whatsapp_runtime_id ("{deployment}__{role}"),
-    # valued by the wire-name permission strings actually granted to that
-    # runtime. Replaces AD-5's auto-grant-of-the-role's-full-permission-set:
-    # a role's own `definition.permissions` is what the role DECLARES it may
-    # need, never what a deployment GRANTS it. Empty by default; main.py
-    # fails boot loudly (DefinitionError) for any configured runtime with no
+    # SOLE grant source for main.py's lifespan when create_app got no
+    # `grants=`. Keyed by the registered runtime id (the same opaque ids as
+    # AGENT_REGISTRATIONS/ADAPTER_RUNTIMES/WHATSAPP_RUNTIME_ID), valued by
+    # the wire-name permission strings actually granted to that runtime.
+    # Replaces AD-5's auto-grant-of-the-role's-full-permission-set: a role's
+    # own `definition.permissions` is what the role DECLARES it may need,
+    # never what a deployment GRANTS it. Empty by default; main.py fails
+    # boot loudly (DefinitionError) for any registered runtime with no
     # matching entry here -- there is no automatic grant.
-    # e.g. DEPLOY_GRANTS='{"acme__sales-agent": ["read:catalog", "write:orders"]}'
+    # e.g. DEPLOY_GRANTS='{"acme-sales": ["read:catalog", "write:orders"]}'
     deploy_grants: dict[str, tuple[str, ...]] = {}
 
     # #78 Phase 0 -- cost table for real per-turn token usage. Keyed by the
-    # same model id a caller already names to select a runtime: the
-    # "{deployment}__{role}" adapter/webhook runtime id
-    # (`AgentRuntime.run_turn`'s own `model_id` parameter, passed by
-    # `integration/openai_adapter.py`), or a live-eval's own `model_name`
-    # (`evals/provider.py:model_display_name`). A model id with no entry
-    # here means cost is honestly `None` -- `agent/graph.py` never guesses a
-    # price. e.g.
-    # MODEL_PRICES='{"acme__sales-agent": {"input_per_million": 0.14, "output_per_million": 0.28}}'
+    # PROVIDER model id that bills the tokens (`agent/graph.py`'s
+    # `model_display_name(model)`, e.g. "deepseek/deepseek-v4-flash"), never
+    # by a runtime id: the OpenAI adapter and the WhatsApp webhook worker
+    # both rely on that derived key (see docs/platform/live-eval.md). A model
+    # id with no entry here means cost is honestly `None` -- `agent/graph.py`
+    # never guesses a price. e.g.
+    # MODEL_PRICES='{"deepseek/deepseek-v4-flash": {"input_per_million": 0.14, "output_per_million": 0.28}}'
     model_prices: dict[str, ModelPrice] = {}
 
     # #78 Phase 0 Slice 2 -- GET /metrics (Prometheus text format,

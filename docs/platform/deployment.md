@@ -189,7 +189,37 @@ app = create_app(
 - **`grants`** is the explicit deploy-time grant, one list per registered id. Nothing is granted automatically: an id with no entry fails boot, and so does a bare string in place of a list. Without `grants=`, `DEPLOY_GRANTS` is the source, keyed by the same ids. See `docs/architecture/permission-model.md`.
 - **Channels look ids up.** `WHATSAPP_RUNTIME_ID` and every `ADAPTER_RUNTIMES` id must be a registered id, or boot fails naming it. `/v1/models` lists only the `ADAPTER_RUNTIMES` ids, never every registered one.
 
-Without `agents=`, `create_app` keeps the Settings-driven boot: `ADAPTER_RUNTIMES`/`WHATSAPP_RUNTIME_ID` carry `{deployment}__{role}` ids (`_generic__{role}` for no deployment).
+### Without `agents=`: `AGENT_REGISTRATIONS`
+
+Without `agents=`, `create_app` registers the entries of the `AGENT_REGISTRATIONS` environment variable instead, and builds them through the same rules. It maps each runtime id to a predefined role, as `"{role}"` or `"{role}@{client}"`:
+
+```bash
+AGENT_REGISTRATIONS='{"acme-sales": "sales-agent@acme", "support": "sales-agent"}'
+ADAPTER_RUNTIMES='["acme-sales", "support"]'
+DEPLOY_GRANTS='{"acme-sales": ["read:catalog", "write:orders"], "support": ["read:catalog"]}'
+```
+
+- **A value is strict.** At most one `@`; the role and the client each match the id rule above. A malformed id or value fails boot, naming it and `AGENT_REGISTRATIONS`. `__` has no meaning anywhere: it is part of the name.
+- **`"{role}@{client}"`** is that id's `clients` entry, so it needs an explicit `RootConfig(deployments_root=...)`. `"{role}"` alone means no deployment override.
+- **Only predefined roles.** An environment variable cannot carry an `Agent`; a custom agent is registered with `agents=`.
+- **`agents=` wins.** When `create_app` gets `agents=`, `AGENT_REGISTRATIONS` is ignored, never merged.
+
+### Migrating from the old runtime ids
+
+Before ADR-004, the Settings-driven boot read the role and the deployment out of the runtime id itself: `acme__sales-agent`, or `_generic__sales-agent` for no deployment. That scheme is gone. A runtime id is only a key, and a deployment still configured the old way fails boot, naming the unregistered id and pointing at `AGENT_REGISTRATIONS`. To migrate:
+
+1. **Choose an id for each runtime.** Keeping the old string works only where it is a valid id: `acme__sales-agent` is one (now just a name), `_generic__sales-agent` is not (an id cannot start with `_`).
+2. **Register it** in `AGENT_REGISTRATIONS`: what was `acme__sales-agent` becomes `"sales-agent@acme"`, what was `_generic__sales-agent` becomes `"sales-agent"`.
+3. **Rename the id everywhere it is used**: `ADAPTER_RUNTIMES`, `WHATSAPP_RUNTIME_ID`, and every `DEPLOY_GRANTS` key. An old `DEPLOY_GRANTS` key is never matched to a renamed id: the runtime fails boot for lack of a grant.
+4. **Update OpenAI-compatible clients** (e.g. Open WebUI): they send the id as `model`, and `/v1/models` now lists the new ids.
+
+| Before | After |
+|---|---|
+| `ADAPTER_RUNTIMES='["_generic__sales-agent"]'` | `AGENT_REGISTRATIONS='{"sales": "sales-agent"}'` and `ADAPTER_RUNTIMES='["sales"]'` |
+| `WHATSAPP_RUNTIME_ID=acme__sales-agent` | `AGENT_REGISTRATIONS='{"acme-sales": "sales-agent@acme"}'` and `WHATSAPP_RUNTIME_ID=acme-sales` |
+| `DEPLOY_GRANTS='{"acme__sales-agent": [...]}'` | `DEPLOY_GRANTS='{"acme-sales": [...]}'` |
+
+`MODEL_PRICES` needs no change: it is keyed by the provider model id, never by a runtime id. `agents_system.integration.openai_adapter.to_model_id` and `parse_model_id` are deleted with the scheme, with no replacement: code that imports them fails at import time. Register through `create_app(agents=...)` or `AGENT_REGISTRATIONS` instead.
 
 ---
 

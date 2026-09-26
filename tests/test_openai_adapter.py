@@ -6,7 +6,7 @@ Covers:
   - No-auth path when key unset (adapter_api_key == "")
   - POST /v1/chat/completions — happy path, unknown model 404, stream:true 400
   - Message mapping: client system message dropped
-  - model-id round-trip: to_model_id / parse_model_id
+  - to_model_id / parse_model_id are gone (ADR-004 PR4b): import fails
 
 Isolation strategy:
   TestClient is instantiated WITHOUT the context-manager form so the real
@@ -701,29 +701,24 @@ def test_chat_completion_write_tool_succeeds_with_default_permissions(
     assert len(invoked) == 1
 
 
-def test_model_id_roundtrip():
-    """to_model_id and parse_model_id are inverses of each other."""
-    from agents_system.integration.openai_adapter import parse_model_id, to_model_id
+def test_to_model_id_import_raises_import_error() -> None:
+    """ADR-004 PR4b -- spec: 'Any external caller importing the deleted
+    functions fails at import time'. The `{deployment}__{role}` runtime-id
+    scheme is gone, and so are both of its helpers, with no successor: a
+    runtime id is an opaque registration key (see
+    tests/test_no_duplicated_runtime_id_parsing.py)."""
+    with pytest.raises(ImportError):
+        from agents_system.integration.openai_adapter import (  # noqa: F401
+            to_model_id,
+        )
 
-    # Normal deployment
-    model_id = to_model_id("sales-agent", "acme")
-    assert model_id == "acme__sales-agent"
-    deployment, role = parse_model_id(model_id)
-    assert deployment == "acme"
-    assert role == "sales-agent"
 
-    # Generic deployment (None)
-    model_id_generic = to_model_id("sales-agent", None)
-    assert model_id_generic == "_generic__sales-agent"
-    deployment_g, role_g = parse_model_id(model_id_generic)
-    assert deployment_g is None
-    assert role_g == "sales-agent"
-
-    # Invalid id raises ValueError
-    import pytest as _pytest
-
-    with _pytest.raises(ValueError, match="missing '__'"):
-        parse_model_id("no-separator-here")
+def test_parse_model_id_import_raises_import_error() -> None:
+    """The inverse helper goes with it (same spec scenario)."""
+    with pytest.raises(ImportError):
+        from agents_system.integration.openai_adapter import (  # noqa: F401
+            parse_model_id,
+        )
 
 
 def test_map_messages_role_types():

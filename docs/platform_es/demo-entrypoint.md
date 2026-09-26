@@ -39,9 +39,10 @@ archivo `.env` del proyecto). La URL de la base demo es independiente de
 | `OPENAI_COMPATIBLE_API_KEY` | opcional | Credencial para ese endpoint; omitila para servidores locales sin clave. |
 | `DEMO_HOST` | `127.0.0.1` | Host de enlace HTTP. |
 | `DEMO_PORT` | `8000` | Puerto de enlace HTTP. |
-| `ADAPTER_RUNTIMES` | obligatoria para exponer un rol | Lista JSON de IDs de runtime publicados, como `["_generic__sales-agent"]`. Vacía (el valor por defecto) no expone modelos en `/v1/*`. |
+| `AGENT_REGISTRATIONS` | obligatoria para servir un rol | Objeto JSON que mapea cada ID de runtime que elegís al rol predefinido que sirve, como `"{role}"` o `"{role}@{client}"`, por ejemplo `{"demo-sales-agent": "sales-agent"}`. El ID es opaco: nada lo parsea. Una entrada malformada hace fallar el arranque, nombrándola. |
+| `ADAPTER_RUNTIMES` | obligatoria para exponer un rol | Lista JSON de los IDs de runtime registrados a publicar, como `["demo-sales-agent"]`. Vacía (el valor por defecto) no expone modelos en `/v1/*`. |
 | `ADAPTER_API_KEY` | obligatoria al publicar un rol | Token Bearer requerido por `/v1/*`. |
-| `DEPLOY_GRANTS` | obligatoria para cada runtime configurado | Objeto JSON que mapea cada ID `{deployment}__{role}` a la lista de nombres de permisos efectivamente otorgados, por ejemplo `{"_generic__sales-agent": ["read:catalog"]}`. Un runtime configurado sin una entrada correspondiente hace fallar el arranque de forma explícita, nombrando ese runtime. |
+| `DEPLOY_GRANTS` | obligatoria para cada runtime registrado | Objeto JSON que mapea cada ID registrado a la lista de nombres de permisos efectivamente otorgados, por ejemplo `{"demo-sales-agent": ["read:catalog"]}`. Un runtime registrado sin una entrada correspondiente hace fallar el arranque de forma explícita, nombrando ese runtime. |
 
 Por ejemplo, elegí un proveedor y definí sus variables; después publicá un rol
 genérico sin guardar valores de credenciales en el control de versiones:
@@ -51,17 +52,22 @@ export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://your-compatible-endpoint.example/v1
 export OPENAI_COMPATIBLE_MODEL=your-model-id
 export OPENAI_COMPATIBLE_API_KEY="$YOUR_PROVIDER_API_KEY"
-export ADAPTER_RUNTIMES='["_generic__sales-agent"]'
-export DEPLOY_GRANTS='{"_generic__sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
+export AGENT_REGISTRATIONS='{"demo-sales-agent": "sales-agent"}'
+export ADAPTER_RUNTIMES='["demo-sales-agent"]'
+export DEPLOY_GRANTS='{"demo-sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
 export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
 ```
 
-`ADAPTER_RUNTIMES` y `ADAPTER_API_KEY` son los que efectivamente publican y
-protegen un rol en `/v1/*`; esta entrada no los define por defecto. El arranque
-también requiere una entrada explícita de `DEPLOY_GRANTS` para cada runtime
-configurado (issue #38) — si falta, el lifespan de `main.py` lanza
-`DefinitionError` nombrando ese runtime. El ejemplo de arriba le otorga a
-`_generic__sales-agent` su conjunto completo de permisos declarados
+`AGENT_REGISTRATIONS` construye el runtime, y `ADAPTER_RUNTIMES` y
+`ADAPTER_API_KEY` son los que efectivamente lo publican y protegen en
+`/v1/*`; esta entrada no define ninguno por defecto. El arranque también
+requiere una entrada explícita de `DEPLOY_GRANTS` para cada runtime
+registrado (issue #38) — si falta, el lifespan de `main.py` lanza
+`DefinitionError` nombrando ese runtime. Los IDs de runtime con la vieja forma
+`{deployment}__{role}` ya no se parsean; ver
+[cómo migrar](deployment.md#migrar-desde-los-ids-de-runtime-viejos). El
+ejemplo de arriba le otorga a `demo-sales-agent` su conjunto completo de
+permisos declarados
 (`platform/roles/sales-agent/manifest.md`): `read:catalog`,
 `read:client_registry`, `write:orders`, `write:order_items`,
 `read:price_lists`, `send:message`. `sales-agent` declara
@@ -140,7 +146,7 @@ curl http://127.0.0.1:8000/v1/chat/completions \
   -H "Authorization: Bearer $ADAPTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "_generic__sales-agent",
+    "model": "demo-sales-agent",
     "messages": [{"role": "user", "content": "What items are available?"}]
   }'
 ```

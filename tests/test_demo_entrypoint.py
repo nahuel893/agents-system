@@ -126,8 +126,9 @@ def test_demo_registry_factory_registers_every_expected_tool() -> None:
 
 
 async def test_demo_build_app_boots_with_real_deploy_grants_through_lifespan() -> None:
-    """The documented `DEPLOY_GRANTS` example for `_generic__sales-agent`
-    (docs/platform/demo-entrypoint.md) must actually boot: the demo's own
+    """The documented `AGENT_REGISTRATIONS`/`DEPLOY_GRANTS` example for the
+    `demo-sales-agent` runtime id (docs/platform/demo-entrypoint.md) must
+    actually boot: the demo's own
     `build_app` registry, wired through the REAL `agents_system.main.lifespan`,
     granted exactly the REAL `sales-agent` role's six declared permissions
     (`platform/roles/sales-agent/manifest.md`). None of those six permissions
@@ -145,9 +146,10 @@ async def test_demo_build_app_boots_with_real_deploy_grants_through_lifespan() -
     test_settings = Settings(
         database_url="postgresql+asyncpg://localhost:5432/agentsys_test",
         redis_url="redis://localhost:6379/0",
-        adapter_runtimes=["_generic__sales-agent"],
+        agent_registrations={"demo-sales-agent": "sales-agent"},
+        adapter_runtimes=["demo-sales-agent"],
         deploy_grants={
-            "_generic__sales-agent": (
+            "demo-sales-agent": (
                 "read:catalog",
                 "read:client_registry",
                 "write:orders",
@@ -178,4 +180,4 @@ async def test_demo_build_app_boots_with_real_deploy_grants_through_lifespan() -
         app = build_app(engine=MagicMock(), model=MagicMock())
 
         async with lifespan(app):
-            assert "_generic__sales-agent" in app.state.runtimes
+            assert "demo-sales-agent" in app.state.runtimes
