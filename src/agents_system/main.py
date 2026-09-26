@@ -33,7 +33,7 @@ from agents_system.harness.loader import (
 from agents_system.harness.registry import RegistryFactory
 from agents_system.integration import openai_router, webhook_router
 from agents_system.integration.whatsapp_client import WhatsAppClient
-from agents_system.models.base import get_engine, get_session_factory
+from agents_system.models.base import get_bi_engine, get_engine, get_session_factory
 from agents_system.observability import RequestIdMiddleware, setup_logging
 from agents_system.observability.metrics import DEFAULT_REGISTRY
 from agents_system.services.admission import TurnAdmissionLimiter
@@ -181,7 +181,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async with AsyncExitStack() as resource_stack:
         # Startup — create async engine and store on app state
-        app.state.engine = get_engine(settings.database_url)
+        app.state.engine = get_engine(settings.database_url, settings)
         resource_stack.push_async_callback(app.state.engine.dispose)
 
         # #46 (ADR-001 D-033) — one process-wide bound on concurrent turns,
@@ -258,12 +258,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # app.state.engine — that one can write, and the whole point
                 # is that this path cannot, whatever the model asks for.
                 #
-                # Built through get_engine, like every other engine here, so
-                # it gets pool_pre_ping. This is the engine most likely to sit
-                # behind a connection its pool has held idle — a separate,
-                # possibly remote, read-only replica — which makes it the
-                # worst one to leave without stale-connection detection.
-                candidate = get_engine(settings.bi_database_url)
+                # Built through get_bi_engine, so it gets pool_pre_ping and
+                # the separately configured BI capacity limits. This is the
+                # engine most likely to sit behind a connection its pool has
+                # held idle — a separate, possibly remote, read-only replica.
+                candidate = get_bi_engine(settings.bi_database_url, settings)
                 resource_stack.push_async_callback(candidate.dispose)
 
                 read_only = await _bi_role_is_read_only(candidate)

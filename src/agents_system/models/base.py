@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
+from agents_system.config import Settings, get_settings
+
 #: Key a model sets in its ``Table.info`` to declare that Alembic — not the
 #: ORM — owns its DDL. See ``alembic_owned_tables`` for why that matters.
 ALEMBIC_OWNED = "alembic_owned"
@@ -83,9 +85,60 @@ def alembic_owned_tables() -> tuple[Table, ...]:
     )
 
 
-def get_engine(url: str) -> AsyncEngine:
-    """Create an async SQLAlchemy engine from a database URL."""
-    return create_async_engine(url, echo=False, pool_pre_ping=True)
+def _create_engine(
+    url: str,
+    *,
+    pool_size: int,
+    max_overflow: int,
+    pool_timeout: int,
+    pool_recycle: int,
+) -> AsyncEngine:
+    """Build one bounded, pre-pinging async engine."""
+    return create_async_engine(
+        url,
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
+        pool_recycle=pool_recycle,
+    )
+
+
+def get_engine(url: str, settings: Settings | None = None) -> AsyncEngine:
+    """Create the operational engine using its configured pool limits."""
+    settings = settings or get_settings()
+    return _create_engine(
+        url,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout_s,
+        pool_recycle=settings.database_pool_recycle_s,
+    )
+
+
+def get_bi_engine(url: str, settings: Settings | None = None) -> AsyncEngine:
+    """Create the dedicated BI engine using its configured pool limits."""
+    settings = settings or get_settings()
+    return _create_engine(
+        url,
+        pool_size=settings.bi_pool_size,
+        max_overflow=settings.bi_max_overflow,
+        pool_timeout=settings.bi_pool_timeout_s,
+        pool_recycle=settings.bi_pool_recycle_s,
+    )
+
+
+def get_sql_engine(url: str, settings: Settings | None = None) -> AsyncEngine:
+    """Create the dedicated SQL-tool engine with its intentionally small pool."""
+    settings = settings or get_settings()
+    return _create_engine(
+        url,
+        pool_size=settings.sql_pool_size,
+        max_overflow=settings.sql_max_overflow,
+        pool_timeout=settings.sql_pool_timeout_s,
+        pool_recycle=settings.sql_pool_recycle_s,
+    )
 
 
 def get_session_factory(

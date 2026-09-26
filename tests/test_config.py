@@ -69,6 +69,28 @@ def test_settings_reject_non_positive_rag_limits(field_name: str, value: int) ->
 # ---------------------------------------------------------------------------
 
 
+def test_operational_pool_defaults_preserve_the_legacy_ceiling() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.database_pool_size == 5
+    assert settings.database_max_overflow == 10
+
+
+def test_settings_reject_operational_pool_below_turn_capacity_plus_workers() -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(
+            _env_file=None,
+            database_pool_size=5,
+            database_max_overflow=6,
+            max_concurrent_turns=10,
+        )
+
+    message = str(excinfo.value)
+    assert "database_pool_size" in message
+    assert "database_max_overflow" in message
+    assert "max_concurrent_turns + 2" in message
+
+
 def test_max_concurrent_turns_has_a_conservative_positive_default():
     settings = Settings(_env_file=None)
     assert settings.max_concurrent_turns >= 1
@@ -441,6 +463,52 @@ def test_checkpointer_ttl_s_accepts_none() -> None:
     """checkpointer_ttl_s=None means no expiry (design AD-7 idle expiry is optional)."""
     settings = Settings(_env_file=None, checkpointer_ttl_s=None)
     assert settings.checkpointer_ttl_s is None
+
+
+# ---------------------------------------------------------------------------
+# #11 — database connection-pool sizing
+# ---------------------------------------------------------------------------
+
+
+def test_pool_settings_have_conservative_per_engine_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.database_pool_size == 5
+    assert settings.database_max_overflow == 10
+    assert settings.database_pool_timeout_s == 30
+    assert settings.database_pool_recycle_s == 1_800
+    assert settings.bi_pool_size == 3
+    assert settings.medallion_pool_size == 3
+    assert settings.sql_pool_size == 2
+    assert settings.sql_max_overflow == 0
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("database_pool_size", 0),
+        ("database_max_overflow", -1),
+        ("database_pool_timeout_s", 0),
+        ("database_pool_recycle_s", 0),
+        ("bi_pool_size", 0),
+        ("bi_max_overflow", -1),
+        ("bi_pool_timeout_s", 0),
+        ("bi_pool_recycle_s", 0),
+        ("medallion_pool_size", 0),
+        ("medallion_max_overflow", -1),
+        ("medallion_pool_timeout_s", 0),
+        ("medallion_pool_recycle_s", 0),
+        ("sql_pool_size", 0),
+        ("sql_max_overflow", -1),
+        ("sql_pool_timeout_s", 0),
+        ("sql_pool_recycle_s", 0),
+    ],
+)
+def test_settings_reject_invalid_pool_values(field_name: str, value: int) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(_env_file=None, **{field_name: value})
+
+    assert field_name in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

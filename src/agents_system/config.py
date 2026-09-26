@@ -20,6 +20,12 @@ from sqlalchemy import URL
 #: a unit mix-up) at boot rather than silently computing an absurd cost.
 _MAX_PRICE_PER_MILLION = 10_000.0
 
+# The main lifespan starts two background users of the operational engine:
+# AuditSink's drainer and DeferredWebhookWorker's poll loop. This headroom is
+# reserved in addition to concurrent turns so either worker can check out a
+# connection while every admitted turn holds its one connection for a round.
+_OPERATIONAL_ENGINE_BACKGROUND_CONNECTION_HEADROOM = 2
+
 
 class ModelPrice(BaseModel):
     """Cost per million tokens for one model id (issue #78 Phase 0).
@@ -78,6 +84,31 @@ class Settings(BaseSettings):
     # the BI tool is not registered at all; it deliberately does NOT fall back
     # to `database_url`, because that engine can write and this one must not.
     bi_database_url: str = ""
+
+    # Database connection pools. Each engine has a separate pool in every
+    # process, so their maximum connection counts add together. ``max_overflow``
+    # deliberately permits zero: the SQL tool must not burst beyond its small,
+    # dedicated pool. The remaining limits must be positive to fail malformed
+    # deployment configuration at startup instead of during load.
+    database_pool_size: int = Field(default=5, gt=0)
+    database_max_overflow: int = Field(default=10, ge=0)
+    database_pool_timeout_s: int = Field(default=30, gt=0)
+    database_pool_recycle_s: int = Field(default=1_800, gt=0)
+
+    bi_pool_size: int = Field(default=3, gt=0)
+    bi_max_overflow: int = Field(default=0, ge=0)
+    bi_pool_timeout_s: int = Field(default=30, gt=0)
+    bi_pool_recycle_s: int = Field(default=1_800, gt=0)
+
+    medallion_pool_size: int = Field(default=3, gt=0)
+    medallion_max_overflow: int = Field(default=0, ge=0)
+    medallion_pool_timeout_s: int = Field(default=30, gt=0)
+    medallion_pool_recycle_s: int = Field(default=1_800, gt=0)
+
+    sql_pool_size: int = Field(default=2, gt=0)
+    sql_max_overflow: int = Field(default=0, ge=0)
+    sql_pool_timeout_s: int = Field(default=30, gt=0)
+    sql_pool_recycle_s: int = Field(default=1_800, gt=0)
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
@@ -325,6 +356,22 @@ class Settings(BaseSettings):
                 "ALLOW_INSECURE=true for dev"
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_operational_pool_capacity(self) -> "Settings":
+        """Ensure admitted turns and in-process workers fit one engine pool."""
+        pool_ceiling = self.database_pool_size + self.database_max_overflow
+        required_capacity = (
+            self.max_concurrent_turns
+            + _OPERATIONAL_ENGINE_BACKGROUND_CONNECTION_HEADROOM
+        )
+        if pool_ceiling < required_capacity:
+            raise ValueError(
+                "database_pool_size + database_max_overflow must be at least "
+                "max_concurrent_turns + 2 (two in-process background workers "
+                "share the operational engine)"
+            )
         return self
 
     @model_validator(mode="after")
