@@ -18,7 +18,7 @@ Delivery strategy: single PR (explicit instruction). Forecast is well above the 
 - [x] T4 — ADR-007 (EN + ES) amending AD-2, tool docs (EN + ES), `reports.py` docstring pointer, live-test-plan gap update. Docs-only plus a docstring; offline suite green. Commit `4a3dc8a`.
 - [x] T4b — Live scenarios (`tests/test_live_eval_sql_query.py`) through a test-only role: an ad hoc question and a delete request. 3 runs each on a local `qwen2.5:3b` and on an OpenAI-compatible model: 100% pass, data intact. Commit `d405717`.
 - [x] T4c — Self-review found an application-layer breakout: `E'\\'` rendered as `e'\'` let a later string become live SQL (confirmed on PostgreSQL 16; the role still refused it). Fixed: non-standard string literals refused, the rendering re-validated to a fixed point, `standard_conforming_strings` pinned. RED 7 failed / GREEN 131. Added a differential test: EXPLAIN of accepted text, as a role that could read the secret table, names only the allowlisted view's base table. Commits `2eb38b9`, `74d3bf3`.
-- [ ] T5 — Full offline suite, lint, format, mypy; rebase; PR; CI. Local after rebase on `c4d1ec1`: ruff check and format clean, mypy clean (73 files), 1640 passed / 17 xfailed, coverage 96.11% (gate 94), integration 49 passed. PR and CI: see the PR.
+- [x] T5 — Full offline suite, lint, format, mypy; rebase; PR; CI. Local after rebase on `5681a8e`: ruff check and format clean, mypy clean (73 files), 1927 passed / 17 xfailed, coverage 96.32% (gate 94), SQL integration 67 passed. PR #90 CI run 36233987648 on `88e5166`: all 12 checks green (unit job 1927 passed, coverage 96.28%; bi-readonly job 10 report and 67 SQL integration tests passed).
 
 - [x] T6 — Review fixes on PR #90 (route: inline executor, one commit per finding, strict TDD). Scratch PostgreSQL 16 with the fixture and provisioned role for RED/GREEN on the integration side.
   - T6a — Schema-qualified table functions in FROM (`SELECT * FROM public.lower('x')`) passed the guard. RED 11 failed; GREEN 147 guard tests. Commit `393e912`.
@@ -39,6 +39,6 @@ Acceptance: the #80 acceptance criteria. The live scenario runs through a test-o
   - T7g — (low) the re-review's unwrapped connect errors were already fixed by T6d; its probe on this branch returns `database_unavailable` / `None` for a closed port and a wrong password. Added the wrong-password integration case. Commit `94131c9`.
   - Local after rebase on `5681a8e`: ruff check and format clean, mypy clean (73 files), 1927 passed / 17 xfailed, coverage 96.32% (gate 94), SQL integration 67 passed.
 
-Progress / evidence: T1 to T4c, T6 and T7 done; T5 awaiting CI on the rebased branch.
+Progress / evidence: T1 to T7 done; CI green on the rebased branch. Next step: human review and merge decision on PR #90.
 
 Follow-ups noted, not in this PR: `run_report` and `role_is_read_only` have the same unwrapped-connect-error gap (pre-existing).
