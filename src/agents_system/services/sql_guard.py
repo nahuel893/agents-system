@@ -413,15 +413,27 @@ def _function_not_allowed(name: str) -> QueryRejectedError:
     )
 
 
+def _qualified_function_rejected() -> QueryRejectedError:
+    return _reject(
+        "function_not_allowed",
+        "Schema-qualified function calls are not allowed; call built-in "
+        "functions by their plain name.",
+    )
+
+
+def _is_qualified_table(node: exp.Expr | None) -> bool:
+    return isinstance(node, exp.Table) and bool(
+        node.args.get("db") or node.args.get("catalog")
+    )
+
+
 def _check_function(node: exp.Func, policy: QueryPolicy) -> None:
-    if isinstance(node.parent, exp.Dot):
-        # `schema.fn(...)` escapes the pinned search path and can reach a
-        # deployment-owned function even when the bare name is allowlisted.
-        raise _reject(
-            "function_not_allowed",
-            "Schema-qualified function calls are not allowed; call built-in "
-            "functions by their plain name.",
-        )
+    # `schema.fn(...)` escapes the pinned search path and can reach a
+    # deployment-owned function even when the bare name is allowlisted. In
+    # a select list the qualifier is a Dot parent; a table function in FROM
+    # carries it on its Table parent instead.
+    if isinstance(node.parent, exp.Dot) or _is_qualified_table(node.parent):
+        raise _qualified_function_rejected()
     if isinstance(node, _SYNTAX_NODES):
         return
     anonymous = isinstance(node, exp.Anonymous | exp.AnonymousAggFunc)
@@ -485,7 +497,10 @@ def _check_relations(statement: exp.Expr, policy: QueryPolicy) -> list[str]:
             checked.add(id(table))
             if isinstance(table.this, exp.Func):
                 # A table function (generate_series, unnest): its call is
-                # held to the function allowlist, not the relation one.
+                # held to the function allowlist, not the relation one, and
+                # only by its plain name.
+                if _is_qualified_table(table):
+                    raise _qualified_function_rejected()
                 continue
             if not isinstance(table.this, exp.Identifier):
                 raise _reject("unparseable")

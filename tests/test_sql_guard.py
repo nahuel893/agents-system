@@ -372,6 +372,41 @@ def test_qualified_or_quoted_function_and_operator_calls_are_rejected(
 
 @pytest.mark.parametrize(
     "sql",
+    [
+        # A table function in FROM is a Table node, not a Dot: its schema sits
+        # on the Table. An allowlisted bare name must not make the qualified
+        # call acceptable - it could be a deployment-owned SECURITY DEFINER
+        # function that reads what the role cannot.
+        "SELECT * FROM public.generate_series(1, 3)",
+        "SELECT * FROM evil.unnest(ARRAY[1])",
+        "SELECT * FROM reporting.generate_series(1, 3) AS g",
+        "SELECT * FROM public.lower('x')",
+        "SELECT * FROM public.count()",
+        'SELECT * FROM "public"."generate_series"(1, 3)',
+        "SELECT * FROM mydb.public.generate_series(1, 3)",
+        "SELECT * FROM pg_catalog.generate_series(1, 2)",
+        "SELECT * FROM public.lower('x') WITH ORDINALITY",
+        "SELECT * FROM ROWS FROM (public.generate_series(1, 2))",
+        "SELECT * FROM sales_v JOIN public.generate_series(1, 2) AS g ON true",
+        "SELECT * FROM sales_v, LATERAL public.generate_series(1, 2)",
+        "SELECT * FROM sales_v CROSS JOIN LATERAL public.unnest(ARRAY[1]) AS u",
+    ],
+)
+def test_qualified_table_functions_are_rejected_in_every_from_position(
+    sql: str,
+) -> None:
+    assert _reject_code(sql) == "function_not_allowed"
+
+
+def test_an_unqualified_table_function_stays_accepted() -> None:
+    guarded = guard_query(
+        "SELECT g FROM generate_series(1, 3) AS g", _SINGLE_SCHEMA_POLICY, row_limit=5
+    )
+    assert "GENERATE_SERIES(1, 3)" in guarded.sql.upper()
+
+
+@pytest.mark.parametrize(
+    "sql",
     ["SELECT $1", "SELECT * FROM sales_v WHERE amount > :minimum", "SELECT ?"],
 )
 def test_bind_parameters_are_rejected(sql: str) -> None:
