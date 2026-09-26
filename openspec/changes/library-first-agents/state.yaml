@@ -286,7 +286,7 @@ pr4a_ii:
 pr4b:
   status: implemented
   branch: feat/adr-004-4b-env-migration
-  pr_url: pending
+  pr_url: https://github.com/nahuel893/agents-system/pull/98
   files_changed:
     - src/agents_system/config.py
     - src/agents_system/main.py
