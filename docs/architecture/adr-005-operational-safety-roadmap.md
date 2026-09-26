@@ -215,9 +215,9 @@ issue #18 is closed and the version now moves from Conventional Commit
 prefixes (`docs/operations/release-process.md`). `ToolGranted`/`ToolDenied`
 audit events are recorded at injection time (`audit/events.py:50-63`,
 `audit/recorder.py:179-236`) — a grant/denial trail exists at the tool
-level. No `CONTRIBUTING.md` or PR template exists; review runs through
-ordinary GitHub PR review plus required `ci`/`secret-scan`/`dependency-audit`
-checks.
+level. No `CONTRIBUTING.md` exists, but the PR template now exists at
+`.github/pull_request_template.md` (#16); review runs through ordinary GitHub
+PR review plus required `ci`/`secret-scan`/`dependency-audit` checks.
 
 **Gap:** nothing inspects a diff and forces a MAJOR (`feat!:`/`fix!:`) bump
 when a predefined role's `tools:`/`permissions:` widen — a manifest change
