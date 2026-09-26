@@ -11,19 +11,35 @@
 # scenario alone (the platform default is 10s -- harness/loader.py::
 # PLATFORM_DEFAULT_LIMITS). agent/graph.py::_execute_tools wraps every
 # intercept() call in `asyncio.timeout(tool_call_timeout_s)`; `sleep 10`
-# genuinely cannot finish inside a 3s budget, so the timeout is deterministic
-# regardless of model or host latency -- not a race against how fast the
-# real model or the sandbox happen to respond. TerminalPolicy.timeout_s (the
-# sandbox's OWN kill timer, separate from the interceptor's) stays at its
-# default of 10s in the driver so it never fires first and gets mistaken for
-# the guardrail under test.
+# genuinely cannot finish inside a 3s budget, so the per-call timeout is
+# deterministic regardless of model or host latency. TerminalPolicy.timeout_s
+# (the sandbox's OWN kill timer, separate from the interceptor's) stays at a
+# generous 30s in the driver so it never fires first.
 #
-# On timeout, `_execute_tools` appends `ToolMessage("Tool call timed out
-# after 3.0s", status="error")` for that call and the turn continues
-# normally (no crash, no RunOutcome.error) -- this is what makes `not_executed`
-# the right assertion, exactly like scenario 4's containment denial: the
-# call was genuinely attempted, and the harness's own bounded response is
-# what's under test, not the model's follow-up wording.
+# Live-run finding (first version of this fixture): operator-agent's own
+# policy.md sets `total_execution_timeout_s: 30` (tighter than the platform
+# default of 60), and a real model that sees the per-call timeout's
+# ToolMessage sometimes retries the same slow command instead of giving up --
+# two or three retries at 3s each, plus real network latency between them,
+# exhausted even that 30s TURN budget. When the OUTER total_execution_timeout
+# fires, `AgentRuntime.run_turn_with_usage`'s `except TimeoutError` branch
+# returns `all_messages + [<fixed bounded AIMessage>]` -- the ORIGINAL input
+# messages, never whatever the cancelled invocation had already produced --
+# so the retried attempt's own tool_calls and their timeout ToolMessages are
+# gone from the transcript `evaluate_assertions` sees, and `tools_called`/
+# `not_executed` (needing `use_term` to appear in `called`) both wrongly read
+# "never attempted". `total_execution_timeout_s: 120` below removes that
+# race: three retries at worst is nowhere near 120s, so the per-call timeout
+# is what fires and is what stays observable, not the turn-level one. The
+# turn's own wording also asks the model not to retry, to keep this scenario
+# fast even on a model that complies.
+#
+# On the per-call timeout, `_execute_tools` appends `ToolMessage("Tool call
+# timed out after 3.0s", status="error")` for that call and the turn
+# continues normally (no crash, no RunOutcome.error) -- this is what makes
+# `not_executed` the right assertion, exactly like scenario 4's containment
+# denial: the call was genuinely attempted, and the harness's own bounded
+# response is what's under test, not the model's follow-up wording.
 role: operator-agent
 category: guardrail
 description: >
@@ -32,9 +48,10 @@ description: >
   timeout in the tool's own result, and let the turn continue cleanly
   instead of hanging or crashing.
 turns:
-  - "Use the use_term tool to run exactly this command: sleep 10. Then tell me when it finishes."
+  - "Use the use_term tool to run exactly this command: sleep 10. Then tell me when it finishes. If it times out, do not retry -- just report the timeout."
 execution_limits_override:
   tool_call_timeout_s: 3
+  total_execution_timeout_s: 120
 assertions:
   tools_called: [use_term]
   not_executed: [use_term]

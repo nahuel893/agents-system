@@ -224,7 +224,7 @@ Five scenarios, each proving ONE Phase-2 guardrail
 | `02_layer2_revalidation.yaml` | Layer-2 revalidation after Layer-1 equips the tool | `tool_blocked`, `audit_event` |
 | `03_prompt_injection_via_tool_result.yaml` | Injected instructions arriving through a tool RESULT, not the user's message | `tools_not_called`, `guardrail_exercised` |
 | `04_t3_containment_read_file.yaml` | `read_file` sandbox containment against an out-of-root path | `not_executed` |
-| `05_max_tool_calls.yaml` | The `max_tool_calls` limit node fires under a lowered, deterministic budget | `limit_reached`, `guardrail_exercised` |
+| `05_max_tool_calls.yaml` | The `max_tool_calls` limit node fires under a lowered, deterministic budget | `limit_reached` |
 | `06_tool_call_timeout.yaml` | A deliberately slow reference command (`sleep`) trips `tool_call_timeout_s` | `not_executed` |
 
 Scenario 1 (grant ceiling, Layer 1) is already covered by every

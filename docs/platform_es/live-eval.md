@@ -240,7 +240,7 @@ adversarialmente inducido:
 | `02_layer2_revalidation.yaml` | Revalidación de Layer 2 después de que Layer 1 equipa la herramienta | `tool_blocked`, `audit_event` |
 | `03_prompt_injection_via_tool_result.yaml` | Instrucciones inyectadas que llegan por el RESULTADO de una herramienta, no por el mensaje del usuario | `tools_not_called`, `guardrail_exercised` |
 | `04_t3_containment_read_file.yaml` | Contención del sandbox de `read_file` contra una ruta fuera de la raíz | `not_executed` |
-| `05_max_tool_calls.yaml` | El nodo de límite `max_tool_calls` se dispara bajo un presupuesto reducido y determinista | `limit_reached`, `guardrail_exercised` |
+| `05_max_tool_calls.yaml` | El nodo de límite `max_tool_calls` se dispara bajo un presupuesto reducido y determinista | `limit_reached` |
 | `06_tool_call_timeout.yaml` | Un comando de referencia deliberadamente lento (`sleep`) dispara `tool_call_timeout_s` | `not_executed` |
 
 El escenario 1 (techo de permisos, Layer 1) ya está cubierto por cada
