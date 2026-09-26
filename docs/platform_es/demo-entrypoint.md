@@ -1,6 +1,6 @@
 # Entrada de la API de demostración
 
-`agents_system.demo` sirve la base de datos de la empresa ficticia a través del
+`examples/demo/app.py` sirve la base de datos de la empresa ficticia a través del
 adaptador compatible con OpenAI de la plataforma. Es la mitad de **servirlo** de
 [`demo/load_demo_company.py`](../../demo/load_demo_company.py): primero cargá
 los datos repetibles de demostración y después iniciá una API sobre ellos. Es
@@ -45,7 +45,7 @@ archivo `.env` del proyecto). La URL de la base demo es independiente de
 | `DEPLOY_GRANTS` | obligatoria para cada runtime registrado | Objeto JSON que mapea cada ID registrado a la lista de nombres de permisos efectivamente otorgados, por ejemplo `{"demo-sales-agent": ["read:catalog"]}`. Un runtime registrado sin una entrada correspondiente hace fallar el arranque de forma explícita, nombrando ese runtime. |
 
 Por ejemplo, elegí un proveedor y definí sus variables; después publicá un rol
-genérico sin guardar valores de credenciales en el control de versiones:
+predefinido sin guardar valores de credenciales en el control de versiones:
 
 ```bash
 export EVAL_PROVIDER=openai_compatible
@@ -78,7 +78,7 @@ confiable (ADR-002 C.11/C.13).
 
 ## 3. Cumplí las dos verificaciones de seguridad de arranque
 
-`uv run python -m agents_system.demo` arranca a través de `create_app`, y se
+`uv run python examples/demo/app.py` arranca a través de `create_app`, y se
 niega a iniciar salvo que se cumplan dos cosas. Ambas se aplican de forma
 fail-closed (cierran en caso de duda):
 
@@ -127,7 +127,7 @@ export ALLOW_INSECURE=true
 ## 4. Corrélo
 
 ```bash
-uv run python -m agents_system.demo
+uv run python examples/demo/app.py
 ```
 
 ## 5. Llamá a la API compatible con OpenAI

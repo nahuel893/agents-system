@@ -88,7 +88,7 @@ threshold_reason: >           # required together with threshold
 name: sales_agent_smoke      # optional — defaults to the file's stem
 description: >               # optional, free text
   A customer asks about a catalog item.
-client: deployment-id        # optional — resolve under a deployment; omit for the generic role
+client: deployment-id        # optional — resolve under a deployment; omit for the predefined role
 turns:                       # required, non-empty — user messages, sent in order
   - "Hi, do you have Item Alpha in stock and how much does it cost?"
 assertions:

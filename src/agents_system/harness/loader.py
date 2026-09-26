@@ -109,7 +109,7 @@ def _require_platform_root(root: pathlib.Path) -> pathlib.Path:
     if root.is_dir():
         return root
     raise DefinitionError(
-        "Could not locate the platform/ directory that ships the generic "
+        "Could not locate the platform/ directory that ships the predefined "
         f"agent roles. Looked in: {root}\n"
         f"  - packaged location: {_PACKAGED_PLATFORM_ROOT}\n"
         f"  - dev-checkout location: {_CHECKOUT_PLATFORM_ROOT}\n"

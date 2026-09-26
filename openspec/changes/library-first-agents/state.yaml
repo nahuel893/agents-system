@@ -36,10 +36,10 @@ tasks_progress:
     - PR4b-T2
     - PR4b-T3
     - PR4b-T4
-  pending:
     - PR5-T1
     - PR5-T2
     - PR5-T3
+  pending:
     - PR6-T1
     - PR6-T2
     - PR6-T3
@@ -342,3 +342,94 @@ pr4b:
   follow_ups:
     - .env.example still shows a DEPLOY_GRANTS key shaped like the old
       scheme; it is maintainer-edited, so it was left for a manual update.
+pr5:
+  status: implemented
+  branch: feat/adr-004-5-predefined-rename-examples
+  files_changed:
+    - README.md
+    - docs/platform/demo-entrypoint.md
+    - docs/platform/deployment.md
+    - docs/platform/library-usage.md
+    - docs/platform/live-eval.md
+    - docs/platform_es/demo-entrypoint.md
+    - docs/platform_es/deployment.md
+    - docs/platform_es/live-eval.md
+    - docs/platform_es/role.md
+    - examples/demo/app.py
+    - src/agents_system/__init__.py
+    - src/agents_system/harness/loader.py
+    - tests/_demo_app.py
+    - tests/platform_role_contract.py
+    - tests/test_demo_entrypoint.py
+    - tests/test_harness_loader.py
+    - tests/test_main.py
+    - tests/test_role_contract_suite.py
+    - openspec/changes/library-first-agents/tasks.md
+    - openspec/changes/library-first-agents/state.yaml
+  diff_lines_authored: 254
+  diff_budget_note: >-
+    Within the ~240 estimate (revised up for the _es twin edits) and well
+    under the 400-line default budget.
+  deviations:
+    - PR5-T1's GREEN step named exactly loader.py's error-message strings,
+      __init__.py's docstring line, tests/platform_role_contract.py's
+      docstrings, and docs/platform/role.md + deployment.md (+ their _es
+      twins). role.md already said "predefined role" throughout with zero
+      "generic" occurrences (renamed ahead of this PR, in an earlier slice) --
+      no EN role.md edit was needed. The rename was also applied to
+      docs/platform/library-usage.md and docs/platform/live-eval.md (+ its
+      _es twin), which use "generic role"/"generic platform roles" in the
+      exact same eight-packaged-roles sense the Scope paragraph names
+      ("docs/platform/*.md ... prose using the old term the same way") and
+      cross-reference deployment.md directly; leaving them unrenamed would
+      have made deployment.md and library-usage.md visibly inconsistent
+      immediately after this PR. library-usage.md has no _es twin.
+    - docs/architecture/*.md was left untouched even though it also matches
+      the Scope paragraph's glob -- ADR-002's own "generic"/`generic` mentions
+      are literal references to the `generic`/`load_generic` identifiers
+      (unrenamed, see below) or to the historical design text PR7 owns
+      amending ("ADR-004 + ADR-002 amendments"); no other architecture doc
+      uses "generic" in the eight-roles sense.
+    - harness/loader.py's internal comments/docstrings that describe the
+      `generic`/`load_generic()` mechanism (module docstring, the
+      `_require_deployments_root` docstring, `merge()`'s own `generic`
+      parameter and its ~80 call-site usages, `_validate_segment`'s
+      docstring) were left saying "generic" -- GREEN named only the raised
+      error-message text, and renaming the surrounding prose without
+      renaming the `generic`/`load_generic` identifiers themselves (not
+      part of any PR in this task list) would read as inconsistent within
+      the same paragraph. Only the one `_require_platform_root` message a
+      caller actually sees was changed.
+    - The `EXPECTED_ROLE_TOOLS` docstring/comment tests.platform_role_contract.py
+      mentions in its RED description was not itself edited (it never said
+      "generic"); the terminology guard test instead reads the whole file's
+      source text for "generic role" and asserts `discover_platform_roles`'s
+      docstring explicitly says "predefined role".
+    - The terminology-guard test lives in tests/test_role_contract_suite.py,
+      not tests/platform_role_contract.py as PR5-T1's RED text says verbatim
+      -- platform_role_contract.py is a shared check-function module (like
+      its existing `check_*` functions), not a `test_*.py` file, so pytest's
+      default collection never runs a `def test_...` placed there. The
+      established split in this same file (check_* lives in
+      platform_role_contract.py, the test_* that calls it lives in
+      test_role_contract_suite.py) is followed instead.
+    - PR5-T2's own description assumed demo-entrypoint.md (EN/ES) still
+      cited the old `_generic__sales-agent` env scheme in four places; PR4b
+      already moved both files to the opaque `AGENT_REGISTRATIONS`/
+      `ADAPTER_RUNTIMES` scheme (its own state.yaml deviation note says so
+      explicitly -- "PR5-T2 keeps the demo.py move and the invocation line").
+      This PR's actual demo-entrypoint.md/README.md work was therefore only
+      the `agents_system.demo`/`python -m` invocation references (three in
+      demo-entrypoint.md EN, three in ES, one in README.md).
+    - examples/ ships no `__init__.py` (design.md D7), so
+      `tests/_demo_app.py` loads `examples/demo/app.py` by file path
+      (`importlib.util.spec_from_file_location`) rather than a normal
+      import statement; every test that used to import/patch
+      `agents_system.demo` now goes through that module object instead
+      (`patch.object(demo_app, ...)` in place of
+      `patch("agents_system.demo...", ...)`).
+    - No live `python examples/demo/app.py` run against a real demo
+      Postgres/model provider was exercised (the tasks.md Work Units table
+      itself marks this "manual run, documented, not CI"); the module's
+      loadability and `build_app`/`main` surface are proven by
+      `tests/test_demo_entrypoint.py`, which execs the real file.

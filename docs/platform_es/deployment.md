@@ -1,6 +1,6 @@
 # Modelo de Despliegue (Deployment Model)
 
-La plataforma separa las definiciones de roles genéricas de las implementaciones específicas de los clientes a través de una estructura de dos capas. Los roles genéricos definen la plantilla de comportamiento y las fronteras de capacidades. Los despliegues (*deployments*) extienden y especializan esos roles para el contexto específico de cada cliente.
+La plataforma separa las definiciones de roles predefinidas de las implementaciones específicas de los clientes a través de una estructura de dos capas. Los roles predefinidos definen la plantilla de comportamiento y las fronteras de capacidades. Los despliegues (*deployments*) extienden y especializan esos roles para el contexto específico de cada cliente.
 
 Esta separación es la resolución de la decisión abierta #5: la propiedad intelectual (IP) de la plataforma reside en `platform/roles/`, mientras que la implementación específica del cliente reside en `deployments/{client}/`.
 
@@ -11,7 +11,7 @@ Esta separación es la resolución de la decisión abierta #5: la propiedad inte
 ```
 platform/
   roles/
-    sales-agent/          ← genérico: qué es un agente de ventas
+    sales-agent/          ← predefinido: qué es un agente de ventas
       role.md
       manifest.md
       policy.md
@@ -50,7 +50,7 @@ deployments/
 
 Cuando el harness instancia un agente para un despliegue, construye la definición final en tres pasos secuenciales:
 
-1. Carga el rol genérico desde `platform/roles/{role-type}/`
+1. Carga el rol predefinido desde `platform/roles/{role-type}/`
 2. Mezcla (*merge*) la sobreescritura del cliente desde `deployments/{client}/{role-type}/`
 3. Construye el runtime a partir de la definición ya mezclada y consolidada
 
@@ -58,22 +58,22 @@ La sobreescritura sigue estrictamente estas reglas por cada archivo:
 
 ### Sobreescritura de `role.md`
 
-El archivo `role.md` del despliegue extiende el rol genérico con contexto específico del cliente:
+El archivo `role.md` del despliegue extiende el rol predefinido con contexto específico del cliente:
 - Añade el nombre de la empresa, el dominio, el idioma y el vocabulario de negocio.
-- Añade la declaración del propósito del cliente por encima de la definición genérica.
-- No puede eliminar ni contradecir las fronteras de alcance del rol genérico.
+- Añade la declaración del propósito del cliente por encima de la definición predefinida.
+- No puede eliminar ni contradecir las fronteras de alcance del rol predefinido.
 
 ### Sobreescritura de `manifest.md`
 
 El archivo `manifest.md` del despliegue puede:
 - Añadir herramientas desde el registro aprobado de la plataforma (ej. `dew_connector`, `app_preventas_writer`).
 - Declarar cuáles habilidades de la carpeta `skills/` del despliegue están activas.
-- Restringir el alcance del contexto (haciéndolo más estrecho que el genérico).
+- Restringir el alcance del contexto (haciéndolo más estrecho que el predefinido).
 
 El archivo `manifest.md` del despliegue no puede:
 - Añadir herramientas que no estén presentes en el registro global de la plataforma.
 - Elevar los requisitos de permisos de ninguna herramienta.
-- Expandir el acceso al contexto más allá de lo que permite el manifiesto genérico.
+- Expandir el acceso al contexto más allá de lo que permite el manifiesto predefinido.
 
 ### Sobreescritura de `policy.md`
 
@@ -84,8 +84,8 @@ El archivo `policy.md` del despliegue puede:
 - Definir umbrales específicos del cliente para la intervención humana (*human-in-the-loop*).
 
 El archivo `policy.md` del despliegue no puede:
-- Elevar el nivel de autonomía por encima del límite máximo del rol genérico.
-- Eliminar reglas de escalamiento definidas en la política genérica.
+- Elevar el nivel de autonomía por encima del límite máximo del rol predefinido.
+- Eliminar reglas de escalamiento definidas en la política predefinida.
 - Incrementar los límites de ejecución más allá de los valores por defecto de la plataforma.
 
 ### `skills/`
@@ -104,10 +104,10 @@ Las dos fuentes de archivo quedan contenidas: un archivo de habilidad tiene que 
 
 ## Directivas de mezcla en YAML (YAML Merge Directives)
 
-El cargador de definiciones (`loader.py`) implementa un vocabulario preciso de directivas en YAML para regular cómo se mezclan las propiedades de la plantilla genérica con las sobreescrituras del cliente. Esto evita redundancias y mantiene el control de versión limpio:
+El cargador de definiciones (`loader.py`) implementa un vocabulario preciso de directivas en YAML para regular cómo se mezclan las propiedades de la plantilla predefinida con las sobreescrituras del cliente. Esto evita redundancias y mantiene el control de versión limpio:
 
 ### 1. Comportamiento por defecto (Ausencia de campo)
-Si un campo está definido en la plantilla genérica (`platform/roles/`) pero está **completamente ausente** en la sobreescritura del despliegue (`deployments/{client}/`), el cargador lo hereda automáticamente sin modificaciones.
+Si un campo está definido en la plantilla predefinida (`platform/roles/`) pero está **completamente ausente** en la sobreescritura del despliegue (`deployments/{client}/`), el cargador lo hereda automáticamente sin modificaciones.
 
 ### 2. Heredar explícitamente (`inherit`)
 Si un campo escalar se define con el valor literal `"inherit"` en la sobreescritura, toma el valor original del padre tal cual:
@@ -158,29 +158,29 @@ Para campos estructurados como diccionarios (por ejemplo, `escalation_rules`, `d
 
 ## Invariantes estructurales (Structural Invariants)
 
-> **Regla de Oro de la Plataforma:** Un despliegue específico de cliente solo puede *restringir o especializar* el comportamiento. Jamás puede elevar capacidades, relajar límites ni saltarse controles de seguridad definidos en el rol genérico.
+> **Regla de Oro de la Plataforma:** Un despliegue específico de cliente solo puede *restringir o especializar* el comportamiento. Jamás puede elevar capacidades, relajar límites ni saltarse controles de seguridad definidos en el rol predefinido.
 
 Durante el proceso de mezcla (`merge`), el cargador de configuraciones (`loader.py`) valida de forma estricta los siguientes **cuatro invariantes estructurales**. Si se viola cualquiera de ellos, el cargador aborta de inmediato levantando una excepción `DefinitionError`, bloqueando la instanciación del runtime:
 
 ### Invariante 1 — Restricción de Herramientas (`tools`)
-Las herramientas declaradas por la sobreescritura del despliegue del cliente deben ser un subconjunto estricto de las herramientas declaradas en la plantilla genérica del rol:
+Las herramientas declaradas por la sobreescritura del despliegue del cliente deben ser un subconjunto estricto de las herramientas declaradas en la plantilla predefinida del rol:
 $$\text{set(override.tools)} \subseteq \text{set(parent.tools)}$$
-Si la sobreescritura solicita una herramienta que no está aprobada en la plantilla genérica del rol, la inyección falla.
+Si la sobreescritura solicita una herramienta que no está aprobada en la plantilla predefinida del rol, la inyección falla.
 
 ### Invariante 2 — Restricción de Permisos (`permissions`)
-Los permisos resueltos finales del despliegue deben ser un subconjunto de los permisos declarados en el rol genérico:
+Los permisos resueltos finales del despliegue deben ser un subconjunto de los permisos declarados en el rol predefinido:
 $$\text{resolved\_permissions} \subseteq \text{parent.permissions}$$
 Esto impide que una configuración de cliente intente elevar privilegios o solicitar accesos de seguridad no planificados para ese tipo de rol en la plataforma.
 
 ### Invariante 3 — Techo de Autonomía (`autonomy`)
-El nivel de autonomía del despliegue debe ser menor o igual al nivel de autonomía declarado en el rol genérico:
+El nivel de autonomía del despliegue debe ser menor o igual al nivel de autonomía declarado en el rol predefinido:
 $$\text{autonomy\_rank(override)} \le \text{autonomy\_rank(parent)}$$
 El cargador ordena los rangos de autonomía de menor a mayor (más restrictivo a más permisivo):
 1. **`confirm` (Rango 0)** — El agente debe pedir confirmación humana antes de ejecutar cualquier herramienta.
 2. **`supervised` (Rango 1)** — El agente actúa autónomamente en tareas seguras y escala en excepciones.
 3. **`full` (Rango 2)** — El agente ejecuta libremente todas las herramientas de su superficie.
 
-Si el rol genérico está definido con autonomía `supervised`, un despliegue de cliente puede restringirlo a `confirm`, pero **jamás** elevarlo a `full`.
+Si el rol predefinido está definido con autonomía `supervised`, un despliegue de cliente puede restringirlo a `confirm`, pero **jamás** elevarlo a `full`.
 
 ### Invariante 4 — Restricción de Límites de Ejecución (`execution_limits`)
 Si la sobreescritura del cliente define límites de ejecución personalizados (`execution_limits`), cada valor numérico individual debe ser **más estricto o igual** (menor o igual) que el límite por defecto definido por el padre o por la plataforma:
@@ -217,13 +217,13 @@ function build_runtime(client, role_type, user_identity):
   return AgentFactory.build(definition, user_identity)
 ```
 
-Si no existe una sobreescritura de despliegue para un cliente y rol específicos, la plataforma utiliza la definición genérica tal como está. Esto permite una especialización gradual: un cliente puede comenzar operando con el rol genérico e ir agregando sobreescrituras de forma incremental a medida que se refinan sus necesidades.
+Si no existe una sobreescritura de despliegue para un cliente y rol específicos, la plataforma utiliza la definición predefinida tal como está. Esto permite una especialización gradual: un cliente puede comenzar operando con el rol predefinido e ir agregando sobreescrituras de forma incremental a medida que se refinan sus necesidades.
 
 ---
 
 ## Ejemplo: ACME sales-agent
 
-### `platform/roles/sales-agent/role.md` (genérico)
+### `platform/roles/sales-agent/role.md` (predefinido)
 ```
 name: sales-agent
 purpose: >
@@ -319,7 +319,7 @@ La capa de memoria sigue el mismo esquema de delimitación de dos niveles:
 
 | Alcance / Scope | Qué almacena |
 |---|---|
-| `platform / {role_type}` | Comportamiento genérico del agente aprendido a lo largo del tiempo en todos los despliegues. |
+| `platform / {role_type}` | Comportamiento predefinido del agente aprendido a lo largo del tiempo en todos los despliegues. |
 | `deployment / {client} / {role_type}` | Conocimiento específico del cliente (patrones de catálogo, preferencias corporativas). |
 | `deployment / {client} / {role_type} / {user_id}` | Memoria individual del usuario (historial de pedidos, preferencias personales, notas de entrega). |
 

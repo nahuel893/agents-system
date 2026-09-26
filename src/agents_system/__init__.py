@@ -1,6 +1,6 @@
 """agents_system — a reusable AI agent platform library.
 
-``agents_system`` ships the GENERIC harness and the GENERIC platform agent roles
+``agents_system`` ships the GENERIC harness and the PREDEFINED platform agent roles
 (``platform/roles/``). A client application supplies its own context on top:
 its own tools (wired to its own services), and — optionally — its own
 deployment overrides (``deployments/{client}/``) with client-specific prompts,
@@ -25,7 +25,7 @@ The injection flow, end to end::
     )
 
     # 2. Point RootConfig at YOUR deployments tree (optional — omit `client`
-    #    below to use the generic role as-is with no deployment override).
+    #    below to use the predefined role as-is with no deployment override).
     roots = agents_system.RootConfig(deployments_root=MY_APP_DEPLOYMENTS_DIR)
 
     # 3. Build the runtime: role + your registry + the permissions this

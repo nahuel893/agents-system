@@ -2,7 +2,7 @@
 
 `agents_system` is not only the ACME runtime — it is an importable library. The
 package ships the platform: the harness (loader → injector → factory) and
-the GENERIC agent roles (`platform/roles/`). It does **not** ship any
+the PREDEFINED agent roles (`platform/roles/`). It does **not** ship any
 client's tools or any client's deployment overrides. A consuming application
 supplies both of those itself, at runtime, by injection — the user's own
 words for the requirement this document exists to satisfy: *"el cliente debe
@@ -20,7 +20,7 @@ platform's own architecture, read `docs/platform/harness.md` and
 | Comes from `agents_system` | You bring it |
 |---|---|
 | The harness: `ToolRegistry`, `RootConfig`, `resolve`, `build_runtime`, `AgentRuntime` | Your own `ToolSpec`s — the connectors that call *your* services |
-| The generic platform roles (`platform/roles/*/{role,manifest,policy}.md`) — what a `sales-agent`, `orchestrator`, `data-agent`, or `summary-agent` *is generically allowed to do* | Your own deployment overrides (`deployments/{your-client}/`), if you want client-specific prompts, skills, or tighter policy |
+| The predefined platform roles (`platform/roles/*/{role,manifest,policy}.md`) — what a `sales-agent`, `orchestrator`, `data-agent`, or `summary-agent` *is allowed to do* | Your own deployment overrides (`deployments/{your-client}/`), if you want client-specific prompts, skills, or tighter policy |
 | RBAC enforcement (`InjectionError`, `FactoryError`, `DefinitionError`) | The permission grants for your caller/identity, and the `granted_permissions` you pass to `build_runtime` |
 | A LangGraph-backed `AgentRuntime` that turns an equipped runtime into something you can call `run_turn` on | Any LangChain `BaseChatModel` to bind it to |
 
@@ -51,7 +51,7 @@ pip install "git+https://github.com/nahuel893/agents-system"
 Either way, the import name is `agents_system` (underscore) — only the
 distribution name on the index is hyphenated.
 
-Installing the package is enough to get the generic platform roles — they
+Installing the package is enough to get the predefined platform roles — they
 ship inside the wheel (`platform/roles/**` is packaged as `agents_system/platform`
 via `[tool.hatch.build.targets.wheel.force-include]` in `pyproject.toml`).
 Your own deployment overrides are never part of the install; you keep them
@@ -73,7 +73,7 @@ nothing more:
 | `ToolNotFoundError` | `agents_system.harness.registry` | Raised by `ToolRegistry.get()` for an unregistered name |
 | `RootConfig` | `agents_system.harness.loader` | Injectable `platform_root` / `deployments_root` path pair |
 | `AgentDefinition` | `agents_system.harness.loader` | The frozen, resolved role definition `resolve()` returns |
-| `resolve` | `agents_system.harness.loader` | Loads + merges a role definition (generic, optionally + a client override) |
+| `resolve` | `agents_system.harness.loader` | Loads + merges a role definition (predefined, optionally + a client override) |
 | `DefinitionError` | `agents_system.harness.loader` | Raised when a definition or its roots are invalid |
 | `build_runtime` | `agents_system.harness.factory` | The single choke point: role + your registry + your grants → `EquippedRuntime` |
 | `EquippedRuntime` | `agents_system.harness.factory` | The fully assembled spec — tools, prompt, definition — `build_runtime` returns |
@@ -132,7 +132,7 @@ registry.register(
 # clone of `agents_system` you're running from — almost never what you want in
 # a real application. If that default doesn't exist and you request a
 # client override, `resolve()` now raises `DefinitionError` instead of
-# silently falling back to the generic role. See "Trap 1" below.
+# silently falling back to the predefined role. See "Trap 1" below.
 
 roots = agents_system.RootConfig(
     deployments_root=MY_APP_ROOT / "deployments",
@@ -144,7 +144,7 @@ equipped = agents_system.build_runtime(
     "sales-agent",
     registry,
     granted_permissions=["read:catalog", "send:message"],
-    client="my-client",  # omit entirely to use the generic role, unmodified
+    client="my-client",  # omit entirely to use the predefined role, unmodified
     roots=roots,
 )
 
@@ -181,8 +181,8 @@ client=...)` / `build_runtime(..., client=...)`) and the resolved
 `deployments_root` directory does not exist at all (e.g. `agents_system` installed
 as a dependency, with no co-located `deployments/`), the library raises an
 explicit `DefinitionError` naming the exact path it looked for, instead of
-quietly falling back to the generic role. A deployment override can only
-*narrow* the generic role, never broaden it — so a silent fallback would
+quietly falling back to the predefined role. A deployment override can only
+*narrow* the predefined role, never broaden it — so a silent fallback would
 have widened tools/autonomy/permissions past what the requested (but
 unconfigured) override was meant to restrict; that is a security relaxation
 disguised as a safe default, which is why this is now a loud failure rather
@@ -203,7 +203,7 @@ first, then the dev-checkout location, and raises `DefinitionError` naming
 both attempted paths only if neither exists
 (`src/agents_system/harness/loader.py`, `_default_platform_root`). You only need
 to pass `platform_root` yourself if you're shipping your own fork of the
-generic roles.
+predefined roles.
 
 ### Trap 2 — `load_override` returns `None` silently on a typo'd client name
 
@@ -217,9 +217,9 @@ if not folder.exists():
 ```
 
 `resolve(role_type, client=..., roots=...)` treats a `None` override exactly
-like "this client has no override" and falls back to the generic role
+like "this client has no override" and falls back to the predefined role
 definition. That means a typo in `client=` (`"my-cilent"` instead of
-`"my-client"`) does not raise — it quietly hands you back the generic role
+`"my-client"`) does not raise — it quietly hands you back the predefined role
 with none of your deployment's prompts, skills, or policy restrictions
 applied. This behavior is unchanged by this document; it is documented here
 so you know to check `AgentDefinition.deployment is not None` (or log
@@ -230,7 +230,7 @@ so you know to check `AgentDefinition.deployment is not None` (or log
 ## Cross-references
 
 - Harness pipeline and injection order: `docs/platform/harness.md`
-- Generic role vs. deployment override semantics: `docs/platform/deployment.md`
+- Predefined role vs. deployment override semantics: `docs/platform/deployment.md`
 - Role/manifest/policy file schema: `docs/platform/role.md`, `docs/platform/policy.md`
 - Tool contract (`ToolSpec`, connector signature): `docs/platform/tool.md`
 - Reference backends for the four platform-generic ports (knowledge, summarizer, escalation, order writer): `docs/platform/reference-backends.md`
