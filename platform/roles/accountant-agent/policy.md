@@ -17,12 +17,13 @@ escalation_rules:
 
 Both added conditions exist because of how this role fails.
 
-`report_returned_no_rows` — an empty result is ambiguous between "nothing
-happened" and "the query was wrong", and the agent cannot tell which from the
-output alone. Escalating is the honest response.
+## escalation_rules
 
-`figure_requested_outside_report_catalog` — when someone asks for a number no
-pre-approved report produces, the wrong move is to approximate it from one
-that is close. Say the report does not exist.
+- `report_returned_no_rows` — an empty result is ambiguous between "nothing
+  happened" and "the query was wrong", and the agent cannot tell which from
+  the output alone. Escalating is the honest response.
+- `figure_requested_outside_report_catalog` — when someone asks for a number
+  no pre-approved report produces, the wrong move is to approximate it from
+  one that is close. Say the report does not exist.
 
 `autonomy: supervised`. Numbers that leave this role end up in decisions.

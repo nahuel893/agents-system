@@ -99,7 +99,26 @@ Every role resolved through `resolve()` gets six behavioral clauses appended to 
 
 ### Escalation rules in the composed prompt
 
-`escalation_rules` (`escalate_to` and `conditions`) is structured policy data, not prose — declaring a condition in `policy.md` used to change nothing the model could act on unless a `role.md` author happened to restate it there too (issue #36; `accountant-agent`'s `role.md` never mentions escalation at all, so its `figure_requested_outside_report_catalog` condition was invisible to the model). `harness/factory.py::_compose_prompt` now renders the fully resolved `escalation_rules` into a short block ("Escalate to: ...", one bullet per condition) and inserts it after the role body and any skill content — still before the base prompt contract above, which stays the composed prompt's last block in every case. A role whose resolved `escalation_rules` carries neither `escalate_to` nor `conditions` gets no block at all, so this adds nothing to a role that declares nothing.
+`escalation_rules` (`escalate_to`, `conditions`, and `descriptions`) is structured policy data, not prose — declaring a condition in `policy.md` used to change nothing the model could act on unless a `role.md` author happened to restate it there too (issue #36; `accountant-agent`'s `role.md` never mentions escalation at all, so its `figure_requested_outside_report_catalog` condition was invisible to the model). `harness/factory.py::_compose_prompt` renders the fully resolved `escalation_rules` into a short block and inserts it after the role body and any skill content — still before the base prompt contract above, which stays the composed prompt's last block in every case. A role whose resolved `escalation_rules` carries neither `escalate_to` nor `conditions` gets no block at all, so this adds nothing to a role that declares nothing.
+
+A bare condition NAME still was not enough (issue #88, following #82): a model that understood a data gap explained it to the user instead of actually calling `escalation_notifier`, because the rendered block never said meeting a condition means calling the tool. Each condition now renders with its own description when one is available (`- name — description`), and the block states explicitly that meeting a condition means **calling** `escalation_notifier` — not only telling the user about it:
+
+```
+## escalation rules
+
+Escalate to: human
+
+Escalate immediately, rather than guess, whenever any of these apply.
+Meeting one means calling `escalation_notifier` — telling the user is not
+enough:
+- data_source_unreachable — the required data source is unreachable after
+  one retry attempt.
+- required_tool_missing
+```
+
+A description comes from `policy.md`'s own prose — a `- \`name\` — description` bullet, conventionally under a `## escalation_rules` heading — parsed back out by `harness/loader.py::_parse_escalation_descriptions` from wherever `resolve()` already reads that file (`_load_role_files`). It is written **once**, at the role that first declares the condition, and every descendant that inherits the condition through `extends:` inherits its description too, without repeating the prose: `descriptions` accumulates across the chain (parent ∪ child, a descendant's own wording wins on a name collision), unlike `conditions` itself, which a child's frontmatter must restate in full (see `agent/policy.md`'s own note on that). `base/policy.md` describes `required_tool_missing` and `confidence_below_threshold` once, at the root, and nothing below it repeats them.
+
+A condition with no description anywhere in its chain still renders — as its bare name, exactly like before #88 — rather than failing to compose a prompt at all. `tests/test_role_contract_suite.py`'s `test_escalation_conditions_have_descriptions` is the enforcement point instead: it fails the build for a *predefined* platform role that declares a condition nobody ever described. An importer agent (`FolderLocator`/`InlineLocator`, `harness/loader.py`) is not held to that same contract test; it may supply a `descriptions` dict directly in its `escalation_rules` (no prose parsing needed for an in-memory `InlineLocator`) or write the same prose convention in its own `policy.md` (a `FolderLocator` is read exactly like a platform role folder), but naming none is a tolerated fallback, not a load error.
 
 > **Open decision (1):** Should role definitions define only role semantics — purpose, scope, tools, skills, escalation rules — or also execution policy, such as which model to use, whether to enable warm caching, and what execution timeouts to apply? Execution policy may belong in `policy.md` (coupling role and execution), in the factory (separating concerns), or in a separate platform-level policy layer. This decision affects whether agent definitions are portable across different runtime configurations.
 

@@ -263,3 +263,33 @@ def check_ungranted_tools_are_not_injected(
                 f"permissions {spec.required_permissions} but was granted "
                 "with an empty permission set"
             )
+
+
+def check_escalation_conditions_have_descriptions(definition: Any) -> None:
+    """Issue #88: every condition a predefined role declares must resolve to
+    a non-empty description, so the composed prompt renders `- name —
+    description` and never just the bare name.
+
+    A bare name alone is exactly the shape #82 traced the failure to:
+    `accountant-agent`'s `figure_requested_outside_report_catalog` reached
+    the model with no explanation of what it meant or what to do about it.
+    This is enforced for every PREDEFINED role only — an importer agent
+    (`FolderLocator`/`InlineLocator`) that supplies none is a deliberately
+    tolerated fallback (bare name, no failure), see
+    `harness/factory.py::_render_escalation_block`'s own docstring.
+    """
+    from agents_system.harness.loader import _as_str_list
+
+    conditions = _as_str_list(definition.escalation_rules.get("conditions"))
+    descriptions = definition.escalation_rules.get("descriptions") or {}
+    missing = [
+        condition
+        for condition in conditions
+        if not str(descriptions.get(condition) or "").strip()
+    ]
+    assert not missing, (
+        f"'{definition.role_name}': escalation condition(s) {missing} have "
+        "no description — add a `- `name` — description` bullet to this "
+        "role's own `policy.md` prose (or an ancestor's, for an inherited "
+        "condition)"
+    )

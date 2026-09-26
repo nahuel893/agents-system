@@ -168,6 +168,62 @@ def test_resolve_folder_locator_with_client_raises(tmp_path: pathlib.Path) -> No
     assert "FolderLocator" in message
 
 
+def test_folder_locator_policy_prose_supplies_condition_descriptions(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Issue #88: an importer agent's own `policy.md` prose is parsed for
+    condition descriptions exactly like a platform role's -- FolderLocator
+    dispatches through the same `_load_role_files` code path."""
+    folder = _write_folder(tmp_path, "support-bot")
+    (folder / "policy.md").write_text(
+        '---\nrole: support-bot\nversion: "1.0"\nautonomy: supervised\n'
+        "escalation_rules:\n  escalate_to: human\n  conditions:\n"
+        "    - queue_backed_up\n---\n\n"
+        "## escalation_rules\n\n"
+        "- `queue_backed_up` — more than ten messages are waiting for a\n"
+        "  human reply.\n",
+        encoding="utf-8",
+    )
+    locator = FolderLocator(path=folder, root=tmp_path)
+    roots = RootConfig(
+        platform_root=tmp_path / "unused-platform",
+        deployments_root=tmp_path / "unused-deployments",
+    )
+
+    definition = resolve(locator, roots=roots)
+
+    assert definition.escalation_rules["descriptions"]["queue_backed_up"] == (
+        "more than ten messages are waiting for a human reply."
+    )
+
+
+def test_folder_locator_condition_without_description_still_resolves(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Issue #88's documented decision: an importer agent that supplies no
+    description for a declared condition still resolves without error --
+    only a PREDEFINED role's contract test enforces the requirement, not
+    the loader itself (`harness/factory.py::_render_escalation_block`
+    falls back to the bare name)."""
+    folder = _write_folder(tmp_path, "support-bot")
+    (folder / "policy.md").write_text(
+        '---\nrole: support-bot\nversion: "1.0"\nautonomy: supervised\n'
+        "escalation_rules:\n  escalate_to: human\n  conditions:\n"
+        "    - queue_backed_up\n---\n\nNo prose describing it at all.\n",
+        encoding="utf-8",
+    )
+    locator = FolderLocator(path=folder, root=tmp_path)
+    roots = RootConfig(
+        platform_root=tmp_path / "unused-platform",
+        deployments_root=tmp_path / "unused-deployments",
+    )
+
+    definition = resolve(locator, roots=roots)  # must not raise
+
+    assert definition.escalation_rules["conditions"] == ["queue_backed_up"]
+    assert not definition.escalation_rules.get("descriptions")
+
+
 def test_abstract_folder_agent_rejected(tmp_path: pathlib.Path) -> None:
     """design.md's Open Question, PR1a-T2: `resolve()` rejects a
     FolderLocator-sourced agent declared abstract in its own manifest,
