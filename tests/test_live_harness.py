@@ -276,6 +276,7 @@ def _build_webhook_only_harness(client: httpx.AsyncClient) -> LiveHarness:
         model_name="fake-model",
         meta_webhook_secret="test-secret",
         metrics_api_key="test-key",
+        database_url="postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/unused",
     )
 
 
@@ -476,3 +477,139 @@ async def test_boot_live_harness_never_overlaps_two_concurrent_boots(
         "b entered its own boot_live_harness() body before a's had exited -- "
         f"the two boots overlapped: {order!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# render_provision_sql_readonly -- Phase 1 (#79) SQL-tool fixture
+# provisioning. Renders the CHECKED-IN `scripts/provision_sql_readonly.sql`
+# (#80, ADR-007) into plain SQL runnable over one asyncpg connection, so a
+# live Phase 1 run provisions the tool's role through the exact same runbook
+# an operator follows -- see this module's docstring for why a parallel
+# reimplementation would be the wrong choice.
+# ---------------------------------------------------------------------------
+
+
+def test_render_provision_sql_readonly_substitutes_every_psql_variable() -> None:
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="live_harness_abc123",
+        password="it's-a-secret",
+        views=("sql_tool_fixture.sales_v",),
+    )
+
+    # No unsubstituted psql variable or meta-command survives.
+    assert ":'" not in rendered
+    assert ':"' not in rendered
+    assert "\\set" not in rendered
+    assert "\\if" not in rendered
+    assert "\\else" not in rendered
+    assert "\\endif" not in rendered
+    # Each substitution landed, correctly quoted/escaped.
+    assert '"live_harness_abc123"' in rendered
+    assert "it''s-a-secret" in rendered
+    assert "sql_tool_fixture.sales_v" in rendered
+
+
+def test_render_provision_sql_readonly_defaults_temp_file_limit() -> None:
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("s.v",)
+    )
+
+    assert "'256MB'" in rendered
+
+
+def test_render_provision_sql_readonly_accepts_an_explicit_temp_file_limit() -> None:
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("s.v",), temp_file_limit="64MB"
+    )
+
+    assert "'64MB'" in rendered
+    assert "'256MB'" not in rendered
+
+
+def test_render_provision_sql_readonly_joins_multiple_views_as_one_csv_literal() -> (
+    None
+):
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("a.b", "c.d")
+    )
+
+    assert "'a.b,c.d'" in rendered
+
+
+# ---------------------------------------------------------------------------
+# live_registry_factory_adapter -- `extra_tool_specs` (#79, Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def test_live_registry_factory_adapter_extra_spec_replaces_a_same_named_base_tool() -> (
+    None
+):
+    """A scenario that needs to inspect `run_report`'s actual arguments and
+    result -- the audit trail carries neither, only name/timing/outcome --
+    wraps the SAME connector and passes it as `extra_tool_specs`. This must
+    REPLACE the base registry's own `run_report`, not raise
+    `ToolRegistry.register`'s duplicate-name error."""
+    from agents_system.evals.live_harness import live_registry_factory_adapter
+    from agents_system.harness.registry import Tier, ToolSpec
+
+    async def _fake_connector(
+        inputs: dict[str, object], *, session: object = None
+    ) -> dict[str, object]:
+        return {"replaced": True}
+
+    replacement = ToolSpec(
+        name="run_report",
+        description="replacement",
+        required_permissions=(),
+        input_schema={"type": "object", "properties": {}},
+        connector=_fake_connector,
+        tier=Tier.T0,
+    )
+
+    factory = live_registry_factory_adapter(
+        object(), object(), extra_tool_specs=(replacement,)
+    )
+    registry = factory()
+
+    assert registry.get("run_report") is replacement
+    # Every other base tool -- unrelated to the replacement -- still comes
+    # from the reference backends untouched.
+    assert "catalog_search" in registry
+    assert "client_lookup" in registry
+
+
+def test_live_registry_factory_adapter_extra_spec_adds_a_genuinely_new_tool() -> None:
+    """A tool with no base-registry counterpart (e.g. `sql_query`, #80) is
+    simply added alongside every reference-backend tool."""
+    from agents_system.evals.live_harness import live_registry_factory_adapter
+    from agents_system.harness.registry import Tier, ToolSpec
+
+    async def _fake_connector(
+        inputs: dict[str, object], *, session: object = None
+    ) -> dict[str, object]:
+        return {}
+
+    extra = ToolSpec(
+        name="sql_query",
+        description="fake sql_query for this test",
+        required_permissions=(),
+        input_schema={"type": "object", "properties": {}},
+        connector=_fake_connector,
+        tier=Tier.T0,
+    )
+
+    factory = live_registry_factory_adapter(
+        object(), object(), extra_tool_specs=(extra,)
+    )
+    registry = factory()
+
+    assert registry.get("sql_query") is extra
+    assert "catalog_search" in registry

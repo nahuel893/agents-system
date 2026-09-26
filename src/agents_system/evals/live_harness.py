@@ -77,7 +77,7 @@ import os
 import secrets
 import socket
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -92,16 +92,24 @@ from sqlalchemy import Select, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from agents_system.agent.spec import Agent
 from agents_system.config import get_settings
+from agents_system.connectors.operator import TerminalPolicy
 from agents_system.evals.live_registry import build_live_registry_factory
 from agents_system.evals.provider import build_eval_model
-from agents_system.harness.registry import RegistryFactory, ToolRegistry
+from agents_system.harness.registry import RegistryFactory, ToolRegistry, ToolSpec
 from agents_system.integration.meta_signature import sign_payload
 from agents_system.main import create_app
 from agents_system.models.audit_event import AuditEvent
 from agents_system.models.base import get_session_factory
 
 logger = structlog.get_logger()
+
+#: This module's own directory is `src/agents_system/evals/`; the repo root
+#: is three parents up. Shared by `_run_migrations` (already used it inline)
+#: and Phase 1 (#79)'s `_seed_demo_company`/`render_provision_sql_readonly`
+#: below, all of which locate a checked-in file relative to the repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: Overridable so a developer whose docker-compose stack uses different
 #: credentials/ports is not stuck with the checked-in defaults
@@ -295,17 +303,56 @@ class AcceptAllParticipantDirectory:
         return _FakeParticipant()
 
 
-def live_registry_factory_adapter(engine: AsyncEngine, model: Any) -> RegistryFactory:
+def live_registry_factory_adapter(
+    engine: AsyncEngine,
+    model: Any,
+    *,
+    terminal_policy: TerminalPolicy | None = None,
+    extra_tool_specs: Sequence[ToolSpec] = (),
+) -> RegistryFactory:
     """Adapt `evals.live_registry.build_live_registry_factory`'s zero-arg
     closure to the `(settings, embedder, bi_engine)` signature `create_app`'s
     lifespan calls its `registry_factory` with -- the same shape
-    `examples/demo/app.py::_demo_registry_factory` already uses."""
-    build_registry = build_live_registry_factory(engine, model)
+    `examples/demo/app.py::_demo_registry_factory` already uses.
+
+    *terminal_policy* (#79, Phase 1) is forwarded to `build_live_registry_factory`
+    so an operator/developer-shaped scenario can bind `use_term`/`read_file`
+    to a real sandbox instead of the always-refusing default -- `None`
+    keeps #78's original behaviour (both tools refuse every call).
+
+    *extra_tool_specs* (#79, Phase 1) are registered into the SAME registry
+    as the reference backends, REPLACING a base tool of the same name rather
+    than raising `ToolRegistry.register`'s own duplicate-name error -- e.g.
+    the read-only SQL tool (`sql_query_connector.build_sql_query_tool_spec`,
+    a genuinely new name, built and provisioned by the caller BEFORE
+    booting -- see `provision_sql_readonly_fixture`'s own docstring for why
+    the registry factory runs during `create_app`'s lifespan startup, before
+    a harness exists to provision against), or a call-recording wrapper
+    around an EXISTING connector (e.g. `run_report`) that a scenario needs
+    to inspect the actual result of, which the audit trail alone does not
+    carry (`ToolCallAttempted.payload` never includes a tool's arguments or
+    return value -- only name/timing/outcome)."""
+    build_registry = build_live_registry_factory(
+        engine, model, terminal_policy=terminal_policy
+    )
 
     def factory(
         settings: Any = None, embedder: Any = None, bi_engine: Any = None
     ) -> ToolRegistry:
-        return build_registry()
+        base = build_registry()
+        # An extra spec REPLACES a base one of the same name (`ToolRegistry.
+        # register` itself raises on a duplicate) -- e.g. #79 Phase 1's
+        # `run_report`-call-recording wrapper around the same connector, kept
+        # local to a test rather than a change to `build_live_registry` --
+        # not just adds a genuinely new tool (e.g. `sql_query`).
+        extra_names = {spec.name for spec in extra_tool_specs}
+        registry = ToolRegistry()
+        for name in base.names():
+            if name not in extra_names:
+                registry.register(base.get(name))
+        for spec in extra_tool_specs:
+            registry.register(spec)
+        return registry
 
     return factory
 
@@ -438,6 +485,159 @@ def _run_migrations(database_url: str, *, repo_root: Path) -> None:
     )
 
 
+def _seed_demo_company(database_url: str, *, repo_root: Path) -> None:
+    """Load `demo/load_demo_company.py`'s fixture data (catalog, clients,
+    sales) into *database_url* (#79, Phase 1) -- the SAME script an operator
+    runs by hand, reused here rather than reimplemented so the harness's
+    data matches exactly what the script documents and
+    `demo/verify_contract.py`'s own contract check already covers. Safe
+    against a fresh throwaway database: the script only refuses to run
+    against one that already holds unrecognized objects (`classify_target`),
+    which an empty, just-migrated database never does.
+    """
+    import subprocess
+    import sys
+
+    env = {**os.environ, "DEMO_DATABASE_URL": database_url}
+    subprocess.run(
+        [sys.executable, str(repo_root / "demo" / "load_demo_company.py")],
+        cwd=repo_root,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+async def _execute_sql_script(database_url: str, sql_text: str) -> None:
+    """Run *sql_text* -- which may hold several statements, including `DO
+    $$ ... $$` blocks -- against *database_url* over ONE raw asyncpg
+    connection (#79, Phase 1).
+
+    Mirrors `demo/load_demo_company.py::_run_sql_files`'s own technique, and
+    for the same reason: every SQLAlchemy `execute()` path sends a PREPARED
+    statement, and PostgreSQL rejects more than one command in one of those
+    ("cannot insert multiple commands into a prepared statement"). asyncpg's
+    own `execute()` with no bind parameters uses the simple query protocol,
+    which accepts them.
+    """
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as conn:
+            raw = await conn.get_raw_connection()
+            driver_conn = raw.driver_connection
+            if driver_conn is None:
+                raise RuntimeError(
+                    "no raw asyncpg connection available; sql_text was NOT run"
+                )
+            await driver_conn.execute(sql_text)
+    finally:
+        await engine.dispose()
+
+
+def _quote_sql_literal(value: str) -> str:
+    """A single-quoted SQL string literal, with every embedded `'` doubled
+    -- the same escaping rule PostgreSQL's own lexer applies."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _quote_sql_identifier(value: str) -> str:
+    """A double-quoted SQL identifier, with every embedded `"` doubled."""
+    return '"' + value.replace('"', '""') + '"'
+
+
+#: The four psql-only meta-command prefixes `scripts/provision_sql_readonly.sql`
+#: uses purely to supply a DEFAULT for `sql_temp_file_limit` when the caller's
+#: `-v` omits it. `render_provision_sql_readonly` always supplies a value
+#: itself (see its own *temp_file_limit* parameter), so the whole `\if
+#: ... \endif` block -- along with the unrelated `\set ON_ERROR_STOP on`
+#: line -- is dropped rather than interpreted; asyncpg's simple query
+#: protocol has no psql meta-command support at all, so leaving one in would
+#: fail as invalid SQL.
+_PSQL_META_COMMAND_PREFIX = "\\"
+
+
+def render_provision_sql_readonly(
+    *,
+    database: str,
+    password: str,
+    views: Sequence[str],
+    temp_file_limit: str = "256MB",
+) -> str:
+    """Render the checked-in `scripts/provision_sql_readonly.sql` (#80,
+    ADR-007's read-only SQL tool role) into plain SQL runnable over one
+    asyncpg connection (#79, Phase 1's own SQL-tool scenario provisions this
+    role against the harness's throwaway database with this function).
+
+    Renders the CHECKED-IN script -- rather than a parallel
+    reimplementation -- by substituting its three psql variables
+    (`sql_password`, `sql_views`, `sql_temp_file_limit`) and its one
+    automatic psql variable (`DBNAME`) and dropping its psql-only
+    meta-commands, so a live Phase 1 run provisions the tool's role through
+    the EXACT same runbook an operator follows by hand -- see
+    `tests/test_live_harness.py` for unit tests of the substitution itself.
+    """
+    raw = (_REPO_ROOT / "scripts" / "provision_sql_readonly.sql").read_text()
+    rendered = "\n".join(
+        line
+        for line in raw.splitlines()
+        if not line.lstrip().startswith(_PSQL_META_COMMAND_PREFIX)
+    )
+    rendered = rendered.replace(":'sql_password'", _quote_sql_literal(password))
+    rendered = rendered.replace(":'sql_views'", _quote_sql_literal(",".join(views)))
+    rendered = rendered.replace(
+        ":'sql_temp_file_limit'", _quote_sql_literal(temp_file_limit)
+    )
+    rendered = rendered.replace(':"DBNAME"', _quote_sql_identifier(database))
+    return rendered
+
+
+async def provision_sql_readonly_fixture(database_url: str, *, password: str) -> str:
+    """Load `tests/fixtures/sql_query_fixture.sql` and provision the
+    `sql_readonly` role (`scripts/provision_sql_readonly.sql`) against
+    *database_url* (#79, Phase 1's SQL-tool scenario), granting it `SELECT`
+    on exactly `sql_tool_fixture.sales_v` -- the same fixture
+    `tests/test_sql_query_integration.py` already uses.
+
+    *database_url* must be a SUPERUSER-credentialed connection string (the
+    same shape `DEFAULT_ADMIN_DATABASE_URL`/`_with_database` produce): a
+    dedicated throwaway database the caller creates and drops itself,
+    independent of any `boot_live_harness` database -- this must run and
+    complete BEFORE the `ToolSpec` it provisions for can be handed to
+    `boot_live_harness(extra_tool_specs=...)`, which is itself built and
+    bound while `create_app`'s lifespan is starting, before a harness exists
+    to provision against.
+
+    Returns the `sql_readonly` role's own connection URL: same host and
+    database as *database_url*, different user/password -- a live scenario
+    passes this to
+    `agents_system.connectors.sql_query_connector.build_sql_query_tool_spec`
+    exactly like a deployment's own `SQL_DATABASE_URL` would.
+    """
+    fixture_path = _REPO_ROOT / "tests" / "fixtures" / "sql_query_fixture.sql"
+    fixture_sql = "\n".join(
+        line
+        for line in fixture_path.read_text().splitlines()
+        if not line.lstrip().startswith(_PSQL_META_COMMAND_PREFIX)
+    )
+    await _execute_sql_script(database_url, fixture_sql)
+
+    database = make_url(database_url).database
+    assert database is not None, "database_url carries no database name"
+    provision_sql = render_provision_sql_readonly(
+        database=database,
+        password=password,
+        views=("sql_tool_fixture.sales_v",),
+    )
+    await _execute_sql_script(database_url, provision_sql)
+
+    return (
+        make_url(database_url)
+        .set(username="sql_readonly", password=password)
+        .render_as_string(hide_password=False)
+    )
+
+
 @dataclass
 class LiveHarness:
     """Handle to a booted real application (#78 Phase 0 Slice 3), exposing
@@ -453,6 +653,12 @@ class LiveHarness:
     model_name: str
     meta_webhook_secret: str
     metrics_api_key: str
+    #: The exact superuser-credentialed connection string the app itself
+    #: connects with, pointed at this run's throwaway database (#79, Phase
+    #: 1) -- lets a scenario provision extra database-level fixtures (e.g.
+    #: `provision_sql_readonly_fixture`) against the SAME database, without
+    #: re-deriving it from `LIVE_HARNESS_ADMIN_DATABASE_URL` itself.
+    database_url: str
     #: Every `thread_id` (normalized phone number) a `deliver_webhook` call
     #: has driven the checkpointer with, so `boot_live_harness`'s teardown
     #: knows exactly which Redis checkpoints are this run's own to delete
@@ -557,7 +763,13 @@ class LiveHarness:
 
 @contextlib.asynccontextmanager
 async def boot_live_harness(
-    *, role: str = "sales-agent", runtime_id: str = "live-harness"
+    *,
+    role: Agent | str = "sales-agent",
+    runtime_id: str = "live-harness",
+    permissions: Sequence[str] | None = None,
+    terminal_policy: TerminalPolicy | None = None,
+    seed_demo: bool = False,
+    extra_tool_specs: Sequence[ToolSpec] = (),
 ) -> AsyncIterator[LiveHarness]:
     """Boot the real application against a fresh throwaway database and
     yield a `LiveHarness`. See this module's docstring for the full design.
@@ -567,11 +779,30 @@ async def boot_live_harness(
     `CREATE DATABASE`, a reachable Redis (`LIVE_HARNESS_REDIS_URL`, default:
     the `redis` service), and a real model reachable through whatever
     `EVAL_PROVIDER` is configured (see `docs/platform/live-eval.md`).
+
+    *role* (#79, Phase 1) accepts either a predefined platform-role name --
+    #78's original `str` -- or a Python-built `Agent` (`agent.spec.Agent`,
+    e.g. `Agent.from_folder(...)` or a bare `Agent(...)`), registered exactly
+    as `create_app(agents=...)` already accepts both. *permissions* is the
+    matching deploy-time grant; omitted, it keeps #78's original
+    `SALES_AGENT_PERMISSIONS` default (correct only when *role* is left at
+    its own `"sales-agent"` default). *terminal_policy* is forwarded to the
+    live registry so `use_term`/`read_file` can be genuinely exercised
+    instead of always refusing. *seed_demo* additionally loads
+    `demo/load_demo_company.py`'s fixture data (catalog, clients, sales) into
+    the throwaway database, needed by any scenario touching `catalog_search`,
+    `client_lookup`, or `run_report`. *extra_tool_specs* are registered on
+    top of the reference backends -- see `live_registry_factory_adapter`'s
+    own docstring for why they must already be fully built (and, for a
+    database-backed one, already provisioned) before this call.
     """
     admin_url = os.environ.get(_ADMIN_DATABASE_URL_ENV, DEFAULT_ADMIN_DATABASE_URL)
     redis_url = os.environ.get(_REDIS_URL_ENV, DEFAULT_REDIS_URL)
     db_name = f"live_harness_{uuid.uuid4().hex[:12]}"
     database_url = _with_database(admin_url, db_name)
+    grant_list = (
+        list(permissions) if permissions is not None else list(SALES_AGENT_PERMISSIONS)
+    )
 
     # #113 review (medium finding) -- held for this call's ENTIRE lifetime
     # (boot through teardown), not just around the env mutation below: see
@@ -585,8 +816,11 @@ async def boot_live_harness(
         registry_engine: AsyncEngine | None = None
         harness: LiveHarness | None = None
         try:
-            repo_root = Path(__file__).resolve().parents[3]
-            await asyncio.to_thread(_run_migrations, database_url, repo_root=repo_root)
+            await asyncio.to_thread(_run_migrations, database_url, repo_root=_REPO_ROOT)
+            if seed_demo:
+                await asyncio.to_thread(
+                    _seed_demo_company, database_url, repo_root=_REPO_ROOT
+                )
             await outbound.start()
 
             metrics_api_key = secrets.token_hex(16)
@@ -615,9 +849,12 @@ async def boot_live_harness(
 
                 app = create_app(
                     agents={runtime_id: role},
-                    grants={runtime_id: list(SALES_AGENT_PERMISSIONS)},
+                    grants={runtime_id: grant_list},
                     registry_factory=live_registry_factory_adapter(
-                        registry_engine, model
+                        registry_engine,
+                        model,
+                        terminal_policy=terminal_policy,
+                        extra_tool_specs=extra_tool_specs,
                     ),
                     participant_directory=AcceptAllParticipantDirectory(),
                     title="agents_system live harness",
@@ -641,6 +878,7 @@ async def boot_live_harness(
                             model_name=model_name,
                             meta_webhook_secret=settings.meta_webhook_secret,
                             metrics_api_key=metrics_api_key,
+                            database_url=database_url,
                         )
                         yield harness
             finally:
