@@ -88,9 +88,15 @@ The deployment `policy.md` cannot:
 - Remove escalation rules defined in the generic policy
 - Increase execution limits beyond platform defaults. A `null` value counts as the platform default and is checked like any other value; a value that is not a number, or is `NaN`, raises `DefinitionError`
 
-### `skills/` (deployment-only)
+### `skills/`
 
-Skills are always client-specific. There are no generic skills. The `skills/` folder exists only in deployments. Skills are behavioral prompt modules that shape how the agent reasons about domain-specific tasks — they encode client vocabulary, business rules, and interaction patterns.
+Skills are behavioral prompt modules that shape how the agent reasons about domain-specific tasks — they encode client vocabulary, business rules, and interaction patterns. Skill content resolves from three sources, checked in this order:
+
+1. **Inline Python content** — a custom agent built with `Agent(skill_contents={...})` (or `Agent.from_folder(path, skill_contents={...})`) supplies skill content directly, with no file read.
+2. **The custom agent's own folder** — `Agent.from_folder(path)`'s own `skills/<name>.md`, for a custom agent that ships its own default skill content.
+3. **The deployment** — `deployments/{client}/{role}/skills/<name>.md`. This is the **only** source a predefined platform role ever resolves skills from; a predefined role has no folder or inline source of its own.
+
+A declared skill that resolves from none of the three sources fails loud (`FactoryError`). A custom agent may combine its own two sources — e.g. ship a folder default and let an inline override (source 1) replace one skill by name. The deployment source is exclusively a predefined-role mechanism: pairing a `client` deployment override with a folder- or inline-sourced agent (any `Agent`/`Agent.from_folder` locator) raises `DefinitionError` at resolve time, since a custom agent has no deployment tree to look one up in.
 
 ---
 

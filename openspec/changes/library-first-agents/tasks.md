@@ -671,7 +671,7 @@ PR1a (`FolderLocator`/`InlineLocator` exist) and PR2
 ~230-260, revised up ~20 lines for the `docs/platform_es/` twin edits added
 by PR3-T3, per the corrected `_es` doc-twin note above).
 
-- [ ] **PR3-T1 — `AgentDefinition` gains `skills_folder`/`inline_skills` (D4).**
+- [x] **PR3-T1 — `AgentDefinition` gains `skills_folder`/`inline_skills` (D4).**
   RED: extend `tests/test_locator_folder.py`/`tests/test_locator_inline.py`
   (or a new `tests/test_agent_definition_skills_fields.py`) asserting: a
   platform-role `AgentDefinition` has `skills_folder=None,
@@ -699,7 +699,7 @@ by PR3-T3, per the corrected `_es` doc-twin note above).
   half), "Skills load from inline Python-supplied content" (the carrier
   half). <!-- sdd-owner: implementation -->
 
-- [ ] **PR3-T2 — `_load_skills` 4-source precedence (inline > own folder > deployment > error).**
+- [x] **PR3-T2 — `_load_skills` 4-source precedence (inline > own folder > deployment > error).**
   RED: create `tests/test_skills_precedence.py` covering spec Requirements
   "Skills load from an importer agent's own folder", "Skills load from inline
   Python-supplied content", "Inline skill content overrides a same-named
@@ -738,7 +738,7 @@ by PR3-T3, per the corrected `_es` doc-twin note above).
   fails the same way", "A predefined role's own platform-role folder is never
   treated as a skills source". <!-- sdd-owner: implementation -->
 
-- [ ] **PR3-T3 — Threat-matrix: importer skills/ symlink containment + doc contradiction fix.**
+- [x] **PR3-T3 — Threat-matrix: importer skills/ symlink containment + doc contradiction fix.**
   RED: add `test_skill_symlink_does_not_escape_folder` to
   `tests/test_skills_precedence.py` (the threat-matrix RED test named in
   `design.md`'s Threat Matrix table): a `FolderLocator`-sourced importer
@@ -784,7 +784,7 @@ by PR3-T3, per the corrected `_es` doc-twin note above).
   containment property), plus the proposal's own doc-contradiction Scope
   item. <!-- sdd-owner: implementation -->
 
-- [ ] **PR3-T4 — PR3 closing: full verification.**
+- [x] **PR3-T4 — PR3 closing: full verification.**
   Verify: `.venv/bin/pytest -q` (full suite), `.venv/bin/ruff check .`,
   `.venv/bin/ruff format --check .`, `.venv/bin/mypy src/`. Confirm `git diff
   --stat` against PR3's branch base; flag in the PR description if it

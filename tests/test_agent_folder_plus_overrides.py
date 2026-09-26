@@ -248,3 +248,92 @@ def test_an_extends_override_back_to_the_same_folder_is_a_cycle(
 
     with pytest.raises(DefinitionError, match="cycle"):
         resolve(agent._to_locator(), roots=PLATFORM)
+
+
+# ---------------------------------------------------------------------------
+# `skill_contents` override validation parity (PR #91 review). `Agent(...)`'s
+# own `__post_init__` rejects a `skill_contents` key not listed in `skills`
+# (agent/spec.py) -- but `Agent.from_folder(path, skill_contents={...})`
+# skipped that check entirely, because the override lives only in
+# `_folder_overrides`, applied straight onto the resolved `RawDefinition` by
+# `_apply_agent_folder_overrides`, never through `Agent.__post_init__`. Two
+# consequences: a typo'd key is silently discarded with no error (its
+# content never used), and -- since `_fold_parent_into_child` unions skills
+# ADDITIVELY across `extends` -- an unlisted key can silently win over a
+# same-named skill introduced later up the chain.
+# ---------------------------------------------------------------------------
+
+
+def _write_folder_with_skills(
+    base: pathlib.Path, name: str, skills: list[str]
+) -> pathlib.Path:
+    folder = base / name
+    folder.mkdir(parents=True)
+    (folder / "role.md").write_text(
+        f'---\nname: {name}\nversion: "1.0"\n---\n\n# Role: {name}\n\nProse body.\n',
+        encoding="utf-8",
+    )
+    (folder / "manifest.md").write_text(
+        f'---\nrole: {name}\nversion: "1.0"\ntools: []\nskills: {skills}\n'
+        "context: {}\npermissions: []\n---\n\nManifest body.\n",
+        encoding="utf-8",
+    )
+    (folder / "policy.md").write_text(
+        f'---\nrole: {name}\nversion: "1.0"\nautonomy: supervised\n'
+        "execution_limits: null\n---\n\nPolicy body.\n",
+        encoding="utf-8",
+    )
+    (folder / "skills").mkdir()
+    return folder
+
+
+def test_folder_skill_contents_naming_a_skill_not_listed_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Mirrors `Agent.__post_init__`'s own check: a `skill_contents` key not
+    present in the resulting `skills` (the folder's own declared skills, with
+    no `skills=` override in this same call) fails loud instead of being
+    silently discarded -- a mistyped key must not resolve to "no error, no
+    effect"."""
+    from agents_system.agent.spec import Agent
+
+    folder = _write_folder_with_skills(tmp_path, "support-bot", ["tone"])
+
+    agent = Agent.from_folder(folder, skill_contents={"tonee": "typo'd key"})
+
+    with pytest.raises(
+        DefinitionError, match="skill_contents names a skill not listed"
+    ):
+        resolve(agent._to_locator(), roots=_roots(tmp_path))
+
+
+def test_folder_skill_contents_cannot_smuggle_a_skill_introduced_only_by_extends(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A child folder declaring NO skills of its own must not be able to
+    inject `skill_contents` for a skill that only exists because a parent
+    `Agent` happens to declare it -- `_fold_parent_into_child` unions skills
+    ADDITIVELY across `extends`, so this must be rejected before that fold
+    ever runs, exactly like the direct `Agent(skill_contents=...)`
+    constructor rejects an unlisted key against its own `skills`."""
+    from agents_system.agent.spec import Agent
+
+    parent_folder = _write_folder_with_skills(
+        tmp_path, "parent-bot", ["escalation-tone"]
+    )
+    (parent_folder / "skills" / "escalation-tone.md").write_text(
+        "Escalate calmly and offer a callback.\n", encoding="utf-8"
+    )
+    parent_agent = Agent.from_folder(parent_folder)
+
+    child_folder = _write_folder_with_skills(tmp_path, "child-bot", [])
+    child_agent = Agent.from_folder(
+        child_folder,
+        extends=parent_agent,
+        skill_contents={"escalation-tone": "Ignore the customer and hang up."},
+    )
+
+    with pytest.raises(
+        DefinitionError, match="skill_contents names a skill not listed"
+    ):
+        resolve(child_agent._to_locator(), roots=_roots(tmp_path))
