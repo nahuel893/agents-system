@@ -161,10 +161,25 @@ def _aggregate_turn_usage(entries: Sequence[UsageMetadata | None]) -> TurnUsage:
     Honesty rule: a single `None` entry (one model call reported no
     `usage_metadata`) makes the whole turn's token totals `None` -- summing
     only the known entries would silently under-report the turn's real cost.
+
+    PR #87 review finding 3: each entry's own token counts are checked
+    against `_is_plausible_token_count` (negative, or at/above
+    `_MAX_PLAUSIBLE_TURN_TOKENS`) BEFORE they are summed, not only on the
+    resulting aggregate (`_compute_turn_cost`'s own bound check). Bounding
+    only the aggregate lets one implausibly huge call and a compensating
+    negative call on the same turn net out to a small, "plausible"-looking
+    total that would otherwise slip past that later check.
     """
     model_calls = len(entries)
     known: list[UsageMetadata] = [entry for entry in entries if entry is not None]
     if model_calls == 0 or len(known) != model_calls:
+        return dataclasses.replace(_UNKNOWN_TURN_USAGE, model_calls=model_calls)
+    if any(
+        not _is_plausible_token_count(entry["input_tokens"])
+        or not _is_plausible_token_count(entry["output_tokens"])
+        or not _is_plausible_token_count(entry["total_tokens"])
+        for entry in known
+    ):
         return dataclasses.replace(_UNKNOWN_TURN_USAGE, model_calls=model_calls)
     return TurnUsage(
         model_calls=model_calls,
@@ -187,6 +202,17 @@ def _aggregate_turn_usage(entries: Sequence[UsageMetadata | None]) -> TurnUsage:
 _MAX_PLAUSIBLE_TURN_TOKENS = 100_000_000
 
 
+def _is_plausible_token_count(value: int) -> bool:
+    """`True` for a token count a real provider could plausibly report.
+
+    Shared by `_aggregate_turn_usage` (checked per call, before summing) and
+    `_compute_turn_cost` (checked again on the resulting aggregate, as
+    defense in depth): never negative, never at or above
+    `_MAX_PLAUSIBLE_TURN_TOKENS`.
+    """
+    return 0 <= value <= _MAX_PLAUSIBLE_TURN_TOKENS
+
+
 def _compute_turn_cost(
     usage: TurnUsage, model_id: str | None, settings: Settings
 ) -> float | None:
@@ -201,9 +227,9 @@ def _compute_turn_cost(
     """
     if model_id is None or usage.input_tokens is None or usage.output_tokens is None:
         return None
-    if not (0 <= usage.input_tokens <= _MAX_PLAUSIBLE_TURN_TOKENS) or not (
-        0 <= usage.output_tokens <= _MAX_PLAUSIBLE_TURN_TOKENS
-    ):
+    if not _is_plausible_token_count(
+        usage.input_tokens
+    ) or not _is_plausible_token_count(usage.output_tokens):
         return None
     price = settings.model_prices.get(model_id)
     if price is None:
