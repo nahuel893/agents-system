@@ -20,6 +20,15 @@ Delivery strategy: single PR (explicit instruction). Forecast is well above the 
 - [x] T4c — Self-review found an application-layer breakout: `E'\\'` rendered as `e'\'` let a later string become live SQL (confirmed on PostgreSQL 16; the role still refused it). Fixed: non-standard string literals refused, the rendering re-validated to a fixed point, `standard_conforming_strings` pinned. RED 7 failed / GREEN 131. Added a differential test: EXPLAIN of accepted text, as a role that could read the secret table, names only the allowlisted view's base table.
 - [ ] T5 — Full offline suite, lint, format, mypy; rebase; PR; CI. Local after rebase on `c4d1ec1`: ruff check and format clean, mypy clean (73 files), 1640 passed / 17 xfailed, coverage 96.11% (gate 94), integration 49 passed. PR and CI: see the PR.
 
+- [x] T6 — Review fixes on PR #90 (route: inline executor, one commit per finding, strict TDD). Scratch PostgreSQL 16 with the fixture and provisioned role for RED/GREEN on the integration side.
+  - T6a — Schema-qualified table functions in FROM (`SELECT * FROM public.lower('x')`) passed the guard. RED 11 failed; GREEN 147 guard tests. Commit `d93999c`.
+  - T6b — Guard CPU was quadratic (per-node renders; AND/OR are function nodes) and ran on the event loop: 400 terms 3.2 s, max length 30 s. Function names and types are now checked during the one render (fail-closed for any node it skips), 2,500-node budget, guard in `asyncio.to_thread`. RED 5 failed; GREEN 211; probe: 30.6 s call / 30.7 s stall became 0.0 s / 0.1 s. Commit `85b80f3`.
+  - T6c — Role check ignored memberships (predefined `pg_*` roles), CREATE on the database and executable SECURITY DEFINER functions. RED 5 offline + 5 integration failed; GREEN 23 offline, 54 integration. Commit `64b6a12`.
+  - T6d — Real connect failures (ConnectionRefusedError, socket.gaierror, asyncpg errors) escaped the connector and `verify_query_role`. RED 10 failed; GREEN 75 offline, 55 integration (closed-port case). Commit `023235c`.
+  - T6e — Results were bounded in rows, not bytes (500 MB through one call). Byte gate in the database (running sum of row sizes, rows past `byte_limit` sent as NULLs) plus a JSON cut in the connector, `truncated_bytes`. RED 9 offline + 4 integration failed; GREEN 258 offline, 59 integration; probe: 100 x 5 MB rows now 0 rows, peak RSS 69 MiB (was 1,042 MiB). Commit `e5f2ef1`.
+
 Acceptance: the #80 acceptance criteria. The live scenario runs through a test-only role and the direct runtime; running it through the HTTP API needs a predefined role that declares the tool and the Phase 0 harness (#78).
 
-Progress / evidence: T1 to T4c done; T5 awaiting CI.
+Progress / evidence: T1 to T4c done; T5 awaiting CI; T6 review fixes done, awaiting CI on the rebased branch.
+
+Follow-ups noted, not in this PR: `run_report` and `role_is_read_only` have the same unwrapped-connect-error gap (pre-existing).
