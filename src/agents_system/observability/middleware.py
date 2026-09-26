@@ -33,6 +33,11 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
                 status_code=response.status_code,
                 elapsed_ms=elapsed_ms,
             )
+            # #78 Phase 0 Slice 3 -- echoed so a caller (the live harness,
+            # above all) can correlate this request's audit rows without
+            # scraping logs: `audit/recorder.py` already stamps every event
+            # with exactly this id from the same contextvar.
+            response.headers["x-request-id"] = request_id
             return response
         finally:
             structlog.contextvars.clear_contextvars()

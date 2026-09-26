@@ -469,6 +469,89 @@ proceso, los contadores
 `agent_turns_total`/`agent_tool_calls_total`/`agent_limit_trips_total`, y
 el propio modelo de protección de `GET /metrics`.
 
+## Harness en vivo (issue #78 Phase 0 Slice 3)
+
+`run_scenario` de arriba llama directamente a `AgentRuntime.run_turn` -- nunca
+levanta la aplicación real. `agents_system.evals.live_harness.
+boot_live_harness` sí: la API HTTP, la ruta del webhook de WhatsApp y su
+worker diferido, una base de datos Postgres real (descartable) migrada con
+`alembic upgrade head`, un checkpointer Redis real, y auditoría persistida en
+la tabla `audit_event` real. La Fase 1 (#79) y la Fase 2 (extiende #76)
+construyen sus propios escenarios en vivo sobre este harness.
+
+```python
+from agents_system.evals.live_harness import boot_live_harness
+
+async with boot_live_harness() as harness:
+    response = await harness.send_chat_completion("...")
+    ...
+```
+
+Requiere, todo local por defecto (los servicios `postgres`/`redis` de
+`docker-compose.yml`):
+
+- un Postgres alcanzable que pueda ejecutar `CREATE DATABASE` (la conexión
+  admin se puede sobreescribir con `LIVE_HARNESS_ADMIN_DATABASE_URL`);
+- un Redis alcanzable (sobreescribible con `LIVE_HARNESS_REDIS_URL`);
+- un modelo real alcanzable a través de lo que nombre `EVAL_PROVIDER` (ver
+  "Cambiar de proveedor" arriba) -- el propio `ADAPTER_PROVIDER` del harness
+  lo espeja, así que la aplicación levantada sirve exactamente el mismo
+  proveedor que usa una corrida manual del eval.
+
+Cada llamada a `boot_live_harness()` crea y migra una base de datos nueva
+con nombre único, y la descarta al finalizar -- nunca la base
+`agents_system` del operador. El envío saliente de WhatsApp nunca llega a
+Meta: `WhatsAppClient` publica hacia `Settings.whatsapp_graph_api_url`, un
+punto de configuración ya existente que este harness apunta a un servidor
+local real (`FakeWhatsAppServer`) que registra cada envío en lugar de
+enviarlo de verdad.
+
+Al finalizar también borra cada hilo de checkpoint de Redis que las
+llamadas a `deliver_webhook` de esta corrida escribieron (#113): un
+checkpoint que quedó de una corrida anterior nunca debe dejar pasar el
+assert de `read_thread` de una corrida posterior sin que el checkpointing
+de ESA corrida haya funcionado de verdad. Sólo una llamada a
+`boot_live_harness()` puede estar activa a la vez por proceso -- levantar
+el harness muta el `os.environ` global del proceso y el caché de
+`get_settings()`, así que toda la vida de una llamada (desde que levanta
+hasta que finaliza) queda serializada con un lock a nivel de módulo; una
+segunda llamada concurrente espera a que la primera termine del todo en
+lugar de corromper su configuración. No usar `asyncio.gather()` sobre dos
+llamadas a `boot_live_harness()` esperando que corran en paralelo.
+
+`LiveHarness` expone: `send_chat_completion` (un turno vía
+`/v1/chat/completions`), `deliver_webhook` (un mensaje entrante de WhatsApp
+firmado, con el mismo esquema HMAC-SHA256 real que verifica
+`verify_signature`), `wait_until` (esperar a que el worker diferido se
+ponga al día), `audit_rows` (leer las filas que coincidan de la tabla real
+`audit_event`), `scrape_metrics` / `metric_value` (leer una muestra de
+`/metrics`), y `read_thread` (leer un hilo de LangGraph checkpointeado
+directo desde Redis).
+
+El escenario smoke (`tests/test_live_smoke.py`, `pytest -m live`) prueba el
+cableado de punta a punta con un turno por la API y un turno por el
+webhook, ambos disparando la herramienta `session_state` (en memoria, no
+necesita datos sembrados -- `catalog_search` / `client_lookup` /
+`order_writer` esperan las vistas del contrato portable de reportes de la
+empresa demo, que es responsabilidad de la Fase 1 (#79), no de este
+harness), y hace assert sobre lo que hizo el SISTEMA: filas de auditoría,
+contadores de `/metrics`, y el mensaje que efectivamente recibió
+`FakeWhatsAppServer` -- nunca el texto propio del modelo, según el
+Principio de este documento para tests en vivo.
+
+**Salvedad sobre el correlation id**: `AuditEvent.correlation_id` viene del
+contextvar `request_id` de `structlog`, que sólo `RequestIdMiddleware`
+asocia -- únicamente para una request HTTP en curso. Un turno que corre el
+worker diferido del webhook (sin una request HTTP propia) siempre registra
+`correlation_id="none"`; `LiveHarness.audit_rows` filtra las filas de un
+turno de webhook por rol/tipo de evento/timestamp en su lugar. Es una
+brecha existente de la plataforma que el Slice 3 documenta, no cambia.
+
+Los tests offline de las propias funciones auxiliares del harness (el ida y
+vuelta del sobre/firma, el servidor de salida falso, el lector de muestras
+de `/metrics`, el constructor de la consulta de auditoría) viven en
+`tests/test_live_harness.py` y no necesitan modelo, Postgres ni Redis.
+
 ## Correrlo como pipeline propio de un rol
 
 `agents_system.evals.runner.run_scenario(scenario, *, model, model_name,
