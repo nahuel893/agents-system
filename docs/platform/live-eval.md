@@ -146,9 +146,41 @@ of `agents_system.evals.reporting.write_results(...)` writes two timestamped
 files:
 
 - `evals/results/<UTC timestamp>.json` — one entry per scenario: role,
-  model, run count, pass count, success rate, and per-run failure detail.
+  model, run count, pass count, success rate, per-run failure detail, and
+  (issue #78 Phase 0) real token usage/cost -- see below.
 - `evals/results/<UTC timestamp>.md` — a short markdown table (scenario,
-  role, model, runs, success rate) for a quick read.
+  role, model, runs, success rate, tokens, cost) for a quick read.
+
+## Tokens and cost (issue #78 Phase 0)
+
+Every turn `AgentRuntime.run_turn` makes carries its real
+`AIMessage.usage_metadata`, summed across however many model calls that turn
+made (a turn can make several when the model uses tools) into a `TurnUsage`
+(`agents_system.agent.graph.TurnUsage`: `model_calls`, `input_tokens`,
+`output_tokens`, `total_tokens`, `cost_usd`). `run_scenario` passes
+`model_name` through to `run_turn` as its `model_id`, sums each run's turns
+into `RunOutcome.usage`, and `ScenarioResult.total_usage` sums every run's
+usage into one scenario total -- both `write_results` outputs report it
+(`total_tokens`/`total_cost_usd` in the JSON, the `Tokens`/`Cost (USD)`
+columns in the markdown table).
+
+**Honesty rule, not a shortcut**: a value is `None` (JSON) / `n/a`
+(markdown) whenever it is genuinely unknown -- never a guessed `0`. If even
+one of a turn's model calls reported no `usage_metadata`, that whole turn's
+token totals are `None`; if even one turn/run in a sum is `None`, the sum is
+`None` too. `cost_usd` is additionally `None` whenever no price is
+configured for the model id.
+
+**Configuring prices**: `Settings.model_prices` (env var `MODEL_PRICES`) is a
+JSON object keyed by the same model id `model_name`/`model_display_name`
+reports, valued by USD price per million input/output tokens:
+
+```bash
+export MODEL_PRICES='{"deepseek/deepseek-v4-flash": {"input_per_million": 0.14, "output_per_million": 0.28}}'
+```
+
+A model id with no entry here reports `cost_usd: null` -- this is opt-in
+per model, never a global default rate.
 
 ## Running it as a role's own pipeline
 

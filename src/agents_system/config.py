@@ -10,9 +10,21 @@ and pydantic-settings reads the subclass's fields from the same environment.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
+
+
+class ModelPrice(BaseModel):
+    """Cost per million tokens for one model id (issue #78 Phase 0).
+
+    Both prices are USD per 1,000,000 tokens -- the unit every hosted
+    provider quotes in, so a value here can be copy-pasted from a pricing
+    page without conversion.
+    """
+
+    input_per_million: float = Field(ge=0)
+    output_per_million: float = Field(ge=0)
 
 
 class Settings(BaseSettings):
@@ -167,6 +179,17 @@ class Settings(BaseSettings):
     # matching entry here -- there is no automatic grant.
     # e.g. DEPLOY_GRANTS='{"acme__sales-agent": ["read:catalog", "write:orders"]}'
     deploy_grants: dict[str, tuple[str, ...]] = {}
+
+    # #78 Phase 0 -- cost table for real per-turn token usage. Keyed by the
+    # same model id a caller already names to select a runtime: the
+    # "{deployment}__{role}" adapter/webhook runtime id
+    # (`AgentRuntime.run_turn`'s own `model_id` parameter, passed by
+    # `integration/openai_adapter.py`), or a live-eval's own `model_name`
+    # (`evals/provider.py:model_display_name`). A model id with no entry
+    # here means cost is honestly `None` -- `agent/graph.py` never guesses a
+    # price. e.g.
+    # MODEL_PRICES='{"acme__sales-agent": {"input_per_million": 0.14, "output_per_million": 0.28}}'
+    model_prices: dict[str, ModelPrice] = {}
 
     # Any OpenAI-compatible chat endpoint (MiniMax, vLLM, LM Studio, ...),
     # selected with adapter_provider="openai_compatible".

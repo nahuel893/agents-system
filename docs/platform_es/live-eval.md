@@ -156,10 +156,45 @@ versionado). Cada corrida de
 de tiempo:
 
 - `evals/results/<timestamp UTC>.json` — una entrada por escenario: rol,
-  modelo, cantidad de corridas, cantidad de éxitos, tasa de éxito, y el
-  detalle de fallas por corrida.
+  modelo, cantidad de corridas, cantidad de éxitos, tasa de éxito, el
+  detalle de fallas por corrida, y (issue #78 Phase 0) el uso real de
+  tokens/costo -- ver abajo.
 - `evals/results/<timestamp UTC>.md` — una tabla markdown corta (escenario,
-  rol, modelo, corridas, tasa de éxito) para una lectura rápida.
+  rol, modelo, corridas, tasa de éxito, tokens, costo) para una lectura
+  rápida.
+
+## Tokens y costo (issue #78 Phase 0)
+
+Cada turno que hace `AgentRuntime.run_turn` lleva su `AIMessage.usage_metadata`
+real, sumado a través de las llamadas al modelo que hizo ese turno (un turno
+puede hacer varias cuando el modelo usa herramientas) en un `TurnUsage`
+(`agents_system.agent.graph.TurnUsage`: `model_calls`, `input_tokens`,
+`output_tokens`, `total_tokens`, `cost_usd`). `run_scenario` pasa
+`model_name` a `run_turn` como su `model_id`, suma los turnos de cada corrida
+en `RunOutcome.usage`, y `ScenarioResult.total_usage` suma el uso de cada
+corrida en un total por escenario -- ambas salidas de `write_results` lo
+reportan (`total_tokens`/`total_cost_usd` en el JSON, las columnas
+`Tokens`/`Cost (USD)` en la tabla markdown).
+
+**Regla de honestidad, no un atajo**: un valor es `None` (JSON) / `n/a`
+(markdown) siempre que sea genuinamente desconocido -- nunca un `0`
+adivinado. Si incluso una llamada al modelo de un turno no reportó
+`usage_metadata`, los totales de tokens de ese turno entero son `None`; si
+incluso un turno/corrida de una suma es `None`, la suma también lo es.
+`cost_usd` además es `None` cuando no hay un precio configurado para ese
+model id.
+
+**Configurar precios**: `Settings.model_prices` (variable de entorno
+`MODEL_PRICES`) es un objeto JSON con clave el mismo model id que reportan
+`model_name`/`model_display_name`, y valor el precio en USD por millón de
+tokens de entrada/salida:
+
+```bash
+export MODEL_PRICES='{"deepseek/deepseek-v4-flash": {"input_per_million": 0.14, "output_per_million": 0.28}}'
+```
+
+Un model id sin entrada acá reporta `cost_usd: null` -- es opt-in por
+modelo, nunca una tarifa global por defecto.
 
 ## Correrlo como pipeline propio de un rol
 

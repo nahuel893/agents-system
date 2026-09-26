@@ -286,6 +286,10 @@ async def chat_completions(request: Request) -> dict[str, Any]:
             result_messages: list[AnyMessage] = await runtime.run_turn(
                 messages=lc_messages,
                 session_id=session_id,
+                # #78 Phase 0 — prices this turn's real usage under the same
+                # id the client asked for; Settings.model_prices is keyed by
+                # this same "{deployment}__{role}" adapter model id.
+                model_id=model_id,
             )
         except Exception:
             # Anything escaping run_turn used to leave here as a raw 500 with
@@ -319,10 +323,26 @@ async def chat_completions(request: Request) -> dict[str, Any]:
                 "finish_reason": "stop",
             }
         ],
-        # Token usage is zeros for MVP — Open WebUI tolerates this (design open question)
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        },
+        # #78 Phase 0 — real usage from the provider's own AIMessage.usage_metadata
+        # (agent/graph.py's TurnUsage), replacing the old hardcoded zeros.
+        # Honesty rule: `run_turn` returns TurnUsage.total_tokens (and the
+        # other counts) as None whenever any of this turn's model calls
+        # reported no usage_metadata — that None is passed through here
+        # verbatim as a JSON null, never coerced to a guessed 0. A runtime
+        # that returned a plain list without a `.usage` attribute (e.g. a
+        # test double) is treated the same as "no usage reported".
+        "usage": _usage_payload(getattr(result_messages, "usage", None)),
+    }
+
+
+def _usage_payload(usage: Any) -> dict[str, int | None]:
+    """Build the OpenAI-shaped `usage` object from a `TurnUsage` (or `None`
+    when the runtime reported none at all) -- see the honesty note above.
+    """
+    if usage is None:
+        return {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None}
+    return {
+        "prompt_tokens": usage.input_tokens,
+        "completion_tokens": usage.output_tokens,
+        "total_tokens": usage.total_tokens,
     }

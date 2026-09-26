@@ -23,8 +23,9 @@ per turn and owns cross-turn durability.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from functools import partial
 from typing import Any
@@ -33,11 +34,13 @@ import redis.exceptions
 import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
+from langchain_core.messages.ai import UsageMetadata
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
 from agents_system.agent.state import AgentState
+from agents_system.config import Settings, get_settings
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.interceptor import CallResult, PolicyViolation, intercept
@@ -56,6 +59,95 @@ _ENFORCED_LIMIT_KEYS = (
     "total_execution_timeout_s",
     "tool_call_timeout_s",
 )
+
+
+# ---------------------------------------------------------------------------
+# #78 Phase 0 — real per-turn token usage and cost
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class TurnUsage:
+    """Real per-turn token usage and cost -- never an invented number.
+
+    Every field reflects only what the provider actually reported through
+    `AIMessage.usage_metadata`, summed across every `call_model` invocation
+    this turn made (a turn can make several when the model uses tools).
+
+    - `model_calls` is `None` only when it could not be determined at all
+      (the turn timed out before `run_turn` could account for it) -- never
+      confused with a genuine `0`.
+    - `input_tokens`/`output_tokens`/`total_tokens` are `None` whenever ANY
+      of this turn's model calls reported no `usage_metadata`: a partial sum
+      is never reported as if it were the whole turn's total.
+    - `cost_usd` is `None` whenever any token total above is `None`, no
+      `model_id` was given, or `model_id` has no entry in
+      `Settings.model_prices` -- a missing price is never guessed at.
+    """
+
+    model_calls: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    cost_usd: float | None = None
+
+
+class TurnMessages(list[AnyMessage]):
+    """The `list[AnyMessage]` `run_turn` has always returned, carrying this
+    turn's real usage as an attribute (issue #78).
+
+    A plain subclass, not a new return shape: every existing caller that
+    iterates, indexes, slices, or spreads this like a `list[AnyMessage]`
+    (`evals/runner.py`, `integration/openai_adapter.py`,
+    `services/webhook_worker.py`, the test suite) keeps working unmodified.
+    """
+
+    usage: TurnUsage
+
+
+_UNKNOWN_TURN_USAGE = TurnUsage(
+    model_calls=None, input_tokens=None, output_tokens=None, total_tokens=None
+)
+
+
+def _aggregate_turn_usage(entries: Sequence[UsageMetadata | None]) -> TurnUsage:
+    """Sum this turn's `call_model` usage entries into one `TurnUsage`.
+
+    Honesty rule: a single `None` entry (one model call reported no
+    `usage_metadata`) makes the whole turn's token totals `None` -- summing
+    only the known entries would silently under-report the turn's real cost.
+    """
+    model_calls = len(entries)
+    known: list[UsageMetadata] = [entry for entry in entries if entry is not None]
+    if model_calls == 0 or len(known) != model_calls:
+        return dataclasses.replace(_UNKNOWN_TURN_USAGE, model_calls=model_calls)
+    return TurnUsage(
+        model_calls=model_calls,
+        input_tokens=sum(entry["input_tokens"] for entry in known),
+        output_tokens=sum(entry["output_tokens"] for entry in known),
+        total_tokens=sum(entry["total_tokens"] for entry in known),
+    )
+
+
+def _compute_turn_cost(
+    usage: TurnUsage, model_id: str | None, settings: Settings
+) -> float | None:
+    """Cost in USD for *usage*, from `Settings.model_prices` only.
+
+    Returns `None` -- never a guessed number -- whenever `model_id` is
+    unset, the token totals themselves are unknown, or `model_id` has no
+    entry in `Settings.model_prices` (design AD note: a price table is
+    opt-in per model id, not a global default).
+    """
+    if model_id is None or usage.input_tokens is None or usage.output_tokens is None:
+        return None
+    price = settings.model_prices.get(model_id)
+    if price is None:
+        return None
+    return (
+        usage.input_tokens / 1_000_000 * price.input_per_million
+        + usage.output_tokens / 1_000_000 * price.output_per_million
+    )
 
 
 def _effective_limits(execution_limits: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -108,7 +200,13 @@ async def _call_model(
         else:
             raise
     logger.info("runtime.model_response", tool_calls=len(response.tool_calls or []))
-    return {"messages": [response]}
+    # #78 Phase 0 -- record this call's real usage_metadata (None when the
+    # provider reported none) alongside the accumulated ones from earlier
+    # call_model invocations THIS turn. No reducer on `turn_usage` (see
+    # `AgentState`), so this read-then-append is what makes it accumulate
+    # across the several call_model visits one turn can make.
+    turn_usage = [*state.get("turn_usage", []), response.usage_metadata]
+    return {"messages": [response], "turn_usage": turn_usage}
 
 
 async def _execute_tools(
@@ -422,7 +520,8 @@ class AgentRuntime:
         session_id: str,
         permissions: tuple[str, ...] | None = None,
         thread_id: str | None = None,
-    ) -> list[AnyMessage]:
+        model_id: str | None = None,
+    ) -> TurnMessages:
         """Execute one conversational turn.
 
         By default the runtime is stateless: it does NOT persist messages
@@ -456,14 +555,25 @@ class AgentRuntime:
             stateless — no checkpointer is engaged even if one is configured
             on this runtime. Ignored (treated as stateless) if this runtime
             was constructed without a ``checkpointer``.
+        model_id:
+            The model id to price this turn's usage under (issue #78 Phase
+            0), looked up in ``Settings.model_prices`` -- e.g. the OpenAI
+            adapter's own ``"{deployment}__{role}"`` request model, or a
+            live-eval's ``model_name``. ``None`` (default) keeps ``TurnUsage.
+            cost_usd`` honestly ``None`` -- this runtime never guesses a
+            price for an unnamed model.
 
         Returns
         -------
-        list[AnyMessage]
-            All messages accumulated during this turn (input + model responses +
-            tool messages). When stateless, the caller owns cross-turn
-            aggregation; when a checkpointer is engaged, the checkpointer owns
-            cross-turn accumulation and this return value already reflects it.
+        TurnMessages
+            A ``list[AnyMessage]`` — every existing caller keeps working
+            unmodified — of all messages accumulated during this turn (input
+            + model responses + tool messages), carrying this turn's real
+            ``.usage: TurnUsage`` (tokens + cost, honestly ``None`` where
+            unknown — see ``TurnUsage``'s docstring). When stateless, the
+            caller owns cross-turn aggregation; when a checkpointer is
+            engaged, the checkpointer owns cross-turn accumulation and this
+            return value already reflects it.
         """
         effective_permissions = (
             permissions
@@ -500,6 +610,10 @@ class AgentRuntime:
             # a per-turn budget must reset to 0 even when this thread resumes
             # from persisted state (design AD-1 gotcha).
             "tool_call_count": 0,
+            # #78 Phase 0 -- same reset-per-turn reasoning as tool_call_count
+            # above: a resumed checkpointed thread must never inherit a
+            # prior turn's usage entries.
+            "turn_usage": [],
         }
         # D-014 S2 (design AD-3): a hard recursion_limit backstop derived from
         # max_tool_calls. LangGraph's own default (25 super-steps) is too low
@@ -528,9 +642,61 @@ class AgentRuntime:
                 definition=self._equipped.definition,
                 total_execution_timeout_s=effective_limits["total_execution_timeout_s"],
             )
-            return all_messages + [
-                AIMessage(
-                    content=("This is taking longer than expected. Please try again.")
-                )
-            ]
-        return list(result["messages"])
+            # #78 Phase 0 -- a timeout cancels the invocation before this
+            # runtime can read back how many call_model invocations actually
+            # completed, so `model_calls` (and every token total) is
+            # genuinely UNKNOWN here -- never reported as 0.
+            return self._finish_turn(
+                all_messages
+                + [
+                    AIMessage(
+                        content=(
+                            "This is taking longer than expected. Please try again."
+                        )
+                    )
+                ],
+                usage=_UNKNOWN_TURN_USAGE,
+                session_id=session_id,
+                model_id=model_id,
+            )
+        usage = _aggregate_turn_usage(result.get("turn_usage", []))
+        return self._finish_turn(
+            list(result["messages"]),
+            usage=usage,
+            session_id=session_id,
+            model_id=model_id,
+        )
+
+    def _finish_turn(
+        self,
+        messages: list[AnyMessage],
+        *,
+        usage: TurnUsage,
+        session_id: str,
+        model_id: str | None,
+    ) -> TurnMessages:
+        """Attach real cost to *usage*, log one `runtime.turn_usage` event
+        (issue #78 Phase 0), and wrap *messages* as `TurnMessages`.
+
+        The log call carries no explicit correlation id: it reuses this
+        module's existing `structlog` logger, which already picks up
+        whatever `request_id`/`thread_id` contextvars the caller bound
+        (`observability/middleware.py`'s `RequestIdMiddleware` for the
+        adapter path) — the same mechanism every other `runtime.*` log line
+        in this file already relies on.
+        """
+        cost_usd = _compute_turn_cost(usage, model_id, get_settings())
+        usage = dataclasses.replace(usage, cost_usd=cost_usd)
+        logger.info(
+            "runtime.turn_usage",
+            session_id=session_id,
+            model_id=model_id,
+            model_calls=usage.model_calls,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens,
+            cost_usd=usage.cost_usd,
+        )
+        turn_messages = TurnMessages(messages)
+        turn_messages.usage = usage
+        return turn_messages

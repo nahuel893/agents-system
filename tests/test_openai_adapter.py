@@ -201,6 +201,71 @@ def test_chat_completion_happy_path(monkeypatch: pytest.MonkeyPatch):
     assert choice["message"]["content"]  # non-empty
     assert choice["finish_reason"] == "stop"
     assert "usage" in body
+    # #78 Phase 0 -- this fake runtime returns a plain list with no `.usage`
+    # attribute (see _fake_runtimes above): honestly null, never a guessed 0.
+    assert body["usage"] == {
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+    }
+
+
+def test_chat_completion_reports_real_usage_from_the_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#78 Phase 0 -- when the runtime's TurnMessages carries real usage,
+    /v1/chat/completions reports those exact numbers, not zeros."""
+    from agents_system.agent.graph import TurnMessages, TurnUsage
+
+    client = _make_client(
+        runtime_ids=["acme__sales-agent"],
+        adapter_api_key="test-key",
+        monkeypatch=monkeypatch,
+    )
+    turn_messages = TurnMessages([AIMessage(content="ok")])
+    turn_messages.usage = TurnUsage(
+        model_calls=1, input_tokens=42, output_tokens=8, total_tokens=50, cost_usd=0.001
+    )
+    runtime = client.app.state.runtimes["acme__sales-agent"]
+    runtime.run_turn = AsyncMock(return_value=turn_messages)
+
+    payload = {
+        "model": "acme__sales-agent",
+        "messages": [{"role": "user", "content": "hola"}],
+    }
+    response = client.post(
+        "/v1/chat/completions",
+        json=payload,
+        headers={"Authorization": "Bearer test-key"},
+    )
+    assert response.status_code == 200
+    assert response.json()["usage"] == {
+        "prompt_tokens": 42,
+        "completion_tokens": 8,
+        "total_tokens": 50,
+    }
+
+
+def test_chat_completion_forwards_model_id_to_run_turn(monkeypatch: pytest.MonkeyPatch):
+    """#78 Phase 0 -- run_turn receives the request's own model id, the same
+    key Settings.model_prices is documented to use for this adapter."""
+    client = _make_client(
+        runtime_ids=["acme__sales-agent"],
+        adapter_api_key="test-key",
+        monkeypatch=monkeypatch,
+    )
+    payload = {
+        "model": "acme__sales-agent",
+        "messages": [{"role": "user", "content": "hola"}],
+    }
+    client.post(
+        "/v1/chat/completions",
+        json=payload,
+        headers={"Authorization": "Bearer test-key"},
+    )
+    runtime = client.app.state.runtimes["acme__sales-agent"]
+    runtime.run_turn.assert_awaited_once()
+    assert runtime.run_turn.await_args.kwargs["model_id"] == "acme__sales-agent"
 
 
 def test_chat_completion_unknown_model_404(monkeypatch: pytest.MonkeyPatch):
@@ -326,7 +391,9 @@ def test_chat_completions_uses_the_shared_admission_limiter_around_run_turn(
     app_instance = create_test_app()
     events: list[str] = []
 
-    async def run_turn(*, messages: object, session_id: str) -> list[AIMessage]:
+    async def run_turn(
+        *, messages: object, session_id: str, model_id: str | None = None
+    ) -> list[AIMessage]:
         events.append("run_turn")
         return [AIMessage(content="ok")]
 

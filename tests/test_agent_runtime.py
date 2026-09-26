@@ -1044,3 +1044,204 @@ async def test_turn_timeout_is_not_mislabeled_as_checkpointer_degradation(
     assert result[-1].content
     captured = capsys.readouterr()
     assert "checkpointer_degraded" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# #78 Phase 0 — real per-turn token usage and cost
+# ---------------------------------------------------------------------------
+
+
+async def test_run_turn_sums_usage_metadata_across_model_calls() -> None:
+    """A turn that makes two model calls (a tool round-trip) sums BOTH
+    calls' real usage_metadata into run_turn's returned `.usage` -- never
+    just the last call's numbers. The return value is still a real
+    `list[AnyMessage]` -- every existing caller keeps working unmodified."""
+    from agents_system.agent.graph import AgentRuntime
+
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_usage_001",
+                "name": "catalog_search",
+                "args": {},
+                "type": "tool_call",
+            }
+        ],
+        usage_metadata={"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+    )
+    final_response = AIMessage(
+        content="Here you go.",
+        usage_metadata={"input_tokens": 150, "output_tokens": 30, "total_tokens": 180},
+    )
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+    runtime = _make_runtime(tools=(_catalog_spec(),))
+    agent = AgentRuntime(runtime, model)
+
+    result = await agent.run_turn([HumanMessage(content="hi")], session_id="s1")
+
+    assert isinstance(result, list)
+    assert any(isinstance(m, ToolMessage) for m in result)
+    assert result.usage.model_calls == 2
+    assert result.usage.input_tokens == 250
+    assert result.usage.output_tokens == 50
+    assert result.usage.total_tokens == 300
+    # No model_id given -> cost is honestly None, never a guessed number.
+    assert result.usage.cost_usd is None
+
+
+async def test_run_turn_usage_is_none_when_a_model_call_reports_none() -> None:
+    """Honesty rule: if even one of this turn's model calls reports no
+    usage_metadata, the turn's token totals are None -- never a partial
+    guess (TurnUsage's own documented contract)."""
+    from agents_system.agent.graph import AgentRuntime
+
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    result = await agent.run_turn([HumanMessage(content="hi")], session_id="s1")
+
+    assert result.usage.model_calls == 1
+    assert result.usage.input_tokens is None
+    assert result.usage.output_tokens is None
+    assert result.usage.total_tokens is None
+
+
+async def test_run_turn_usage_is_unknown_on_timeout() -> None:
+    """A turn that times out cannot know how many model calls it actually
+    completed -- model_calls is None (genuinely unknown), never a
+    misleading 0."""
+    from agents_system.agent.graph import AgentRuntime
+
+    model = _SlowFakeModel(responses=[AIMessage(content="unreachable")])
+    definition = _fake_definition(execution_limits={"total_execution_timeout_s": 0.05})
+    runtime = EquippedRuntime(
+        definition=definition,
+        system_prompt="You are a helpful assistant.",
+        tools=(),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(runtime, model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=()),
+        timeout=2.0,
+    )
+
+    assert result.usage.model_calls is None
+    assert result.usage.total_tokens is None
+    assert result.usage.cost_usd is None
+
+
+async def test_run_turn_computes_cost_from_configured_price_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """cost_usd is computed only from Settings.model_prices, keyed by the
+    model_id run_turn was given -- never a hardcoded rate."""
+    from agents_system.agent import graph as graph_module
+    from agents_system.agent.graph import AgentRuntime
+    from agents_system.config import ModelPrice, Settings
+
+    priced_settings = Settings(
+        _env_file=None,
+        model_prices={
+            "acme__sales-agent": ModelPrice(
+                input_per_million=1.0, output_per_million=2.0
+            )
+        },
+    )
+    monkeypatch.setattr(graph_module, "get_settings", lambda: priced_settings)
+
+    model = FakeMessagesListChatModel(
+        responses=[
+            AIMessage(
+                content="hi",
+                usage_metadata={
+                    "input_tokens": 1_000_000,
+                    "output_tokens": 500_000,
+                    "total_tokens": 1_500_000,
+                },
+            )
+        ]
+    )
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    result = await agent.run_turn(
+        [HumanMessage(content="hi")], session_id="s1", model_id="acme__sales-agent"
+    )
+
+    # 1_000_000 input tokens @ $1/M + 500_000 output tokens @ $2/M = $1 + $1
+    assert result.usage.cost_usd == pytest.approx(2.0)
+
+
+async def test_run_turn_cost_is_none_without_a_configured_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model_id with no entry in Settings.model_prices yields cost_usd=None
+    -- a missing price is never guessed at."""
+    from agents_system.agent import graph as graph_module
+    from agents_system.agent.graph import AgentRuntime
+    from agents_system.config import Settings
+
+    monkeypatch.setattr(graph_module, "get_settings", lambda: Settings(_env_file=None))
+
+    model = FakeMessagesListChatModel(
+        responses=[
+            AIMessage(
+                content="hi",
+                usage_metadata={
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            )
+        ]
+    )
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    result = await agent.run_turn(
+        [HumanMessage(content="hi")], session_id="s1", model_id="unpriced-model"
+    )
+
+    assert result.usage.cost_usd is None
+
+
+async def test_run_turn_logs_one_turn_usage_event(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Exactly one structured `runtime.turn_usage` log event is emitted per
+    turn, carrying the usage and cost together (#78 Phase 0)."""
+    from agents_system.agent.graph import AgentRuntime
+
+    model = FakeMessagesListChatModel(
+        responses=[
+            AIMessage(
+                content="hi",
+                usage_metadata={
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            )
+        ]
+    )
+    runtime = _make_runtime()
+    agent = AgentRuntime(runtime, model)
+
+    await agent.run_turn([HumanMessage(content="hi")], session_id="s1")
+
+    captured = capsys.readouterr()
+    # This project's structlog setup (PrintLoggerFactory + ConsoleRenderer in
+    # tests -- see test_checkpointer_failure_degradation_is_logged's own
+    # docstring) writes key=value pairs straight to stdout, not JSON; assert
+    # on that shape, same as the other structlog assertions in this file.
+    usage_lines = [
+        line for line in captured.out.splitlines() if "runtime.turn_usage" in line
+    ]
+    assert len(usage_lines) == 1
+    assert "total_tokens=15" in usage_lines[0]
+    assert "model_calls=1" in usage_lines[0]
