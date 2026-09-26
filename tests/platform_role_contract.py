@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+import re
 from typing import Any
 
 
@@ -366,6 +367,21 @@ def _guard1_major_version(value: str) -> int:
         return 0
 
 
+def _changelog_names_role(role: str, changelog_text: str) -> bool:
+    """Whether *changelog_text* genuinely names *role* — a word-bounded
+    match, not a bare substring occurrence. A plain ``role in changelog_text``
+    check is trivially satisfied by an unrelated word that merely CONTAINS
+    the role's name: the real predefined role ``"agent"`` is itself a
+    substring of the unrelated product name ``"agents-system"``/
+    ``"agents_system"``, which already appears throughout this repository's
+    real ``CHANGELOG.md`` for reasons that have nothing to do with the
+    role's own governance. ``\\b`` alone does not treat ``-``/``_`` as word
+    boundaries, so this also excludes ``sales-agent``/``sales_agent``
+    matching a search for ``"agent"``."""
+    pattern = r"(?<![\w-])" + re.escape(role) + r"(?![\w-])"
+    return re.search(pattern, changelog_text) is not None
+
+
 def check_role_governance_snapshot(
     role: str,
     resolved_tools: frozenset[str],
@@ -400,7 +416,7 @@ def check_role_governance_snapshot(
     version_bumped = _guard1_major_version(resolved_version) > _guard1_major_version(
         snapshot.version
     )
-    changelog_ok = role in changelog_text
+    changelog_ok = _changelog_names_role(role, changelog_text)
 
     if version_bumped and changelog_ok:
         return

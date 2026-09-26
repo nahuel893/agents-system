@@ -143,6 +143,34 @@ def test_divergence_with_changelog_but_no_version_bump_still_fails() -> None:
     assert "CHANGELOG" not in message
 
 
+def test_changelog_check_rejects_unrelated_substring_collision() -> None:
+    """Regression: the real predefined role literally named ``"agent"`` has
+    its own name as a bare substring of the unrelated product name
+    ``"agents-system"``/``"agents_system"``, which already appears
+    throughout the real ``CHANGELOG.md`` for reasons that have nothing to do
+    with this role's governance (commit/compare URLs, package-rename
+    entries, etc.). A naive ``role in changelog_text`` check is trivially
+    satisfied by that incidental occurrence, silently waving through a real
+    tools/permissions escalation with zero genuine entry naming the role.
+    ``changelog_ok`` must require a genuine, word-bounded mention of the
+    role, not any substring occurrence anywhere in the file."""
+    unrelated_changelog_text = (
+        "## [0.3.0]\n\n"
+        "* chore: rename package to agents-system ([#189])\n"
+        "* fix: agents_system import path\n"
+    )
+    with pytest.raises(AssertionError) as excinfo:
+        check_role_governance_snapshot(
+            "agent",
+            _FIXTURE_SNAPSHOT.tools | {"new_tool"},
+            _FIXTURE_SNAPSHOT.permissions,
+            "2.0",  # MAJOR bump satisfied
+            _FIXTURE_SNAPSHOT,
+            changelog_text=unrelated_changelog_text,
+        )
+    assert "CHANGELOG" in str(excinfo.value)
+
+
 def test_divergence_with_both_conditions_passes() -> None:
     check_role_governance_snapshot(
         _FIXTURE_ROLE,
