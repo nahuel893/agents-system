@@ -615,6 +615,31 @@ def _validate_runtime_id(runtime_id: str) -> str:
     return runtime_id
 
 
+def _validate_client(runtime_id: str, client: object) -> str:
+    """Reject a ``clients`` value that is not a client name: a ``str``
+    matching ``loader._SAFE_SEGMENT``, the rule the loader applies when it
+    joins that name onto ``deployments_root``.
+
+    A ``None`` (``os.environ.get(...)`` for an unset variable) would
+    otherwise pass as "no client" and serve the role WITHOUT its
+    subtractive override, silently. The error names the id, never the
+    value.
+    """
+    if not isinstance(client, str):
+        raise DefinitionError(
+            f"clients[{runtime_id!r}] must be a deployment client name (str), "
+            f"got {type(client).__name__}. Refusing to boot."
+        )
+    if not _SAFE_SEGMENT.fullmatch(client):
+        raise DefinitionError(
+            f"clients[{runtime_id!r}] is not a valid deployment client name. "
+            f"It must match {_SAFE_SEGMENT.pattern} -- letters, digits, "
+            "underscore and hyphen only, non-empty, not starting with '-' or "
+            "'_'. Refusing to boot."
+        )
+    return client
+
+
 @dataclasses.dataclass(frozen=True)
 class _Registration:
     """One runtime the lifespan builds (design.md D5): what to resolve, and
@@ -669,9 +694,12 @@ def _explicit_registrations(
                 agent._to_locator(), None, f"agent {agent.name!r}"
             )
         elif isinstance(agent, str):
-            registrations[runtime_id] = _Registration(
-                agent, clients.get(runtime_id), f"role {agent!r}"
+            client = (
+                _validate_client(runtime_id, clients[runtime_id])
+                if runtime_id in clients
+                else None
             )
+            registrations[runtime_id] = _Registration(agent, client, f"role {agent!r}")
         else:
             raise DefinitionError(
                 f"agents[{runtime_id!r}] must be an Agent or a predefined role "
@@ -820,7 +848,9 @@ def create_app(
     clients:
         Runtime id -> deployment client name, valid only for a registered
         ``str`` (predefined role) entry. An entry for an ``Agent``, for an
-        id ``agents`` does not register, or without ``agents`` fails boot.
+        id ``agents`` does not register, or without ``agents`` fails boot,
+        and so does a value that is not a client-name ``str`` (``None``
+        included: leave the id out for no client).
     participant_directory:
         Resolves an inbound channel address to an identity. Absent means the
         inbound route fails closed and runs no turn.

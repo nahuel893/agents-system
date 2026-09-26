@@ -2122,6 +2122,46 @@ async def test_registration_rejects_clients_for_an_unregistered_id(
     assert not hasattr(app.state, "runtimes")
 
 
+@pytest.mark.parametrize(
+    "bad_client",
+    [
+        # `os.environ.get("ACME_CLIENT")` with the variable unset: the role
+        # would be served generic, without its subtractive override.
+        None,
+        42,
+        "",
+        "../client-a",
+    ],
+)
+@pytest.mark.asyncio
+async def test_registration_rejects_a_clients_value_that_is_not_a_client_name(
+    bad_client: object,
+) -> None:
+    """A `clients` value that is not a client-name str fails boot naming the
+    id, before any runtime is built, and without echoing the value."""
+    app = create_test_app(
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": _SALES_GRANT},
+        clients={"acme-sales": bad_client},  # type: ignore[dict-item]
+        roots=RootConfig(deployments_root=_FIXTURE_DEPLOYMENTS),
+    )
+    build_runtime = MagicMock(side_effect=AssertionError("must not be reached"))
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(
+            app,
+            _registration_settings(adapter_runtimes=["acme-sales"]),
+            patch("agents_system.harness.factory.build_runtime", build_runtime),
+        )
+
+    message = str(exc_info.value)
+    assert "clients['acme-sales']" in message
+    if isinstance(bad_client, str) and bad_client:
+        assert bad_client not in message
+    build_runtime.assert_not_called()
+    assert not hasattr(app.state, "runtimes")
+
+
 @pytest.mark.asyncio
 async def test_registration_one_unresolvable_entry_blocks_the_whole_boot() -> None:
     """spec: 'One bad registration entry blocks the whole boot' -- the two
