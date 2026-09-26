@@ -70,6 +70,21 @@ Una definición del agente es una carpeta bajo `platform/roles/{rol}/` (para la 
 | `memory_policy` | `object` | obligatorio | Gobierna lo que el runtime puede leer y escribir en memoria. Subcampos: `read_scope` (uno de `local`, `team`, `org`), `write_scope` (uno de `local`, `team`, `org`), `persist_conversation` (booleano). |
 | `audit_policy` | `object` | obligatorio | Qué eventos debe guardar el runtime en el registro de auditoría. Subcampos: `log_tool_calls` (booleano), `log_delegations` (booleano), `log_escalations` (booleano), `retention_days` (entero o `null` para el valor por defecto de la plataforma). |
 
+### Herencia: aditiva para la capacidad, sustractiva para la seguridad
+
+`extends` suma capacidad: un hijo conserva las herramientas, los permisos y la prosa de su padre, y agrega los suyos. La seguridad funciona al revés. Un hijo puede igualar o endurecer el `autonomy` y los `execution_limits` de su padre, y nunca aflojarlos ni subirlos (`platform/roles/base/policy.md`).
+
+El loader lo hace cumplir para toda definición que escribe el importador: un `Agent(...)`, un `Agent.from_folder(...)` (incluidas sus sobreescrituras en Python) o una carpeta alcanzada desde el `extends:` de otra carpeta. Cada una se valida contra los valores efectivos de su padre antes de plegarse, en cada salto de la cadena (`Agent` → `Agent` → agente de carpeta → rol predefinido). Romper la regla lanza `DefinitionError`, que nombra al agente, el campo, ambos valores y la regla. La validación vive en `resolve()`, así que `build_runtime()` también la aplica.
+
+- **Autonomía.** El orden es `confirm` < `supervised` < `full`. Un padre que no declara nada cuenta como `supervised`, el piso de la plataforma. Un agente del importador que no declara nada hereda el nivel de su padre.
+- **Límites de ejecución.** Un límite ausente o `null` significa el valor por defecto de la plataforma (`tool_call_timeout_s` 10, `total_execution_timeout_s` 60, `max_tool_calls` 20, `max_delegation_depth` 2, `max_clarification_attempts` 3). Vale para los dos lados. Por eso **un agente del importador no puede subir un límite de ejecución por encima del valor de su padre, ni por encima del valor por defecto de la plataforma cuando el padre no fija ninguno.** Tampoco puede escribir `null` para deshacer un límite que su padre endureció. Un límite tiene que ser un número: `NaN` e infinito se rechazan.
+- **Sin padre.** Un agente de carpeta sin `extends:` tiene como techo los valores por defecto de la plataforma: `supervised` y los límites de arriba. Omitir `extends` no es una forma de esquivar la regla.
+- **`extends=` en `Agent.from_folder`.** Reemplaza el `extends:` del manifiesto de la carpeta, como cualquier otro override de Python. Un string se ubica exactamente igual que el valor del manifiesto (relativo a la carpeta, dentro de su raíz de importador), y otro `Agent` pasa a ser el padre directamente. El agente queda sujeto a ese padre: a su techo y a su `untrusted_input: true`, que rechaza los permisos T3. Un valor que el manifiesto rechazaría, `None` incluido, lanza `DefinitionError`.
+
+Los pliegues entre dos roles predefinidos no se validan así, porque la plataforma escribe los dos archivos (`data-agent` y `summary-agent` corren en `full` bajo una cadena `supervised`). Las sobreescrituras de despliegue mantienen su propia validación sustractiva contra el rol resuelto (`docs/platform_es/deployment.md`).
+
+Un `Agent` es inmutable en profundidad. Al construirse copia cada lista y cada diccionario que recibe a uno inmutable, así que cambiar los originales después no cambia lo que resuelve, tampoco cuando es el `extends=` de otro `Agent`.
+
 ### Cuerpo de prosa de `role.md` — prompt orientado al modelo vs. notas de diseño
 
 La tabla de frontmatter de arriba cubre el encabezado YAML de `role.md`. Todo lo que sigue después del `---` de cierre es el cuerpo de prosa, que el loader captura como el aporte del rol a `system_prompt` (`AgentDefinition.system_prompt` / `RawDefinition.system_prompt`, `harness/loader.py`).

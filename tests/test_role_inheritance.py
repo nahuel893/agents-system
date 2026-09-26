@@ -663,3 +663,44 @@ def test_a_role_naming_a_limit_as_null_still_has_a_ceiling(
         )
 
     assert "max_tool_calls" in str(excinfo.value)
+
+
+def _deploy_limits(tmp_path: pathlib.Path, role_limits: str, value: str) -> RootConfig:
+    """A role `p` with `role_limits`, and a `greedy` deployment of it setting
+    `max_tool_calls: <value>` (raw YAML)."""
+    roots = _chain(tmp_path, p={"limits": role_limits})
+    deployments = tmp_path / "deployments"
+    dep = deployments / "greedy" / "p"
+    dep.mkdir(parents=True)
+    (dep / "role.md").write_text("---\nname: p\n---\n\nbody\n")
+    (dep / "manifest.md").write_text(
+        "---\nrole: p\ndeployment: greedy\ntools: []\nskills: []\n"
+        "context: {}\npermissions: inherit\n---\n\nm\n"
+    )
+    (dep / "policy.md").write_text(
+        f"---\nrole: p\nexecution_limits:\n  max_tool_calls: {value}\n---\n\np\n"
+    )
+    return RootConfig(platform_root=roots.platform_root, deployments_root=deployments)
+
+
+@pytest.mark.parametrize("value", ["null", ".nan", "lots"])
+def test_a_deployment_limit_that_is_null_or_not_a_number_is_checked(
+    tmp_path: pathlib.Path, value: str
+) -> None:
+    """A deployment's `max_tool_calls: null` runs as the platform default
+    (`graph._effective_limits`), so under a role that set 5 it RAISES the
+    limit to 20 -- it used to crash the comparison with a TypeError instead.
+    `.nan` compared false against every ceiling and was accepted; a string
+    crashed with TypeError. All three are a `DefinitionError` now."""
+    roots = _deploy_limits(tmp_path, "\n  max_tool_calls: 5", value)
+
+    with pytest.raises(DefinitionError, match="max_tool_calls"):
+        resolve("p", client="greedy", roots=roots)
+
+
+def test_a_deployment_null_limit_under_platform_defaults_is_allowed(
+    tmp_path: pathlib.Path,
+) -> None:
+    roots = _deploy_limits(tmp_path, "null", "null")
+
+    resolve("p", client="greedy", roots=roots)

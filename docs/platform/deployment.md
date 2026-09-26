@@ -86,7 +86,7 @@ The deployment `policy.md` can:
 The deployment `policy.md` cannot:
 - Elevate autonomy level beyond the generic role's ceiling
 - Remove escalation rules defined in the generic policy
-- Increase execution limits beyond platform defaults
+- Increase execution limits beyond platform defaults. A `null` value counts as the platform default and is checked like any other value; a value that is not a number, or is `NaN`, raises `DefinitionError`
 
 ### `skills/` (deployment-only)
 

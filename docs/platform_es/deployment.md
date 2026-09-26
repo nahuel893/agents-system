@@ -186,6 +186,8 @@ Esto aplica a:
 
 Por ejemplo, un cliente puede configurar `max_tool_calls: 10` para prevenir bucles de costes en su despliegue, pero si intenta poner `max_tool_calls: 30`, el cargador rechazará la configuración lanzando un `DefinitionError`.
 
+Un valor `null` cuenta como el valor por defecto de la plataforma y se valida igual que cualquier otro. Un valor que no es un número, o que es `NaN`, también lanza `DefinitionError`.
+
 ---
 
 ## El algoritmo de mezcla del harness (*harness merge algorithm*)

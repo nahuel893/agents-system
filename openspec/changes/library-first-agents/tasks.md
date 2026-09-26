@@ -464,7 +464,7 @@ Depends on PR1a + PR1b (`Agent._to_locator()` produces `FolderLocator`/
 `Agent`-authored chain can rely on it). Estimated lines: ~350 (design.md
 Testing Strategy table: ~330-370).
 
-- [ ] **PR2-T1 — `Agent` frozen dataclass core + `_to_locator()` (pure-Python branch).**
+- [x] **PR2-T1 — `Agent` frozen dataclass core + `_to_locator()` (pure-Python branch).**
   RED: create `tests/test_agent_from_params.py` covering spec Requirement
   "`Agent(...)` Python-parameter construction resolves without disk":
   `Agent(name="triage-bot", extends="agent", tools=["catalog_search"],
@@ -498,7 +498,7 @@ Testing Strategy table: ~330-370).
   disk", "A pure-Python agent resolves with no folder", "A pure-Python agent
   still receives every library invariant". <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T2 — `Agent.from_folder` + folder/params compose (override precedence).**
+- [x] **PR2-T2 — `Agent.from_folder` + folder/params compose (override precedence).**
   RED: create `tests/test_agent_from_folder.py` and
   `tests/test_agent_folder_plus_overrides.py` covering spec Requirements
   "`Agent.from_folder` produces the loader's `AgentDefinition` shape" and
@@ -541,7 +541,7 @@ Testing Strategy table: ~330-370).
   "A field not passed as a parameter keeps the folder's value".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T3 — `extends: str | Agent` (eager Agent-to-Agent, lazy str) + additive inheritance (Option B).**
+- [x] **PR2-T3 — `extends: str | Agent` (eager Agent-to-Agent, lazy str) + additive inheritance (Option B).**
   RED: create `tests/test_agent_extends_agent.py` and
   `tests/test_agent_extends_predefined_role.py` covering spec Requirements
   "Additive inheritance from the generic agent or any predefined role (Option
@@ -579,7 +579,7 @@ Testing Strategy table: ~330-370).
   tool surface", "An importer agent extending the generic agent starts from
   the minimal floor". <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T4 — Public export: `__init__.py` + `test_public_api.py`.**
+- [x] **PR2-T4 — Public export: `__init__.py` + `test_public_api.py`.**
   RED: add a `test_agent_export` parametrize case to `tests/test_public_api.py`
   (matching that file's own existing per-export pattern, `_EXPECTED_EXPORTS`
   dict at `:26-40`) asserting `agents_system.Agent` resolves lazily to
@@ -602,7 +602,7 @@ Testing Strategy table: ~330-370).
   at all to use any of the three locator kinds this capability defines).
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T5 — PR2 closing: docstrings + docs + full verification.**
+- [x] **PR2-T5 — PR2 closing: docstrings + docs + full verification.**
   Add a module docstring to `agent/spec.py` (one paragraph, cross-referencing
   `design.md`'s D3/D6 and the spec's "Agent Python API" requirements — no new
   prose invented beyond what `design.md`/`spec.md` already state). Update
@@ -619,6 +619,42 @@ Testing Strategy table: ~330-370).
   flag in the PR description if it exceeds ~400 lines rather than silently
   merging oversized.
   <!-- sdd-owner: implementation -->
+
+- [x] **PR2 review fixes (PR #85).**
+  1. Safety ceiling for importer agents (HIGH). `extends:` chains became
+     importer-authored in this PR, but `_fold_parent_into_child` lets a
+     child set `autonomy`/`execution_limits` in either direction, so
+     `Agent(extends="platform/roles/sales-agent", autonomy="full")` reached a
+     live `build_runtime`. `_resolve_role_chain` now checks every
+     importer-authored definition (`FolderLocator`/`InlineLocator`) against
+     its parent's effective values before folding it, at every hop, reusing
+     `_validate_autonomy`/`_validate_execution_limits`
+     (`_validate_importer_ceiling`). A parentless importer root is held to
+     the platform defaults. A null limit counts as the platform default on
+     both sides, and a non-number or `NaN` limit is a `DefinitionError`
+     (this also applies to deployment overrides, which share the
+     validator). Folds between two platform roles are unchanged.
+     `build_runtime` is annotated `role_type: RoleLocator`, which is what it
+     already passed to `resolve()`.
+  2. Deep immutability (MEDIUM). `Agent.__post_init__` freezes every field
+     (`MappingProxyType`, tuples, nested values too), and `_to_locator()`
+     hands the loader fresh plain lists/dicts, so mutating a container the
+     caller passed in changes nothing, including through `extends=`.
+  Tests: `tests/test_agent_safety_ceiling.py`,
+  `tests/test_agent_deep_immutability.py`, plus additions to
+  `tests/test_role_inheritance.py` and `tests/test_agent_extends_agent.py`.
+  Docs: `docs/platform/role.md`, `docs/platform/deployment.md` and their
+  `_es` twins.
+  3. `from_folder(extends=...)` was dropped (HIGH, second review). `extends`
+     is an overridable `Agent` field, but `_apply_agent_folder_overrides`
+     skipped it (no `RawDefinition` field), so the agent resolved under the
+     folder's own parent, or none, and lost the requested parent's
+     `untrusted_input: true` and limits. `_load_role_files` now uses the
+     override as the parent (`_extends_override_target`): a string placed by
+     `_extends_target` relative to the folder, or the parent `Agent`'s
+     locator from `Agent._to_locator()`. Tests:
+     `tests/test_agent_folder_plus_overrides.py`. Docs: `docs/platform/role.md`
+     and its `_es` twin.
 
 ---
 

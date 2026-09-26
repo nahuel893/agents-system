@@ -150,6 +150,11 @@ _AUTONOMY_RANK: dict[str, int] = {
     "full": 2,
 }
 
+#: What a chain resolves to when no definition in it declares an autonomy
+#: level -- the platform floor ``load_generic`` applies, and therefore the
+#: effective ceiling of a parent that declared none.
+_DEFAULT_AUTONOMY = "supervised"
+
 # ---------------------------------------------------------------------------
 # Platform default execution limits (from docs/platform/policy.md)
 # ---------------------------------------------------------------------------
@@ -306,7 +311,9 @@ class FolderLocator:
     may reference a sibling/descendant folder under `root`, never outside
     it. `overrides` carries `Agent.from_folder(path, **overrides)`'s Python
     params, applied (field-replace, not merge — see design.md D3) after the
-    folder is read.
+    folder is read. Its `extends` value, when present, replaces the
+    manifest's `extends:`: a string placed like one, or the parent `Agent`'s
+    own locator.
     """
 
     path: pathlib.Path
@@ -969,7 +976,11 @@ def _describe_locator(locator: RoleLocator) -> str:
 
 
 def _extends_target(
-    raw: Any, *, current: RoleLocator, roots: RootConfig
+    raw: Any,
+    *,
+    current: RoleLocator,
+    roots: RootConfig,
+    declared_by: str | None = None,
 ) -> RoleLocator:
     """Place an ``extends:`` value declared by ``current`` in exactly one
     locator space, or raise ``DefinitionError`` (design.md D2).
@@ -987,11 +998,16 @@ def _extends_target(
     what let ``some/importer/path/agent`` silently extend ``agent``. Spec:
     agent-definition-locator, "`extends:` fails loudly when unplaceable in
     either locator space".
+
+    ``declared_by`` names where the value came from in error messages when
+    it was not ``current``'s own ``extends:`` (an ``Agent.from_folder``
+    override); it changes nothing else.
     """
+    source = declared_by or _describe_locator(current)
 
     def fail(detail: str) -> DefinitionError:
         return DefinitionError(
-            f"Invariant violation — extends: {_describe_locator(current)} "
+            f"Invariant violation — extends: {source} "
             f"declares {detail}. {_EXTENDS_RULE}"
         )
 
@@ -1074,6 +1090,65 @@ def _parse_untrusted_input(
     return value
 
 
+def _apply_agent_folder_overrides(
+    definition: RawDefinition, overrides: Mapping[str, Any]
+) -> RawDefinition:
+    """Apply `Agent.from_folder(path, **overrides)`'s Python parameters
+    (design.md D3) onto a folder-read `RawDefinition`, field by field,
+    REPLACING — never merging — the folder's own value: an explicitly passed
+    field wins outright, and a field never passed keeps exactly what the
+    folder declared.
+
+    `overrides` keys are `Agent`'s own field names (validated against
+    `agent.spec._AGENT_OVERRIDABLE_FIELDS` at `Agent.__init__` time); `name`
+    is the one renamed key (`Agent.name` -> `RawDefinition.role_name`, so an
+    overridden name is reflected consistently in both places). `extends` is
+    not a `RawDefinition` field: it replaces the manifest's `extends:` as
+    the parent locator, in `_load_role_files` (`_extends_override_target`).
+    `skill_contents` is not threaded into `RawDefinition` in this PR (see
+    design.md's own Testing Strategy note), so it is left unapplied here.
+    """
+    if not overrides:
+        return definition
+    raw_field_names = {field.name for field in dataclasses.fields(RawDefinition)}
+    changes: dict[str, Any] = {}
+    for key, value in overrides.items():
+        target = "role_name" if key == "name" else key
+        if target in raw_field_names:
+            changes[target] = value
+    return dataclasses.replace(definition, **changes) if changes else definition
+
+
+def _extends_override_target(locator: FolderLocator, roots: RootConfig) -> RoleLocator:
+    """The parent an ``Agent.from_folder(path, extends=...)`` override asks
+    for, used in place of the folder manifest's own ``extends:`` (design.md
+    D3: an explicit parameter replaces the folder's value).
+
+    An ``Agent`` value arrives already turned into its locator by
+    ``Agent._to_locator()`` and is used as is. Anything else is placed by
+    ``_extends_target`` exactly like a manifest value, relative to this
+    folder, so it fails loud on the same inputs (``None``, empty, absolute,
+    escaping the importer root, the folder itself).
+
+    This override used to be accepted and then dropped, which resolved the
+    agent under the folder's own parent, or none: it lost the requested
+    parent's ``untrusted_input: true`` (the R4 T3 barrier) and its tighter
+    execution limits. The chain walk now holds the folder to that parent's
+    ceiling like any importer-authored child.
+    """
+    value = locator.overrides["extends"]
+    if isinstance(value, FolderLocator | InlineLocator):
+        return value
+    return _extends_target(
+        value,
+        current=locator,
+        roots=roots,
+        declared_by=(
+            f"the Agent.from_folder extends= override for {_describe_locator(locator)}"
+        ),
+    )
+
+
 def _load_role_files(
     locator: RoleLocator, roots: RootConfig
 ) -> tuple[RawDefinition, RoleLocator | None, bool]:
@@ -1122,11 +1197,14 @@ def _load_role_files(
     # `null`) is not the same thing: it reaches `_extends_target` and fails,
     # rather than silently dropping the inheritance its author meant to
     # declare. No shipped manifest writes one; a root role omits the key.
-    parent = (
-        _extends_target(manifest_fm["extends"], current=locator, roots=roots)
-        if "extends" in manifest_fm
-        else None
-    )
+    # An `Agent.from_folder(path, extends=...)` override replaces the key.
+    parent: RoleLocator | None
+    if isinstance(locator, FolderLocator) and "extends" in locator.overrides:
+        parent = _extends_override_target(locator, roots)
+    elif "extends" in manifest_fm:
+        parent = _extends_target(manifest_fm["extends"], current=locator, roots=roots)
+    else:
+        parent = None
     is_abstract = bool(manifest_fm.get("abstract", False))
 
     # ADR-002 C.12. Only a platform role's own manifest.md ORIGINATES command
@@ -1169,6 +1247,8 @@ def _load_role_files(
         command_tools=list(command_tool_declarations),
         command_tool_declarations=command_tool_declarations,
     )
+    if isinstance(locator, FolderLocator) and locator.overrides:
+        definition = _apply_agent_folder_overrides(definition, locator.overrides)
     return definition, parent, is_abstract
 
 
@@ -1204,6 +1284,13 @@ def _fold_parent_into_child(
     The ceiling that matters is unchanged: ``_merge_validated`` still refuses
     a deployment that elevates either field, now measured against the fully
     resolved chain.
+
+    That "same author" reasoning holds only while both sides are platform
+    roles. A child written by the importer -- an ``Agent(...)``, an
+    ``Agent.from_folder(...)``, any ``FolderLocator``/``InlineLocator`` --
+    crosses the same kind of trust boundary a deployment does, so
+    ``_resolve_role_chain`` checks it with ``_validate_importer_ceiling``
+    before this fold runs. Nothing here changes for a platform-role child.
 
     ``untrusted_input`` (ADR-002 C.11) is the one field where that "no trust
     boundary between two platform roles" reasoning does NOT apply, and is
@@ -1358,8 +1445,16 @@ def _resolve_role_chain(
     next hop is always ``_load_role_files``'s returned ``parent``, already
     placed by ``_extends_target`` (design.md D2). A parent that fails to
     load is reported with its underlying reason, never as merely missing.
+
+    Every importer-authored definition in the chain is held to its parent's
+    effective ``autonomy``/``execution_limits`` before it is folded -- and
+    an importer-authored root, which has no parent, to the platform
+    defaults. See ``_validate_importer_ceiling``. Only the importer end of a
+    chain can be importer-authored: a platform role never ``extends:`` an
+    importer folder, so platform-to-platform folds are never checked here.
     """
-    chain: list[RawDefinition] = []
+    # (definition, written by the importer?) -- leaf first.
+    chain: list[tuple[RawDefinition, bool]] = []
     seen: list[str] = []
     leaf_is_abstract = False
 
@@ -1392,12 +1487,17 @@ def _resolve_role_chain(
 
         if key == original_key:
             leaf_is_abstract = is_abstract
-        chain.append(definition)
+        importer_authored = isinstance(current_locator, FolderLocator | InlineLocator)
+        chain.append((definition, importer_authored))
         current_locator = parent
 
     # chain is leaf-first; fold root-first so a child composes onto its parent.
-    resolved = chain[-1]
-    for child in reversed(chain[:-1]):
+    resolved, root_is_importer_authored = chain[-1]
+    if root_is_importer_authored:
+        _validate_importer_ceiling(None, resolved)
+    for child, child_is_importer_authored in reversed(chain[:-1]):
+        if child_is_importer_authored:
+            _validate_importer_ceiling(resolved, child)
         resolved = _fold_parent_into_child(resolved, child)
 
     return resolved, leaf_is_abstract
@@ -1432,7 +1532,7 @@ def load_generic(
     if not resolved.autonomy:
         # Nothing in the chain declared one. `supervised` is the platform
         # floor, applied once here rather than at every load.
-        resolved = dataclasses.replace(resolved, autonomy="supervised")
+        resolved = dataclasses.replace(resolved, autonomy=_DEFAULT_AUTONOMY)
 
     if resolved.untrusted_input is None:
         # ADR-002 C.11 — explicit decision, not a neutral default.
@@ -1728,29 +1828,56 @@ def _validate_permissions(
         )
 
 
-def _validate_autonomy(parent: RawDefinition, override: RawDefinition) -> None:
-    if not override.autonomy:
-        # Not declared: the override inherits the parent's level, which
+_DEPLOYMENT_RULE = "Deployments may only restrict, not elevate."
+
+#: `platform/roles/base/policy.md`'s rule, as it applies to a definition the
+#: importer wrote (see `_validate_importer_ceiling`).
+_IMPORTER_RULE = (
+    "An importer agent is additive for capability but subtractive for "
+    "safety: it may match or tighten its parent's autonomy and "
+    "execution_limits, never loosen or raise them (a null limit means the "
+    "platform default)."
+)
+
+
+def _validate_autonomy(
+    ceiling: str,
+    level: str,
+    *,
+    who: str = "override",
+    against: str = "parent ceiling",
+    rule: str = _DEPLOYMENT_RULE,
+) -> None:
+    """``level`` may match or tighten ``ceiling``, never exceed it.
+
+    The one autonomy ceiling check, shared by both trust boundaries: a
+    deployment override against its resolved role (``_merge_validated``)
+    and an importer-authored agent against its parent
+    (``_validate_importer_ceiling``). ``who``/``against``/``rule`` only
+    phrase the error; the defaults are the deployment wording.
+    """
+    if not level:
+        # Not declared: the child inherits the parent's level, which
         # cannot exceed itself. Nothing to check.
         return
-    parent_rank = _AUTONOMY_RANK.get(parent.autonomy)
-    override_rank = _AUTONOMY_RANK.get(override.autonomy)
+    ceiling_rank = _AUTONOMY_RANK.get(ceiling)
+    level_rank = _AUTONOMY_RANK.get(level)
 
-    if parent_rank is None:
+    if ceiling_rank is None:
         raise DefinitionError(
             f"Invariant violation — autonomy: unknown parent autonomy level "
-            f"'{parent.autonomy}'.  Valid values: {list(_AUTONOMY_RANK)}"
+            f"'{ceiling}'.  Valid values: {list(_AUTONOMY_RANK)}"
         )
-    if override_rank is None:
+    if level_rank is None:
         raise DefinitionError(
-            f"Invariant violation — autonomy: unknown override autonomy level "
-            f"'{override.autonomy}'.  Valid values: {list(_AUTONOMY_RANK)}"
+            f"Invariant violation — autonomy: unknown {who} autonomy level "
+            f"'{level}'.  Valid values: {list(_AUTONOMY_RANK)}"
         )
-    if override_rank > parent_rank:
+    if level_rank > ceiling_rank:
         raise DefinitionError(
-            f"Invariant violation — autonomy: override level '{override.autonomy}' "
-            f"(rank {override_rank}) exceeds parent ceiling '{parent.autonomy}' "
-            f"(rank {parent_rank}).  Deployments may only restrict, not elevate."
+            f"Invariant violation — autonomy: {who} level '{level}' "
+            f"(rank {level_rank}) exceeds {against} '{ceiling}' "
+            f"(rank {ceiling_rank}).  {rule}"
         )
 
 
@@ -1838,8 +1965,12 @@ def _validate_untrusted_input_exec(
 
 
 def _validate_execution_limits(
-    baseline: dict[str, int],
-    override_limits: dict[str, int],
+    baseline: Mapping[str, Any],
+    override_limits: Mapping[str, Any],
+    *,
+    who: str = "override",
+    against: str = "parent/platform default",
+    rule: str = _DEPLOYMENT_RULE,
 ) -> None:
     """Validate that override limits are stricter or equal to baseline.
 
@@ -1847,6 +1978,10 @@ def _validate_execution_limits(
     baseline value for that key. If any value is greater (looser), raise
     DefinitionError with a precise message naming the field, the override
     value, and the baseline.
+
+    Shared by the deployment boundary (``_merge_validated``) and the importer
+    boundary (``_validate_importer_ceiling``); ``who``/``against``/``rule``
+    only phrase the error, defaulting to the deployment wording.
     """
     for key, override_value in override_limits.items():
         # A role's `execution_limits` may name only some keys. Falling back to
@@ -1866,12 +2001,92 @@ def _validate_execution_limits(
         if baseline_value is None:
             # Genuinely unknown to both — a new limit nobody has a ceiling for.
             continue
-        if override_value > baseline_value:
-            raise DefinitionError(
-                f"Invariant violation — execution_limits: override sets "
-                f"{key}={override_value} which exceeds parent/platform default "
-                f"{key}={baseline_value}.  Deployments may only restrict, not elevate."
+        # The same null reading on the override side: `graph._effective_limits`
+        # runs a null value as the platform default, so that is what gets
+        # checked. Otherwise a null would lift a parent's tighter limit back
+        # up to the default while comparing as "no value".
+        value = override_value
+        if value is None:
+            value = _PLATFORM_DEFAULT_LIMITS.get(key)
+        if not isinstance(value, int | float):
+            described = (
+                "null, with no platform default to fall back to,"
+                if override_value is None
+                else f"a {type(override_value).__name__},"
             )
+            raise DefinitionError(
+                f"Invariant violation — execution_limits: {who} sets {key} to "
+                f"{described} which is not a number.  {rule}"
+            )
+        # `not <=` rather than `>`: NaN compares false both ways, so `>`
+        # accepted it, and a NaN limit bounds nothing.
+        if not value <= baseline_value:
+            shown = (
+                f"null (the platform default, {value})"
+                if override_value is None
+                else str(override_value)
+            )
+            raise DefinitionError(
+                f"Invariant violation — execution_limits: {who} sets "
+                f"{key}={shown} which exceeds {against} "
+                f"{key}={baseline_value}.  {rule}"
+            )
+
+
+def _validate_importer_ceiling(
+    parent: RawDefinition | None, child: RawDefinition
+) -> None:
+    """Hold an importer-authored ``child`` to ``parent``'s effective safety
+    settings: additive for capability, subtractive for safety
+    (``platform/roles/base/policy.md``).
+
+    ``_fold_parent_into_child`` lets a platform role loosen ``autonomy`` or
+    ``execution_limits`` because the same author writes both files. An
+    importer-authored definition (``FolderLocator``/``InlineLocator``, which
+    is what ``Agent._to_locator()`` produces) is written by someone else, so
+    it may match or tighten its parent's values, never exceed them. This
+    reuses the deployment validators, measured against the parent's
+    EFFECTIVE values: an undeclared autonomy is the platform floor, and a
+    missing or null limit is the platform default -- exactly what the
+    runtime would enforce for the parent.
+
+    ``parent`` is ``None`` for an importer-authored chain root. Having no
+    parent does not mean having no ceiling: the platform defaults are what
+    such a definition would otherwise run with, so they are its ceiling.
+    Otherwise leaving out ``extends`` would be the way around this check.
+
+    Errors name agents by ``role_name`` -- never a locator or its host path.
+    """
+    who = f"agent '{child.role_name}'"
+    if parent is None:
+        source = "platform default"
+        ceiling_autonomy = _DEFAULT_AUTONOMY
+        ceiling_limits: Mapping[str, Any] = {}
+    else:
+        source = f"parent '{parent.role_name}' effective"
+        ceiling_autonomy = parent.autonomy or _DEFAULT_AUTONOMY
+        ceiling_limits = (
+            parent.execution_limits if isinstance(parent.execution_limits, dict) else {}
+        )
+
+    _validate_autonomy(
+        ceiling_autonomy,
+        child.autonomy,
+        who=who,
+        against=f"{source} autonomy",
+        rule=_IMPORTER_RULE,
+    )
+    # Only a dict is folded over the parent's limits; any other shape
+    # inherits them unchanged (`_fold_parent_into_child`), so it cannot raise
+    # anything.
+    if isinstance(child.execution_limits, dict):
+        _validate_execution_limits(
+            ceiling_limits,
+            child.execution_limits,
+            who=who,
+            against=source,
+            rule=_IMPORTER_RULE,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1924,7 +2139,7 @@ def _merge_validated(
     violation before returning the frozen ``AgentDefinition``.
     """
     # --- Validate autonomy BEFORE resolving other fields ---
-    _validate_autonomy(generic, override)
+    _validate_autonomy(generic.autonomy, override.autonomy)
 
     # --- Validate untrusted_input monotonicity, same stage as autonomy ---
     _validate_untrusted_input_monotonic(generic, override)
