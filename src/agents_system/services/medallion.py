@@ -15,13 +15,22 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from agents_system.config import Settings
 
 
-def get_medallion_engine(url: str) -> AsyncEngine:
-    """Create an async engine for the medallion warehouse.
+def get_medallion_engine(url: str, settings: Settings | None = None) -> AsyncEngine:
+    """Create the medallion engine using its configured pool limits.
 
     Use ``execution_options(readonly=True)`` at the session/connection level
     to enforce read-only at the application layer.
     """
-    return create_async_engine(url, echo=False, pool_pre_ping=True)
+    settings = settings or get_medallion_settings()
+    return create_async_engine(
+        url,
+        echo=False,
+        pool_pre_ping=True,
+        pool_size=settings.medallion_pool_size,
+        max_overflow=settings.medallion_max_overflow,
+        pool_timeout=settings.medallion_pool_timeout_s,
+        pool_recycle=settings.medallion_pool_recycle_s,
+    )
 
 
 class MedallionSettings(Settings):

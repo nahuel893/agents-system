@@ -77,7 +77,7 @@ El despliegue más fuerte apunta la herramienta a una réplica física de lectur
      -f scripts/provision_sql_readonly.sql
    ```
 
-3. Cree un engine **dedicado** para `sql_readonly` — nunca el engine de lectura-escritura de la aplicación ni la sesión del turno — con un pool pequeño (por ejemplo `create_async_engine(url, pool_size=2, max_overflow=0)`), contra una base de datos cuyo host haga fallar las asignaciones de memoria en lugar de matar procesos (`vm.overcommit_memory = 2`, ver el modelo de amenazas). La herramienta no puede verificarlo desde su rol; en un host que mata procesos por falta de memoria, una sola consulta reinicia todo el clúster.
+3. Cree un engine **dedicado** para `sql_readonly` — nunca el engine de lectura-escritura de la aplicación ni la sesión del turno — con `get_sql_engine(url, settings)`. Sus settings tienen por defecto el `SQL_POOL_SIZE=2` y `SQL_MAX_OVERFLOW=0` intencionalmente pequeños; `SQL_POOL_TIMEOUT_S` y `SQL_POOL_RECYCLE_S` también quedan configurables. Dimensiónelo con la regla de pools de ADR-001 para todo el despliegue, contra una base de datos cuyo host haga fallar las asignaciones de memoria en lugar de matar procesos (`vm.overcommit_memory = 2`, ver el modelo de amenazas). La herramienta no puede verificarlo desde su rol; en un host que mata procesos por falta de memoria, una sola consulta reinicia todo el clúster.
 4. Configure la herramienta con la misma lista de vistas y regístrela:
 
    ```python

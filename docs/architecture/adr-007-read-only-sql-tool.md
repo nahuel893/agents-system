@@ -77,7 +77,7 @@ The strongest deployment points the tool at a dedicated physical read replica wh
      -f scripts/provision_sql_readonly.sql
    ```
 
-3. Build a **dedicated** engine for `sql_readonly` — never the application's read-write engine or the turn-scoped session — with a small pool (for example `create_async_engine(url, pool_size=2, max_overflow=0)`), against a database whose host fails allocations instead of OOM-killing (`vm.overcommit_memory = 2`, see the threat model). The tool cannot check that from its role; on a host that OOM-kills, one query restarts the whole cluster.
+3. Build a **dedicated** engine for `sql_readonly` — never the application's read-write engine or the turn-scoped session — with `get_sql_engine(url, settings)`. Its settings default to the intentionally small `SQL_POOL_SIZE=2` and `SQL_MAX_OVERFLOW=0`; `SQL_POOL_TIMEOUT_S` and `SQL_POOL_RECYCLE_S` also remain configurable. Size it with the deployment-wide pool rule in ADR-001, against a database whose host fails allocations instead of OOM-killing (`vm.overcommit_memory = 2`, see the threat model). The tool cannot check that from its role; on a host that OOM-kills, one query restarts the whole cluster.
 4. Configure the tool with the same view list, and register it:
 
    ```python
