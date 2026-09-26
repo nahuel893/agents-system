@@ -18,9 +18,30 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import asyncpg
 import structlog
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+
+UNWRAPPED_CONNECT_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    asyncpg.PostgresError,
+    asyncpg.InterfaceError,
+    asyncpg.exceptions.InternalClientError,
+)
+"""What opening an asyncpg connection raises WITHOUT SQLAlchemy wrapping it.
+
+On the connect path SQLAlchemy re-raises the driver's exception as is: a
+closed port or unknown host is an `OSError` (`ConnectionRefusedError`,
+`socket.gaierror`; a connect timeout is `TimeoutError`, also an `OSError`),
+and a password, database or connection-limit refusal is an
+`asyncpg.PostgresError`. Catching only `SQLAlchemyError` lets all of them
+escape. Errors while a query runs ARE wrapped, as `DBAPIError`."""
+
+DATABASE_UNAVAILABLE_ERRORS: tuple[type[Exception], ...] = (
+    SQLAlchemyError,
+    *UNWRAPPED_CONNECT_ERRORS,
+)
 
 
 async def role_is_read_only(
@@ -256,7 +277,7 @@ async def verify_query_role(
                 check = await check_query_role(conn, allowed)
             finally:
                 await conn.rollback()
-    except SQLAlchemyError:
+    except DATABASE_UNAVAILABLE_ERRORS:
         logger.warning(log_event, exc_info=True)
         return None
     for warning in check.warnings:

@@ -267,6 +267,22 @@ async def test_a_view_outside_the_allowlist_is_refused_before_the_database(
     assert result["reason"] == "relation_not_allowed"
 
 
+async def test_an_unreachable_database_is_a_result_not_an_exception() -> None:
+    # Port 1 refuses the connection: asyncpg raises ConnectionRefusedError,
+    # which SQLAlchemy does not wrap on the connect path.
+    engine = get_engine("postgresql+asyncpg://sql_readonly:x@127.0.0.1:1/acme")
+    try:
+        result = await build_sql_query_connector(engine, _CONFIG)(
+            {"sql": "SELECT count(*) FROM sales_v"}
+        )
+        verified = await verify_query_role(engine, _ALLOWED)
+    finally:
+        await engine.dispose()
+
+    assert result["error_kind"] == "database_unavailable"
+    assert verified is None
+
+
 # ---------------------------------------------------------------------------
 # The database is the boundary: the guard bypassed, every write refused
 # ---------------------------------------------------------------------------

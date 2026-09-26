@@ -9,9 +9,11 @@ facts are canned so every decision rule is pinned without a database.
 
 from __future__ import annotations
 
+import socket
 from collections.abc import Mapping
 from typing import Any, Self
 
+import asyncpg
 import pytest
 from sqlalchemy.exc import OperationalError
 
@@ -255,12 +257,15 @@ class _Connection:
 
 
 class _Engine:
-    def __init__(self, connection: _Connection | None) -> None:
+    def __init__(
+        self, connection: _Connection | None, error: Exception | None = None
+    ) -> None:
         self._connection = connection
+        self._error = error or OperationalError("connect", {}, Exception("unreachable"))
 
     def connect(self) -> _Connection:
         if self._connection is None:
-            raise OperationalError("connect", {}, Exception("unreachable"))
+            raise self._error
         return self._connection
 
 
@@ -276,3 +281,21 @@ async def test_verify_query_role_is_false_for_a_writable_role() -> None:
 
 async def test_verify_query_role_is_none_when_the_database_cannot_answer() -> None:
     assert await verify_query_role(_Engine(None), _ALLOWED) is None
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionRefusedError(111, "Connect call failed"),
+        socket.gaierror(-2, "Name or service not known"),
+        asyncpg.exceptions.InvalidPasswordError("password authentication failed"),
+        TimeoutError("connect timed out"),
+    ],
+    ids=lambda e: type(e).__name__,
+)
+async def test_verify_query_role_is_none_for_the_real_connect_failures(
+    error: Exception,
+) -> None:
+    # SQLAlchemy does not wrap these on the asyncpg connect path; "could
+    # not answer" must still be None, not an exception at startup.
+    assert await verify_query_role(_Engine(None, error), _ALLOWED) is None

@@ -43,6 +43,7 @@ import structlog
 from sqlalchemy.exc import SQLAlchemyError
 
 from agents_system.harness.registry import Tier, ToolSpec
+from agents_system.services.db_role import UNWRAPPED_CONNECT_ERRORS
 from agents_system.services.reports import HARD_ROW_CEILING
 from agents_system.services.sql_guard import (
     DEFAULT_ALLOWED_FUNCTIONS,
@@ -266,6 +267,20 @@ def build_sql_query_connector(engine: Any, config: SqlQueryConfig) -> AsyncConne
             return {"error": _ROLE_REFUSED_MESSAGE, "error_kind": "role_not_read_only"}
         except SQLAlchemyError as error:
             return _database_error(error, config)
+        except UNWRAPPED_CONNECT_ERRORS as error:
+            # Refused, unknown host, bad password, connect timeout: the
+            # driver's own exception, never wrapped by SQLAlchemy. Operators
+            # get the detail; the model gets the fixed text.
+            _logger.warning(
+                "sql_query.failed",
+                sqlstate=None,
+                error_class=type(error).__name__,
+                exc_info=True,
+            )
+            return {
+                "error": _DB_UNAVAILABLE_MESSAGE,
+                "error_kind": "database_unavailable",
+            }
 
         rows = [[json_cell(cell) for cell in row] for row in outcome.rows]
         return {

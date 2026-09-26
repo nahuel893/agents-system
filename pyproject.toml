@@ -120,6 +120,8 @@ strict = true
 
 [[tool.mypy.overrides]]
 module = [
+    "asyncpg",
+    "asyncpg.*",
     "sentence_transformers.*",
     "yaml",
 ]

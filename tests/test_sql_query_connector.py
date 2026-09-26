@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import socket
 import threading
 import uuid
 from collections.abc import Mapping, Sequence
@@ -19,6 +20,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Self
 
+import asyncpg
 import pytest
 from sqlalchemy.exc import DBAPIError, OperationalError
 
@@ -380,10 +382,25 @@ async def test_the_timeout_text_states_the_configured_limit() -> None:
     assert "1.5" in result["error"]
 
 
-async def test_an_unreachable_database_is_a_result_not_an_exception() -> None:
-    engine = _Engine(
-        connect_error=OperationalError("connect", {}, Exception(_DRIVER_SECRET))
-    )
+#: What connecting really raises. On the asyncpg connect path SQLAlchemy does
+#: not wrap these: a closed port, an unknown host, a rejected password and a
+#: connect timeout reach the caller as the driver's or the OS's own types.
+_CONNECT_FAILURES = [
+    ConnectionRefusedError(111, f"Connect call failed {_DRIVER_SECRET}"),
+    socket.gaierror(-2, f"Name or service not known {_DRIVER_SECRET}"),
+    asyncpg.exceptions.InvalidPasswordError(f"auth failed {_DRIVER_SECRET}"),
+    asyncpg.exceptions.TooManyConnectionsError(f"too many {_DRIVER_SECRET}"),
+    asyncpg.exceptions.ConnectionDoesNotExistError(f"closed {_DRIVER_SECRET}"),
+    TimeoutError(f"connect timed out {_DRIVER_SECRET}"),
+    OperationalError("connect", {}, Exception(_DRIVER_SECRET)),
+]
+
+
+@pytest.mark.parametrize("error", _CONNECT_FAILURES, ids=lambda e: type(e).__name__)
+async def test_an_unreachable_database_is_a_result_not_an_exception(
+    error: Exception,
+) -> None:
+    engine = _Engine(connect_error=error)
 
     result = await _run(engine, "SELECT product FROM sales_v")
 
