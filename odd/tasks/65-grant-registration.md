@@ -12,3 +12,5 @@ Ensure an unregistered `Permission` class supplied to `build_runtime` or `create
 ## Evidence
 - RED: focused factory and application-boot tests each failed because no `UnknownPermissionNameError` was raised.
 - GREEN: `pytest -q tests/test_harness_factory.py tests/test_main.py` — 127 passed.
+- Implementation commit: `09b8945` (`fix(permissions): reject unregistered class grants`).
+- Required checks: `ruff check .`, `ruff format --check .`, and `mypy src/` passed; full `pytest -q` passed with 2262 passed, 17 xfailed, and 184 deselected after rebasing on `origin/main`.
