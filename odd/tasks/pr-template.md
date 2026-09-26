@@ -7,7 +7,7 @@ Implement GitHub issue #16 by adding the repository PR template and updating the
 - [x] Record scope and acceptance criteria.
 - [x] Add `.github/pull_request_template.md` with the four delivery questions and short standing-rules checklist.
 - [x] Update current-state delivery documentation to state the template exists and replace archive issue `#55` with `#16`.
-- [x] Run required validation, commit, push, open the PR, and observe CI. (in progress: commit and PR delivery remain)
+- [x] Run required validation, commit, push, open the PR, and observe CI.
 
 ## Acceptance criteria
 - The template uses the four questions verbatim from the delivery documentation.
@@ -21,3 +21,4 @@ Implement GitHub issue #16 by adding the repository PR template and updating the
 - `mypy src/`: passed (73 source files; one existing unused configuration-section note).
 - `pytest -q`: passed (2285 passed, 184 deselected, 17 xfailed; 7 warnings).
 - No Spanish delivery-document twins exist under `docs/`.
+- Work-unit commit: `def86a86d3580e42a37a3d4fed02b41f3fc1932e` (`docs(process): add PR template delivery questions (#16)`).
