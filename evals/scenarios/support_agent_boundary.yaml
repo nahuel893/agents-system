@@ -23,18 +23,25 @@
 # bound to the model (`AgentRuntime.__init__`'s `bind_tools`) and a
 # well-behaved model simply has no schema for it to call. permission_denied
 # reads a Layer-2 `ToolCallBlocked`/`PolicyViolation` (agent/graph.py's
-# `_execute_tools` -> harness/interceptor.py::intercept), which additionally
-# requires `run_scenario` to thread this scenario's narrowed
-# granted_permissions into `AgentRuntime.run_turn`'s `permissions` argument
-# -- it doesn't (`run_turn(history, session_id=...)` is called with no
-# `permissions=` override, so Layer-2's `current_permissions` is always the
-# role's full `definition.permissions`, never this scenario's narrower
-# grant). Since Layer 1 already guarantees every GRANTED tool's
-# required_permissions are a subset of Layer 2's (always-full) permissions,
-# "permission_revoked"/"revalidation_required" are unreachable through
-# run_scenario as currently written -- confirmed by direct trace of
-# runner.py, harness/injector.py, agent/graph.py, and
-# harness/interceptor.py, not assumed.
+# `_execute_tools` -> harness/interceptor.py::intercept), which requires
+# Layer-2's `current_permissions` to be narrower than what Layer 1 equipped
+# the tool with in the first place -- this scenario's own
+# `granted_permissions` controls BOTH layers identically here (the tool is
+# simply never equipped), so it stays a Layer-1 exclusion, not a Layer-2
+# revalidation failure.
+#
+# #76 UPDATE: `run_scenario` no longer always leaves Layer 2's
+# `current_permissions` pinned to the role's full `definition.permissions`.
+# `Scenario.turn_permissions`, when set, is threaded into
+# `AgentRuntime.run_turn_with_usage`'s `permissions` argument independently
+# of `granted_permissions` -- so a scenario CAN equip a tool at Layer 1
+# (wide `granted_permissions`) and still narrow what Layer 2 sees for the
+# turn, reaching a genuine `permission_revoked` block.
+# `evals/scenarios/guardrails/02_layer2_revalidation.yaml` is exactly that
+# scenario, using `sales-agent`/`order_writer`. This file keeps
+# `tools_not_called` because that is still the correct, non-vacuous signal
+# for what it tests (the Layer-1 grant ceiling) -- the two scenarios cover
+# different layers on purpose, not one superseding the other.
 role: support-agent
 category: guardrail
 description: >
