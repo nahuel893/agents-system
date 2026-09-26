@@ -65,11 +65,18 @@ class _Result:
     def keys(self) -> list[str]:
         return list(self._columns)
 
-    def fetchmany(self, size: int) -> list[tuple[Any, ...]]:
-        return self._rows[:size]
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return list(self._rows)
 
 
 class _Connection:
+    """Plays PostgreSQL's side of the tool's cursor protocol.
+
+    `DECLARE` opens the byte-gated cursor over the guarded query; each
+    `FETCH FORWARD n` returns the next n rows, each followed by its size as
+    the gate measured it (`sizes`, default 10 bytes a row).
+    """
+
     def __init__(self, engine: _Engine) -> None:
         self._engine = engine
 
@@ -85,18 +92,21 @@ class _Connection:
             return _Result([], [])
         if self._engine.query_error is not None:
             raise self._engine.query_error
-        if "octet_length" not in sql:
-            return _Result(self._engine.columns, self._engine.rows)
-        # The byte-budget gate: the database appends whether each row still
-        # fits the budget, and sends a row that does not as all NULLs.
-        fits = self._engine.fits or [True] * len(self._engine.rows)
-        return _Result(
-            [*self._engine.columns, "fits"],
-            [
-                (*(row if fit else [None] * len(row)), fit)
-                for row, fit in zip(self._engine.rows, fits, strict=True)
-            ],
-        )
+        if not sql.startswith("FETCH "):
+            return _Result([], [])  # DECLARE
+        count = int(sql.split()[2])
+        start = self._engine.position
+        sizes = self._engine.sizes or [10] * len(self._engine.rows)
+        batch = [
+            (*row, size)
+            for row, size in zip(
+                self._engine.rows[start : start + count],
+                sizes[start : start + count],
+                strict=True,
+            )
+        ]
+        self._engine.position += len(batch)
+        return _Result([*self._engine.columns, "size"], batch)
 
     async def execute(
         self, clause: Any, params: Mapping[str, Any] | None = None
@@ -117,11 +127,12 @@ class _Engine:
         rows: Sequence[Sequence[Any]] = (),
         query_error: Exception | None = None,
         connect_error: Exception | None = None,
-        fits: Sequence[bool] | None = None,
+        sizes: Sequence[int] | None = None,
     ) -> None:
         self.columns = columns
         self.rows = rows
-        self.fits = fits
+        self.sizes = sizes
+        self.position = 0
         self.query_error = query_error
         self.connect_error = connect_error
         self.statements: list[str] = []
@@ -133,6 +144,13 @@ class _Engine:
         if self.connect_error is not None:
             raise self.connect_error
         return _Connection(self)
+
+    def declared(self) -> str:
+        """The DECLARE statement: the gated query the connector opened."""
+        return next(s for s in self.statements if s.startswith("DECLARE "))
+
+    def fetches(self) -> list[str]:
+        return [s for s in self.statements if s.startswith("FETCH ")]
 
 
 @pytest.fixture(autouse=True)
@@ -202,7 +220,7 @@ async def test_the_model_query_runs_as_the_guarded_rendering_and_is_rolled_back(
     engine = _Engine(rows=[("a", 1)])
     await _run(engine, "SELECT product, amount FROM sales_v -- note")
 
-    executed = engine.statements[-1]
+    executed = engine.declared()
     assert '"reporting"."sales_v"' in executed
     assert "note" not in executed
     assert "LIMIT 4" in executed
@@ -346,30 +364,63 @@ async def test_exactly_the_cap_is_not_truncation() -> None:
     assert result["truncated"] is False
 
 
-async def test_the_database_gates_rows_by_a_byte_budget() -> None:
+async def test_the_database_gates_each_row_by_the_byte_budget() -> None:
     # The row cap bounds rows, not bytes: rpad/string_agg can put hundreds of
-    # MB in one cell. The executed statement measures each row's size in the
-    # database and blanks every row past the running budget there, so an
-    # oversized value never crosses the wire.
+    # MB in one cell. The database measures every row and sends one larger
+    # than the whole budget as NULLs, so an oversized value never crosses
+    # the wire.
     engine = _Engine(rows=[("a", 1)])
 
     await _run(engine, "SELECT product, amount FROM sales_v")
 
-    executed = engine.statements[-1]
-    assert "pg_catalog.octet_length(" in executed
-    assert "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW" in executed
-    assert f"<= {_CONFIG.byte_limit}" in executed
-    assert "LEFT JOIN LATERAL" in executed
+    declared = engine.declared()
+    assert "NO SCROLL CURSOR FOR" in declared
+    assert 'pg_catalog.octet_length("sql_query_rows".*::text)' in declared
+    assert f"<= {_CONFIG.byte_limit}" in declared
+    assert "LEFT JOIN LATERAL" in declared
+
+
+async def test_the_gate_keeps_no_running_total_in_the_database() -> None:
+    # A window over whole rows (a running sum) makes PostgreSQL keep every
+    # row in a tuplestore, which spills to temporary files: 2 GB of disk for
+    # one call. The gate is per row; the connector keeps the running total.
+    engine = _Engine(rows=[("a", 1)])
+
+    await _run(engine, "SELECT product, amount FROM sales_v")
+
+    assert " OVER " not in engine.declared().split("FROM (", 1)[0]
+    assert "UNBOUNDED PRECEDING" not in engine.declared()
+
+
+async def test_the_gate_reads_the_row_through_a_reference_no_column_can_shadow() -> (
+    None
+):
+    # A bare `sql_query_rows` resolves to a query column of that name before
+    # the whole row; the qualified `"sql_query_rows".*` is always the row.
+    engine = _Engine(rows=[(5,)], columns=("sql_query_rows",))
+
+    result = await _run(engine, "SELECT 5 AS sql_query_rows FROM sales_v")
+
+    declared = engine.declared()
+    assert '"sql_query_rows" AS' not in declared
+    assert '(SELECT "sql_query_rows".*)' in declared
+    assert result["columns"] == ["sql_query_rows"]
+    assert result["rows"] == [[5]]
 
 
 @pytest.mark.parametrize("byte_limit", [0, -1, True, 1.5, "65536"])
 def test_the_byte_gate_takes_only_a_positive_integer(byte_limit: Any) -> None:
     with pytest.raises((TypeError, ValueError)):
-        sql_query.byte_gated("SELECT 1", byte_limit)
+        sql_query.gated_cursor("SELECT 1", byte_limit, "sql_query_rows_x")
+
+
+def test_the_cursor_name_is_a_plain_generated_identifier() -> None:
+    with pytest.raises(ValueError):
+        sql_query.gated_cursor("SELECT 1", 1_024, 'x"; DROP TABLE t; --')
 
 
 async def test_rows_past_the_byte_budget_are_cut_and_reported() -> None:
-    engine = _Engine(rows=[("a", 1), ("b", 2), ("c", 3)], fits=[True, False, False])
+    engine = _Engine(rows=[("a", 1), ("b", 2), ("c", 3)], sizes=[100, 70_000, 70_000])
 
     result = await _run(engine, "SELECT product, amount FROM sales_v")
 
@@ -383,14 +434,77 @@ async def test_rows_past_the_byte_budget_are_cut_and_reported() -> None:
     assert result["empty_result"] is False
 
 
+async def test_the_running_total_cuts_rows_that_each_fit() -> None:
+    engine = _Engine(rows=[("a", 1), ("b", 2), ("c", 3)], sizes=[30_000] * 3)
+
+    result = await _run(engine, "SELECT product, amount FROM sales_v")
+
+    assert result["rows"] == [["a", 1], ["b", 2]]
+    assert result["truncated_bytes"] is True
+
+
 async def test_a_first_row_over_the_budget_is_not_an_empty_result() -> None:
-    engine = _Engine(rows=[("a", 1)], fits=[False])
+    engine = _Engine(rows=[("a", 1)], sizes=[70_000])
 
     result = await _run(engine, "SELECT product, amount FROM sales_v")
 
     assert result["rows"] == []
     assert result["truncated_bytes"] is True
     assert result["empty_result"] is False
+
+
+async def test_rows_are_fetched_in_small_batches_and_fetching_stops_at_the_budget() -> (
+    None
+):
+    # Each row the database sends fits the budget on its own, so the most
+    # one call can move is the budget plus one batch.
+    config = SqlQueryConfig(views=_CONFIG.views, row_limit=100)
+    engine = _Engine(rows=[("a", 1)] * 101, sizes=[20_000] * 101)
+    connector = build_sql_query_connector(engine, config)
+
+    result = await connector({"sql": "SELECT product, amount FROM sales_v"})
+
+    assert result["row_count"] == 3  # 3 x 20,000 fit in 65,536; the 4th does not
+    assert len(engine.fetches()) == 1
+    assert engine.fetches()[0].startswith(f"FETCH FORWARD {sql_query.FETCH_BATCH} ")
+    assert engine.position <= sql_query.FETCH_BATCH
+
+
+async def test_a_result_inside_the_budget_is_fetched_to_the_end() -> None:
+    config = SqlQueryConfig(views=_CONFIG.views, row_limit=100)
+    engine = _Engine(rows=[("a", 1)] * 25)
+    connector = build_sql_query_connector(engine, config)
+
+    result = await connector({"sql": "SELECT product, amount FROM sales_v"})
+
+    assert result["row_count"] == 25
+    assert result["truncated"] is False
+    assert len(engine.fetches()) == 3
+
+
+async def test_every_fetch_runs_on_what_is_left_of_one_statement_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each FETCH is a statement of its own; without this, a query slow on
+    # every batch could run for the timeout once per batch.
+    clock = iter(range(0, 100_000, 400))
+    monkeypatch.setattr(sql_query, "_now", lambda: next(clock) / 1000)
+    config = SqlQueryConfig(
+        views=_CONFIG.views, row_limit=100, statement_timeout_ms=1_500
+    )
+    engine = _Engine(rows=[("a", 1)] * 45)
+    connector = build_sql_query_connector(engine, config)
+
+    await connector({"sql": "SELECT product, amount FROM sales_v"})
+
+    timeouts = [
+        int(params["statement_timeout"].removesuffix("ms"))
+        for params in engine.params[1:]
+    ]
+    assert len(timeouts) == len(engine.fetches()) == 5
+    assert timeouts == sorted(timeouts, reverse=True)
+    assert all(1 <= timeout < 1_500 for timeout in timeouts)
+    assert timeouts[-1] == 1  # past the deadline: the server stops it at once
 
 
 async def test_a_result_within_the_budget_is_not_cut() -> None:

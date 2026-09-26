@@ -16,6 +16,7 @@ and asserts PostgreSQL refuses every one of them.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -287,6 +288,109 @@ async def test_many_small_rows_are_cut_at_the_byte_budget_in_order(
     assert len(json.dumps(result["rows"])) <= config.byte_limit
 
 
+async def test_a_column_named_like_the_gate_keeps_its_own_value(
+    sql_engine: AsyncEngine,
+) -> None:
+    # The gate once read the row through the bare name `sql_query_rows`,
+    # which PostgreSQL resolves to a query column of that name first: the
+    # first query failed and the second came back with the view's columns.
+    connector = build_sql_query_connector(sql_engine, _CONFIG)
+
+    same_name = await connector({"sql": "SELECT 5 AS sql_query_rows FROM sales_v"})
+    whole_row = await connector(
+        {
+            "sql": "SELECT s AS sql_query_rows, rpad('x', 100, 'x') AS big "
+            "FROM sales_v AS s"
+        }
+    )
+
+    assert "error" not in same_name, same_name
+    assert same_name["columns"] == ["sql_query_rows"]
+    assert same_name["rows"][0] == [5]
+    assert "error" not in whole_row, whole_row
+    assert whole_row["columns"] == ["sql_query_rows", "big"]
+    assert whole_row["rows"][0][1] == "x" * 100
+
+
+_WIDE_ROWS = "SELECT rpad('x', 5000000, 'x') AS c FROM generate_series(1, 20) AS g"
+
+
+async def _temp_bytes(admin_engine: AsyncEngine) -> int:
+    return int(
+        await _admin(
+            admin_engine,
+            "SELECT temp_bytes FROM pg_stat_database WHERE datname = current_database()",
+        )
+    )
+
+
+async def test_the_byte_gate_writes_no_temporary_files(
+    sql_engine: AsyncEngine, admin_engine: AsyncEngine
+) -> None:
+    # A running total over whole rows kept every row in a window tuplestore,
+    # which spilled to disk: 100 MB here, gigabytes with larger values, on
+    # the volume that also holds the data files.
+    before = await _temp_bytes(admin_engine)
+
+    result = await build_sql_query_connector(sql_engine, _CONFIG)({"sql": _WIDE_ROWS})
+    await sql_engine.dispose()  # a backend flushes its statistics as it exits
+
+    assert result["truncated_bytes"] is True
+    for _ in range(20):
+        assert await _temp_bytes(admin_engine) == before
+        await asyncio.sleep(0.1)
+
+
+async def test_the_gated_plan_keeps_no_rows(admin_engine: AsyncEngine) -> None:
+    guarded = guard_query(_WIDE_ROWS, _CONFIG.policy(), row_limit=_CONFIG.row_limit)
+    declare = sql_query.gated_cursor(
+        guarded.sql, _CONFIG.byte_limit, sql_query.new_cursor_name()
+    )
+
+    async with admin_engine.connect() as conn:
+        await conn.exec_driver_sql("SET search_path = ''")
+        plan = (await conn.exec_driver_sql(f"EXPLAIN (FORMAT JSON) {declare}")).scalar()
+
+    assert not _plan_node_types(plan) & {"WindowAgg", "Materialize", "Sort"}
+
+
+def _plan_node_types(node: Any) -> set[str]:
+    found: set[str] = set()
+    if isinstance(node, dict):
+        if "Node Type" in node:
+            found.add(str(node["Node Type"]))
+        for value in node.values():
+            found |= _plan_node_types(value)
+    elif isinstance(node, list):
+        for item in node:
+            found |= _plan_node_types(item)
+    return found
+
+
+async def test_the_database_computes_only_the_rows_the_budget_needs(
+    sql_engine: AsyncEngine,
+) -> None:
+    # 100 rows of 20 MB each: fetched in batches, the first row already
+    # spends the budget, so the server builds one batch and stops. Built in
+    # full, the same query ran into the statement timeout.
+    config = SqlQueryConfig(
+        views=_CONFIG.views, row_limit=100, statement_timeout_ms=5_000
+    )
+    connector = build_sql_query_connector(sql_engine, config)
+
+    started = time.monotonic()
+    result = await connector(
+        {
+            "sql": "SELECT rpad('x', 20000000, 'x') AS c FROM generate_series(1, 100) AS g"
+        }
+    )
+
+    assert "error" not in result, result
+    assert result["rows"] == []
+    assert result["truncated_bytes"] is True
+    assert time.monotonic() - started < 5
+
+
 async def test_the_statement_timeout_is_enforced_by_the_server(
     sql_engine: AsyncEngine,
 ) -> None:
@@ -412,14 +516,14 @@ async def test_the_connector_path_refuses_writes_with_the_guard_bypassed(
     def no_guard(sql: object, policy: object, *, row_limit: int) -> GuardedQuery:
         return GuardedQuery(sql=str(sql), relations=())
 
-    def no_gate(sql: str, byte_limit: int) -> str:
+    def no_gate(sql: str, byte_limit: int, cursor: str) -> str:
         return sql
 
-    # Both application-side layers off: the guard, and the byte-budget
-    # wrapper (which would refuse a bare write as a syntax error on its own).
-    # What must refuse the write then is the database role.
+    # Both application-side layers off: the guard, and the byte-gated cursor
+    # (a DECLARE, which would refuse a bare write as a syntax error on its
+    # own). What must refuse the write then is the database role.
     monkeypatch.setattr(sql_query_connector, "guard_query", no_guard)
-    monkeypatch.setattr(sql_query, "byte_gated", no_gate)
+    monkeypatch.setattr(sql_query, "gated_cursor", no_gate)
     connector = build_sql_query_connector(sql_engine, _CONFIG)
 
     result = await connector({"sql": statement})

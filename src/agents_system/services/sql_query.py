@@ -17,11 +17,16 @@ check:
    protocol (asyncpg prepares every statement), which refuses a second
    statement independently of the guard. At most `row_limit + 1` rows are
    fetched, and the wrapped `LIMIT` already stops the server there.
-5. Rows are bounded in BYTES by the database too (`byte_gated`): the row cap
-   alone lets one accepted query return hundreds of MB (`rpad`,
+5. Rows are bounded in BYTES by the database too (`gated_cursor`): the row
+   cap alone lets one accepted query return hundreds of MB (`rpad`,
    `string_agg`), all of it buffered here and handed to the model. The
-   server measures each row and sends every row past the running budget as
-   NULLs, so an oversized value never leaves PostgreSQL.
+   query runs as a cursor; the server measures each row and sends one
+   larger than the whole budget as NULLs, and the connector fetches
+   `FETCH_BATCH` rows at a time, keeping the running total itself and
+   stopping at the budget. No running total lives in the database: a window
+   over whole rows keeps every row in a tuplestore, which spills to
+   temporary files (2 GB of disk for one call). Each FETCH runs on what is
+   left of one `statement_timeout`, so the whole query stays inside it.
 6. The transaction is always rolled back; nothing this path runs is ever
    committed.
 
@@ -32,6 +37,9 @@ application's read-write engine or a turn-scoped session.
 from __future__ import annotations
 
 import math
+import re
+import time
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -64,32 +72,56 @@ session with it turned off would read the same text differently. Static
 text with bound values: AD-2 still holds for everything this module writes."""
 
 
-_BYTE_GATE = (
-    'SELECT "sql_query_row".*, "sql_query_gate"."fits" FROM ('
-    'SELECT "sql_query_rows" AS "rec", pg_catalog.sum('
-    'pg_catalog.octet_length("sql_query_rows"::text)) OVER ('
-    "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) <= {byte_limit} "
-    'AS "fits" FROM ({query}) AS "sql_query_rows") AS "sql_query_gate" '
-    'LEFT JOIN LATERAL (SELECT ("sql_query_gate"."rec").*) AS "sql_query_row" '
-    'ON "sql_query_gate"."fits"'
+_STATEMENT_TIMEOUT = text(
+    "SELECT pg_catalog.set_config('statement_timeout', :statement_timeout, true)"
 )
-"""Wraps the guarded query so the database enforces a byte budget.
+"""Sets the time left for the next FETCH. Static text, bound value (AD-2)."""
 
-A running sum of each row's size (its text form) marks whether the row
-still fits; the lateral join expands a fitting row back into its own
-columns, names and types intact, and turns every other row into NULLs plus
-`fits = false`. Row order is the guarded query's: the window has no ORDER
-BY and the join keeps its outer order. Static text around the guard's
-validated rendering and an integer from configuration (AD-2)."""
+FETCH_BATCH = 10
+"""Rows per FETCH. Every row the database sends fits the byte budget on its
+own, so a call moves at most the budget plus one batch of rows."""
+
+_CURSOR_NAME = re.compile(r"sql_query_rows_[0-9a-f]{32}")
+
+_GATED_CURSOR = (
+    'DECLARE "{cursor}" NO SCROLL CURSOR FOR '
+    'SELECT "sql_query_row".*, "sql_query_size"."size" '
+    'FROM ({query}) AS "sql_query_rows" '
+    "CROSS JOIN LATERAL (SELECT pg_catalog.octet_length("
+    '"sql_query_rows".*::text) AS "size") AS "sql_query_size" '
+    'LEFT JOIN LATERAL (SELECT "sql_query_rows".*) AS "sql_query_row" '
+    'ON "sql_query_size"."size" <= {byte_limit}'
+)
+"""Opens the guarded query as a cursor whose rows the database size-gates.
+
+Each row is measured by its text form. The first lateral join expands a
+row that fits the whole budget back into its own columns (names, types and
+order intact); a row that does not comes back as NULLs plus its size. The
+row is referenced only as `"sql_query_rows".*`, which no column of the
+query can shadow (a bare `sql_query_rows` would resolve to a column of that
+name first). The plan streams row by row - no window, no sort, nothing
+kept - and the cursor computes only the rows the connector fetches. Static
+text around the guard's validated rendering, a generated cursor name and an
+integer from configuration (AD-2)."""
 
 
-def byte_gated(sql: str, byte_limit: int) -> str:
-    """Wrap guarded *sql* so no row past *byte_limit* bytes leaves the server."""
+def new_cursor_name() -> str:
+    return f"sql_query_rows_{uuid.uuid4().hex}"
+
+
+def gated_cursor(sql: str, byte_limit: int, cursor: str) -> str:
+    """DECLARE *cursor* over guarded *sql*, every row gated at *byte_limit*."""
     if isinstance(byte_limit, bool) or not isinstance(byte_limit, int):
         raise TypeError("byte_limit must be an int.")
     if byte_limit < 1:
         raise ValueError("byte_limit must be positive.")
-    return _BYTE_GATE.format(byte_limit=byte_limit, query=sql)
+    if not _CURSOR_NAME.fullmatch(cursor):
+        raise ValueError("cursor must be a name from new_cursor_name().")
+    return _GATED_CURSOR.format(cursor=cursor, byte_limit=byte_limit, query=sql)
+
+
+def _now() -> float:
+    return time.monotonic()
 
 
 class UnsafeQueryRoleError(RuntimeError):
@@ -150,27 +182,51 @@ async def run_guarded_query(
             role = await check_query_role(conn, allowed_relations)
             if not role.safe:
                 raise UnsafeQueryRoleError(role.problems)
-            result = await conn.exec_driver_sql(byte_gated(guarded.sql, byte_limit))
-            # The gate appends `fits` as the last column; the rest are the
+            deadline = _now() + statement_timeout_ms / 1000
+            cursor = new_cursor_name()
+            await conn.exec_driver_sql(gated_cursor(guarded.sql, byte_limit, cursor))
+            return await _fetch_within_budget(
+                conn,
+                cursor,
+                deadline=deadline,
+                row_limit=row_limit,
+                byte_limit=byte_limit,
+            )
+        finally:
+            await conn.rollback()
+
+
+async def _fetch_within_budget(
+    conn: Any, cursor: str, *, deadline: float, row_limit: int, byte_limit: int
+) -> QueryRows:
+    """FETCH from *cursor* until the rows, the bytes or the query run out."""
+    fetch = f'FETCH FORWARD {FETCH_BATCH} FROM "{cursor}"'
+    columns: list[str] | None = None
+    rows: list[tuple[Any, ...]] = []
+    used = 0
+    seen = 0
+    while True:
+        left_ms = max(1, int((deadline - _now()) * 1000))
+        await conn.execute(_STATEMENT_TIMEOUT, {"statement_timeout": f"{left_ms}ms"})
+        result = await conn.exec_driver_sql(fetch)
+        if columns is None:
+            # The gate appends `size` as the last column; the rest are the
             # query's own, by position (names may repeat).
             keys = result.keys()
             columns = [str(column) for column in keys][:-1]
-            fetched = list(result.fetchmany(row_limit + 1))
-        finally:
-            await conn.rollback()
-    rows: list[tuple[Any, ...]] = []
-    truncated_bytes = False
-    for *values, fits in fetched[:row_limit]:
-        if not fits:
-            truncated_bytes = True
-            break
-        rows.append(tuple(values))
-    return QueryRows(
-        columns=columns,
-        rows=rows,
-        truncated=len(fetched) > row_limit or truncated_bytes,
-        truncated_bytes=truncated_bytes,
-    )
+        batch = result.fetchall()
+        for *values, size in batch:
+            seen += 1
+            if seen > row_limit:
+                return QueryRows(columns=columns, rows=rows, truncated=True)
+            used += int(size)
+            if used > byte_limit:
+                return QueryRows(
+                    columns=columns, rows=rows, truncated=True, truncated_bytes=True
+                )
+            rows.append(tuple(values))
+        if len(batch) < FETCH_BATCH:
+            return QueryRows(columns=columns, rows=rows, truncated=False)
 
 
 def json_cell(value: Any) -> Any:

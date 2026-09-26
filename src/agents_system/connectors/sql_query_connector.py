@@ -18,9 +18,10 @@ every other one fails.
    `LIMIT row_limit + 1`, and it goes through the driver's extended protocol
    (asyncpg prepares every statement), which refuses a second statement on
    its own. At most `row_limit + 1` rows are fetched; the extra one only
-   reports truncation. Bytes are bounded too: the database blanks every row
-   past `byte_limit` (a running sum of row sizes) before it is sent, and the
-   JSON rows handed back are cut at the same budget (`truncated_bytes`).
+   reports truncation. Bytes are bounded too: the database never sends a row
+   larger than `byte_limit`, rows come through a cursor a few at a time and
+   fetching stops once their running total passes the budget, and the JSON
+   rows handed back are cut at the same budget (`truncated_bytes`).
    The guard bounds its own work before it parses anything, and runs on a
    small executor of its own, off the event loop.
 3. Tool surface. Its own permission, `query:sql`, in its own `Query` family
