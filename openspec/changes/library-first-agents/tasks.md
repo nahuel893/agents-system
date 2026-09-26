@@ -1094,7 +1094,7 @@ PR is breaking** — see PR4b-T4.
   caller importing the deleted functions fails at import time".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR4b-T4 — PR4b closing: full verification + BREAKING CHANGE marker.**
+- [x] **PR4b-T4 — PR4b closing: full verification + BREAKING CHANGE marker.**
   Verify: `.venv/bin/pytest -q` (full suite), `.venv/bin/ruff check .`,
   `.venv/bin/ruff format --check .`, `.venv/bin/mypy src/`. Confirm `git diff
   --stat` against PR4b's branch base; flag if it exceeds ~400 lines. **This
