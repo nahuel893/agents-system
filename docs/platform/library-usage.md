@@ -80,6 +80,7 @@ nothing more:
 | `FactoryError` | `agents_system.harness.factory` | Raised when a runtime can't be assembled (e.g. a declared skill file is missing) |
 | `InjectionError` | `agents_system.harness.injector` | Raised when a role declares a tool your registry doesn't have |
 | `AgentRuntime` | `agents_system.agent.graph` | Wraps an `EquippedRuntime` + a chat model into something you call `run_turn` on |
+| `Agent` | `agents_system.agent.spec` | A custom agent defined in Python (`Agent(...)`), from a folder (`Agent.from_folder(path)`), or both; its `_to_locator()` goes wherever a role name does (`resolve`, `build_runtime`). See `docs/platform/role.md` |
 
 `agents_system.__version__` is also available, resolved from the installed
 package's metadata (falling back to a placeholder in a source checkout that
