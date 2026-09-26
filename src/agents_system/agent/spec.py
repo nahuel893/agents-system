@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+import types
 from collections.abc import Mapping
 from typing import Any
 
@@ -33,16 +34,39 @@ from agents_system.harness.loader import (
 )
 
 
-def _coerce_execution_limits(
-    value: Mapping[str, Any] | str | None,
-) -> dict[str, Any] | str | None:
-    """``RawDefinition.execution_limits`` is typed ``dict[str, Any] | str |
-    None`` — narrower than ``Agent.execution_limits``'s ``Mapping``, so a
-    non-``dict`` ``Mapping`` (unlikely in practice, but not ruled out by the
-    field's own type) is copied into a real ``dict`` here rather than passed
-    through unchanged."""
+def _freeze(value: Any) -> Any:
+    """A deep, immutable copy of ``value``: every mapping becomes a
+    ``MappingProxyType`` over a fresh ``dict``, every list or tuple a
+    ``tuple``, every set a ``frozenset``, nested values included. Anything
+    else (a ``str``, a number, a path, another ``Agent``) is already
+    immutable and is returned as is.
+
+    ``frozen=True`` only blocks reassigning a field. Without this copy, a
+    list or dict the caller passed in stays shared with the caller, and
+    mutating it afterwards changes every later ``_to_locator()`` -- including
+    one reached through another ``Agent``'s ``extends=``."""
     if isinstance(value, Mapping):
-        return dict(value)
+        return types.MappingProxyType(
+            {key: _freeze(item) for key, item in value.items()}
+        )
+    if isinstance(value, list | tuple):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, set | frozenset):
+        return frozenset(_freeze(item) for item in value)
+    return value
+
+
+def _thaw(value: Any) -> Any:
+    """The inverse of ``_freeze``, as a fresh copy: mappings become plain
+    ``dict``s and tuples plain ``list``s, nested values included -- the
+    shapes the loader parses out of YAML and checks for (a tuple where it
+    expects a list, or a ``MappingProxyType`` where it expects a ``dict``,
+    would be skipped or misread). Each call returns new containers, so
+    nothing the loader does to them can reach back into the ``Agent``."""
+    if isinstance(value, Mapping):
+        return {key: _thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
     return value
 
 
@@ -88,6 +112,11 @@ class Agent:
     )
 
     def __post_init__(self) -> None:
+        # Deep-immutable, not just frozen (see `_freeze`). Every field goes
+        # through it, so a container field added later is covered too.
+        for field in dataclasses.fields(self):
+            object.__setattr__(self, field.name, _freeze(getattr(self, field.name)))
+
         unlisted = self.skill_contents.keys() - set(self.skills)
         if unlisted:
             raise DefinitionError(
@@ -125,11 +154,14 @@ class Agent:
         )
 
     def _to_locator(self) -> RoleLocator:
+        # Every container handed to the loader is a fresh, plain copy
+        # (`_thaw`): the loader's shapes, and nothing it can mutate back into
+        # this frozen `Agent`.
         if self._folder is not None:
             return FolderLocator(
                 path=self._folder,
                 root=self._folder.parent,
-                overrides=self._folder_overrides,
+                overrides=_thaw(self._folder_overrides),
             )
         raw = RawDefinition(
             role_name=self.name,
@@ -138,14 +170,14 @@ class Agent:
             system_prompt=self.system_prompt,
             tools=list(self.tools),
             skills=list(self.skills),
-            context=dict(self.context),
+            context=_thaw(self.context),
             permissions=list(self.permissions),
             autonomy=self.autonomy,
-            escalation_rules=dict(self.escalation_rules),
-            delegation_policy=dict(self.delegation_policy),
-            memory_policy=dict(self.memory_policy),
-            audit_policy=dict(self.audit_policy),
-            execution_limits=_coerce_execution_limits(self.execution_limits),
+            escalation_rules=_thaw(self.escalation_rules),
+            delegation_policy=_thaw(self.delegation_policy),
+            memory_policy=_thaw(self.memory_policy),
+            audit_policy=_thaw(self.audit_policy),
+            execution_limits=_thaw(self.execution_limits),
             untrusted_input=self.untrusted_input,
         )
         parent: RoleLocator | None

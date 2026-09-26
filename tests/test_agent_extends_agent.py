@@ -39,12 +39,34 @@ def test_agent_extends_agent_resolves_parent_eagerly_with_no_disk_io(
 
 def test_frozen_parent_agent_cannot_be_mutated_after_use_as_extends() -> None:
     """The immutability argument design.md D3 makes for why an `Agent`-to-
-    `Agent` extends chain is cycle-free by construction: a already-built
-    `Agent` used as another's `extends=` cannot be mutated afterward."""
+    `Agent` extends chain is cycle-free by construction: an already-built
+    `Agent` used as another's `extends=` cannot be mutated afterward -- not
+    by reassigning a field, not by mutating a field's container in place,
+    and not through the list/dict the caller originally passed in."""
     from agents_system.agent.spec import Agent
+    from agents_system.harness.loader import RootConfig, resolve
 
-    parent = Agent(name="base-agent")
-    Agent(name="child-agent", extends=parent)
+    tools = ["catalog_search"]
+    context = {"extra": {"flags": ["a"]}}
+    parent = Agent(
+        name="base-agent",
+        extends="agent",
+        tools=tools,  # type: ignore[arg-type]
+        context=context,
+    )
+    child = Agent(name="child-agent", extends=parent)
+    before = resolve(child._to_locator(), roots=RootConfig())
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         parent.name = "renamed"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        parent.tools.append("order_writer")  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        parent.context["extra"] = {}  # type: ignore[index]
+
+    tools.append("order_writer")
+    context["extra"]["flags"].append("b")
+
+    after = resolve(child._to_locator(), roots=RootConfig())
+    assert after.tools == before.tools
+    assert after.context == before.context

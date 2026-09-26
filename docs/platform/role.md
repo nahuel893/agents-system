@@ -82,6 +82,8 @@ The loader enforces this for every definition the importer writes: an `Agent(...
 
 Folds between two predefined roles are not checked this way, because the platform writes both files (`data-agent` and `summary-agent` run `full` under a `supervised` chain). Deployment overrides keep their own subtractive check against the resolved role (`docs/platform/deployment.md`).
 
+An `Agent` is immutable all the way down. It copies every list and dict it receives into an immutable one when it is built, so changing the originals afterwards does not change what it resolves to, including when it is another `Agent`'s `extends=`.
+
 ### `role.md` prose body — model-facing prompt vs. design notes
 
 The frontmatter table above covers `role.md`'s YAML header. Everything after the closing `---` is the prose body, which the loader captures as the role's contribution to `system_prompt` (`AgentDefinition.system_prompt` / `RawDefinition.system_prompt`, `harness/loader.py`).

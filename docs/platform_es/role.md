@@ -82,6 +82,8 @@ El loader lo hace cumplir para toda definición que escribe el importador: un `A
 
 Los pliegues entre dos roles predefinidos no se validan así, porque la plataforma escribe los dos archivos (`data-agent` y `summary-agent` corren en `full` bajo una cadena `supervised`). Las sobreescrituras de despliegue mantienen su propia validación sustractiva contra el rol resuelto (`docs/platform_es/deployment.md`).
 
+Un `Agent` es inmutable en profundidad. Al construirse copia cada lista y cada diccionario que recibe a uno inmutable, así que cambiar los originales después no cambia lo que resuelve, tampoco cuando es el `extends=` de otro `Agent`.
+
 ### Cuerpo de prosa de `role.md` — prompt orientado al modelo vs. notas de diseño
 
 La tabla de frontmatter de arriba cubre el encabezado YAML de `role.md`. Todo lo que sigue después del `---` de cierre es el cuerpo de prosa, que el loader captura como el aporte del rol a `system_prompt` (`AgentDefinition.system_prompt` / `RawDefinition.system_prompt`, `harness/loader.py`).
