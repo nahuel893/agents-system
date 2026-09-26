@@ -37,6 +37,7 @@ _EXPECTED_EXPORTS: dict[str, str] = {
     "FactoryError": "agents_system.harness.factory",
     "InjectionError": "agents_system.harness.injector",
     "AgentRuntime": "agents_system.agent.graph",
+    "Agent": "agents_system.agent.spec",
 }
 
 
@@ -153,6 +154,19 @@ def test_import_agents_system_does_not_import_agent_graph() -> None:
     result = _run_import_probe(
         "import sys\n"
         "import agents_system\n"
+        "assert 'agents_system.agent.graph' not in sys.modules, sorted(sys.modules)\n"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_touching_agent_name_does_not_import_agent_graph() -> None:
+    """PR2, D6: `agent/spec.py` only imports from `harness.loader`, never
+    `agent.graph` — resolving `agents_system.Agent` must not pull in
+    LangGraph the way resolving `agents_system.AgentRuntime` does."""
+    result = _run_import_probe(
+        "import sys\n"
+        "import agents_system\n"
+        "agents_system.Agent\n"
         "assert 'agents_system.agent.graph' not in sys.modules, sorted(sys.modules)\n"
     )
     assert result.returncode == 0, result.stdout + result.stderr
