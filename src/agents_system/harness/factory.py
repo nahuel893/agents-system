@@ -262,7 +262,17 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
             "telling the user is not enough:"
         )
         for condition in conditions:
-            description = str(descriptions.get(condition) or "").strip()
+            # PR #89 review (finding 1): a description value that reaches
+            # this function without passing through the prose parser's
+            # continuation-joining -- a deployment override's frontmatter
+            # `descriptions:`, or an importer's InlineLocator -- is never
+            # validated to be single-line. Collapsing all internal
+            # whitespace (not just leading/trailing) the same way the
+            # parser's continuation-joining already does means an embedded
+            # newline can never fragment one bullet into several
+            # bullet/heading-shaped lines, regardless of which source
+            # supplied it.
+            description = " ".join(str(descriptions.get(condition) or "").split())
             if description:
                 lines.append(f"- {condition} — {description}")
             else:
