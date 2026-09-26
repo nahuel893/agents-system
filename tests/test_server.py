@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from fastapi import FastAPI
 
@@ -149,6 +151,16 @@ def test_get_application_non_callable_registry_factory_raises_type_error(
         get_application()
 
 
+def _fake_checkpointer_cm_factory(fake_checkpointer: Any) -> Any:
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _cm(*args: Any, **kwargs: Any) -> Any:
+        yield fake_checkpointer
+
+    return _cm
+
+
 @pytest.fixture(autouse=True)
 def _clear_settings_cache():
     from agents_system.config import get_settings
@@ -168,6 +180,10 @@ def mock_lifespan_deps():
         patch("agents_system.main.get_engine", return_value=mock_engine),
         patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch("agents_system.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agents_system.main._build_checkpointer_cm",
+            side_effect=_fake_checkpointer_cm_factory(MagicMock()),
+        ),
         patch(
             "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
@@ -231,6 +247,7 @@ def test_server_lifespan_boots_with_custom_registry_factory_equipping_role(
 ) -> None:
     """Lifespan boots and equips the registered role when a valid REGISTRY_FACTORY is configured."""
     monkeypatch.setenv("ALLOW_INSECURE", "true")
+    monkeypatch.setenv("WHATSAPP_CHECKPOINTER_ENABLED", "false")
     monkeypatch.setenv("AGENT_REGISTRATIONS", '{"sales": "sales-agent"}')
     monkeypatch.setenv(
         "DEPLOY_GRANTS",
