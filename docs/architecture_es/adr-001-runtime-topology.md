@@ -108,9 +108,10 @@ vuelve inaceptable; no construirlo especulativamente.
 
 Diez turnos concurrentes están dominados por la latencia del LLM, que es I/O.
 Un solo event loop lo maneja cómodo. Un proceso único no requiere ningún
-trabajo de estado compartido: `_seq_counter` es correcto dentro de un proceso,
-una sola cola de auditoría significa un solo `dropped_count`, y 30
-conexiones entran en `max_connections` sin tocar nada.
+trabajo de estado compartido: el asignador de secuencia vive en la base de
+datos y es agnóstico a la cantidad de procesos desde #9, una sola cola de
+auditoría significa un solo `dropped_count`, y 30 conexiones entran en
+`max_connections` sin tocar nada.
 
 Esto significa que la configuración de lanzamiento es **el código actual más
 D-030 y D-033** — no una re-arquitectura. La Etapa A es alcanzable ya.
@@ -129,7 +130,7 @@ Inventariado leyendo el runtime, no supuesto:
 
 | Estado | Ubicación | ¿Sobrevive a N procesos? |
 |---|---|---|
-| `_seq_counter` | dict de módulo, `audit/recorder.py:44` | **No — D-042.** Cada proceso cuenta el fallback `"none"` desde 1, así que dos workers emitiendo un evento sin contexto en el mismo instante violan `uq_audit_event_correlation_sequence` y pierden el lote entero. |
+| ~~`_seq_counter`~~ asignación de secuencia | ahora tabla `audit_sequence`, asignada atómicamente en `AuditSink._flush_batch` | **Sí — arreglado por D-042 (#9).** El contador se mudó a la base de datos: un upsert atómico por `correlation_id` contra `audit_sequence` (migración `005_audit_sequence`), ejecutado dentro de la misma transacción con la que ya commitea cada lote. El propio row lock de PostgreSQL sobre esa fila serializa a los workers concurrentes de cualquier proceso. |
 | Cola de auditoría + `dropped_count` | en memoria, `audit/sink.py` | **Parcialmente.** Cada proceso tiene su propia cola de 1000 y su propio contador; nada los agrega, así que la pérdida de auditoría se vuelve N números invisibles en lugar de uno. Necesita D-046. |
 | Pools de conexiones | SQLAlchemy, sin configurar | **No — D-032.** 4 procesos servidor agotan `max_connections` con los defaults actuales, y 3 más un script de sync corriendo ya lo hacen. |
 | Embedder BGE-M3 local | RAM del proceso | **No.** N × 4,3 GB. Resuelto por la decisión 1. |
@@ -144,10 +145,12 @@ Inventariado leyendo el runtime, no supuesto:
 ### 4. Qué pierde un reinicio
 
 - **Hasta 1000 eventos de auditoría encolados por proceso**, más lo que el
-  drainer tuviera a mitad de lote. Hoy es peor de lo necesario:
-  `AuditSink.stop()` cancela el drainer antes de que su flush de shutdown pueda
-  correr (**D-041**, pineado como xfail estricto), así que incluso un apagado
-  ordenado pierde la cola.
+  drainer tuviera a mitad de lote, ante un kill duro del proceso. Un apagado
+  ordenado ya no suma a esa pérdida: `AuditSink.stop()` (arreglado por
+  **D-041** / #8) ahora espera la salida propia del drainer en vez de
+  cancelarlo por debajo, acotado por un `timeout` (5s por defecto) que solo
+  cae a cancelar — contando el resto como perdido — si el drainer mismo está
+  trabado.
 - **Nada más.** El estado de conversación vive en el checkpointer de Redis y
   las marcas de dedup viven en Redis con TTL de 300 s, así que ambos sobreviven
   a un reinicio. Los turnos en vuelo se pierden, y por eso la ejecución en
@@ -165,8 +168,8 @@ Ordenadas como deben hacerse, con lo que cambió en cada una:
 | **D-030** el webhook devuelve 200 antes del turno | high | Sin cambios, y ahora desbloqueada. Requerida para la Etapa A. |
 | **D-031** claim/release de dedup | medium | Tiene que aterrizar junto con D-030, por lo dicho arriba. |
 | **D-032** dimensionamiento del pool | **low** | **Elevada.** Es la restricción que ata a partir de 4 procesos servidor, así que es prerrequisito de la Etapa B, no una optimización. Configurar `pool_size`/`max_overflow` desde settings en ambos engines, dimensionados como `max_connections` ÷ procesos esperados — dejando lugar para los scripts de sync, que abren su propio par de engines y pueden pasar del límite a un despliegue de 3 procesos por sí solos. |
-| **D-042** `_seq_counter` | medium | Ahora es decidible. Como la Etapa B es un objetivo real, el arreglo tiene que sobrevivir a N procesos: mover la secuencia a la base de datos (una secuencia por correlación, o una expresión en el INSERT), no un contador en memoria más astuto. Limpiar por request no alcanza. |
-| **D-041** `stop()` pierde la cola | medium | Sin cambios, y más importante en la Etapa B, donde N procesos pierden cada uno su cola en cada despliegue. |
+| **D-042** `_seq_counter` | medium | **Arreglado — #9.** Era: ahora decidible, como la Etapa B es un objetivo real, el arreglo tiene que sobrevivir a N procesos — mover la secuencia a la base de datos (una secuencia por correlación, o una expresión en el INSERT), no un contador en memoria más astuto; limpiar por request no alcanza. Se envió exactamente eso: un upsert atómico por `correlation_id` contra `audit_sequence`. |
+| **D-041** `stop()` pierde la cola | medium | **Arreglado — #8.** Era: sin cambios, y más importante en la Etapa B, donde N procesos pierden cada uno su cola en cada despliegue. `stop()` ahora espera el flush de cierre del drainer en vez de cancelarlo. |
 | **D-046** exponer `dropped_count` | medium | Sube de valor: en la Etapa B es la única forma de ver la pérdida agregada de auditoría. |
 | **D-036** provisioning del servidor | high | Ya tiene su insumo: la Etapa A despliega una unidad; la Etapa B necesita la cantidad de unidades parametrizada y el pool dimensionado en consecuencia. |
 
