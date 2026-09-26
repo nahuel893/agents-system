@@ -1200,6 +1200,19 @@ def _apply_agent_folder_overrides(
     way). `extends` is not a `RawDefinition` field: it replaces the
     manifest's `extends:` as the parent locator, in `_load_role_files`
     (`_extends_override_target`).
+
+    `Agent(skill_contents=...)`'s own `__post_init__` rejects a key not
+    listed in `skills` at construction time -- but a `skill_contents`
+    override lives only in `_folder_overrides` (never on the `Agent`
+    instance's own `skills`/`skill_contents` fields, which stay at their
+    empty defaults for a folder-backed `Agent`), so that guard never sees it.
+    Restoring parity here, against the resulting `skills` (the folder's own
+    declared skills, replaced by a `skills=` override in this same call, same
+    as every other field this function applies) matters for more than a
+    typo: `_fold_parent_into_child` unions `skills` ADDITIVELY across
+    `extends`, so an unvalidated key can silently win over a same-named skill
+    introduced only by a parent -- checked here, before that fold ever runs,
+    so it is rejected regardless of what the chain later adds.
     """
     if not overrides:
         return definition
@@ -1210,6 +1223,14 @@ def _apply_agent_folder_overrides(
         target = renames.get(key, key)
         if target in raw_field_names:
             changes[target] = dict(value) if target == "inline_skills" else value
+    if "inline_skills" in changes:
+        resulting_skills = set(changes.get("skills", definition.skills))
+        unlisted = changes["inline_skills"].keys() - resulting_skills
+        if unlisted:
+            raise DefinitionError(
+                "Agent: skill_contents names a skill not listed in `skills`: "
+                f"{sorted(unlisted)}"
+            )
     return dataclasses.replace(definition, **changes) if changes else definition
 
 

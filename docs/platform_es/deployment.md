@@ -96,7 +96,7 @@ Las habilidades son módulos de prompts de comportamiento que definen cómo razo
 2. **La carpeta propia del agente** — el `skills/<nombre>.md` de `Agent.from_folder(path)`, para un agente propio que trae su propio contenido por defecto.
 3. **El despliegue** — `deployments/{cliente}/{rol}/skills/<nombre>.md`. Esta es la **única** fuente desde la que un rol predefinido de plataforma resuelve sus habilidades; un rol predefinido no tiene carpeta ni fuente inline propia.
 
-Una habilidad declarada que no se resuelve en ninguna de las tres fuentes falla de forma explícita (`FactoryError`). Un agente propio puede combinar fuentes — por ejemplo, traer un contenido por defecto en su carpeta y dejar que un despliegue o un contenido inline reemplace una habilidad puntual por nombre.
+Una habilidad declarada que no se resuelve en ninguna de las tres fuentes falla de forma explícita (`FactoryError`). Un agente propio puede combinar sus dos fuentes propias — por ejemplo, traer un contenido por defecto en su carpeta y dejar que un contenido inline (fuente 1) reemplace una habilidad puntual por nombre. La fuente de despliegue es exclusivamente un mecanismo de rol predefinido: combinar una sobreescritura de despliegue (`client`) con un agente propio de carpeta o inline (cualquier locator `Agent`/`Agent.from_folder`) lanza `DefinitionError` al resolver, ya que un agente propio no tiene un árbol de despliegue donde buscarla.
 
 ---
 
