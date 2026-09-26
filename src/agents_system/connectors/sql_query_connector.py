@@ -18,7 +18,10 @@ every other one fails.
    `LIMIT row_limit + 1`, and it goes through the driver's extended protocol
    (asyncpg prepares every statement), which refuses a second statement on
    its own. At most `row_limit + 1` rows are fetched; the extra one only
-   reports truncation.
+   reports truncation. Bytes are bounded too: the database blanks every row
+   past `byte_limit` (a running sum of row sizes) before it is sent, and the
+   JSON rows handed back are cut at the same budget (`truncated_bytes`).
+   The guard itself runs in a worker thread, off the event loop.
 3. Tool surface. Its own permission, `query:sql`, in its own `Query` family
    at T2, so Layer-2 revalidates every call. Error texts are fixed: none
    carries the SQL error, the driver's exception or connection details.
@@ -35,6 +38,7 @@ thing this tool must never run on.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -66,6 +70,9 @@ QUERY_SQL_PERMISSION = "query:sql"
 DEFAULT_ROW_LIMIT = 100
 DEFAULT_STATEMENT_TIMEOUT_MS = 5_000
 MAX_STATEMENT_TIMEOUT_MS = 30_000
+DEFAULT_BYTE_LIMIT = 65_536
+MIN_BYTE_LIMIT = 1_024
+MAX_BYTE_LIMIT = 1_048_576
 
 ConnectorOutput = dict[str, Any]
 AsyncConnector = Callable[..., Awaitable[ConnectorOutput]]
@@ -121,6 +128,7 @@ class SqlQueryConfig:
     row_limit: int = DEFAULT_ROW_LIMIT
     statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS
     allowed_functions: frozenset[str] = field(default=DEFAULT_ALLOWED_FUNCTIONS)
+    byte_limit: int = DEFAULT_BYTE_LIMIT
 
     def __post_init__(self) -> None:
         if not self.views:
@@ -135,6 +143,10 @@ class SqlQueryConfig:
         if not 1 <= self.statement_timeout_ms <= MAX_STATEMENT_TIMEOUT_MS:
             raise ValueError(
                 f"statement_timeout_ms must be between 1 and {MAX_STATEMENT_TIMEOUT_MS}."
+            )
+        if not MIN_BYTE_LIMIT <= self.byte_limit <= MAX_BYTE_LIMIT:
+            raise ValueError(
+                f"byte_limit must be between {MIN_BYTE_LIMIT} and {MAX_BYTE_LIMIT}."
             )
 
     def policy(self) -> QueryPolicy:
@@ -157,11 +169,13 @@ def _describe(config: SqlQueryConfig) -> str:
         "Rules: a single statement; no writes, DDL, SET or transaction "
         "control; only standard aggregate, window, date, string and math "
         "functions, called by their plain name; write values as literals. "
-        f"At most {config.row_limit} rows come back (`truncated` says when "
-        "more matched: aggregate or filter instead of paging), and the "
-        f"database stops any query after {config.statement_timeout_ms / 1000:g} "
-        "seconds. An empty `rows` list means the query ran and matched "
-        "nothing."
+        f"At most {config.row_limit} rows and {config.byte_limit} bytes come "
+        "back (`truncated` says when more matched: aggregate or filter instead "
+        "of paging; `truncated_bytes` says the byte budget cut the rows: "
+        "select fewer or shorter columns, for example left(col, 200)), and "
+        f"the database stops any query after {config.statement_timeout_ms / 1000:g} "
+        "seconds. An empty `rows` list with `empty_result` true means the "
+        "query ran and matched nothing."
     )
 
 
@@ -218,6 +232,33 @@ def _database_error(error: SQLAlchemyError, config: SqlQueryConfig) -> Connector
     return {"error": _QUERY_FAILED_MESSAGE, "error_kind": "query_failed"}
 
 
+def _rows_within_budget(
+    rows: list[tuple[Any, ...]], byte_limit: int
+) -> tuple[list[list[Any]], bool]:
+    """JSON-safe rows, cut before their JSON exceeds *byte_limit* bytes.
+
+    The database already bounds rows by their text size; JSON escaping can
+    make a row larger than that, and this is what reaches the model.
+    """
+    kept: list[list[Any]] = []
+    used = 2  # the enclosing brackets
+    for row in rows:
+        cells = [json_cell(cell) for cell in row]
+        used += len(json.dumps(cells)) + (2 if kept else 0)  # ", " separator
+        if used > byte_limit:
+            return kept, True
+        kept.append(cells)
+    return kept, False
+
+
+def _byte_budget_note(byte_limit: int) -> str:
+    return (
+        f"The rows were cut at this tool's {byte_limit}-byte budget. Select "
+        "fewer or shorter columns (for example left(col, 200)) or aggregate, "
+        "and do not treat the rows shown as the whole result."
+    )
+
+
 def build_sql_query_connector(engine: Any, config: SqlQueryConfig) -> AsyncConnector:
     """Build the async `sql_query` connector over *engine*.
 
@@ -259,6 +300,7 @@ def build_sql_query_connector(engine: Any, config: SqlQueryConfig) -> AsyncConne
                 allowed_relations=policy.allowed_relations,
                 statement_timeout_ms=config.statement_timeout_ms,
                 row_limit=row_limit,
+                byte_limit=config.byte_limit,
             )
         except UnsafeQueryRoleError as unsafe:
             _logger.error(
@@ -282,16 +324,23 @@ def build_sql_query_connector(engine: Any, config: SqlQueryConfig) -> AsyncConne
                 "error_kind": "database_unavailable",
             }
 
-        rows = [[json_cell(cell) for cell in row] for row in outcome.rows]
-        return {
+        rows, cut = _rows_within_budget(outcome.rows, config.byte_limit)
+        truncated_bytes = outcome.truncated_bytes or cut
+        truncated = outcome.truncated or truncated_bytes
+        output: ConnectorOutput = {
             "columns": outcome.columns,
             "rows": rows,
             "row_count": len(rows),
-            "truncated": outcome.truncated,
+            "truncated": truncated,
+            "truncated_bytes": truncated_bytes,
             "row_limit": row_limit,
-            "empty_result": not rows,
+            "byte_limit": config.byte_limit,
+            "empty_result": not rows and not truncated,
             "relations": list(guarded.relations),
         }
+        if truncated_bytes:
+            output["note"] = _byte_budget_note(config.byte_limit)
+        return output
 
     return sql_query_connector
 

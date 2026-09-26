@@ -33,6 +33,7 @@ from agents_system.connectors.sql_query_connector import (
     build_sql_query_connector,
 )
 from agents_system.models.base import get_engine
+from agents_system.services import sql_query
 from agents_system.services.db_role import verify_query_role
 from agents_system.services.sql_guard import GuardedQuery, guard_query
 from agents_system.services.sql_query import json_cell
@@ -240,6 +241,52 @@ async def test_rows_are_capped_by_the_server_and_order_is_kept(
     assert [row[0] for row in result["rows"]] == list(range(40, 30, -1))
 
 
+#: Queries whose rows fit the row cap but whose bytes do not: one row can
+#: carry up to PostgreSQL's 1 GB per value, well inside the statement timeout.
+_AMPLIFIERS = (
+    "SELECT rpad('x', 5000000, 'x') AS c FROM generate_series(1, 20) AS g",
+    "SELECT lpad('', 5000000, 'x') AS blob FROM sales_v",
+    (
+        "SELECT string_agg(rpad('x', 1000, 'x'), '') AS blob "
+        "FROM generate_series(1, 20000) AS g"
+    ),
+)
+
+
+@pytest.mark.parametrize("sql", _AMPLIFIERS)
+async def test_an_oversized_value_never_leaves_the_database(
+    sql_engine: AsyncEngine, sql: str
+) -> None:
+    connector = build_sql_query_connector(sql_engine, _CONFIG)
+
+    result = await connector({"sql": sql})
+
+    assert "error" not in result, result
+    assert result["rows"] == []
+    assert result["truncated_bytes"] is True
+    assert len(json.dumps(result)) < _CONFIG.byte_limit
+
+
+async def test_many_small_rows_are_cut_at_the_byte_budget_in_order(
+    sql_engine: AsyncEngine,
+) -> None:
+    config = SqlQueryConfig(views=_CONFIG.views, row_limit=100, byte_limit=16_384)
+    connector = build_sql_query_connector(sql_engine, config)
+
+    result = await connector(
+        {
+            "sql": "SELECT g, rpad('x', 1000, 'x') AS c "
+            "FROM generate_series(1, 100) AS g ORDER BY g"
+        }
+    )
+
+    assert result["truncated_bytes"] is True
+    assert 10 <= result["row_count"] < 17
+    assert [row[0] for row in result["rows"]] == list(range(1, result["row_count"] + 1))
+    assert all(len(row[1]) == 1000 for row in result["rows"])
+    assert len(json.dumps(result["rows"])) <= config.byte_limit
+
+
 async def test_the_statement_timeout_is_enforced_by_the_server(
     sql_engine: AsyncEngine,
 ) -> None:
@@ -365,7 +412,14 @@ async def test_the_connector_path_refuses_writes_with_the_guard_bypassed(
     def no_guard(sql: object, policy: object, *, row_limit: int) -> GuardedQuery:
         return GuardedQuery(sql=str(sql), relations=())
 
+    def no_gate(sql: str, byte_limit: int) -> str:
+        return sql
+
+    # Both application-side layers off: the guard, and the byte-budget
+    # wrapper (which would refuse a bare write as a syntax error on its own).
+    # What must refuse the write then is the database role.
     monkeypatch.setattr(sql_query_connector, "guard_query", no_guard)
+    monkeypatch.setattr(sql_query, "byte_gated", no_gate)
     connector = build_sql_query_connector(sql_engine, _CONFIG)
 
     result = await connector({"sql": statement})

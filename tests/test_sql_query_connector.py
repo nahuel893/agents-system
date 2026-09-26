@@ -85,7 +85,18 @@ class _Connection:
             return _Result([], [])
         if self._engine.query_error is not None:
             raise self._engine.query_error
-        return _Result(self._engine.columns, self._engine.rows)
+        if "octet_length" not in sql:
+            return _Result(self._engine.columns, self._engine.rows)
+        # The byte-budget gate: the database appends whether each row still
+        # fits the budget, and sends a row that does not as all NULLs.
+        fits = self._engine.fits or [True] * len(self._engine.rows)
+        return _Result(
+            [*self._engine.columns, "fits"],
+            [
+                (*(row if fit else [None] * len(row)), fit)
+                for row, fit in zip(self._engine.rows, fits, strict=True)
+            ],
+        )
 
     async def execute(
         self, clause: Any, params: Mapping[str, Any] | None = None
@@ -106,9 +117,11 @@ class _Engine:
         rows: Sequence[Sequence[Any]] = (),
         query_error: Exception | None = None,
         connect_error: Exception | None = None,
+        fits: Sequence[bool] | None = None,
     ) -> None:
         self.columns = columns
         self.rows = rows
+        self.fits = fits
         self.query_error = query_error
         self.connect_error = connect_error
         self.statements: list[str] = []
@@ -192,7 +205,7 @@ async def test_the_model_query_runs_as_the_guarded_rendering_and_is_rolled_back(
     executed = engine.statements[-1]
     assert '"reporting"."sales_v"' in executed
     assert "note" not in executed
-    assert executed.endswith("LIMIT 4")
+    assert "LIMIT 4" in executed
     assert engine.rolled_back
 
 
@@ -303,6 +316,76 @@ async def test_exactly_the_cap_is_not_truncation() -> None:
     assert result["truncated"] is False
 
 
+async def test_the_database_gates_rows_by_a_byte_budget() -> None:
+    # The row cap bounds rows, not bytes: rpad/string_agg can put hundreds of
+    # MB in one cell. The executed statement measures each row's size in the
+    # database and blanks every row past the running budget there, so an
+    # oversized value never crosses the wire.
+    engine = _Engine(rows=[("a", 1)])
+
+    await _run(engine, "SELECT product, amount FROM sales_v")
+
+    executed = engine.statements[-1]
+    assert "pg_catalog.octet_length(" in executed
+    assert "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW" in executed
+    assert f"<= {_CONFIG.byte_limit}" in executed
+    assert "LEFT JOIN LATERAL" in executed
+
+
+@pytest.mark.parametrize("byte_limit", [0, -1, True, 1.5, "65536"])
+def test_the_byte_gate_takes_only_a_positive_integer(byte_limit: Any) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        sql_query.byte_gated("SELECT 1", byte_limit)
+
+
+async def test_rows_past_the_byte_budget_are_cut_and_reported() -> None:
+    engine = _Engine(rows=[("a", 1), ("b", 2), ("c", 3)], fits=[True, False, False])
+
+    result = await _run(engine, "SELECT product, amount FROM sales_v")
+
+    assert result["rows"] == [["a", 1]]
+    assert result["columns"] == ["product", "amount"]
+    assert result["row_count"] == 1
+    assert result["truncated"] is True
+    assert result["truncated_bytes"] is True
+    assert result["byte_limit"] == _CONFIG.byte_limit
+    assert str(_CONFIG.byte_limit) in result["note"]
+    assert result["empty_result"] is False
+
+
+async def test_a_first_row_over_the_budget_is_not_an_empty_result() -> None:
+    engine = _Engine(rows=[("a", 1)], fits=[False])
+
+    result = await _run(engine, "SELECT product, amount FROM sales_v")
+
+    assert result["rows"] == []
+    assert result["truncated_bytes"] is True
+    assert result["empty_result"] is False
+
+
+async def test_a_result_within_the_budget_is_not_cut() -> None:
+    result = await _run(
+        _Engine(rows=[("a", 1), ("b", 2)]), "SELECT product, amount FROM sales_v"
+    )
+
+    assert result["truncated_bytes"] is False
+    assert "note" not in result
+
+
+async def test_the_json_rows_never_exceed_the_byte_budget() -> None:
+    # The database measures a row by its text form; JSON escaping can make
+    # it larger. The connector enforces the budget on the JSON it returns.
+    config = SqlQueryConfig(views=_CONFIG.views, row_limit=10, byte_limit=1_024)
+    engine = _Engine(columns=("c",), rows=[("\x01" * 100,)] * 5)
+    connector = build_sql_query_connector(engine, config)
+
+    result = await connector({"sql": "SELECT product FROM sales_v"})
+
+    assert 0 < result["row_count"] < 5
+    assert len(json.dumps(result["rows"])) <= config.byte_limit
+    assert result["truncated_bytes"] is True
+
+
 async def test_zero_rows_is_flagged_as_an_empty_result() -> None:
     result = await _run(_Engine(rows=[]), "SELECT product, amount FROM sales_v")
 
@@ -411,6 +494,17 @@ async def test_an_unreachable_database_is_a_result_not_an_exception(
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("byte_limit", [0, 1_023, 1_048_577])
+def test_byte_limit_must_be_bounded(byte_limit: int) -> None:
+    with pytest.raises(ValueError):
+        SqlQueryConfig(views=_CONFIG.views, byte_limit=byte_limit)
+
+
+def test_the_description_states_the_byte_budget() -> None:
+    spec = build_sql_query_tool_spec(None, _CONFIG)
+    assert f"{_CONFIG.byte_limit} bytes" in spec.description
 
 
 def test_row_limit_cannot_exceed_the_hard_ceiling() -> None:

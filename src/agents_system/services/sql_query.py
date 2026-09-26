@@ -17,7 +17,12 @@ check:
    protocol (asyncpg prepares every statement), which refuses a second
    statement independently of the guard. At most `row_limit + 1` rows are
    fetched, and the wrapped `LIMIT` already stops the server there.
-5. The transaction is always rolled back; nothing this path runs is ever
+5. Rows are bounded in BYTES by the database too (`byte_gated`): the row cap
+   alone lets one accepted query return hundreds of MB (`rpad`,
+   `string_agg`), all of it buffered here and handed to the model. The
+   server measures each row and sends every row past the running budget as
+   NULLs, so an oversized value never leaves PostgreSQL.
+6. The transaction is always rolled back; nothing this path runs is ever
    committed.
 
 The engine is a dedicated one for the tool's own role - never the
@@ -59,6 +64,34 @@ session with it turned off would read the same text differently. Static
 text with bound values: AD-2 still holds for everything this module writes."""
 
 
+_BYTE_GATE = (
+    'SELECT "sql_query_row".*, "sql_query_gate"."fits" FROM ('
+    'SELECT "sql_query_rows" AS "rec", pg_catalog.sum('
+    'pg_catalog.octet_length("sql_query_rows"::text)) OVER ('
+    "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) <= {byte_limit} "
+    'AS "fits" FROM ({query}) AS "sql_query_rows") AS "sql_query_gate" '
+    'LEFT JOIN LATERAL (SELECT ("sql_query_gate"."rec").*) AS "sql_query_row" '
+    'ON "sql_query_gate"."fits"'
+)
+"""Wraps the guarded query so the database enforces a byte budget.
+
+A running sum of each row's size (its text form) marks whether the row
+still fits; the lateral join expands a fitting row back into its own
+columns, names and types intact, and turns every other row into NULLs plus
+`fits = false`. Row order is the guarded query's: the window has no ORDER
+BY and the join keeps its outer order. Static text around the guard's
+validated rendering and an integer from configuration (AD-2)."""
+
+
+def byte_gated(sql: str, byte_limit: int) -> str:
+    """Wrap guarded *sql* so no row past *byte_limit* bytes leaves the server."""
+    if isinstance(byte_limit, bool) or not isinstance(byte_limit, int):
+        raise TypeError("byte_limit must be an int.")
+    if byte_limit < 1:
+        raise ValueError("byte_limit must be positive.")
+    return _BYTE_GATE.format(byte_limit=byte_limit, query=sql)
+
+
 class UnsafeQueryRoleError(RuntimeError):
     """The tool's database role is not safe for model-authored SQL.
 
@@ -74,11 +107,16 @@ class UnsafeQueryRoleError(RuntimeError):
 
 @dataclass(frozen=True)
 class QueryRows:
-    """Raw query output: column names, at most `row_limit` rows, truncation."""
+    """Raw query output: column names, at most `row_limit` rows, truncation.
+
+    `truncated` means more rows matched than `row_limit`; `truncated_bytes`
+    means the rows were cut at the byte budget.
+    """
 
     columns: list[str]
     rows: list[tuple[Any, ...]]
     truncated: bool
+    truncated_bytes: bool = False
 
 
 def session_limits(statement_timeout_ms: int) -> dict[str, str]:
@@ -97,6 +135,7 @@ async def run_guarded_query(
     allowed_relations: frozenset[tuple[str, str]],
     statement_timeout_ms: int,
     row_limit: int,
+    byte_limit: int,
 ) -> QueryRows:
     """Run *guarded* under the database-side limits described above.
 
@@ -111,16 +150,26 @@ async def run_guarded_query(
             role = await check_query_role(conn, allowed_relations)
             if not role.safe:
                 raise UnsafeQueryRoleError(role.problems)
-            result = await conn.exec_driver_sql(guarded.sql)
+            result = await conn.exec_driver_sql(byte_gated(guarded.sql, byte_limit))
+            # The gate appends `fits` as the last column; the rest are the
+            # query's own, by position (names may repeat).
             keys = result.keys()
-            columns = [str(column) for column in keys]
+            columns = [str(column) for column in keys][:-1]
             fetched = list(result.fetchmany(row_limit + 1))
         finally:
             await conn.rollback()
+    rows: list[tuple[Any, ...]] = []
+    truncated_bytes = False
+    for *values, fits in fetched[:row_limit]:
+        if not fits:
+            truncated_bytes = True
+            break
+        rows.append(tuple(values))
     return QueryRows(
         columns=columns,
-        rows=[tuple(row) for row in fetched[:row_limit]],
-        truncated=len(fetched) > row_limit,
+        rows=rows,
+        truncated=len(fetched) > row_limit or truncated_bytes,
+        truncated_bytes=truncated_bytes,
     )
 
 
