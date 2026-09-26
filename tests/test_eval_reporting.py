@@ -70,3 +70,68 @@ def test_write_results_creates_the_output_directory(tmp_path: pathlib.Path) -> N
 
 def test_write_results_default_dir_is_the_documented_gitignored_path() -> None:
     assert DEFAULT_RESULTS_DIR == pathlib.Path("evals/results")
+
+
+# ---------------------------------------------------------------------------
+# #78 Phase 0 — tokens and cost in the live-eval report
+# ---------------------------------------------------------------------------
+
+
+def _priced_result() -> ScenarioResult:
+    from agents_system.agent.graph import TurnUsage
+
+    return ScenarioResult(
+        scenario="priced-scenario",
+        role="sales-agent",
+        model="fake-model",
+        runs=(
+            RunOutcome(
+                passed=True,
+                usage=TurnUsage(
+                    model_calls=1,
+                    input_tokens=100,
+                    output_tokens=50,
+                    total_tokens=150,
+                    cost_usd=0.002,
+                ),
+            ),
+        ),
+    )
+
+
+def test_write_results_json_carries_tokens_and_cost_per_run_and_scenario_total(
+    tmp_path: pathlib.Path,
+) -> None:
+    out_dir = tmp_path / "results"
+
+    json_path, _ = write_results([_priced_result()], out_dir=out_dir, now=_FIXED_NOW)
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))[0]
+    assert payload["total_tokens"] == 150
+    assert payload["total_cost_usd"] == 0.002
+    assert payload["run_details"][0]["total_tokens"] == 150
+    assert payload["run_details"][0]["cost_usd"] == 0.002
+
+
+def test_write_results_markdown_shows_tokens_and_cost(tmp_path: pathlib.Path) -> None:
+    out_dir = tmp_path / "results"
+
+    _, markdown_path = write_results(
+        [_priced_result()], out_dir=out_dir, now=_FIXED_NOW
+    )
+
+    text = markdown_path.read_text(encoding="utf-8")
+    assert "150" in text
+    assert "0.0020" in text
+
+
+def test_write_results_markdown_shows_n_a_when_usage_is_unknown(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A scenario with no reported usage shows 'n/a', never a guessed 0."""
+    out_dir = tmp_path / "results"
+
+    _, markdown_path = write_results([_result()], out_dir=out_dir, now=_FIXED_NOW)
+
+    text = markdown_path.read_text(encoding="utf-8")
+    assert "n/a" in text

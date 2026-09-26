@@ -146,9 +146,66 @@ of `agents_system.evals.reporting.write_results(...)` writes two timestamped
 files:
 
 - `evals/results/<UTC timestamp>.json` — one entry per scenario: role,
-  model, run count, pass count, success rate, and per-run failure detail.
+  model, run count, pass count, success rate, per-run failure detail, and
+  (issue #78 Phase 0) real token usage/cost -- see below.
 - `evals/results/<UTC timestamp>.md` — a short markdown table (scenario,
-  role, model, runs, success rate) for a quick read.
+  role, model, runs, success rate, tokens, cost) for a quick read.
+
+## Tokens and cost (issue #78 Phase 0)
+
+Every turn `AgentRuntime.run_turn_with_usage` makes carries its real
+`AIMessage.usage_metadata`, summed across however many model calls that turn
+made (a turn can make several when the model uses tools) into a `TurnUsage`
+(`agents_system.agent.graph.TurnUsage`: `model_calls`, `input_tokens`,
+`output_tokens`, `total_tokens`, `cost_usd`). Plain `run_turn` keeps
+returning only the message list (`list[AnyMessage]`, unmodified for every
+existing caller); `run_turn_with_usage` returns a `TurnResult(messages,
+usage)` for a caller that also wants `.usage` -- see its docstring for why
+this replaced an earlier `list` subclass. `run_scenario` calls
+`run_turn_with_usage`, sums each run's turns into `RunOutcome.usage`, and
+`ScenarioResult.total_usage` sums every run's usage into one scenario total
+-- both `write_results` outputs report it (`total_tokens`/`total_cost_usd`
+in the JSON, the `Tokens`/`Cost (USD)` columns in the markdown table).
+
+**Honesty rule, not a shortcut**: a value is `None` (JSON) / `n/a`
+(markdown) whenever it is genuinely unknown -- never a guessed `0`. If even
+one of a turn's model calls reported no `usage_metadata`, that whole turn's
+token totals are `None`; if even one turn/run in a sum is `None` (including a
+run that crashed before completing a turn), the sum is `None` too --
+`ScenarioResult.total_usage` is unknown as soon as ANY of its runs is,
+never a partial sum across only the runs that succeeded. `cost_usd` is
+additionally `None` whenever no price is configured for the model id, or a
+turn's reported token counts fall outside a plausible range (negative, or
+above ~100M -- an `openai_compatible` backend's `usage_metadata` is
+untrusted input with no upstream size ceiling; an implausible count is
+treated the same as an unknown one rather than raising).
+
+**Configuring prices**: `Settings.model_prices` (env var `MODEL_PRICES`) is a
+JSON object keyed by the PROVIDER MODEL id (e.g. `"gpt-4o"`,
+`"deepseek/deepseek-v4-flash"`) -- never a caller-chosen routing id such as
+the OpenAI adapter's `"{deployment}__{role}"` request model -- valued by USD
+price per million input/output tokens:
+
+```bash
+export MODEL_PRICES='{"deepseek/deepseek-v4-flash": {"input_per_million": 0.14, "output_per_million": 0.28}}'
+```
+
+`AgentRuntime` derives this key itself, at construction time, from the
+model it was actually built with (`model_display_name(model)`, the same
+logic `evals/provider.py:model_display_name` re-exports) -- a caller never
+has to name a model id for its turns to be priced. `run_turn(_with_usage)`'s
+own `model_id` argument is at most an OPTIONAL OVERRIDE of that derived
+default (e.g. a live-eval comparing several runtime configurations under
+one shared label); the OpenAI adapter and the WhatsApp webhook worker both
+rely on the derived default rather than overriding it, so every entry point
+prices under the same, correct key. A model id with no entry here reports
+`cost_usd: null` -- this is opt-in per model, never a global default rate.
+
+**`POST /v1/chat/completions`'s `usage` field**: OpenAI SDK compatibility
+(the official `openai` SDK's `CompletionUsage` requires non-Optional ints
+for every field) means an unknown usage is reported as the top-level
+`"usage": null`, never an object with `null` fields
+(`{"prompt_tokens": null, ...}` fails client-side Pydantic validation).
 
 ## Running it as a role's own pipeline
 

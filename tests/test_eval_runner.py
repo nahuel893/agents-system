@@ -367,6 +367,160 @@ async def test_run_scenario_records_a_crashed_run_as_failed_with_its_error() -> 
     assert result.runs[0].failures == ()
 
 
+# ---------------------------------------------------------------------------
+# #78 Phase 0 — real per-run token usage and cost
+# ---------------------------------------------------------------------------
+
+
+async def test_run_scenario_records_real_token_usage_per_run() -> None:
+    """RunOutcome.usage sums this run's real usage_metadata across every
+    turn's model calls; ScenarioResult.total_usage carries the same total
+    when the scenario has only one run."""
+    from conftest import build_test_registry
+
+    model = ToolAwareFakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "catalog_search",
+                        "args": {"q": "Item Alpha"},
+                        "type": "tool_call",
+                    }
+                ],
+                usage_metadata={
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "total_tokens": 120,
+                },
+            ),
+            AIMessage(
+                content="Yes, Item Alpha is in stock.",
+                usage_metadata={
+                    "input_tokens": 150,
+                    "output_tokens": 30,
+                    "total_tokens": 180,
+                },
+            ),
+        ]
+    )
+
+    result = await run_scenario(
+        _scenario(tools_called=("catalog_search",)),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    assert result.runs[0].usage is not None
+    assert result.runs[0].usage.total_tokens == 300
+    assert result.total_usage is not None
+    assert result.total_usage.total_tokens == 300
+
+
+async def test_run_scenario_a_crashed_run_has_no_usage() -> None:
+    """A run that raises before any turn returns has RunOutcome.usage ==
+    None -- never a guessed number for a run that never completed a turn."""
+    from conftest import build_test_registry
+
+    class _ExplodingModel(ToolAwareFakeModel):
+        def _generate(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("simulated model failure")
+
+    model = _ExplodingModel(responses=[AIMessage(content="unreachable")])
+
+    result = await run_scenario(
+        _scenario(tools_called=("catalog_search",)),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    assert result.runs[0].usage is None
+    # Review finding 2 (PR #87) -- `total_usage` is `None` only when there
+    # are NO runs at all; a scenario that HAS a run whose usage is unknown
+    # reports an honestly-unknown `TurnUsage` (every field `None`), which
+    # `write_results`'s markdown table already renders as "n/a" either way.
+    assert result.total_usage is not None
+    assert result.total_usage.total_tokens is None
+    assert result.total_usage.model_calls is None
+
+
+async def test_run_scenario_total_usage_is_unknown_when_one_of_several_runs_crashed() -> (
+    None
+):
+    """Review finding 2 (PR #87) -- honesty rule at the scenario grain, with
+    `runs > 1` (the crashed-run test above alone, at `runs=1`, cannot expose
+    this: a single crashed run trivially makes `known=[]`). A crashed run
+    among several SUCCESSFUL ones must make the whole scenario's
+    `total_usage` unknown too -- silently summing only the known runs would
+    under-report a flaky scenario's real cost as if it were the complete
+    total (reproduces review probe `probe_point5.py`)."""
+    from conftest import build_test_registry
+
+    # A plain module-level-style counter, not a pydantic field on the fake
+    # model class -- FakeMessagesListChatModel is itself a pydantic
+    # BaseModel, so a class-annotated `int` attribute would become a model
+    # field (per-instance default), not shared mutable class state.
+    call_count = {"n": 0}
+
+    class _CrashesOnlyOnSecondRun(ToolAwareFakeModel):
+        def _generate(self, *args: Any, **kwargs: Any) -> Any:
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise RuntimeError("simulated model failure on run 2")
+            return super()._generate(*args, **kwargs)
+
+    scenario = _scenario(tools_called=())
+    model = _CrashesOnlyOnSecondRun(
+        responses=[
+            AIMessage(
+                content="ok",
+                usage_metadata={
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "total_tokens": 120,
+                },
+            ),
+            AIMessage(content="unreachable"),
+            AIMessage(
+                content="ok",
+                usage_metadata={
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "total_tokens": 120,
+                },
+            ),
+        ]
+    )
+
+    result = await run_scenario(
+        scenario,
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=3,
+    )
+
+    assert len(result.runs) == 3
+    assert result.runs[0].usage is not None
+    assert result.runs[1].usage is None  # the crashed run
+    assert result.runs[2].usage is not None
+    # The honest total for a scenario with ANY unknown run is unknown too --
+    # never a partial sum across only the 2 successful runs.
+    assert result.total_usage is not None
+    assert result.total_usage.total_tokens is None
+    assert result.total_usage.model_calls is None
+    assert result.total_usage.cost_usd is None
+
+
 async def test_run_scenario_to_dict_carries_role_model_and_rate() -> None:
     from conftest import build_test_registry
 

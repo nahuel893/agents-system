@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agents_system.config import Settings, get_settings
+from agents_system.config import ModelPrice, Settings, get_settings
 
 
 def test_settings_loads_with_defaults():
@@ -180,6 +180,128 @@ def test_deploy_grants_accepts_direct_construction() -> None:
         deploy_grants={"_generic__sales-agent": ["read:catalog"]},
     )
     assert settings.deploy_grants == {"_generic__sales-agent": ("read:catalog",)}
+
+
+# ---------------------------------------------------------------------------
+# #78 Phase 0 — Settings.model_prices
+# ---------------------------------------------------------------------------
+
+
+def test_model_prices_defaults_to_empty_dict() -> None:
+    """An unset MODEL_PRICES yields an empty model_prices -- cost stays
+    honestly None for every model id until one is explicitly configured."""
+    settings = Settings(_env_file=None)
+    assert settings.model_prices == {}
+
+
+def test_model_prices_parses_json_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MODEL_PRICES is a JSON object mapping model id -> {input,output} price
+    per million tokens, decoded via pydantic-settings' existing JSON-env
+    mechanism (the same one deploy_grants above already uses)."""
+    monkeypatch.setenv(
+        "MODEL_PRICES",
+        '{"acme__sales-agent": '
+        '{"input_per_million": 0.14, "output_per_million": 0.28}}',
+    )
+    settings = Settings(_env_file=None)
+    assert settings.model_prices == {
+        "acme__sales-agent": ModelPrice(input_per_million=0.14, output_per_million=0.28)
+    }
+
+
+def test_model_prices_accepts_direct_construction() -> None:
+    """Direct kwarg construction accepts a plain dict[str, dict[str, float]]
+    and normalizes values to ModelPrice."""
+    settings = Settings(
+        _env_file=None,
+        model_prices={
+            "acme__sales-agent": {
+                "input_per_million": 1.0,
+                "output_per_million": 2.0,
+            }
+        },
+    )
+    assert settings.model_prices == {
+        "acme__sales-agent": ModelPrice(input_per_million=1.0, output_per_million=2.0)
+    }
+
+
+def test_model_prices_rejects_negative_price() -> None:
+    """A negative price is refused at construction time -- fails loud rather
+    than silently computing a negative cost later."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            model_prices={
+                "acme__sales-agent": {
+                    "input_per_million": -1.0,
+                    "output_per_million": 2.0,
+                }
+            },
+        )
+
+
+def test_model_prices_rejects_unknown_fields() -> None:
+    """Review finding 6 (PR #87) -- `ModelPrice` forbids extra keys, so a
+    typo (e.g. `input_tokens_per_million`) fails loudly instead of being
+    silently ignored while a required field stays missing."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            model_prices={
+                "m": {
+                    "input_per_million": 1.0,
+                    "output_per_million": 2.0,
+                    "unknown_field": "val",
+                }
+            },
+        )
+
+
+def test_model_prices_rejects_infinite_price() -> None:
+    """Review finding 6 (PR #87) -- `Infinity` satisfies `ge=0` (Python's
+    own `float('inf') >= 0` is True) but must still be rejected: an infinite
+    price would make `cost_usd` compute as `inf`/`nan`, a plausible-looking
+    but meaningless number rather than the honest `None`."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            model_prices={
+                "m": {
+                    "input_per_million": float("inf"),
+                    "output_per_million": 1.0,
+                }
+            },
+        )
+
+
+def test_model_prices_rejects_nan_price() -> None:
+    """Review finding 6 (PR #87) -- same reasoning as the infinity case."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            model_prices={
+                "m": {
+                    "input_per_million": float("nan"),
+                    "output_per_million": 1.0,
+                }
+            },
+        )
+
+
+def test_model_prices_rejects_unreasonably_large_price() -> None:
+    """Review finding 6 (PR #87) -- a finite but absurd price (`1e308`) is
+    still a malformed configuration, not a real per-million-token rate."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            model_prices={
+                "m": {
+                    "input_per_million": 1e308,
+                    "output_per_million": 1.0,
+                }
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
