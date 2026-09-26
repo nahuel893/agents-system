@@ -20,7 +20,7 @@ The tier values are unchanged: T0 is inherent access, T1 scoped read, T2 scoped 
 
 R1 is enforced at class-definition time in `Permission.__init_subclass__`: a child may inherit its parent's tier, retain it, or escalate it, but may not declare a lower tier. All tier comparisons use the explicit ordinal `tier_rank` / `_RANK` mapping rather than raw enum comparisons.
 
-Built-in action families are `Read` (T0), `Write` (T2), `Send` (T2), `Exec` (T3), `Run` (T2), and `Spawn` (T2). Resource-scoped names resolve to dedicated subclasses. `ReadFiles(Read)` explicitly escalates `read:files` to T3.
+Built-in action families are `Read` (T0), `Write` (T2), `Send` (T2), `Exec` (T3), `Run` (T2), `Spawn` (T2), and `Query` (T2; its one wire name, `query:sql`, is the read-only SQL tool's permission — deliberately not a `Read` subclass, so no `read:*` grant covers it; see [ADR-007](adr-007-read-only-sql-tool.md)). Resource-scoped names resolve to dedicated subclasses. `ReadFiles(Read)` explicitly escalates `read:files` to T3.
 
 ### Tool and grant enforcement
 

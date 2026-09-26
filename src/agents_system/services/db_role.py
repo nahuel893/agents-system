@@ -5,15 +5,43 @@ ask the same question of a database role without duplicating the reasoning:
 ``main.py``'s lifespan asks it about ``BI_DATABASE_URL`` before binding
 ``run_report``, and ``demo.py``'s entrypoint asks it about
 ``DEMO_DATABASE_URL`` before serving the demo database at all.
+
+The read-only SQL tool (#80, ADR-007) asks a stricter question of its own
+role, because the model writes that tool's SQL: not only "is every
+transaction read-only by default?" but "can this role write anything at all,
+or read anything beyond its allowlisted views?" (`check_query_role`).
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
+import asyncpg
 import structlog
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+
+UNWRAPPED_CONNECT_ERRORS: tuple[type[Exception], ...] = (
+    OSError,
+    asyncpg.PostgresError,
+    asyncpg.InterfaceError,
+    asyncpg.exceptions.InternalClientError,
+)
+"""What opening an asyncpg connection raises WITHOUT SQLAlchemy wrapping it.
+
+On the connect path SQLAlchemy re-raises the driver's exception as is: a
+closed port or unknown host is an `OSError` (`ConnectionRefusedError`,
+`socket.gaierror`; a connect timeout is `TimeoutError`, also an `OSError`),
+and a password, database or connection-limit refusal is an
+`asyncpg.PostgresError`. Catching only `SQLAlchemyError` lets all of them
+escape. Errors while a query runs ARE wrapped, as `DBAPIError`."""
+
+DATABASE_UNAVAILABLE_ERRORS: tuple[type[Exception], ...] = (
+    SQLAlchemyError,
+    *UNWRAPPED_CONNECT_ERRORS,
+)
 
 
 async def role_is_read_only(
@@ -46,3 +74,262 @@ async def role_is_read_only(
     except SQLAlchemyError:
         structlog.get_logger().warning(log_event, exc_info=True)
         return None
+
+
+# ---------------------------------------------------------------------------
+# The read-only SQL tool's role (#80, ADR-007)
+# ---------------------------------------------------------------------------
+
+_QUERY_ROLE_FACTS = text(
+    """
+    SELECT pg_catalog.current_setting('default_transaction_read_only')
+               AS default_read_only,
+           r.rolsuper, r.rolcreaterole, r.rolcreatedb, r.rolreplication,
+           r.rolbypassrls,
+           ARRAY(SELECT g.rolname::text
+                 FROM pg_catalog.pg_auth_members AS m
+                 JOIN pg_catalog.pg_roles AS g ON g.oid = m.roleid
+                 WHERE m.member = r.oid
+                 ORDER BY 1) AS member_of,
+           pg_catalog.has_database_privilege(
+               pg_catalog.current_database(), 'CREATE') AS can_create_schemas,
+           (SELECT s.setting::bigint FROM pg_catalog.pg_settings AS s
+            WHERE s.name = 'temp_file_limit') AS temp_file_limit_kb
+    FROM pg_catalog.pg_roles AS r
+    WHERE r.rolname = current_user
+    """
+)
+"""Role-level facts. `default_transaction_read_only` is read here, not
+`transaction_read_only`: the connector sets its own transaction READ ONLY, so
+only the role default tells whether the ROLE is read-only. `member_of` lists
+the roles this one belongs to directly: a predefined role such as
+`pg_execute_server_program` grants capabilities that neither a READ ONLY
+transaction nor relation privileges contain, so any membership is unsafe.
+`temp_file_limit_kb` is the session's cap on temporary files (-1: none); only
+a superuser can change it, so for this role it is the role's own setting."""
+
+_QUERY_ROLE_FINDINGS = text(
+    r"""
+    WITH privileges AS (
+        SELECT n.nspname AS schema_name, c.relname AS object_name,
+               c.relkind::text AS relkind,
+               CASE WHEN c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                    THEN pg_catalog.has_any_column_privilege(c.oid, 'SELECT')
+                    ELSE false
+               END AS can_select,
+               CASE WHEN c.relkind = 'v'
+                    THEN coalesce(
+                        (SELECT o.option_value::boolean
+                         FROM pg_catalog.pg_options_to_table(c.reloptions) AS o
+                         WHERE o.option_name = 'security_barrier'),
+                        false)
+               END AS security_barrier,
+               CASE WHEN c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                    THEN pg_catalog.has_any_column_privilege(
+                             c.oid, 'INSERT, UPDATE, REFERENCES')
+                         OR pg_catalog.has_table_privilege(
+                             c.oid, 'DELETE, TRUNCATE, TRIGGER')
+                    WHEN c.relkind = 'S'
+                    THEN pg_catalog.has_sequence_privilege(c.oid, 'USAGE, UPDATE')
+                    ELSE false
+               END AS can_write
+        FROM pg_catalog.pg_class AS c
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND n.nspname NOT LIKE 'pg\_toast%'
+          AND n.nspname NOT LIKE 'pg\_temp\_%'
+    )
+    SELECT CASE WHEN relkind = 'S' THEN 'sequence' ELSE 'relation' END AS finding,
+           schema_name, object_name, relkind, can_select, can_write,
+           security_barrier
+    FROM privileges
+    WHERE can_select OR can_write
+    UNION ALL
+    SELECT 'schema', n.nspname, NULL, NULL, false, true, NULL
+    FROM pg_catalog.pg_namespace AS n
+    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg\_toast%'
+      AND n.nspname NOT LIKE 'pg\_temp\_%'
+      AND pg_catalog.has_schema_privilege(n.oid, 'CREATE')
+    UNION ALL
+    SELECT 'function', n.nspname, p.proname, NULL, false, false, NULL
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE p.prosecdef
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg\_toast%'
+      AND n.nspname NOT LIKE 'pg\_temp\_%'
+      AND pg_catalog.has_schema_privilege(n.oid, 'USAGE')
+      AND pg_catalog.has_function_privilege(p.oid, 'EXECUTE')
+    """
+)
+"""Everything outside the system schemas this role can read or change:
+relations it can SELECT from or write to, sequences it can advance, schemas
+it can create objects in, and SECURITY DEFINER functions it can call (they
+run with their owner's privileges, so they reach what this role cannot).
+Privileges granted to PUBLIC count, because they reach this role too. For a
+plain view, `security_barrier` says whether the view's own filters run
+before any condition of the query (the option's text form, such as `on`,
+read as a boolean). Each privilege function sits behind a CASE on
+`relkind` because WHERE clauses have no evaluation order: without it the
+planner may ask `has_sequence_privilege` about a TOAST table and fail. Static
+text, no caller input (AD-2 holds here)."""
+
+_ELEVATED_ATTRIBUTES = (
+    "rolsuper",
+    "rolcreaterole",
+    "rolcreatedb",
+    "rolreplication",
+    "rolbypassrls",
+)
+_VIEW_RELKINDS = frozenset({"v", "m"})
+
+MAX_TEMP_FILE_LIMIT_KB = 1_048_576
+"""Highest `temp_file_limit` (in kB, so 1 GiB) the check accepts for the
+tool's role. The cap applies per session: every connection the tool's engine
+holds may write that much at once, on the volume that usually also holds the
+data files and the WAL. `scripts/provision_sql_readonly.sql` sets 256 MB."""
+
+
+@dataclass(frozen=True)
+class QueryRoleCheck:
+    """What `check_query_role` found.
+
+    `problems` make the role unsafe for model-authored SQL and the tool
+    refuses to run while any exist. `warnings` are configuration gaps that
+    are not unsafe (an allowlisted view the role cannot read just fails that
+    query at the database).
+    """
+
+    problems: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+    @property
+    def safe(self) -> bool:
+        return not self.problems
+
+
+def evaluate_query_role(
+    facts: Mapping[str, Any] | None,
+    findings: Iterable[Mapping[str, Any]],
+    allowed: frozenset[tuple[str, str]],
+) -> QueryRoleCheck:
+    """Decide whether the role behind *facts*/*findings* is safe for the tool.
+
+    Safe means all of: the role's own default makes every transaction
+    read-only; it has no elevated attribute and belongs to no other role; its
+    temporary files are capped (`temp_file_limit` set, at most
+    `MAX_TEMP_FILE_LIMIT_KB`); it
+    can create no schema and write no relation, sequence or schema; it can
+    execute no SECURITY DEFINER function outside the system schemas; it can
+    SELECT from no relation outside *allowed*; and every allowlisted
+    relation it can read is a materialized view or a `security_barrier`
+    view.
+
+    Why `security_barrier`: a view's own WHERE or JOIN is what hides rows
+    from this role, and without the option the planner may evaluate the
+    model's conditions first, on the hidden rows. A condition that raises an
+    error for some values (`1 / (CASE WHEN amount > x THEN 0 ELSE 1 END)`)
+    then tells the model whether a hidden row matches, one call at a time.
+    A materialized view holds only its own rows, so it needs no barrier.
+    """
+    if facts is None:
+        return QueryRoleCheck(problems=("the current role was not found",), warnings=())
+
+    problems: list[str] = []
+    warnings: list[str] = []
+    if str(facts.get("default_read_only", "")).strip().lower() != "on":
+        problems.append("default_transaction_read_only is not on for this role")
+    elevated = [name for name in _ELEVATED_ATTRIBUTES if facts.get(name)]
+    if elevated:
+        problems.append(f"role has elevated attributes: {', '.join(elevated)}")
+    member_of = [str(role) for role in facts.get("member_of") or ()]
+    if member_of:
+        problems.append(f"role is a member of other roles: {', '.join(member_of)}")
+    if facts.get("can_create_schemas"):
+        problems.append("role can create schemas in this database")
+    temp_limit = facts.get("temp_file_limit_kb")
+    if temp_limit is None or int(temp_limit) < 0:
+        problems.append("temp_file_limit is not set for this role (no cap)")
+    elif int(temp_limit) > MAX_TEMP_FILE_LIMIT_KB:
+        problems.append(
+            f"temp_file_limit is {int(temp_limit)} kB, above the "
+            f"{MAX_TEMP_FILE_LIMIT_KB} kB ceiling"
+        )
+
+    readable: set[tuple[str, str]] = set()
+    for finding in findings:
+        kind = finding["finding"]
+        schema = str(finding["schema_name"])
+        name = finding.get("object_name")
+        shown = schema if name is None else f"{schema}.{name}"
+        if kind == "schema":
+            problems.append(f"role can create objects in schema {shown}")
+            continue
+        if kind == "function":
+            problems.append(f"role can execute SECURITY DEFINER function {shown}")
+            continue
+        if finding.get("can_write"):
+            problems.append(f"role can write {kind} {shown}")
+        if kind != "relation" or not finding.get("can_select"):
+            continue
+        key = (schema, str(name))
+        if key not in allowed:
+            problems.append(f"role can read {shown}, which is not allowlisted")
+            continue
+        readable.add(key)
+        if finding.get("relkind") not in _VIEW_RELKINDS:
+            problems.append(f"allowlisted relation {shown} is not a view")
+        elif (
+            finding.get("relkind") == "v"
+            and finding.get("security_barrier") is not True
+        ):
+            problems.append(
+                f"allowlisted view {shown} is not a security_barrier view "
+                "(ALTER VIEW ... SET (security_barrier = true))"
+            )
+
+    for schema, name in sorted(allowed - readable):
+        warnings.append(f"role cannot read allowlisted view {schema}.{name}")
+    return QueryRoleCheck(problems=tuple(problems), warnings=tuple(warnings))
+
+
+async def check_query_role(
+    conn: Any, allowed: frozenset[tuple[str, str]]
+) -> QueryRoleCheck:
+    """Ask the database, over *conn*, what the current role can do."""
+    facts = (await conn.execute(_QUERY_ROLE_FACTS)).mappings().first()
+    findings = (await conn.execute(_QUERY_ROLE_FINDINGS)).mappings().all()
+    return evaluate_query_role(facts, findings, allowed)
+
+
+async def verify_query_role(
+    engine: Any,
+    allowed: frozenset[tuple[str, str]],
+    *,
+    log_event: str = "sql_query.role_check_failed",
+) -> bool | None:
+    """Startup form of `check_query_role`, shaped like `role_is_read_only`.
+
+    True: safe. False: unsafe, with every problem logged - a deployment
+    should refuse to start (or refuse to bind the tool). None: the question
+    could not be answered; that is neither "safe" nor "unsafe", and the tool
+    itself re-checks on every call regardless.
+    """
+    logger = structlog.get_logger()
+    try:
+        async with engine.connect() as conn:
+            try:
+                check = await check_query_role(conn, allowed)
+            finally:
+                await conn.rollback()
+    except DATABASE_UNAVAILABLE_ERRORS:
+        logger.warning(log_event, exc_info=True)
+        return None
+    for warning in check.warnings:
+        logger.warning("sql_query.role_warning", detail=warning)
+    if check.problems:
+        logger.error("sql_query.role_not_read_only", problems=list(check.problems))
+        return False
+    return True

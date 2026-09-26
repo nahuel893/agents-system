@@ -30,8 +30,9 @@ pytestmark = [pytest.mark.usefixtures("reset_permission_registry")]
 #: The 12-row R2a/R2b compatibility table in spec.md, minus non-permission
 #: rows (`session_state` requires none; the public-library-example row
 #: reuses `read:catalog`), plus the 6-name registration gap from design.md
-#: (`spawn:*` has no prior prefix classification at all) -- 18 distinct
-#: wire names total.
+#: (`spawn:*` has no prior prefix classification at all), plus `query:sql`
+#: for the read-only SQL tool (#80, ADR-007) -- 19 distinct wire names
+#: total.
 _SHIPPED_WIRE_NAMES = (
     "read:catalog",
     "read:client_registry",
@@ -51,12 +52,13 @@ _SHIPPED_WIRE_NAMES = (
     "spawn:sales-agent",
     "spawn:data-agent",
     "spawn:summary-agent",
+    "query:sql",
 )
 
 
-def test_shipped_wire_name_count_is_eighteen() -> None:
-    assert len(_SHIPPED_WIRE_NAMES) == 18
-    assert len(set(_SHIPPED_WIRE_NAMES)) == 18  # all distinct
+def test_shipped_wire_name_count_is_nineteen() -> None:
+    assert len(_SHIPPED_WIRE_NAMES) == 19
+    assert len(set(_SHIPPED_WIRE_NAMES)) == 19  # all distinct
 
 
 @pytest.mark.parametrize(
@@ -68,6 +70,7 @@ def test_shipped_wire_name_count_is_eighteen() -> None:
         ("Exec", Tier.T3),
         ("Run", Tier.T2),
         ("Spawn", Tier.T2),
+        ("Query", Tier.T2),
     ],
 )
 def test_builtin_action_classes_exist_with_correct_tier(
@@ -95,10 +98,11 @@ def test_every_shipped_wire_name_resolves_to_a_distinct_registered_subclass(
         builtins.Exec,
         builtins.Run,
         builtins.Spawn,
+        builtins.Query,
     )
 
 
-def test_all_eighteen_wire_names_resolve_to_distinct_classes() -> None:
+def test_all_nineteen_wire_names_resolve_to_distinct_classes() -> None:
     resolved_classes = {
         wire_name: permission_registry.resolve(wire_name)
         for wire_name in _SHIPPED_WIRE_NAMES

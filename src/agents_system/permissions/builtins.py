@@ -54,6 +54,18 @@ class Spawn(Permission):
     tier = Tier.T2
 
 
+class Query(Permission):
+    """Model-authored query execution (T2) -- the read-only SQL tool (#80).
+
+    A top-level family, deliberately not a `Read` subclass: the model writes
+    the query text, so a grant of any `read:*` permission must never cover
+    it, and the tool is revalidated at call time like every T2 tool. See
+    ADR-007 for the tier decision against R2a/R2b and R4.
+    """
+
+    tier = Tier.T2
+
+
 class ReadFiles(Read):
     """Escalated `read:files` classification: host filesystem access is
     T3-dangerous (design.md Resolved Decision 1, a valid R1 escalation).
@@ -115,7 +127,8 @@ def _class_name(wire_name: str) -> str:
 #: Every shipped wire name that resolves through `resource()` -- the 11
 #: `ToolSpec`-backed names from spec.md's R2a/R2b compatibility table, plus
 #: the 7-name registration gap from design.md's "Full Wire-Name
-#: Registration Gap". `read:files` is handled separately below since it
+#: Registration Gap", plus `query:sql` for the read-only SQL tool (#80,
+#: ADR-007). `read:files` is handled separately below since it
 #: needs `ReadFiles`, not a fresh `resource()`-created subclass.
 _RESOURCE_REGISTRATIONS: tuple[tuple[type[Permission], str], ...] = (
     (Read, "read:catalog"),
@@ -135,6 +148,7 @@ _RESOURCE_REGISTRATIONS: tuple[tuple[type[Permission], str], ...] = (
     (Spawn, "spawn:sales-agent"),
     (Spawn, "spawn:data-agent"),
     (Spawn, "spawn:summary-agent"),
+    (Query, "query:sql"),
 )
 
 for _parent, _wire_name in _RESOURCE_REGISTRATIONS:

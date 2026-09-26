@@ -13,6 +13,13 @@ separate ReportSpec, never a template hole. Deployment-provided catalogs,
 such as the portable sales-report catalog, supply the actual `ReportSpec`
 values; this module only knows how to validate parameters against a spec and
 run it.
+
+AD-2 has exactly one documented exception, and it is not in this module:
+ADR-007 (docs/architecture/adr-007-read-only-sql-tool.md) lets the separate
+`sql_query` tool run SQL the model writes, and moves that tool's trust
+boundary to a database role that can read only allowlisted views and write
+nothing. Nothing here changes: report SQL stays static, and a report never
+takes a SQL fragment as a parameter.
 """
 
 from __future__ import annotations

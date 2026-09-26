@@ -113,6 +113,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/acme
       BI_DATABASE_URL: postgresql+asyncpg://bi_readonly:ci-only-password@localhost:5432/acme
+      SQL_DATABASE_URL: postgresql+asyncpg://sql_readonly:ci-only-password@localhost:5432/acme
       ALLOW_INSECURE: "true"
 
     steps:
@@ -141,6 +142,29 @@ jobs:
 
       - name: Verify the role really is read-only
         run: uv run pytest -m integration tests/test_reports_integration.py -v
+
+      # #80, ADR-007: the read-only SQL tool runs MODEL-AUTHORED SQL, so its
+      # role - not the application's parser - is the trust boundary. The
+      # fixture views load first (the provisioning script refuses to grant a
+      # view that does not exist), then the role, then tests that write
+      # through that role with the application guard bypassed and require
+      # PostgreSQL itself to refuse every statement.
+      - name: Load the SQL tool fixture views
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/acme" \
+            -v ON_ERROR_STOP=1 \
+            -f tests/fixtures/sql_query_fixture.sql
+
+      - name: Provision the sql_readonly role
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/acme" \
+            -v ON_ERROR_STOP=1 \
+            -v sql_password=ci-only-password \
+            -v sql_views=sql_tool_fixture.sales_v \
+            -f scripts/provision_sql_readonly.sql
+
+      - name: Verify the SQL tool's role refuses writes on its own
+        run: uv run pytest -m integration tests/test_sql_query_integration.py -v
 
   # audit_event is RANGE partitioned, and partitioning is the one part of that
   # schema SQLAlchemy cannot express — the ORM model carries no partitions at

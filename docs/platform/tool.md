@@ -44,7 +44,7 @@ ADR-002 C.10. Every tool declares a `tier` classifying how dangerous it IS, inde
 |---|---|---|---|
 | **T0** | Inherent — every agent needs it to function at all | session read | Every agent, via `base`/`agent` |
 | **T1** | Scoped read | knowledge base lookup, sales report read | Roles whose manifest declares the corresponding `read:*` permission |
-| **T2** | Scoped write/send | order writer, `send:message` | Always revalidated at call time |
+| **T2** | Scoped write/send, or a query the model writes | order writer, `send:message`, `sql_query` | Always revalidated at call time |
 | **T3** | Host execution | `use_term`, `read_file` | `operator-agent` branch only |
 
 Two deterministic consequences follow from tier, both replacing (as a superset of, never a narrowing of) the older `write:`/`send:` prefix heuristic:
@@ -234,9 +234,25 @@ Resolves a phone number to a registered client record. Fails open on connector u
 
 ---
 
+### `sql_query`
+
+| Field | Value |
+|---|---|
+| Connector | `connectors/sql_query_connector.py`, over a dedicated engine for the `sql_readonly` role (`scripts/provision_sql_readonly.sql`) |
+| Required permissions | `query:sql` (the `Query` family) |
+| Tier | `T2` — the model writes the query; see ADR-007 for the tier decision |
+| Inputs | `sql` (string: one PostgreSQL `SELECT` or `WITH … SELECT` over the deployment's allowlisted views) |
+| Outputs | `columns` (list), `rows` (list of lists, JSON-safe; money as strings), `row_count`, `truncated` (more rows matched than `row_limit`, or the byte budget cut them), `truncated_bytes` (the rows were cut at `byte_limit`), `row_limit`, `byte_limit`, `empty_result` (the query ran and matched nothing), `relations` (views read), and `note` (a fixed explanation, only when `truncated_bytes`) |
+| Errors | Fixed texts with an `error_kind`: `query_rejected` (with a `reason` code), `query_timeout`, `refused_by_database`, `query_invalid`, `data_error`, `value_out_of_range` (a value the driver cannot represent in Python, such as a date past year 9999), `query_failed` (also any other failure), `database_unavailable`, `role_not_read_only`, `sql_not_configured`. None carries database or driver output, and no failure escapes as an exception. |
+
+Runs one read-only query the model wrote, for questions the fixed `run_report` catalog cannot answer. This is the one tool that runs model-authored SQL, so the database role is its boundary, not the application: the role can read only the allowlisted views and write nothing, every call runs in a `READ ONLY` transaction with a server-side statement timeout, and the tool re-verifies the role on every call and refuses to run if it could write or read beyond the allowlist. An application guard on top parses the query and executes only its canonical rendering, capped at `row_limit + 1` rows and at `byte_limit` bytes (default 64 KiB): the database measures every row and never sends one larger than the budget, and the tool fetches through a cursor, 10 rows at a time, and stops once the budget is spent. Every view it reads must be a materialized view or a `security_barrier` view. PostgreSQL does not bound a query's memory, so run the tool's database where an oversized allocation fails instead of being OOM-killed (`vm.overcommit_memory = 2`), ideally a dedicated replica: on a host that OOM-kills, one query restarts the whole cluster. No predefined role equips it; a deployment registers it with `build_sql_query_tool_spec(engine, SqlQueryConfig(views=...))`. Provisioning, the threat model and the AD-2 amendment are in [ADR-007](../architecture/adr-007-read-only-sql-tool.md).
+
+---
+
 ## Cross-references
 
 - Permission model and connector-specific injection rules: `docs/architecture/permission-model.md`
+- Read-only SQL tool, its trust boundary and the AD-2 amendment: `docs/architecture/adr-007-read-only-sql-tool.md`
 - Injection pipeline and ordering: `docs/platform/harness.md`
 - Skill definitions (behavioral counterpart to tools): `docs/platform/skill.md`
 - Agent `manifest.md` `tools` field: `docs/platform/role.md`

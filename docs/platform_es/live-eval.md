@@ -379,3 +379,9 @@ de humo.
 - Pruebas offline: `tests/test_eval_schema.py`, `tests/test_eval_runner.py`,
   `tests/test_eval_reporting.py`, `tests/test_eval_provider.py`
 - Pruebas en vivo: `tests/test_live_eval_sales_agent.py`, `tests/test_live_eval_roles.py`
+- Escenarios de la herramienta SQL de solo lectura (#80):
+  `tests/test_live_eval_sql_query.py` — además necesita la configuración de
+  PostgreSQL de `tests/test_sql_query_integration.py` (`DATABASE_URL`,
+  `SQL_DATABASE_URL`) y se omite sin ella; su escenario de pedido de borrado
+  exige en cada corrida que los datos queden intactos, porque lo garantiza el
+  rol de base de datos, sin depender del modelo
