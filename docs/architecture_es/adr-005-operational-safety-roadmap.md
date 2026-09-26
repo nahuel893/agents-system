@@ -234,9 +234,10 @@ issue #18 está cerrado y la versión ahora se deriva de los prefijos de
 Conventional Commits (`docs/operations/release-process.md`). Los eventos
 `ToolGranted`/`ToolDenied` se registran en tiempo de inyección
 (`audit/events.py:50-63`, `audit/recorder.py:179-236`) — existe un rastro de
-grant/denegación a nivel de herramienta. No existe `CONTRIBUTING.md` ni
-template de PR; la revisión corre por el review de PR habitual de GitHub más
-los checks requeridos `ci`/`secret-scan`/`dependency-audit`.
+grant/denegación a nivel de herramienta. No existe `CONTRIBUTING.md`, pero el
+template de PR ya existe en `.github/pull_request_template.md` (#16); la
+revisión corre por el review de PR habitual de GitHub más los checks requeridos
+`ci`/`secret-scan`/`dependency-audit`.
 
 **Vacío:** nada inspecciona un diff y fuerza un bump MAJOR
 (`feat!:`/`fix!:`) cuando los `tools:`/`permissions:` de un rol predefinido
