@@ -618,10 +618,27 @@ def _explicit_registrations(
     parsed. A ``str`` is a predefined-role name; an ``Agent`` is its own
     locator."""
     clients = clients or {}
+    # A client names a subtractive deployment override: one keyed by a
+    # typo'd id would silently serve that agent WITHOUT its narrowing.
+    unknown = [repr(key) for key in clients if key not in agents]
+    if unknown:
+        raise DefinitionError(
+            f"clients names runtime id(s) {', '.join(unknown)} that agents "
+            "does not register. Refusing to boot."
+        )
     registrations: dict[str, _Registration] = {}
     for runtime_id, agent in agents.items():
         _validate_runtime_id(runtime_id)
         if isinstance(agent, Agent):
+            if runtime_id in clients:
+                # design.md D5 / Q5: deployment overrides stay
+                # predefined-role-only. Fail loud, not a silent no-op.
+                raise DefinitionError(
+                    f"clients[{runtime_id!r}] is set, but agents[{runtime_id!r}] "
+                    f"is an Agent ({agent.name!r}). A client deployment "
+                    "override applies only to a predefined role registered "
+                    "by name (a str). Refusing to boot."
+                )
             registrations[runtime_id] = _Registration(
                 agent._to_locator(), None, f"agent {agent.name!r}"
             )
@@ -674,6 +691,12 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
         channel_ids.append(settings.whatsapp_runtime_id)
 
     if agents is None:
+        if clients is not None:
+            raise DefinitionError(
+                "create_app got clients but no agents: clients names the "
+                "deployment client of a registered predefined role, so it "
+                "needs agents to register one. Refusing to boot."
+            )
         registrations = _settings_registrations(channel_ids)
     else:
         registrations = _explicit_registrations(agents, clients)

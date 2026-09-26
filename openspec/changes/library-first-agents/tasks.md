@@ -894,7 +894,7 @@ breaking** — see PR4a-ii-T4.
   id is rejected", "An arbitrary id string with no embedded convention is
   accepted". <!-- sdd-owner: implementation -->
 
-- [ ] **PR4a-ii-T2 — Custom `Agent` registration + `clients`-on-`Agent` misuse rejected.**
+- [x] **PR4a-ii-T2 — Custom `Agent` registration + `clients`-on-`Agent` misuse rejected.**
   RED: extend `tests/test_main.py` asserting `create_app(registry_factory=...,
   agents={"triage-bot": <Agent.from_folder(...) instance>},
   grants={"triage-bot": [...]})` boots and serves `"triage-bot"` through the

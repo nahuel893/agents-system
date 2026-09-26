@@ -1993,3 +1993,156 @@ async def test_registration_accepts_an_arbitrary_id_without_parsing_it(
     definition = app.state.runtimes[runtime_id]["runtime"].definition
     assert definition.role_name == role
     assert definition.deployment is None
+
+
+def _write_agent_folder(
+    base: pathlib.Path, name: str, *, untrusted_input: bool = True
+) -> pathlib.Path:
+    """A minimal importer-agent folder: the three-file contract, no `extends:`."""
+    folder = base / name
+    folder.mkdir(parents=True)
+    (folder / "role.md").write_text(
+        f'---\nname: {name}\nversion: "1.0"\n---\n\n# Role: {name}\n\nProse body.\n',
+        encoding="utf-8",
+    )
+    (folder / "manifest.md").write_text(
+        f'---\nrole: {name}\nversion: "1.0"\ntools: [catalog_search]\nskills: []\n'
+        "context: {}\npermissions:\n  - read:catalog\n---\n\nManifest body.\n",
+        encoding="utf-8",
+    )
+    (folder / "policy.md").write_text(
+        f'---\nrole: {name}\nversion: "1.0"\nautonomy: supervised\n'
+        f"untrusted_input: {str(untrusted_input).lower()}\n"
+        "execution_limits: null\n---\n\nPolicy body.\n",
+        encoding="utf-8",
+    )
+    return folder
+
+
+@pytest.mark.asyncio
+async def test_registration_serves_a_custom_folder_agent_on_both_channels(
+    tmp_path: pathlib.Path,
+) -> None:
+    """spec: 'An importer-defined custom agent is registered and served' --
+    an `Agent.from_folder(...)` registration is built, bound to WhatsApp and
+    published on /v1/models through the same code paths a predefined role
+    uses."""
+    import httpx
+
+    from agents_system.agent.spec import Agent
+
+    triage = Agent.from_folder(_write_agent_folder(tmp_path, "triage-bot"))
+    app = create_test_app(
+        agents={"triage-bot": triage}, grants={"triage-bot": ["read:catalog"]}
+    )
+    settings = _registration_settings(
+        adapter_runtimes=["triage-bot"], whatsapp_runtime_id="triage-bot"
+    )
+    worker = MagicMock()
+    worker.start = AsyncMock()
+    worker.stop = AsyncMock()
+
+    with (
+        _stack(_registration_patches(settings)),
+        patch(
+            "agents_system.services.webhook_worker.DeferredWebhookWorker",
+            return_value=worker,
+        ) as worker_cls,
+        patch(
+            "agents_system.integration.openai_adapter.get_settings",
+            return_value=settings,
+        ),
+        # The request below is audited; keep that off the MagicMock engine.
+        patch("agents_system.audit.sink.AuditSink") as sink_cls,
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        async with lifespan(app):
+            equipped = app.state.runtimes["triage-bot"]["runtime"]
+            assert equipped.definition.role_name == "triage-bot"
+            assert [t.name for t in equipped.tools] == ["catalog_search"]
+            _, kwargs = worker_cls.call_args
+            assert kwargs["runtime"] is app.state.runtimes["triage-bot"]
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                response = await client.get("/v1/models")
+
+    assert response.status_code == 200
+    assert [m["id"] for m in response.json()["data"]] == ["triage-bot"]
+
+
+@pytest.mark.asyncio
+async def test_registration_rejects_clients_for_an_agent_valued_entry() -> None:
+    """design.md D5: `clients` is only meaningful for a `str` (predefined
+    role) entry. Pairing it with an `Agent` fails boot rather than being
+    silently ignored."""
+    from agents_system.agent.spec import Agent
+
+    app = create_test_app(
+        agents={"triage-bot": Agent(name="triage-bot")},
+        grants={"triage-bot": ["read:session"]},
+        clients={"triage-bot": "client-a"},
+    )
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(app, _registration_settings())
+
+    message = str(exc_info.value)
+    assert "triage-bot" in message
+    assert "clients" in message
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.parametrize(
+    ("agents", "clients"),
+    [
+        # A typo'd key would silently drop a subtractive deployment override.
+        ({"acme-sales": "sales-agent"}, {"acme-sale": "client-a"}),
+        # `clients` has nothing to apply to without `agents`.
+        (None, {"acme-sales": "client-a"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_registration_rejects_clients_for_an_unregistered_id(
+    agents: dict[str, str] | None, clients: dict[str, str]
+) -> None:
+    app = create_test_app(
+        agents=agents,
+        grants={"acme-sales": _SALES_GRANT},
+        clients=clients,
+        roots=RootConfig(deployments_root=_FIXTURE_DEPLOYMENTS),
+    )
+
+    with pytest.raises(DefinitionError, match="clients"):
+        await _boot(app, _registration_settings())
+
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.asyncio
+async def test_registration_one_unresolvable_entry_blocks_the_whole_boot() -> None:
+    """spec: 'One bad registration entry blocks the whole boot' -- the two
+    valid entries are not served while the broken one is dropped."""
+    from agents_system.agent.spec import Agent
+
+    app = create_test_app(
+        agents={
+            "acme-sales": "sales-agent",
+            "broken-bot": Agent(name="broken-bot", extends="nowhere/custom-agent"),
+            "acme-ops": "operator-agent",
+        },
+        grants={
+            "acme-sales": _SALES_GRANT,
+            "broken-bot": ["read:session"],
+            "acme-ops": ["read:session"],
+        },
+    )
+
+    with pytest.raises(DefinitionError, match="nowhere/custom-agent"):
+        await _boot(app, _registration_settings())
+
+    assert not hasattr(app.state, "runtimes")
+    assert not hasattr(app.state, "adapter_model_ids")
