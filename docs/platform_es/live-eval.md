@@ -190,7 +190,11 @@ falló antes de completar un turno), la suma también lo es --
 `ScenarioResult.total_usage` es desconocido apenas UNA de sus corridas lo
 es, nunca una suma parcial sólo sobre las corridas que tuvieron éxito.
 `cost_usd` además es `None` cuando no hay un precio configurado para ese
-model id.
+model id, o cuando los conteos de tokens reportados de un turno caen fuera
+de un rango plausible (negativos, o por encima de ~100M -- el
+`usage_metadata` de un backend `openai_compatible` es entrada no confiable
+sin un techo de tamaño upstream; un conteo implausible se trata igual que
+uno desconocido en lugar de lanzar una excepción).
 
 **Configurar precios**: `Settings.model_prices` (variable de entorno
 `MODEL_PRICES`) es un objeto JSON con clave el ID DEL MODELO DEL PROVEEDOR

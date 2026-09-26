@@ -174,7 +174,11 @@ token totals are `None`; if even one turn/run in a sum is `None` (including a
 run that crashed before completing a turn), the sum is `None` too --
 `ScenarioResult.total_usage` is unknown as soon as ANY of its runs is,
 never a partial sum across only the runs that succeeded. `cost_usd` is
-additionally `None` whenever no price is configured for the model id.
+additionally `None` whenever no price is configured for the model id, or a
+turn's reported token counts fall outside a plausible range (negative, or
+above ~100M -- an `openai_compatible` backend's `usage_metadata` is
+untrusted input with no upstream size ceiling; an implausible count is
+treated the same as an unknown one rather than raising).
 
 **Configuring prices**: `Settings.model_prices` (env var `MODEL_PRICES`) is a
 JSON object keyed by the PROVIDER MODEL id (e.g. `"gpt-4o"`,

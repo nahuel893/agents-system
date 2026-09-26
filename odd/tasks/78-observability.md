@@ -170,6 +170,28 @@ global CLAUDE.md). Runner: `pytest -q` from the worktree root with
   `test_openai_adapter.py` (15, several via `ImportError: cannot import
   name 'TurnResult'`); restoring the fixed implementation files returned to
   GREEN (same full-suite result above).
+- [x] **S1.9 — second review round (PR #87), overflow in cost computation.**
+  A hostile or compromised `adapter_provider="openai_compatible"` backend
+  (an explicitly supported, operator-selectable third-party/self-hosted
+  endpoint) can return a syntactically valid but absurdly large
+  `prompt_tokens`/`completion_tokens` value -- JSON integers have no size
+  ceiling and `UsageMetadata` does not bound them -- which raised an
+  unhandled `OverflowError` out of `_compute_turn_cost`, failing every turn
+  for any deployment with a configured price for that model (each caller's
+  generic `except Exception` still failed closed to a 500/retry, so this was
+  a reliability/DoS gap, not data corruption). Reproduced with
+  `.pi/ops/logs/review-probes/pr87-fix/probe_overflow_cost.py`. Fixed by
+  bounding `_compute_turn_cost`'s inputs to a plausible per-turn range
+  (`_MAX_PLAUSIBLE_TURN_TOKENS = 100_000_000`, negative rejected too) and
+  returning `None` instead of computing -- the same honesty-null contract
+  as a missing price, never a crash. Three new tests in
+  `test_agent_runtime.py` (huge value, negative value, ordinary value
+  unaffected); RED observed via `pytest -k compute_turn_cost` before the
+  fix (`OverflowError` / a wrong non-`None` cost for the negative case).
+  Docs updated (EN + ES, `docs/platform/live-eval.md`) with the plausible
+  range. Full re-verification: `ruff check .` all checks passed;
+  `ruff format --check .` 366 files already formatted; `mypy src/` success,
+  69 source files; `pytest -q` 1421 passed, 97 deselected, 17 xfailed.
 
 ## Slice 2 — process memory/CPU, durations, `/metrics` (pending)
 Not started. Per the issue: process memory/CPU sampling (no `psutil`/

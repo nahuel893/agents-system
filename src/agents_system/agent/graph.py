@@ -166,17 +166,36 @@ def _aggregate_turn_usage(entries: Sequence[UsageMetadata | None]) -> TurnUsage:
     )
 
 
+# PR #87 review follow-up: the largest per-turn token count any real
+# provider response could plausibly report. `usage_metadata` comes straight
+# off an `AIMessage` a configured backend returned -- including
+# `adapter_provider="openai_compatible"`, an explicitly supported,
+# operator-selectable third-party/self-hosted endpoint (MiniMax, vLLM, LM
+# Studio, OpenRouter, ...) -- and nothing upstream bounds it: JSON integers
+# have no size ceiling, and LangChain's `UsageMetadata` TypedDict does not
+# validate or clamp them. 100M tokens is already ~10x the largest known
+# context window; a value at or above it, or a negative one, can only come
+# from a malformed or hostile response, never a real turn.
+_MAX_PLAUSIBLE_TURN_TOKENS = 100_000_000
+
+
 def _compute_turn_cost(
     usage: TurnUsage, model_id: str | None, settings: Settings
 ) -> float | None:
     """Cost in USD for *usage*, from `Settings.model_prices` only.
 
-    Returns `None` -- never a guessed number -- whenever `model_id` is
-    unset, the token totals themselves are unknown, or `model_id` has no
-    entry in `Settings.model_prices` (design AD note: a price table is
-    opt-in per model id, not a global default).
+    Returns `None` -- never a guessed number, and never a crash -- whenever
+    `model_id` is unset, the token totals themselves are unknown or outside
+    the plausible range a real provider could report (see
+    `_MAX_PLAUSIBLE_TURN_TOKENS`), or `model_id` has no entry in
+    `Settings.model_prices` (design AD note: a price table is opt-in per
+    model id, not a global default).
     """
     if model_id is None or usage.input_tokens is None or usage.output_tokens is None:
+        return None
+    if not (0 <= usage.input_tokens <= _MAX_PLAUSIBLE_TURN_TOKENS) or not (
+        0 <= usage.output_tokens <= _MAX_PLAUSIBLE_TURN_TOKENS
+    ):
         return None
     price = settings.model_prices.get(model_id)
     if price is None:

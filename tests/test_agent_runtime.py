@@ -1610,3 +1610,79 @@ async def test_limit_reached_message_not_counted_in_usage() -> None:
     assert result.usage.input_tokens == 55
     assert result.usage.output_tokens == 15
     assert result.usage.total_tokens == 70
+
+
+# ---------------------------------------------------------------------------
+# #78 Phase 0 review follow-up (PR #87) -- a hostile or compromised
+# "openai_compatible" backend (an explicitly supported, operator-selectable
+# third-party/self-hosted endpoint) can return a syntactically valid but
+# absurdly large prompt_tokens/completion_tokens value: JSON integers have no
+# size ceiling, and LangChain's UsageMetadata does not bound them.
+# _compute_turn_cost must never raise on it -- an implausible count is
+# untrustworthy, so cost_usd is honestly None, the same as a missing price.
+# ---------------------------------------------------------------------------
+
+
+def test_compute_turn_cost_returns_none_for_implausibly_large_token_counts() -> None:
+    """A huge attacker/compromised-backend-supplied input_tokens value must
+    not raise OverflowError out of _compute_turn_cost."""
+    from agents_system.agent.graph import TurnUsage, _compute_turn_cost
+    from agents_system.config import ModelPrice, Settings
+
+    malicious_usage = TurnUsage(
+        model_calls=1,
+        input_tokens=10**320,
+        output_tokens=10,
+        total_tokens=10**320 + 10,
+    )
+    settings = Settings(
+        _env_file=None,
+        model_prices={
+            "evil-backend-model": ModelPrice(
+                input_per_million=0.14, output_per_million=0.28
+            )
+        },
+    )
+
+    cost = _compute_turn_cost(malicious_usage, "evil-backend-model", settings)
+
+    assert cost is None
+
+
+def test_compute_turn_cost_returns_none_for_negative_token_counts() -> None:
+    """A negative token count is equally untrustworthy -- it must never be
+    fed into the cost formula either."""
+    from agents_system.agent.graph import TurnUsage, _compute_turn_cost
+    from agents_system.config import ModelPrice, Settings
+
+    usage = TurnUsage(model_calls=1, input_tokens=-5, output_tokens=10, total_tokens=5)
+    settings = Settings(
+        _env_file=None,
+        model_prices={
+            "some-model": ModelPrice(input_per_million=1.0, output_per_million=1.0)
+        },
+    )
+
+    assert _compute_turn_cost(usage, "some-model", settings) is None
+
+
+def test_compute_turn_cost_still_prices_ordinary_plausible_usage() -> None:
+    """Sanity check: the new bounds check does not disturb an ordinary
+    turn's cost computation."""
+    from agents_system.agent.graph import TurnUsage, _compute_turn_cost
+    from agents_system.config import ModelPrice, Settings
+
+    usage = TurnUsage(
+        model_calls=1,
+        input_tokens=1_000_000,
+        output_tokens=500_000,
+        total_tokens=1_500_000,
+    )
+    settings = Settings(
+        _env_file=None,
+        model_prices={
+            "some-model": ModelPrice(input_per_million=1.0, output_per_million=2.0)
+        },
+    )
+
+    assert _compute_turn_cost(usage, "some-model", settings) == pytest.approx(2.0)
