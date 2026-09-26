@@ -11,3 +11,5 @@
 
 - RED: `pytest -q tests/test_health.py tests/test_observability_metrics.py` reported 2 expected failures: 100 cold-cache requests and no total timeout.
 - GREEN: `pytest -q tests/test_health.py tests/test_observability_metrics.py` passed: 26 passed (5 pre-existing SQLAlchemy warnings).
+- Commit: `23c5bdd` (`fix(health): bound concurrent provider probes`).
+- Required pre-rebase checks: `ruff check .`, `ruff format --check .`, `mypy src/`, and `pytest -q` all passed (2,290 passed, 184 deselected, 17 xfailed).
