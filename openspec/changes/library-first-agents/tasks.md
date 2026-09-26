@@ -968,7 +968,7 @@ breaking** — see PR4a-ii-T4.
   agent", "A client-override registration with no RootConfig fails boot".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR4a-ii-T4 — PR4a-ii closing: full verification + BREAKING CHANGE marker.**
+- [x] **PR4a-ii-T4 — PR4a-ii closing: full verification + BREAKING CHANGE marker.**
   Verify: `.venv/bin/pytest -q` (full suite), `.venv/bin/ruff check .`,
   `.venv/bin/ruff format --check .`, `.venv/bin/mypy src/`. Confirm `git diff
   --stat` against PR4a-ii's branch base; flag if it exceeds ~400 lines. **This

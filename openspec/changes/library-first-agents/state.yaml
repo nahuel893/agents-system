@@ -28,11 +28,11 @@ tasks_progress:
     - PR3-T4
     - PR4a-i-T1
     - PR4a-i-T2
-  pending:
     - PR4a-ii-T1
     - PR4a-ii-T2
     - PR4a-ii-T3
     - PR4a-ii-T4
+  pending:
     - PR4b-T1
     - PR4b-T2
     - PR4b-T3
@@ -212,3 +212,66 @@ pr4a_i:
   diff_lines_authored: 185
   review_fixes: []
   ci: 12/12 checks passed
+pr4a_ii:
+  status: implemented
+  branch: feat/adr-004-4a-ii-registration-wiring
+  pr_url: pending
+  files_changed:
+    - src/agents_system/main.py
+    - tests/test_main.py
+    - tests/test_create_app_agents_param.py
+    - docs/platform/deployment.md
+    - docs/platform_es/deployment.md
+    - docs/architecture/permission-model.md
+    - docs/architecture_es/permission-model.md
+    - docs/architecture/webhook-delivery.md
+    - docs/architecture_es/webhook-delivery.md
+    - .claude/skills/harness-conventions/SKILL.md
+    - openspec/changes/library-first-agents/tasks.md
+    - openspec/changes/library-first-agents/state.yaml
+  diff_lines_authored: 1090
+  diff_budget_note: >-
+    Exceeds the ~245 estimate and the 400-line default budget. main.py is
+    ~370 changed lines (the loop rewrite, the boot plan helpers and the two
+    PR4a-i follow-ups); tests are ~640, one or more per spec scenario the
+    section names (22 registration tests in test_main.py, 7 follow-up tests
+    in test_create_app_agents_param.py); docs ~70 across three EN/ES pairs.
+    Nothing was trimmed; recommend size:exception.
+  ci: pending
+  deviations:
+    - Without agents=, lifespan still boots from the {deployment}__{role}
+      env ids, mapped onto the same loop through openai_adapter's
+      parse_model_id. The inline split in the loop is deleted; the env
+      source and parse_model_id go together in PR4b. Legacy env ids are not
+      run through _validate_runtime_id (_generic__... starts with '_').
+    - Registrations are validated at the top of lifespan, before any
+      resource is created, not in create_app (D6 places it where lifespan
+      builds its working map).
+    - An ADAPTER_RUNTIMES id that matches no registration fails boot like an
+      unmatched WHATSAPP_RUNTIME_ID. No new adapter-exposed parameter was
+      added; ADAPTER_RUNTIMES already is that explicit set.
+    - clients is also rejected for an id agents does not register and when
+      passed without agents (a silently dropped client drops a subtractive
+      override).
+    - A missing grant names its source, create_app(grants=...) or
+      DEPLOY_GRANTS.
+    - The runtime-cache gate is "any registration" instead of "any
+      configured env id", so an env config with only malformed ids no
+      longer builds an embedder/registry/model it never uses. The
+      adapter.open_mode warning moved out of that gate, same condition.
+    - PR4a-i's transitional test_agents_param_has_no_effect_on_lifespan_yet
+      was removed; test_main.py now imports harness.factory at module load
+      (factory binds resolve at import, and a first import under a patched
+      loader.resolve kept the mock for the session).
+  review_follow_ups_closed:
+    - _validate_runtime_id caps an id at 64 characters without echoing an
+      oversized value, and rejects a non-str id.
+    - A grants value that is a str, bytes or non-iterable fails boot naming
+      the id.
+  follow_ups:
+    - PR4b replaces the env source with AGENT_REGISTRATIONS and deletes
+      parse_model_id/to_model_id with _settings_registrations; README and
+      demo-entrypoint still show {deployment}__{role} env ids, which stay
+      correct until then.
+    - A library-first app can only name its /v1 surface through
+      ADAPTER_RUNTIMES; a create_app parameter for it was not added.
