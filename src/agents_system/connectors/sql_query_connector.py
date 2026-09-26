@@ -26,7 +26,8 @@ every other one fails.
    small executor of its own, off the event loop.
 3. Tool surface. Its own permission, `query:sql`, in its own `Query` family
    at T2, so Layer-2 revalidates every call. Error texts are fixed: none
-   carries the SQL error, the driver's exception or connection details.
+   carries the SQL error, the driver's exception or connection details, and
+   no failure escapes as an exception (that would abort the agent's turn).
 
 No predefined role equips this tool (a SemVer-relevant decision left to a
 follow-up); a deployment or an importer registers it with
@@ -113,6 +114,12 @@ _DATA_ERROR_MESSAGE = (
 _QUERY_FAILED_MESSAGE = (
     "The database could not complete the query. Try a simpler or more "
     "selective query; do not estimate the answer."
+)
+_VALUE_OUT_OF_RANGE_MESSAGE = (
+    "The query returned a value this tool cannot represent (for example a "
+    "date or timestamp outside the years 1 to 9999, or an interval of "
+    "millions of years). Cast that column to text (for example col::text) "
+    "or leave it out, and retry."
 )
 
 _REFUSED_SQLSTATES = frozenset({"42501", "25006"})
@@ -339,6 +346,26 @@ def build_sql_query_connector(engine: Any, config: SqlQueryConfig) -> AsyncConne
                 "error": _DB_UNAVAILABLE_MESSAGE,
                 "error_kind": "database_unavailable",
             }
+        except (ValueError, ArithmeticError) as error:
+            # The driver could not turn a value PostgreSQL returned into
+            # Python (a date past year 9999, a huge interval) and raised a
+            # plain ValueError / OverflowError, which SQLAlchemy does not
+            # wrap. Its text quotes the value: operators get the class only.
+            _logger.warning(
+                "sql_query.failed", sqlstate=None, error_class=type(error).__name__
+            )
+            return {
+                "error": _VALUE_OUT_OF_RANGE_MESSAGE,
+                "error_kind": "value_out_of_range",
+            }
+        except Exception as error:
+            # Anything else: a fixed result, never an exception that aborts
+            # the agent's whole turn (the harness re-raises everything but a
+            # timeout or a policy violation). Class only, for the same reason.
+            _logger.warning(
+                "sql_query.failed", sqlstate=None, error_class=type(error).__name__
+            )
+            return {"error": _QUERY_FAILED_MESSAGE, "error_kind": "query_failed"}
 
         rows, cut = _rows_within_budget(outcome.rows, config.byte_limit)
         truncated_bytes = outcome.truncated_bytes or cut

@@ -22,6 +22,7 @@ from typing import Any, Self
 
 import asyncpg
 import pytest
+import structlog.testing
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from agents_system.connectors import sql_query_connector
@@ -94,6 +95,8 @@ class _Connection:
             raise self._engine.query_error
         if not sql.startswith("FETCH "):
             return _Result([], [])  # DECLARE
+        if self._engine.fetch_error is not None:
+            raise self._engine.fetch_error
         count = int(sql.split()[2])
         start = self._engine.position
         sizes = self._engine.sizes or [10] * len(self._engine.rows)
@@ -127,6 +130,7 @@ class _Engine:
         rows: Sequence[Sequence[Any]] = (),
         query_error: Exception | None = None,
         connect_error: Exception | None = None,
+        fetch_error: Exception | None = None,
         sizes: Sequence[int] | None = None,
     ) -> None:
         self.columns = columns
@@ -135,6 +139,7 @@ class _Engine:
         self.position = 0
         self.query_error = query_error
         self.connect_error = connect_error
+        self.fetch_error = fetch_error
         self.statements: list[str] = []
         self.params: list[dict[str, Any]] = []
         self.rolled_back = False
@@ -633,6 +638,50 @@ async def test_an_unreachable_database_is_a_result_not_an_exception(
 
     assert result["error_kind"] == "database_unavailable"
     assert "hunter2" not in json.dumps(result)
+
+
+#: What asyncpg raises, unwrapped, when it cannot turn a value PostgreSQL
+#: returned into Python: a date or timestamp past year 9999 or before year 1,
+#: an interval of millions of years.
+_DECODE_FAILURES = [
+    ValueError(f"year 20000 is out of range {_DRIVER_SECRET}"),
+    OverflowError(f"date value out of range {_DRIVER_SECRET}"),
+    OverflowError(
+        f"days=2000000000; must have magnitude <= 999999999 {_DRIVER_SECRET}"
+    ),
+]
+
+
+@pytest.mark.parametrize("error", _DECODE_FAILURES, ids=lambda e: type(e).__name__)
+async def test_a_value_the_driver_cannot_decode_is_a_result_not_an_exception(
+    error: Exception,
+) -> None:
+    engine = _Engine(fetch_error=error)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await _run(engine, "SELECT make_date(20000, 1, 1) AS d")
+
+    assert result["error_kind"] == "value_out_of_range"
+    assert "::text" in result["error"]
+    assert "hunter2" not in json.dumps(result)
+    # Operators get the error class, not its text: it quotes the data.
+    assert [log["error_class"] for log in logs] == [type(error).__name__]
+    assert "hunter2" not in repr(logs)
+    assert not any(log.get("exc_info") for log in logs)
+    assert engine.rolled_back
+
+
+async def test_any_other_failure_while_reading_rows_is_a_fixed_result() -> None:
+    engine = _Engine(fetch_error=RuntimeError(f"unexpected {_DRIVER_SECRET}"))
+
+    with structlog.testing.capture_logs() as logs:
+        result = await _run(engine, "SELECT product FROM sales_v")
+
+    assert result["error_kind"] == "query_failed"
+    assert "hunter2" not in json.dumps(result)
+    assert [log["error_class"] for log in logs] == ["RuntimeError"]
+    assert "hunter2" not in repr(logs)
+    assert engine.rolled_back
 
 
 # ---------------------------------------------------------------------------

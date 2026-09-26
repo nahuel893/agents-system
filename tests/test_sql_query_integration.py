@@ -435,6 +435,35 @@ async def test_the_statement_timeout_is_enforced_by_the_server(
     assert elapsed < 5
 
 
+#: Values PostgreSQL returns but asyncpg cannot turn into Python objects: it
+#: raises a plain ValueError or OverflowError, which SQLAlchemy does not wrap.
+_UNDECODABLE = (
+    "SELECT make_date(10000, 1, 1) AS d",
+    "SELECT make_date(-5, 1, 1) AS d",
+    "SELECT sold_on + 3000000 AS d FROM sales_v LIMIT 1",
+    "SELECT make_timestamp(10000, 1, 1, 0, 0, 0) AS t",
+    "SELECT make_interval(years => 100000000) AS i",
+)
+
+
+@pytest.mark.parametrize("sql", _UNDECODABLE)
+async def test_a_value_the_driver_cannot_decode_is_a_result_not_an_exception(
+    sql_engine: AsyncEngine, sql: str
+) -> None:
+    connector = build_sql_query_connector(sql_engine, _CONFIG)
+
+    result = await connector({"sql": sql})
+    # The fixed text's advice works: cast the column to text.
+    as_text = await connector(
+        {"sql": sql.replace("SELECT ", "SELECT (", 1).replace(" AS ", ")::text AS ", 1)}
+    )
+    after = await connector({"sql": "SELECT count(*) AS n FROM sales_v"})
+
+    assert result["error_kind"] == "value_out_of_range", result
+    assert "error" not in as_text, as_text
+    assert after["rows"] == [[40]]
+
+
 async def test_a_view_outside_the_allowlist_is_refused_before_the_database(
     sql_engine: AsyncEngine,
 ) -> None:
