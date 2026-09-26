@@ -1666,6 +1666,77 @@ def test_compute_turn_cost_returns_none_for_negative_token_counts() -> None:
     assert _compute_turn_cost(usage, "some-model", settings) is None
 
 
+def test_aggregate_turn_usage_treats_negative_per_call_tokens_as_unknown() -> None:
+    """PR #87 follow-up: a provider that reports a negative input_tokens for
+    ONE call must null the whole turn's totals right where the entries are
+    summed, not only downstream in `_compute_turn_cost` -- the honesty rule
+    applies at the per-call boundary, the same as at the aggregate."""
+    from agents_system.agent.graph import _aggregate_turn_usage
+
+    entries = [
+        {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+        {"input_tokens": -5, "output_tokens": 10, "total_tokens": 5},
+    ]
+
+    usage = _aggregate_turn_usage(entries)
+
+    assert usage.model_calls == 2
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
+    assert usage.total_tokens is None
+
+
+def test_aggregate_turn_usage_treats_implausible_per_call_tokens_as_unknown() -> None:
+    """PR #87 review finding 3: an implausibly large per-call count must be
+    rejected BEFORE summing, so a second call's compensating negative value
+    cannot net out to a small, plausible-looking (but wrong) aggregate that
+    slips past `_compute_turn_cost`'s own bound check."""
+    from agents_system.agent.graph import (
+        _MAX_PLAUSIBLE_TURN_TOKENS,
+        _aggregate_turn_usage,
+    )
+
+    entries = [
+        {
+            "input_tokens": _MAX_PLAUSIBLE_TURN_TOKENS + 1,
+            "output_tokens": 10,
+            "total_tokens": _MAX_PLAUSIBLE_TURN_TOKENS + 11,
+        },
+        {
+            "input_tokens": -_MAX_PLAUSIBLE_TURN_TOKENS,
+            "output_tokens": 10,
+            "total_tokens": 10 - _MAX_PLAUSIBLE_TURN_TOKENS,
+        },
+    ]
+
+    usage = _aggregate_turn_usage(entries)
+
+    # The naive sum would be (1, 20, 21) -- small and "plausible". Checking
+    # each entry before summing must null the whole turn instead.
+    assert usage.model_calls == 2
+    assert usage.input_tokens is None
+    assert usage.output_tokens is None
+    assert usage.total_tokens is None
+
+
+def test_aggregate_turn_usage_still_sums_ordinary_plausible_calls() -> None:
+    """Sanity check: the new per-entry bound does not disturb an ordinary
+    multi-call turn's real sum."""
+    from agents_system.agent.graph import _aggregate_turn_usage
+
+    entries = [
+        {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+        {"input_tokens": 150, "output_tokens": 30, "total_tokens": 180},
+    ]
+
+    usage = _aggregate_turn_usage(entries)
+
+    assert usage.model_calls == 2
+    assert usage.input_tokens == 250
+    assert usage.output_tokens == 50
+    assert usage.total_tokens == 300
+
+
 def test_compute_turn_cost_still_prices_ordinary_plausible_usage() -> None:
     """Sanity check: the new bounds check does not disturb an ordinary
     turn's cost computation."""

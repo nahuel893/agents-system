@@ -269,6 +269,29 @@ def _load_skills(
 _ESCALATION_HEADING = "## escalation rules"
 
 
+def _normalize_condition_name(raw: str) -> str:
+    """Normalize one ``escalation_rules.conditions`` entry (#88 follow-up).
+
+    A condition name is a structural identifier -- it is looked up by exact
+    string (``descriptions.get(condition)`` below) and rendered as its own
+    bullet line -- not free prose like a description. Internal whitespace
+    runs (a stray double space or tab) are collapsed to one space, the same
+    way a description's is (``" ".join(text.split())`` below). An embedded
+    newline is different in kind, not just untidy formatting: silently
+    collapsing it away would hide exactly what let one condition fragment
+    ``_render_escalation_block``'s output into extra bullet/heading-shaped
+    lines, so it is rejected instead of normalized.
+    """
+    if "\n" in raw or "\r" in raw:
+        raise FactoryError(
+            f"Invariant violation — escalation_rules.conditions: condition "
+            f"name {raw!r} contains a newline, which is not a valid "
+            f"condition name. Fix the source that declared it (a role's "
+            f"frontmatter, a deployment override, or an importer locator)."
+        )
+    return " ".join(raw.split())
+
+
 def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     """Render the resolved ``escalation_rules`` into a short, model-facing
     block, or ``""`` when there is nothing to say (issue #36).
@@ -310,7 +333,8 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     conditions = [
         condition
         for condition in (
-            c.strip() for c in _as_str_list(escalation_rules.get("conditions"))
+            _normalize_condition_name(c)
+            for c in _as_str_list(escalation_rules.get("conditions"))
         )
         if condition
     ]
@@ -318,6 +342,20 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     descriptions: Mapping[str, Any] = (
         raw_descriptions if isinstance(raw_descriptions, Mapping) else {}
     )
+    # PR #99 review follow-up: `conditions` above is normalized through
+    # `_normalize_condition_name` before it becomes the lookup key into
+    # `descriptions` -- but `descriptions` itself (a role/deployment
+    # frontmatter `escalation_rules.descriptions:`, or an importer's raw
+    # `InlineLocator`/`FolderLocator` dict) is keyed by the condition's
+    # UNNORMALIZED raw name. Without normalizing this mapping's own keys the
+    # same way, a condition whose declared name needs whitespace collapsing
+    # silently loses its description and falls back to the bare-name
+    # render -- exactly the failure mode issue #88 exists to eliminate.
+    # This restores the exact-string-lookup invariant: both sides of the
+    # comparison go through the identical whitespace-collapsing rule.
+    normalized_descriptions = {
+        " ".join(str(key).split()): value for key, value in descriptions.items()
+    }
 
     if not escalate_to and not conditions:
         return ""
@@ -344,7 +382,9 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
             # newline can never fragment one bullet into several
             # bullet/heading-shaped lines, regardless of which source
             # supplied it.
-            description = " ".join(str(descriptions.get(condition) or "").split())
+            description = " ".join(
+                str(normalized_descriptions.get(condition) or "").split()
+            )
             if description:
                 lines.append(f"- {condition} — {description}")
             else:
