@@ -4,15 +4,15 @@
 Strict TDD: written BEFORE `create_app` gains these parameters — intentionally
 red until `main.py` is widened.
 
-Signature/validation only. `lifespan()` does not read `agents`/`grants`/
-`clients` yet (that is PR4a-ii) — this file asserts that explicitly: passing
-`agents` has no observable effect on `app.state.runtimes` in this slice.
+Signature/validation only. What `lifespan()` builds from these params
+(PR4a-ii) is covered by `tests/test_main.py`'s "registration" tests; the
+PR4a-i test that pinned "`agents` is not consumed yet" went with that slice.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -75,34 +75,6 @@ def test_create_app_defaults_the_new_params_to_none() -> None:
     assert app.state.clients is None
 
 
-@pytest.mark.asyncio
-async def test_agents_param_has_no_effect_on_lifespan_yet() -> None:
-    """`lifespan()` still only reads the Settings-driven fallback path in
-    this slice — an `agents` mapping is written to `app.state` but not yet
-    consumed. Booting with `adapter_runtimes=[]` and a non-empty `agents`
-    stays a no-runtimes boot, proving `agents` has no observable effect yet."""
-    test_settings = Settings(
-        _env_file=None,  # type: ignore[call-arg]
-        allow_insecure=True,
-        adapter_runtimes=[],
-    )
-    mock_engine = MagicMock()
-    mock_engine.dispose = AsyncMock()
-
-    app = create_app(
-        registry_factory=lambda *a, **k: ToolRegistry(),
-        agents={"acme-sales": "sales-agent"},
-    )
-
-    with (
-        patch("agents_system.main.get_settings", return_value=test_settings),
-        patch("agents_system.main.get_engine", return_value=mock_engine),
-        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
-    ):
-        async with lifespan(app):
-            assert app.state.runtimes == {}
-
-
 # ---------------------------------------------------------------------------
 # PR4a-i-T1 — `_validate_runtime_id`
 # ---------------------------------------------------------------------------
@@ -120,3 +92,59 @@ def test_validate_runtime_id_rejects_a_string_with_spaces() -> None:
 
 def test_validate_runtime_id_returns_a_valid_id_unchanged() -> None:
     assert _validate_runtime_id("acme-sales-v2") == "acme-sales-v2"
+
+
+# ---------------------------------------------------------------------------
+# PR4a-i review follow-ups, closed in PR4a-ii
+# ---------------------------------------------------------------------------
+
+
+def test_validate_runtime_id_accepts_an_id_at_the_length_limit() -> None:
+    assert _validate_runtime_id("a" * 64) == "a" * 64
+
+
+def test_validate_runtime_id_rejects_an_id_over_the_length_limit() -> None:
+    """A runtime id reaches URLs, log lines and /metrics labels, so its
+    length is bounded -- and the error does not echo an unbounded value."""
+    with pytest.raises(DefinitionError) as exc_info:
+        _validate_runtime_id("a" * 10_000)
+
+    message = str(exc_info.value)
+    assert "64" in message
+    assert len(message) < 400
+
+
+def test_validate_runtime_id_rejects_a_non_string_id() -> None:
+    with pytest.raises(DefinitionError):
+        _validate_runtime_id(42)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad_grant", ["read:catalog", b"read:catalog", None])
+@pytest.mark.asyncio
+async def test_lifespan_rejects_a_grants_value_that_is_not_a_list(
+    bad_grant: object,
+) -> None:
+    """A bare str satisfies Sequence[str]: iterated, "read:catalog" would be
+    granted character by character. It fails boot, naming the id, before
+    the lifespan creates any resource."""
+    app = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": bad_grant},  # type: ignore[dict-item]
+    )
+    get_engine = MagicMock(side_effect=AssertionError("must not be reached"))
+
+    with (
+        patch(
+            "agents_system.main.get_settings",
+            return_value=Settings(_env_file=None, allow_insecure=True),  # type: ignore[call-arg]
+        ),
+        patch("agents_system.main.get_engine", get_engine),
+        pytest.raises(DefinitionError) as exc_info,
+    ):
+        async with lifespan(app):
+            pass
+
+    assert "'acme-sales'" in str(exc_info.value)
+    assert "grants" in str(exc_info.value)
+    get_engine.assert_not_called()

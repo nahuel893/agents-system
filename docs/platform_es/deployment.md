@@ -251,6 +251,36 @@ purpose_extension: >
 
 ---
 
+## Servir: registrar runtimes con `create_app`
+
+Una aplicación registra lo que sirve cuando construye la app (ADR-004). Cada id de runtime lo elegís vos, y es opaco: nada lo parsea buscando un rol o un despliegue.
+
+```python
+app = create_app(
+    registry_factory=build_registry,
+    roots=RootConfig(deployments_root=Path("deployments")),
+    agents={
+        "acme-sales": "sales-agent",  # un rol predefinido
+        "triage-bot": Agent.from_folder("agents/triage-bot"),  # un agente propio
+    },
+    clients={"acme-sales": "acme"},  # deployments/acme/sales-agent/ lo acota
+    grants={
+        "acme-sales": ["read:catalog", "write:orders"],
+        "triage-bot": ["read:catalog"],
+    },
+)
+```
+
+- **Cada id registrado se construye en el arranque.** Una entrada que no resuelve o no se equipa hace fallar todo el arranque; nunca se sirve un runtime mientras otro se descarta.
+- **Un id** tiene de 1 a 64 letras, dígitos, `_` o `-`, y empieza con una letra o un dígito.
+- **`clients`** vale solo para un rol predefinido registrado por nombre. Hace fallar el arranque para una entrada `Agent`, para un id que `agents` no registra, sin `agents`, y para un valor que no es un nombre de cliente (un `str` de letras, dígitos, `_` o `-`, que empieza con una letra o un dígito): un cliente nombra una sobreescritura sustractiva, y una ignorada en silencio serviría al agente sin su acotamiento. Un valor `None`, como una variable de entorno sin definir, no significa "sin cliente"; en ese caso hay que dejar el id fuera de `clients`. Una sobreescritura de cliente necesita un `RootConfig(deployments_root=...)` explícito.
+- **`grants`** es el grant explícito de despliegue, una lista por id registrado. Nada se otorga automáticamente: un id sin entrada hace fallar el arranque, y también un string suelto en lugar de una lista. Sin `grants=`, la fuente es `DEPLOY_GRANTS`, con las mismas claves. Ver `docs/architecture_es/permission-model.md`.
+- **Los canales buscan ids.** `WHATSAPP_RUNTIME_ID` y cada id de `ADAPTER_RUNTIMES` tienen que ser ids registrados, o el arranque falla nombrándolos. `/v1/models` lista solo los ids de `ADAPTER_RUNTIMES`, nunca todos los registrados.
+
+Sin `agents=`, `create_app` mantiene el arranque desde Settings: `ADAPTER_RUNTIMES`/`WHATSAPP_RUNTIME_ID` llevan ids `{deployment}__{role}` (`_generic__{role}` sin despliegue).
+
+---
+
 ## Delimitación de memoria en despliegues (*Memory scoping*)
 
 La capa de memoria sigue el mismo esquema de delimitación de dos niveles:

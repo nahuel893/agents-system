@@ -49,6 +49,8 @@ DEPLOY_GRANTS='{"acme__sales-agent": ["read:catalog", "write:orders"]}'
 
 El arranque falla de forma explícita, nombrando el id del runtime, cuando un runtime configurado no tiene una entrada correspondiente — no existe un grant automático, y los permisos declarados por un rol nunca se convierten silenciosamente en su grant. El grant resultante se persiste en el runtime (`EquippedRuntime.deploy_grant_ceiling`) de forma independiente del conjunto declarado por el rol, y es lo que acota la revalidación en tiempo de ejecución descrita arriba: la Capa 2 verifica los permisos requeridos por una herramienta sensible contra este límite (ceiling), nunca contra el conjunto completo declarado por el rol. Los consumidores de la librería (que no arrancan a través de `agents_system.main`) otorgan permisos de la misma forma, explícitamente, mediante `build_runtime(..., granted_permissions=[...])`.
 
+Una aplicación que registra sus agentes con `create_app(agents=..., grants=...)` (ADR-004) otorga por cada id de runtime que eligió, por ejemplo `grants={"acme-sales": ["read:catalog", "write:orders"]}`; sin `grants=`, la fuente es `DEPLOY_GRANTS`, con esos mismos ids registrados como claves. Las reglas son las mismas: un id sin entrada hace fallar el arranque, nombrándolo junto con la fuente; un valor tiene que ser una lista (un string suelto hace fallar el arranque en lugar de otorgarse carácter por carácter); y `build_runtime` sigue rechazando cualquier grant T3 a un agente `untrusted_input` (R4), incluido un `Agent` propio. Ver `docs/platform_es/deployment.md`.
+
 ---
 
 ## Qué gobierna el filtrado de permisos
