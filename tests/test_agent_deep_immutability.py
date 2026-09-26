@@ -5,15 +5,19 @@ PR #85 review, finding 2 (MEDIUM). `frozen=True` only blocks
 could be mutated in place afterwards, and every later `_to_locator()` /
 `resolve()` -- including one reached through another `Agent`'s `extends=`
 -- read the mutated container. `Agent` now copies every container field
-into an immutable shape at construction (tuples, `MappingProxyType`, nested
+into an immutable shape at construction (tuples, read-only mappings, nested
 values included), and `_to_locator()` hands the loader fresh plain
 lists/dicts, the shapes it parses from YAML.
+
+Issue #93 replaced `MappingProxyType` with a `dict` subclass whose mutators
+raise, because a mapping proxy cannot be pickled or deep-copied. The checks
+below test the behaviour (every mapping refuses a write), not the type.
 """
 
 from __future__ import annotations
 
 import pathlib
-import types
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -146,11 +150,13 @@ def test_container_fields_are_frozen_shapes() -> None:
     for mapping in (
         agent.skill_contents,
         agent.context,
+        agent.context["extra"],
         agent.escalation_rules,
         agent.execution_limits,
     ):
-        assert isinstance(mapping, types.MappingProxyType)
-    assert isinstance(agent.context["extra"], types.MappingProxyType)
+        assert isinstance(mapping, Mapping)
+        with pytest.raises(TypeError):
+            mapping["new"] = 1  # type: ignore[index]
     assert agent.context["extra"]["list"] == (1, 2)
     assert agent.escalation_rules["conditions"] == ("angry customer",)
     with pytest.raises(TypeError):
@@ -173,7 +179,12 @@ def test_frozen_shapes_still_resolve_to_the_loaders_plain_shapes(
         )._to_locator(),
         roots=ROOTS,
     )
-    assert inline.escalation_rules["conditions"] == ["angry customer"]
+    # A plain list. Issue #93 made an importer agent's conditions additive,
+    # so `agent`'s own come first.
+    conditions = inline.escalation_rules["conditions"]
+    assert isinstance(conditions, list)
+    assert conditions[-1] == "angry customer"
+    assert "explicit_user_request" in conditions
 
     folder = _write_folder(tmp_path, "folder-bot")
     from_folder = resolve(
