@@ -4,7 +4,7 @@
 
 Un rol es una identidad de comportamiento declarativa. Define qué tiene permitido ser y hacer un agente dentro de la plataforma; no es una clase de Python, ni un servicio, ni una cadena de texto (*prompt string*).
 
-Un rol se define mediante una carpeta bajo `platform/roles/` (para las plantillas de roles genéricos) y `deployments/{cliente}/` (para las sobreescrituras específicas del cliente). La carpeta contiene tres archivos: `role.md` (identidad), `manifest.md` (capacidades) y `policy.md` (comportamiento). El harness lee esta carpeta de definición del agente en el momento de la instanciación, resuelve las fusiones y ensambla las capacidades a partir de ella. La carpeta propia de un rol predefinido de plataforma nunca trae su propio subdirectorio `skills/` — sus habilidades se resuelven únicamente desde un despliegue (ver la precedencia de `skills/` en `deployment.md`). Un agente propio construido con `Agent.from_folder(path)` sí puede agregar su propio subdirectorio `skills/` dentro de `path`. Un contenido inline (`skill_contents`) con el mismo nombre gana sobre el archivo de esa carpeta: `harness/factory.py::_load_skills` revisa primero el contenido inline, después la carpeta propia del agente y por último un despliegue. Las habilidades provistas por un despliegue siguen siendo exclusivamente un mecanismo de rol predefinido (ver la precedencia de `skills/` en `deployment.md`) — no pueden combinarse con un agente propio de carpeta o inline.
+Un rol se define mediante una carpeta bajo `platform/roles/` (para las plantillas de roles predefinidos) y `deployments/{cliente}/` (para las sobreescrituras específicas del cliente). La carpeta contiene tres archivos: `role.md` (identidad), `manifest.md` (capacidades) y `policy.md` (comportamiento). El harness lee esta carpeta de definición del agente en el momento de la instanciación, resuelve las fusiones y ensambla las capacidades a partir de ella. La carpeta propia de un rol predefinido de plataforma nunca trae su propio subdirectorio `skills/` — sus habilidades se resuelven únicamente desde un despliegue (ver la precedencia de `skills/` en `deployment.md`). Un agente propio construido con `Agent.from_folder(path)` sí puede agregar su propio subdirectorio `skills/` dentro de `path`. Un contenido inline (`skill_contents`) con el mismo nombre gana sobre el archivo de esa carpeta: `harness/factory.py::_load_skills` revisa primero el contenido inline, después la carpeta propia del agente y por último un despliegue. Las habilidades provistas por un despliegue siguen siendo exclusivamente un mecanismo de rol predefinido (ver la precedencia de `skills/` en `deployment.md`) — no pueden combinarse con un agente propio de carpeta o inline.
 
 **Un rol NO es:**
 - Un proceso activo o un hilo de ejecución (*thread*).
@@ -38,7 +38,7 @@ La definición del agente declara las capacidades, permisos y restricciones. El 
 
 ## Esquema de la definición del agente (*Agent definition schema*)
 
-Una definición del agente es una carpeta bajo `platform/roles/{rol}/` (para la plantilla genérica) o `deployments/{cliente}/{rol}/` (para las sobreescrituras) que contiene tres archivos. Los campos marcados como **obligatorio** deben estar presentes para que la definición se considere válida.
+Una definición del agente es una carpeta bajo `platform/roles/{rol}/` (para la plantilla predefinida) o `deployments/{cliente}/{rol}/` (para las sobreescrituras) que contiene tres archivos. Los campos marcados como **obligatorio** deben estar presentes para que la definición se considere válida.
 
 ### Campos de `role.md`
 
@@ -166,7 +166,7 @@ El NOMBRE de una condición en `escalation_rules.conditions` se normaliza igual 
 
 ## Ejemplo de definición del agente: Preventa Agent (Agente de Preventa)
 
-En la arquitectura de dos capas, la definición consolidada del Agente de Preventa (que se especializa como `sales-agent` para a regional beverage distributor) se construye mezclando la plantilla genérica de `platform/roles/sales-agent/` y la sobreescritura del cliente en `deployments/acme/sales-agent/`. A continuación se muestran los tres archivos consolidados resultantes de dicha mezcla:
+En la arquitectura de dos capas, la definición consolidada del Agente de Preventa (que se especializa como `sales-agent` para a regional beverage distributor) se construye mezclando la plantilla predefinida de `platform/roles/sales-agent/` y la sobreescritura del cliente en `deployments/acme/sales-agent/`. A continuación se muestran los tres archivos consolidados resultantes de dicha mezcla:
 
 **`deployments/acme/sales-agent/role.md`**
 

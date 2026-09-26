@@ -449,6 +449,11 @@ def test_default_platform_root_both_missing_defers_instead_of_raising(
     message = str(exc_info.value)
     assert str(packaged) in message
     assert str(checkout) in message
+    # PR5 (ADR-004): the eight packaged roles are "predefined roles" now,
+    # never "generic roles" -- agent-definition-locator spec's "Error and
+    # boot-failure messages name predefined roles by their new term".
+    assert "predefined agent roles" in message
+    assert "generic" not in message.lower()
 
 
 def test_root_config_default_uses_packaged_then_checkout_resolution(

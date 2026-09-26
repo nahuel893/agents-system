@@ -38,10 +38,11 @@ def platform_roles_dir() -> pathlib.Path:
 
 
 def discover_platform_roles() -> tuple[str, ...]:
-    """Every role folder present under ``platform/roles/``, sorted.
+    """Every predefined role folder present under ``platform/roles/``, sorted.
 
-    Deliberately unfiltered beyond "is a directory": an incomplete role folder
-    must fail the boot guards loudly rather than be silently skipped.
+    Deliberately unfiltered beyond "is a directory": an incomplete predefined
+    role folder must fail the boot guards loudly rather than be silently
+    skipped.
     """
     return tuple(
         sorted(

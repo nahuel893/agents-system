@@ -1,8 +1,8 @@
 """Serve the demo database through the OpenAI-compatible adapter.
 
-Run ``uv run python -m agents_system.demo`` after loading the demo database
-with ``demo/load_demo_company.py``; this module is that loader's "serve it"
-half. Configuration is environment-variable only.
+Run ``python examples/demo/app.py`` after loading the demo database with
+``demo/load_demo_company.py``; this script is that loader's "serve it" half.
+Configuration is environment-variable only.
 
 Set ``AGENT_REGISTRATIONS``, ``ADAPTER_RUNTIMES`` and ``ADAPTER_API_KEY`` to
 publish a role on ``/v1/*``; this module deliberately sets none of them. Boot

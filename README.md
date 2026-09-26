@@ -303,7 +303,7 @@ export ADAPTER_RUNTIMES='["demo-sales-agent"]'
 export DEPLOY_GRANTS='{"demo-sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
 export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
 
-uv run python -m agents_system.demo
+uv run python examples/demo/app.py
 ```
 
 `DEPLOY_GRANTS` is required for every registered runtime id (issue #38); the

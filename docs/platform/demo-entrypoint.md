@@ -1,6 +1,6 @@
 # Demo API entrypoint
 
-`agents_system.demo` serves the fake company database through the platform's
+`examples/demo/app.py` serves the fake company database through the platform's
 OpenAI-compatible adapter. It is the **serve it** half of
 [`demo/load_demo_company.py`](../../demo/load_demo_company.py): load the
 repeatable demo data first, then start an API against it. This is a manual
@@ -42,8 +42,8 @@ All entrypoint configuration comes from environment variables (or the project's
 | `ADAPTER_API_KEY` | required when publishing a role | Bearer token required by `/v1/*`. |
 | `DEPLOY_GRANTS` | required for every registered runtime id | JSON object mapping each registered id to the list of permission wire names actually granted to it, such as `{"demo-sales-agent": ["read:catalog"]}`. A registered runtime with no matching entry fails boot loudly, naming the runtime id. |
 
-For example, choose one provider and set its variables, then publish a generic
-role without putting any credential values in source control:
+For example, choose one provider and set its variables, then publish a
+predefined role without putting any credential values in source control:
 
 ```bash
 export EVAL_PROVIDER=openai_compatible
@@ -74,7 +74,7 @@ full declared set here never hands a T3 permission to an untrusted-input role
 
 ## 3. Satisfy the two startup security checks
 
-`uv run python -m agents_system.demo` boots through `create_app`, and refuses
+`uv run python examples/demo/app.py` boots through `create_app`, and refuses
 to start unless two things hold. Both are enforced fail-closed:
 
 1. **A non-empty webhook secret.** `create_app`'s lifespan runs
@@ -121,7 +121,7 @@ export ALLOW_INSECURE=true
 ## 4. Run it
 
 ```bash
-uv run python -m agents_system.demo
+uv run python examples/demo/app.py
 ```
 
 ## 5. Call the OpenAI-compatible API
