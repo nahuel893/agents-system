@@ -1,5 +1,5 @@
 change: library-first-agents
-phase: apply
+phase: archived
 artifact_store: hybrid
 artifacts:
   exploration: true
@@ -7,6 +7,8 @@ artifacts:
   specs: true
   design: true
   tasks: true
+  verify_report: true
+  archive_report: true
 tasks_progress:
   completed:
     - PR1a-T1
@@ -47,6 +49,8 @@ tasks_progress:
     - PR7-T3
   pending: []
 last_updated: 2026-09-26T00:00:00Z
+archived_at: 2026-09-26
+archived_to: openspec/changes/archive/2026-09-26-library-first-agents
 pr1a:
   status: implemented
   branch: feat/library-first-1a-locator
