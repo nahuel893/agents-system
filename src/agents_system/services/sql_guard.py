@@ -519,17 +519,28 @@ class _CheckedRenderer(PostgresGenerator):
         if self._tree is None:  # preprocess() did not run: nothing was checked
             raise _reject("unparseable")
         # Fail closed: a function or type the render did not pass through
-        # `sql()` was not checked. The only exception is the inner links of
-        # an AND/OR or same-operator chain, which sqlglot writes iteratively
-        # as the operator itself - never as a name followed by `(`.
+        # `sql()` was not checked. The only exceptions are written as syntax,
+        # never as a name followed by `(`: the inner links of an AND/OR or
+        # same-operator chain (written iteratively as the operator itself)
+        # and the WHEN branches of a CASE (written by the CASE as
+        # `WHEN ... THEN ...`; their operands still pass through `sql()`).
         for node in self._tree.walk():
             if (
                 isinstance(node, exp.Func | exp.DataType)
                 and id(node) not in self._checked
                 and not isinstance(node, exp.Connector | exp.Binary)
+                and not _is_case_branch(node)
             ):
                 raise _reject("unparseable")
         return text
+
+
+def _is_case_branch(node: exp.Expr) -> bool:
+    return (
+        isinstance(node, exp.If)
+        and isinstance(node.parent, exp.Case)
+        and node.arg_key == "ifs"
+    )
 
 
 def _relation_not_allowed(shown: str, policy: QueryPolicy) -> QueryRejectedError:

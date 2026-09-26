@@ -125,6 +125,25 @@ def test_typical_analytical_queries_are_accepted(sql: str) -> None:
     assert guarded.sql
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT CASE WHEN amount > 100 THEN 'big' ELSE 'small' END FROM sales_v",
+        "SELECT CASE product WHEN 'a' THEN 1 WHEN 'b' THEN 2 END FROM sales_v",
+        "SELECT sum(CASE WHEN amount > 0 THEN amount ELSE 0 END) FROM sales_v",
+        (
+            "SELECT CASE WHEN amount > 0 THEN CASE WHEN amount > 100 THEN 'big'"
+            " ELSE 'small' END END FROM sales_v"
+        ),
+    ],
+)
+def test_case_expressions_are_accepted(sql: str) -> None:
+    # sqlglot writes each WHEN branch of a CASE from inside the CASE, never
+    # as a call of its own: the branch is syntax, not an unchecked function.
+    guarded = guard_query(sql, _SINGLE_SCHEMA_POLICY, row_limit=10)
+    assert "CASE" in guarded.sql and "END" in guarded.sql
+
+
 # ---------------------------------------------------------------------------
 # Input shape
 # ---------------------------------------------------------------------------
@@ -479,6 +498,9 @@ def test_an_unqualified_table_function_stays_accepted() -> None:
         "SELECT 1 FROM sales_v WHERE a = 1 OR {f} IS NULL OR b = 2",
         "SELECT 1 + 2 + {f} + 3",
         "SELECT CASE WHEN {f} IS NULL THEN 1 END",
+        "SELECT CASE WHEN true THEN {f} END",
+        "SELECT CASE WHEN true THEN 1 ELSE {f} END",
+        "SELECT CASE {f} WHEN 1 THEN 1 END",
         "SELECT count(*) FILTER (WHERE {f} IS NULL) FROM sales_v",
         "SELECT sum(1) OVER (PARTITION BY {f}) FROM sales_v",
         "WITH c AS (SELECT {f}) SELECT * FROM c",
