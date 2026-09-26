@@ -1,7 +1,9 @@
 """Smoke test for the demo API entrypoint."""
 
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +20,71 @@ from agents_system.main import lifespan
 _demo_registry_factory = demo_app._demo_registry_factory
 _ensure_read_only_engine = demo_app._ensure_read_only_engine
 build_app = demo_app.build_app
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Every doc that tells a reader to run `examples/demo/app.py` (README.md's
+# "Run the Demo API" section, docs/platform/demo-entrypoint.md, and its ES
+# twin). Every other command these docs give (`uv run python
+# demo/load_demo_company.py`, `uv run pytest`, ...) is prefixed with
+# `uv run` specifically so it works without the reader having activated
+# `.venv` themselves; the invocation line must match that convention.
+_DEMO_INVOCATION_DOCS = (
+    "README.md",
+    "docs/platform/demo-entrypoint.md",
+    "docs/platform_es/demo-entrypoint.md",
+)
+
+
+# ---------------------------------------------------------------------------
+# PR5-T2 review fix -- the "Run it" invocation must keep the `uv run` prefix
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("doc", _DEMO_INVOCATION_DOCS)
+def test_demo_invocation_doc_keeps_uv_run_prefix(doc: str) -> None:
+    """Every `python examples/demo/app.py` invocation (as opposed to a bare
+    `examples/demo/app.py` file reference) must be spelled
+    `uv run python examples/demo/app.py`, exactly like every other command
+    in the same docs -- otherwise the documented command fails with
+    `ModuleNotFoundError` for a reader who never activated `.venv`."""
+    text = (_REPO_ROOT / doc).read_text(encoding="utf-8")
+
+    unprefixed = re.findall(r"(?<!uv run )python examples/demo/app\.py", text)
+
+    assert unprefixed == [], (
+        f"{doc} invokes `python examples/demo/app.py` without the `uv run` "
+        f"prefix used by every other command in this doc: found "
+        f"{len(unprefixed)} occurrence(s)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# PR5-T1 review fix -- demo-entrypoint.md's own "generic role" leftover
+# ---------------------------------------------------------------------------
+
+
+def test_demo_entrypoint_doc_has_no_leftover_generic_role_text() -> None:
+    """agent-definition-locator spec's Terminology section: the eight
+    packaged platform roles are "predefined role(s)", never "generic
+    role(s)". docs/platform/demo-entrypoint.md already says "predefined
+    role" in its variables table, so a leftover "generic role" a few lines
+    below is a completeness gap within this exact same document."""
+    text = (_REPO_ROOT / "docs/platform/demo-entrypoint.md").read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+
+    assert "generic role" not in normalized.lower()
+
+
+def test_demo_entrypoint_doc_es_has_no_leftover_rol_generico_text() -> None:
+    """ES twin of the check above: "rol genérico" must not remain once the
+    table above it already says "rol predefinido"."""
+    text = (_REPO_ROOT / "docs/platform_es/demo-entrypoint.md").read_text(
+        encoding="utf-8"
+    )
+    normalized = " ".join(text.split())
+
+    assert "rol genérico" not in normalized.lower()
 
 
 # ---------------------------------------------------------------------------
