@@ -32,7 +32,7 @@ enforcement:
 |---|---|---|
 | Branch protection on `main` | Required checks, required review, no direct push | **None.** `GET /branches/main/protection` → 404 |
 | CODEOWNERS | Routes reviews automatically | Does not exist |
-| PR template | Every PR answers the same questions | Does not exist |
+| PR template | Every PR answers the same questions | Exists at `.github/pull_request_template.md` (#16) |
 | Versioning | SemVer, tags, CHANGELOG | `0.1.0` static, 0 tags, 0 releases |
 | Environments | dev → staging → production, with promotion | 0 configured |
 | Rollback | A defined path back, per deploy | Undefined |
@@ -255,16 +255,16 @@ second pair of eyes does not exist yet.
 
 ### Still missing, ordered by how much each one buys
 
-1. **PR template** (#55) — makes the four questions in step 3 unavoidable. The
-   pull request that introduced this very document answered none of them, which
-   is the argument for the template rather than against it.
-2. **CODEOWNERS** (#56) — routes review instead of leaving it to chance.
-3. **Versioning and CHANGELOG** (#57) — SemVer driven by the commit prefixes we
+The **PR template** now exists (#16) at `.github/pull_request_template.md`,
+which makes the four questions in step 3 visible in every new pull request.
+
+1. **CODEOWNERS** (#56) — routes review instead of leaving it to chance.
+2. **Versioning and CHANGELOG** (#57) — SemVer driven by the commit prefixes we
    already write. `agents_system` is consumed as a library, so until tags exist a
    downstream project has no version it can pin.
-4. **Required approving reviews at `1`** (#59) — blocked on a second identity.
-5. **Environments and deploy pipeline** (#49) — the deployment work itself.
-6. **DORA measurement** (#58) — meaningful only once deploys actually happen.
+3. **Required approving reviews at `1`** (#59) — blocked on a second identity.
+4. **Environments and deploy pipeline** (#49) — the deployment work itself.
+5. **DORA measurement** (#58) — meaningful only once deploys actually happen.
 
-Items 1 through 3 are configuration and cost hours. Item 4 needs a second
-account to exist. Items 5 and 6 need the deployment work first.
+Items 1 and 2 are configuration and cost hours. Item 3 needs a second account
+to exist. Items 4 and 5 need the deployment work first.
