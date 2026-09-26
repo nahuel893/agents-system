@@ -77,7 +77,7 @@ import os
 import secrets
 import socket
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -309,6 +309,7 @@ def live_registry_factory_adapter(
     *,
     terminal_policy: TerminalPolicy | None = None,
     extra_tool_specs: Sequence[ToolSpec] = (),
+    tool_wrappers: Mapping[str, Callable[[ToolSpec], ToolSpec]] | None = None,
 ) -> RegistryFactory:
     """Adapt `evals.live_registry.build_live_registry_factory`'s zero-arg
     closure to the `(settings, embedder, bi_engine)` signature `create_app`'s
@@ -323,15 +324,20 @@ def live_registry_factory_adapter(
     *extra_tool_specs* (#79, Phase 1) are registered into the SAME registry
     as the reference backends, REPLACING a base tool of the same name rather
     than raising `ToolRegistry.register`'s own duplicate-name error -- e.g.
-    the read-only SQL tool (`sql_query_connector.build_sql_query_tool_spec`,
+    the read-only SQL tool (`sql_query_connector.build_sql_query_tool_spec`),
     a genuinely new name, built and provisioned by the caller BEFORE
     booting -- see `provision_sql_readonly_fixture`'s own docstring for why
     the registry factory runs during `create_app`'s lifespan startup, before
-    a harness exists to provision against), or a call-recording wrapper
-    around an EXISTING connector (e.g. `run_report`) that a scenario needs
-    to inspect the actual result of, which the audit trail alone does not
-    carry (`ToolCallAttempted.payload` never includes a tool's arguments or
-    return value -- only name/timing/outcome)."""
+    a harness exists to provision against.
+
+    *tool_wrappers* (#79, Phase 1) map a base tool's name to a function that
+    receives that tool's OWN `ToolSpec` -- already bound to this harness's
+    throwaway database, which *extra_tool_specs* has no way to pre-build --
+    and returns the `ToolSpec` to register in its place: a call-recording
+    wrapper around `run_report`, say, for a scenario that needs to inspect
+    the tool's actual arguments and result, which the audit trail alone does
+    not carry (`ToolCallAttempted.payload` never includes a tool's arguments
+    or return value -- only name/timing/outcome)."""
     build_registry = build_live_registry_factory(
         engine, model, terminal_policy=terminal_policy
     )
@@ -340,16 +346,19 @@ def live_registry_factory_adapter(
         settings: Any = None, embedder: Any = None, bi_engine: Any = None
     ) -> ToolRegistry:
         base = build_registry()
+        wrappers = tool_wrappers or {}
         # An extra spec REPLACES a base one of the same name (`ToolRegistry.
-        # register` itself raises on a duplicate) -- e.g. #79 Phase 1's
-        # `run_report`-call-recording wrapper around the same connector, kept
-        # local to a test rather than a change to `build_live_registry` --
-        # not just adds a genuinely new tool (e.g. `sql_query`).
+        # register` itself raises on a duplicate) -- e.g. #80's read-only SQL
+        # tool is a genuinely new name, added alongside every reference
+        # backend.
         extra_names = {spec.name for spec in extra_tool_specs}
         registry = ToolRegistry()
         for name in base.names():
-            if name not in extra_names:
-                registry.register(base.get(name))
+            if name in extra_names:
+                continue
+            spec = base.get(name)
+            wrap = wrappers.get(name)
+            registry.register(wrap(spec) if wrap is not None else spec)
         for spec in extra_tool_specs:
             registry.register(spec)
         return registry
@@ -770,6 +779,7 @@ async def boot_live_harness(
     terminal_policy: TerminalPolicy | None = None,
     seed_demo: bool = False,
     extra_tool_specs: Sequence[ToolSpec] = (),
+    tool_wrappers: Mapping[str, Callable[[ToolSpec], ToolSpec]] | None = None,
 ) -> AsyncIterator[LiveHarness]:
     """Boot the real application against a fresh throwaway database and
     yield a `LiveHarness`. See this module's docstring for the full design.
@@ -795,6 +805,9 @@ async def boot_live_harness(
     top of the reference backends -- see `live_registry_factory_adapter`'s
     own docstring for why they must already be fully built (and, for a
     database-backed one, already provisioned) before this call.
+    *tool_wrappers* replaces a base tool with the result of calling a
+    function on it -- see `live_registry_factory_adapter`'s own docstring
+    for when this is the right choice instead of *extra_tool_specs*.
     """
     admin_url = os.environ.get(_ADMIN_DATABASE_URL_ENV, DEFAULT_ADMIN_DATABASE_URL)
     redis_url = os.environ.get(_REDIS_URL_ENV, DEFAULT_REDIS_URL)
@@ -855,6 +868,7 @@ async def boot_live_harness(
                         model,
                         terminal_policy=terminal_policy,
                         extra_tool_specs=extra_tool_specs,
+                        tool_wrappers=tool_wrappers,
                     ),
                     participant_directory=AcceptAllParticipantDirectory(),
                     title="agents_system live harness",

@@ -613,3 +613,39 @@ def test_live_registry_factory_adapter_extra_spec_adds_a_genuinely_new_tool() ->
 
     assert registry.get("sql_query") is extra
     assert "catalog_search" in registry
+
+
+def test_live_registry_factory_adapter_tool_wrappers_replaces_with_the_wrapper_result() -> (
+    None
+):
+    """A scenario needing `run_report`'s actual arguments/result -- unlike
+    `extra_tool_specs`, which cannot pre-build a spec bound to a database
+    whose name is only known once `boot_live_harness` has already booted --
+    wraps whatever the base registry already built."""
+    import dataclasses
+
+    from agents_system.evals.live_harness import live_registry_factory_adapter
+    from agents_system.harness.registry import ToolSpec
+
+    calls: list[dict[str, object]] = []
+
+    def wrap(spec: ToolSpec) -> ToolSpec:
+        original = spec.connector
+
+        async def recording(
+            inputs: dict[str, object], *, session: object = None
+        ) -> object:
+            calls.append(dict(inputs))
+            return await original(inputs, session=session)
+
+        return dataclasses.replace(spec, connector=recording)
+
+    factory = live_registry_factory_adapter(
+        object(), object(), tool_wrappers={"run_report": wrap}
+    )
+    registry = factory()
+    wrapped = registry.get("run_report")
+
+    assert wrapped is not registry.get("catalog_search")
+    assert wrapped.name == "run_report"
+    assert wrapped.connector is not None
