@@ -28,6 +28,25 @@ Design decisions
   `redis` service) -- the checkpointer runs for real
   (`WHATSAPP_CHECKPOINTER_ENABLED` defaults `True`; nothing here disables
   it), so `read_thread` reads an actual persisted LangGraph checkpoint.
+  `boot_live_harness` tracks every `thread_id` its own `deliver_webhook`
+  calls write (the normalized phone number `DeferredWebhookWorker` engages
+  the checkpointer with) and deletes those threads at teardown, in the same
+  `finally` that drops the throwaway database -- a checkpoint left behind by
+  one run must never be mistaken for proof that a LATER run's checkpointing
+  actually worked (#113 review).
+- **One `boot_live_harness` at a time per process.** Booting mutates the
+  process-global `os.environ` and the process-global `get_settings()`
+  `lru_cache` -- there is no per-instance `Settings` isolation. A whole
+  `boot_live_harness()` lifetime (boot through teardown) is therefore
+  serialized on a module-level `asyncio.Lock`: a second concurrent call
+  blocks until the first's context manager fully exits. Do NOT
+  `asyncio.gather()` two `boot_live_harness()` calls expecting them to run
+  side by side -- they will run one after the other, and while one is
+  active its env/settings are the only ones in effect process-wide (#113
+  review; Phase 1 #79 and Phase 2 #76-extends build on this harness and
+  must not reach for concurrent boots without first giving each
+  `LiveHarness` its own isolated `Settings` instance instead of mutating
+  the shared process globals).
 - **Outbound WhatsApp never reaches Meta.** `WhatsAppClient` posts to
   `Settings.whatsapp_graph_api_url` -- an existing configuration seam, no
   code change needed -- pointed here at `FakeWhatsAppServer`, a real local
@@ -103,6 +122,13 @@ DEFAULT_ADMIN_DATABASE_URL = (
     "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres"
 )
 DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
+
+#: Serializes `boot_live_harness`'s whole lifetime (see the module docstring's
+#: "One `boot_live_harness` at a time per process" note, #113 review): booting
+#: mutates the process-global `os.environ` and `get_settings()` cache with no
+#: per-instance isolation, so two overlapping boots would silently invalidate
+#: each other's already-issued credentials.
+_boot_lock = asyncio.Lock()
 
 #: `platform/roles/sales-agent/manifest.md`'s own `permissions:` list,
 #: repeated here (not imported) because the manifest is data, not code --
@@ -363,6 +389,30 @@ async def _drop_database(admin_url: str, name: str) -> None:
         await engine.dispose()
 
 
+async def _delete_redis_threads(redis_url: str, thread_ids: set[str]) -> None:
+    """Best-effort delete of every LangGraph checkpoint this harness run
+    wrote (#113 review, high-severity finding): a stale checkpoint left by
+    an earlier run under the same `thread_id` must never let a later run's
+    `read_thread` assertion pass without the current run's checkpointer
+    genuinely having written anything. Mirrors `_drop_database`'s own
+    never-raise contract -- a teardown that fails must not hide the test's
+    own result.
+    """
+    if not thread_ids:
+        return
+    from langgraph.checkpoint.redis import AsyncRedisSaver
+
+    try:
+        async with AsyncRedisSaver.from_conn_string(redis_url) as saver:
+            for thread_id in thread_ids:
+                await saver.adelete_thread(thread_id)
+    except Exception:
+        logger.warning(
+            "live_harness.delete_redis_threads_failed",
+            thread_ids=sorted(thread_ids),
+        )
+
+
 def _run_migrations(database_url: str, *, repo_root: Path) -> None:
     """`alembic upgrade head` against *database_url*, mirroring the CI
     `audit-migration`/`outbox-migration` jobs' own throwaway-database
@@ -398,6 +448,12 @@ class LiveHarness:
     model_name: str
     meta_webhook_secret: str
     metrics_api_key: str
+    #: Every `thread_id` (normalized phone number) a `deliver_webhook` call
+    #: has driven the checkpointer with, so `boot_live_harness`'s teardown
+    #: knows exactly which Redis checkpoints are this run's own to delete
+    #: (#113 review) -- never mutated by `send_chat_completion`, which never
+    #: engages the checkpointer (see this module's docstring).
+    used_thread_ids: set[str] = field(default_factory=set)
 
     async def send_chat_completion(self, text: str) -> httpx.Response:
         """POST one turn to `/v1/chat/completions` against this harness's
@@ -423,6 +479,12 @@ class LiveHarness:
         )
         body = json.dumps(envelope).encode()
         signature = sign_payload(body, self.meta_webhook_secret)
+        # Recorded BEFORE the request completes (not after): `phone` is the
+        # exact thread_id `DeferredWebhookWorker` engages the checkpointer
+        # with (#113 review) once it processes this message, regardless of
+        # whether the worker has run yet by the time this call returns --
+        # teardown must still know to clean it up.
+        self.used_thread_ids.add(phone)
         return await self.client.post(
             "/webhook",
             content=body,
@@ -506,74 +568,87 @@ async def boot_live_harness(
     db_name = f"live_harness_{uuid.uuid4().hex[:12]}"
     database_url = _with_database(admin_url, db_name)
 
-    await _create_database(admin_url, db_name)
-    outbound = FakeWhatsAppServer()
-    registry_engine: AsyncEngine | None = None
-    try:
-        repo_root = Path(__file__).resolve().parents[3]
-        await asyncio.to_thread(_run_migrations, database_url, repo_root=repo_root)
-        await outbound.start()
-
-        metrics_api_key = secrets.token_hex(16)
-        env_overrides = {
-            "DATABASE_URL": database_url,
-            "REDIS_URL": redis_url,
-            "META_WEBHOOK_SECRET": secrets.token_hex(16),
-            "WHATSAPP_TOKEN": "live-harness-test-token",
-            "WHATSAPP_PHONE_NUMBER_ID": "live-harness-test-phone-id",
-            "WHATSAPP_GRAPH_API_URL": outbound.base_url,
-            "WHATSAPP_RUNTIME_ID": runtime_id,
-            "WHATSAPP_CHECKPOINTER_ENABLED": "true",
-            "ADAPTER_RUNTIMES": json.dumps([runtime_id]),
-            "ADAPTER_API_KEY": secrets.token_hex(16),
-            "ADAPTER_PROVIDER": os.environ.get("EVAL_PROVIDER", "ollama"),
-            "METRICS_ENABLED": "true",
-            "METRICS_API_KEY": metrics_api_key,
-        }
-        previous_env = {key: os.environ.get(key) for key in env_overrides}
-        os.environ.update(env_overrides)
-        get_settings.cache_clear()
+    # #113 review (medium finding) -- held for this call's ENTIRE lifetime
+    # (boot through teardown), not just around the env mutation below: see
+    # the module docstring's "One `boot_live_harness` at a time per process"
+    # note. A second concurrent call blocks here until this one's context
+    # manager fully exits, so two booted harnesses can never be up at once
+    # invalidating each other's process-global env/`get_settings()` cache.
+    async with _boot_lock:
+        await _create_database(admin_url, db_name)
+        outbound = FakeWhatsAppServer()
+        registry_engine: AsyncEngine | None = None
+        harness: LiveHarness | None = None
         try:
-            settings = get_settings()
-            model, model_name = build_eval_model()
-            registry_engine = create_async_engine(database_url)
+            repo_root = Path(__file__).resolve().parents[3]
+            await asyncio.to_thread(_run_migrations, database_url, repo_root=repo_root)
+            await outbound.start()
 
-            app = create_app(
-                agents={runtime_id: role},
-                grants={runtime_id: list(SALES_AGENT_PERMISSIONS)},
-                registry_factory=live_registry_factory_adapter(registry_engine, model),
-                participant_directory=AcceptAllParticipantDirectory(),
-                title="agents_system live harness",
-            )
-
-            async with app.router.lifespan_context(app):
-                transport = httpx.ASGITransport(app=app)
-                async with httpx.AsyncClient(
-                    transport=transport,
-                    base_url="http://live-harness.test",
-                    headers={"Authorization": f"Bearer {settings.adapter_api_key}"},
-                    timeout=httpx.Timeout(120.0),
-                ) as client:
-                    yield LiveHarness(
-                        app=app,
-                        client=client,
-                        engine=app.state.engine,
-                        redis_url=redis_url,
-                        outbound=outbound,
-                        runtime_id=runtime_id,
-                        model_name=model_name,
-                        meta_webhook_secret=settings.meta_webhook_secret,
-                        metrics_api_key=metrics_api_key,
-                    )
-        finally:
-            for key, value in previous_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+            metrics_api_key = secrets.token_hex(16)
+            env_overrides = {
+                "DATABASE_URL": database_url,
+                "REDIS_URL": redis_url,
+                "META_WEBHOOK_SECRET": secrets.token_hex(16),
+                "WHATSAPP_TOKEN": "live-harness-test-token",
+                "WHATSAPP_PHONE_NUMBER_ID": "live-harness-test-phone-id",
+                "WHATSAPP_GRAPH_API_URL": outbound.base_url,
+                "WHATSAPP_RUNTIME_ID": runtime_id,
+                "WHATSAPP_CHECKPOINTER_ENABLED": "true",
+                "ADAPTER_RUNTIMES": json.dumps([runtime_id]),
+                "ADAPTER_API_KEY": secrets.token_hex(16),
+                "ADAPTER_PROVIDER": os.environ.get("EVAL_PROVIDER", "ollama"),
+                "METRICS_ENABLED": "true",
+                "METRICS_API_KEY": metrics_api_key,
+            }
+            previous_env = {key: os.environ.get(key) for key in env_overrides}
+            os.environ.update(env_overrides)
             get_settings.cache_clear()
-    finally:
-        if registry_engine is not None:
-            await registry_engine.dispose()
-        await outbound.stop()
-        await _drop_database(admin_url, db_name)
+            try:
+                settings = get_settings()
+                model, model_name = build_eval_model()
+                registry_engine = create_async_engine(database_url)
+
+                app = create_app(
+                    agents={runtime_id: role},
+                    grants={runtime_id: list(SALES_AGENT_PERMISSIONS)},
+                    registry_factory=live_registry_factory_adapter(
+                        registry_engine, model
+                    ),
+                    participant_directory=AcceptAllParticipantDirectory(),
+                    title="agents_system live harness",
+                )
+
+                async with app.router.lifespan_context(app):
+                    transport = httpx.ASGITransport(app=app)
+                    async with httpx.AsyncClient(
+                        transport=transport,
+                        base_url="http://live-harness.test",
+                        headers={"Authorization": f"Bearer {settings.adapter_api_key}"},
+                        timeout=httpx.Timeout(120.0),
+                    ) as client:
+                        harness = LiveHarness(
+                            app=app,
+                            client=client,
+                            engine=app.state.engine,
+                            redis_url=redis_url,
+                            outbound=outbound,
+                            runtime_id=runtime_id,
+                            model_name=model_name,
+                            meta_webhook_secret=settings.meta_webhook_secret,
+                            metrics_api_key=metrics_api_key,
+                        )
+                        yield harness
+            finally:
+                for key, value in previous_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+                get_settings.cache_clear()
+        finally:
+            if registry_engine is not None:
+                await registry_engine.dispose()
+            await outbound.stop()
+            if harness is not None:
+                await _delete_redis_threads(redis_url, harness.used_thread_ids)
+            await _drop_database(admin_url, db_name)

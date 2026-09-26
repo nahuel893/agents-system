@@ -6,12 +6,15 @@ exercised by the opt-in `tests/test_live_smoke.py` (`pytest -m live`).
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
 from agents_system.evals.live_harness import (
     AcceptAllParticipantDirectory,
     FakeWhatsAppServer,
+    LiveHarness,
     audit_rows_statement,
     build_meta_webhook_envelope,
     metric_value,
@@ -233,3 +236,223 @@ async def test_accept_all_participant_directory_resolves_to_active_participant()
     participant = await directory.resolve(session=None, address="+15550001111")
     assert participant.active is True
     assert participant.id
+
+
+# ---------------------------------------------------------------------------
+# LiveHarness.deliver_webhook -- used_thread_ids tracking (#113 review)
+# ---------------------------------------------------------------------------
+
+
+def _build_webhook_only_harness(client: httpx.AsyncClient) -> LiveHarness:
+    """A `LiveHarness` with only what `deliver_webhook` itself reads set to
+    something real -- `app`/`engine` are never touched by that method."""
+    return LiveHarness(
+        app=object(),  # type: ignore[arg-type]
+        client=client,
+        engine=object(),  # type: ignore[arg-type]
+        redis_url="redis://127.0.0.1:6379/0",
+        outbound=FakeWhatsAppServer(),
+        runtime_id="live-harness",
+        model_name="fake-model",
+        meta_webhook_secret="test-secret",
+        metrics_api_key="test-key",
+    )
+
+
+async def test_deliver_webhook_records_the_phone_as_a_used_thread_id() -> None:
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def webhook(request):
+        return JSONResponse({"status": "ok"})
+
+    app = Starlette(routes=[Route("/webhook", webhook, methods=["POST"])])
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://live-harness.test"
+    ) as client:
+        harness = _build_webhook_only_harness(client)
+        assert harness.used_thread_ids == set()
+
+        await harness.deliver_webhook(phone="+15550009999", text="hola")
+
+        assert harness.used_thread_ids == {"+15550009999"}
+
+
+async def test_deliver_webhook_accumulates_every_distinct_phone() -> None:
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def webhook(request):
+        return JSONResponse({"status": "ok"})
+
+    app = Starlette(routes=[Route("/webhook", webhook, methods=["POST"])])
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://live-harness.test"
+    ) as client:
+        harness = _build_webhook_only_harness(client)
+
+        await harness.deliver_webhook(phone="+15550001111", text="one")
+        await harness.deliver_webhook(phone="+15550002222", text="two")
+        await harness.deliver_webhook(phone="+15550001111", text="one-again")
+
+        assert harness.used_thread_ids == {"+15550001111", "+15550002222"}
+
+
+# ---------------------------------------------------------------------------
+# _delete_redis_threads (#113 review, high-severity finding)
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_redis_threads_deletes_every_tracked_thread(monkeypatch) -> None:
+    import langgraph.checkpoint.redis as redis_checkpoint
+
+    from agents_system.evals import live_harness
+
+    deleted: list[str] = []
+
+    class _FakeSaver:
+        async def adelete_thread(self, thread_id: str) -> None:
+            deleted.append(thread_id)
+
+    class _FakeSaverContext:
+        async def __aenter__(self):
+            return _FakeSaver()
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+    class _FakeAsyncRedisSaver:
+        @staticmethod
+        def from_conn_string(conn_string: str) -> _FakeSaverContext:
+            return _FakeSaverContext()
+
+    monkeypatch.setattr(redis_checkpoint, "AsyncRedisSaver", _FakeAsyncRedisSaver)
+
+    await live_harness._delete_redis_threads(
+        "redis://127.0.0.1:6379/0", {"+15550001111", "+15550002222"}
+    )
+
+    assert sorted(deleted) == ["+15550001111", "+15550002222"]
+
+
+async def test_delete_redis_threads_is_a_no_op_for_an_empty_set(monkeypatch) -> None:
+    import langgraph.checkpoint.redis as redis_checkpoint
+
+    from agents_system.evals import live_harness
+
+    def _fail_from_conn_string(conn_string: str) -> None:
+        raise AssertionError(
+            "must not connect to Redis when there is nothing to delete"
+        )
+
+    class _FakeAsyncRedisSaver:
+        from_conn_string = staticmethod(_fail_from_conn_string)
+
+    monkeypatch.setattr(redis_checkpoint, "AsyncRedisSaver", _FakeAsyncRedisSaver)
+
+    # Must not raise, and must not touch Redis at all.
+    await live_harness._delete_redis_threads("redis://127.0.0.1:6379/0", set())
+
+
+async def test_delete_redis_threads_swallows_errors_like_drop_database(
+    monkeypatch,
+) -> None:
+    """Mirrors `_drop_database`'s never-raise contract: a teardown that fails
+    must not hide the test's own result."""
+    import langgraph.checkpoint.redis as redis_checkpoint
+
+    from agents_system.evals import live_harness
+
+    class _FakeSaverContext:
+        async def __aenter__(self):
+            raise ConnectionError("redis unreachable")
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+    class _FakeAsyncRedisSaver:
+        @staticmethod
+        def from_conn_string(conn_string: str) -> _FakeSaverContext:
+            return _FakeSaverContext()
+
+    monkeypatch.setattr(redis_checkpoint, "AsyncRedisSaver", _FakeAsyncRedisSaver)
+
+    await live_harness._delete_redis_threads("redis://127.0.0.1:6379/0", {"+1555"})
+
+
+# ---------------------------------------------------------------------------
+# boot_live_harness -- single-boot-at-a-time serialization (#113 review,
+# medium-severity finding)
+# ---------------------------------------------------------------------------
+
+
+async def test_boot_live_harness_never_overlaps_two_concurrent_boots(
+    monkeypatch,
+) -> None:
+    """Two `boot_live_harness()` calls booted concurrently in the same
+    process must never be "up" at the same time -- overlapping would let the
+    second call's `os.environ`/`get_settings()` mutation invalidate the
+    first's already-issued credentials mid-flight (this module's docstring,
+    "One `boot_live_harness` at a time per process"). Every real I/O boundary
+    (Postgres, the model provider, the real `create_app` lifespan) is faked;
+    only the harness's own locking and its real env-mutate/restore logic are
+    exercised.
+    """
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from agents_system.evals import live_harness
+
+    async def fake_create_database(admin_url: str, name: str) -> None:
+        return None
+
+    async def fake_drop_database(admin_url: str, name: str) -> None:
+        return None
+
+    def fake_run_migrations(database_url: str, *, repo_root: object) -> None:
+        return None
+
+    def fake_build_eval_model():
+        return object(), "fake-model"
+
+    def fake_create_app(**kwargs: object) -> FastAPI:
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            app.state.engine = object()
+            yield
+
+        return FastAPI(lifespan=lifespan)
+
+    monkeypatch.setattr(live_harness, "_create_database", fake_create_database)
+    monkeypatch.setattr(live_harness, "_drop_database", fake_drop_database)
+    monkeypatch.setattr(live_harness, "_run_migrations", fake_run_migrations)
+    monkeypatch.setattr(live_harness, "build_eval_model", fake_build_eval_model)
+    monkeypatch.setattr(live_harness, "create_app", fake_create_app)
+
+    order: list[str] = []
+
+    async def run(name: str, hold_s: float) -> None:
+        async with live_harness.boot_live_harness(runtime_id=name) as harness:
+            order.append(f"{name}-enter")
+            assert harness.runtime_id == name
+            await asyncio.sleep(hold_s)
+            order.append(f"{name}-exit")
+
+    async def run_a() -> None:
+        await run("a", 0.3)
+
+    async def run_b() -> None:
+        await asyncio.sleep(0.05)
+        await run("b", 0.0)
+
+    await asyncio.gather(run_a(), run_b())
+
+    assert order.index("a-exit") < order.index("b-enter"), (
+        "b entered its own boot_live_harness() body before a's had exited -- "
+        f"the two boots overlapped: {order!r}"
+    )

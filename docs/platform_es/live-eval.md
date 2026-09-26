@@ -506,6 +506,19 @@ punto de configuración ya existente que este harness apunta a un servidor
 local real (`FakeWhatsAppServer`) que registra cada envío en lugar de
 enviarlo de verdad.
 
+Al finalizar también borra cada hilo de checkpoint de Redis que las
+llamadas a `deliver_webhook` de esta corrida escribieron (#113): un
+checkpoint que quedó de una corrida anterior nunca debe dejar pasar el
+assert de `read_thread` de una corrida posterior sin que el checkpointing
+de ESA corrida haya funcionado de verdad. Sólo una llamada a
+`boot_live_harness()` puede estar activa a la vez por proceso -- levantar
+el harness muta el `os.environ` global del proceso y el caché de
+`get_settings()`, así que toda la vida de una llamada (desde que levanta
+hasta que finaliza) queda serializada con un lock a nivel de módulo; una
+segunda llamada concurrente espera a que la primera termine del todo en
+lugar de corromper su configuración. No usar `asyncio.gather()` sobre dos
+llamadas a `boot_live_harness()` esperando que corran en paralelo.
+
 `LiveHarness` expone: `send_chat_completion` (un turno vía
 `/v1/chat/completions`), `deliver_webhook` (un mensaje entrante de WhatsApp
 firmado, con el mismo esquema HMAC-SHA256 real que verifica

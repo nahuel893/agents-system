@@ -87,7 +87,12 @@ async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> Non
     assert turns_after_api >= turns_before + 1
 
     # --- Turn 2: the WhatsApp webhook -> deferred worker -------------------
-    phone = "+15550001234"
+    # A per-run phone number (mirroring the uuid4-based session_id above),
+    # not a fixed one (#113 review): a fixed thread_id would let a stale
+    # checkpoint from an earlier, possibly-broken run satisfy this run's own
+    # `read_thread` assertion below, on top of `boot_live_harness` now also
+    # deleting each run's own checkpoint threads at teardown.
+    phone = f"+1555{uuid.uuid4().int % 10_000_000:07d}"
     webhook_response = await live_harness.deliver_webhook(
         phone=phone,
         text=(

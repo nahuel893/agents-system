@@ -467,6 +467,17 @@ Meta: `WhatsAppClient` posts to `Settings.whatsapp_graph_api_url`, an
 existing configuration seam this harness points at a real local server
 (`FakeWhatsAppServer`) that records every send instead.
 
+Teardown also deletes every Redis checkpoint thread this run's own
+`deliver_webhook` calls wrote (#113): a checkpoint left behind by an earlier
+run must never let a later run's `read_thread` assertion pass without that
+run's own checkpointing genuinely having worked. Only one `boot_live_harness()`
+call can be "up" at a time per process -- booting mutates the process-global
+`os.environ` and `get_settings()` cache, so a whole call's lifetime (boot
+through teardown) is serialized on a module-level lock; a second concurrent
+call waits for the first to fully finish instead of corrupting its settings.
+Do not `asyncio.gather()` two `boot_live_harness()` calls expecting them to
+run side by side.
+
 `LiveHarness` exposes: `send_chat_completion` (one turn through
 `/v1/chat/completions`), `deliver_webhook` (one signed inbound WhatsApp
 message, HMAC-SHA256'd with the real scheme `verify_signature` checks),
