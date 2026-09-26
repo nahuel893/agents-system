@@ -923,7 +923,7 @@ breaking** — see PR4a-ii-T4.
   unresolvable registration, before serving begins", "One bad registration
   entry blocks the whole boot". <!-- sdd-owner: implementation -->
 
-- [ ] **PR4a-ii-T3 — WhatsApp/adapter-binding-preserved regression suite.**
+- [x] **PR4a-ii-T3 — WhatsApp/adapter-binding-preserved regression suite.**
   RED: extend `tests/test_main.py` with the full set of WhatsApp/adapter
   regression scenarios the spec names for this capability, now expressed
   against the `agents`-driven registration path instead of the old

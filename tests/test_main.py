@@ -2146,3 +2146,248 @@ async def test_registration_one_unresolvable_entry_blocks_the_whole_boot() -> No
 
     assert not hasattr(app.state, "runtimes")
     assert not hasattr(app.state, "adapter_model_ids")
+
+
+def _mock_worker() -> MagicMock:
+    worker = MagicMock()
+    worker.start = AsyncMock()
+    worker.stop = AsyncMock()
+    return worker
+
+
+@pytest.mark.asyncio
+async def test_registration_binds_whatsapp_and_publishes_only_adapter_ids() -> None:
+    """spec: 'A registered id is correctly bound to WhatsApp', 'An
+    adapter-named id appears in /v1/models' and 'A WhatsApp-only runtime does
+    not leak into /v1/models' -- the cache holds both runtimes, /v1 lists only
+    the id ADAPTER_RUNTIMES names, never every key of `agents`."""
+    import httpx
+
+    app = create_test_app(
+        agents={"acme-sales": "sales-agent", "support-bot": "sales-agent"},
+        grants={"acme-sales": _SALES_GRANT, "support-bot": _SALES_GRANT},
+    )
+    settings = _registration_settings(
+        adapter_runtimes=["acme-sales"], whatsapp_runtime_id="support-bot"
+    )
+
+    with (
+        _stack(_registration_patches(settings)),
+        patch(
+            "agents_system.services.webhook_worker.DeferredWebhookWorker",
+            return_value=_mock_worker(),
+        ) as worker_cls,
+        patch(
+            "agents_system.integration.openai_adapter.get_settings",
+            return_value=settings,
+        ),
+        patch("agents_system.audit.sink.AuditSink") as sink_cls,
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        async with lifespan(app):
+            assert set(app.state.runtimes) == {"acme-sales", "support-bot"}
+            assert app.state.adapter_model_ids == frozenset({"acme-sales"})
+            _, kwargs = worker_cls.call_args
+            assert kwargs["runtime"] is app.state.runtimes["support-bot"]
+
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                response = await client.get("/v1/models")
+
+    assert [m["id"] for m in response.json()["data"]] == ["acme-sales"]
+
+
+@pytest.mark.parametrize(
+    ("channel", "overrides"),
+    [
+        ("WHATSAPP_RUNTIME_ID", {"whatsapp_runtime_id": "ghost-bot"}),
+        ("ADAPTER_RUNTIMES", {"adapter_runtimes": ["acme-sales", "ghost-bot"]}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_registration_fails_boot_on_an_unmatched_channel_id(
+    channel: str, overrides: dict[str, object]
+) -> None:
+    """spec: 'An unmatched WhatsApp runtime id fails boot' -- naming the id.
+    An ADAPTER_RUNTIMES id no registration serves fails the same way,
+    rather than /v1/models silently listing less than the operator named."""
+    app = create_test_app(
+        agents={"acme-sales": "sales-agent"}, grants={"acme-sales": _SALES_GRANT}
+    )
+    build_runtime = MagicMock(side_effect=AssertionError("must not be reached"))
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(
+            app,
+            _registration_settings(**overrides),
+            patch("agents_system.harness.factory.build_runtime", build_runtime),
+        )
+
+    message = str(exc_info.value)
+    assert "'ghost-bot'" in message
+    assert channel in message
+    build_runtime.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_registration_refuses_a_trusted_input_agent_on_whatsapp() -> None:
+    """spec: 'A trusted-input agent cannot be bound to WhatsApp' -- naming
+    the agent and the runtime id. The generic agent resolves
+    untrusted_input=False."""
+    from agents_system.agent.spec import Agent
+
+    app = create_test_app(
+        agents={"wa-internal": Agent(name="internal-bot")},
+        grants={"wa-internal": ["read:session"]},
+    )
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(app, _registration_settings(whatsapp_runtime_id="wa-internal"))
+
+    message = str(exc_info.value)
+    assert "'internal-bot'" in message
+    assert "'wa-internal'" in message
+    assert "untrusted_input" in message
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.asyncio
+async def test_registration_binds_an_untrusted_input_agent_to_whatsapp() -> None:
+    """spec: 'An untrusted-input agent binds successfully' -- a custom agent
+    extending sales-agent inherits untrusted_input: true."""
+    from agents_system.agent.spec import Agent
+
+    app = create_test_app(
+        agents={"wa-support": Agent(name="support-bot", extends="sales-agent")},
+        grants={"wa-support": _SALES_GRANT},
+    )
+    worker = _mock_worker()
+
+    await _boot(
+        app,
+        _registration_settings(whatsapp_runtime_id="wa-support"),
+        patch(
+            "agents_system.services.webhook_worker.DeferredWebhookWorker",
+            return_value=worker,
+        ),
+    )
+
+    assert app.state.runtimes["wa-support"]["runtime"].definition.untrusted_input
+    worker.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_registration_enforces_the_lease_budget_for_a_custom_agent() -> None:
+    """spec: 'A WhatsApp-bound custom agent with too generous a timeout fails
+    boot' -- ValueError naming the runtime id and the computed values. The
+    importer safety ceiling already caps a custom agent at the platform
+    default, so the definition is faked here to reach this second check."""
+    from agents_system.agent.spec import Agent
+
+    fake_definition = MagicMock()
+    fake_definition.untrusted_input = True
+    fake_definition.execution_limits = {"total_execution_timeout_s": 540}
+    app = create_test_app(
+        agents={"wa-support": Agent(name="support-bot", extends="sales-agent")},
+        grants={"wa-support": _SALES_GRANT},
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await _boot(
+            app,
+            _registration_settings(whatsapp_runtime_id="wa-support"),
+            patch("agents_system.harness.loader.resolve", return_value=fake_definition),
+        )
+
+    message = str(exc_info.value)
+    assert "'wa-support'" in message
+    assert "540" in message
+    assert "600" in message
+
+
+@pytest.mark.parametrize(
+    ("grants", "deploy_grants", "source"),
+    [
+        # grants= passed, but not for this id.
+        ({"acme-sales": _SALES_GRANT}, {}, "grants"),
+        # No grants=: DEPLOY_GRANTS is keyed by the registered id, and the
+        # old `{deployment}__{role}` key is never consulted.
+        (None, {"_generic__sales-agent": _SALES_GRANT}, "DEPLOY_GRANTS"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_registration_fails_boot_without_a_grant_for_the_id(
+    grants: dict[str, tuple[str, ...]] | None,
+    deploy_grants: dict[str, tuple[str, ...]],
+    source: str,
+) -> None:
+    """spec: 'A registered id without a DEPLOY_GRANTS entry fails boot' --
+    nothing is granted automatically, whichever source the grants come from."""
+    agents = {"acme-sales": "sales-agent", "support-bot": "sales-agent"}
+    if grants is None:
+        agents = {"support-bot": "sales-agent"}
+    app = create_test_app(agents=agents, grants=grants)
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(app, _registration_settings(deploy_grants=deploy_grants))
+
+    message = str(exc_info.value)
+    assert "'support-bot'" in message
+    assert source in message
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.asyncio
+async def test_registration_falls_back_to_deploy_grants_keyed_by_the_id() -> None:
+    """spec: 'An id migrated from the old key format resolves correctly' --
+    with no grants=, DEPLOY_GRANTS keyed by the registered id is the grant."""
+    app = create_test_app(agents={"support-bot": "sales-agent"})
+
+    await _boot(
+        app,
+        _registration_settings(deploy_grants={"support-bot": ("read:catalog",)}),
+    )
+
+    from agents_system.permissions import permission_registry
+
+    equipped = app.state.runtimes["support-bot"]["runtime"]
+    assert equipped.deploy_grant_ceiling == frozenset(
+        {permission_registry.resolve("read:catalog")}
+    )
+
+
+@pytest.mark.asyncio
+async def test_registration_with_a_client_needs_an_explicit_root_config() -> None:
+    """spec: 'A client-override registration with no RootConfig fails boot'
+    -- naming the runtime id."""
+    app = create_test_app(
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": _SALES_GRANT},
+        clients={"acme-sales": "client-a"},
+    )
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(app, _registration_settings())
+
+    message = str(exc_info.value)
+    assert "'acme-sales'" in message
+    assert "RootConfig" in message
+
+
+@pytest.mark.asyncio
+async def test_registration_still_applies_r4_at_grant_time() -> None:
+    """ADR-003 R4 -- an untrusted_input custom agent granted a T3
+    permission fails boot out of build_runtime, exactly like a predefined
+    role on the Settings-driven path."""
+    from agents_system.agent.spec import Agent
+
+    app = create_test_app(
+        agents={"support-bot": Agent(name="support-bot", extends="sales-agent")},
+        grants={"support-bot": ["exec:command"]},
+    )
+
+    with pytest.raises(UntrustedInputGrantError):
+        await _boot(app, _registration_settings())

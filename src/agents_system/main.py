@@ -338,13 +338,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # failure below) rather than silently defaulting to an empty
                 # or full-role grant.
                 if runtime_id not in plan.grants:
+                    example = (
+                        f'DEPLOY_GRANTS=\'{{"{runtime_id}": ["read:catalog"]}}\''
+                        if plan.grant_source == "DEPLOY_GRANTS"
+                        else f"grants={{{runtime_id!r}: ['read:catalog']}}"
+                    )
                     raise DefinitionError(
                         f"Runtime {runtime_id!r} ({registration.subject}) has no "
-                        "DEPLOY_GRANTS entry. Boot requires an explicit "
+                        f"{plan.grant_source} entry. Boot requires an explicit "
                         "deploy-time grant for every configured runtime -- "
-                        "set DEPLOY_GRANTS to a JSON object mapping this "
-                        "runtime id to its granted permission wire names, "
-                        f'e.g. DEPLOY_GRANTS=\'{{"{runtime_id}": ["read:catalog"]}}\'. '
+                        f"map this runtime id in {plan.grant_source} to its "
+                        f"granted permission wire names, e.g. {example}. "
                         "Refusing to boot."
                     )
 
@@ -425,8 +429,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             #
             # A well-formed, truthy `whatsapp_runtime_id` cannot reach this
             # branch while itself being the reason `webhook_runtime` is
-            # `None`: every registration `_boot_plan` returns reaches the
-            # runtime loop above, which either raises before this code runs
+            # `None`: `_boot_plan` either registers it or, for
+            # `create_app(agents=...)`, refuses it as unmatched; every
+            # registration reaches the runtime loop above, which either
+            # raises before this code runs
             # (an unsafe `untrusted_input` role, an execution timeout too
             # close to the outbox lease, a missing grant) or lands in
             # `runtimes[runtime_id]` -- there is no silent "resolved but not
@@ -608,6 +614,8 @@ class _BootPlan:
 
     registrations: dict[str, _Registration]
     grants: Mapping[str, Any]
+    grant_source: str
+    """``create_app(grants=...)``, or ``DEPLOY_GRANTS`` when it got none."""
 
 
 def _explicit_registrations(
@@ -700,10 +708,36 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
         registrations = _settings_registrations(channel_ids)
     else:
         registrations = _explicit_registrations(agents, clients)
+        # A channel id is looked up in the registration as an opaque key,
+        # never parsed. One that matches nothing fails boot: an unmatched
+        # WHATSAPP_RUNTIME_ID would accept messages no runtime answers, and
+        # an unmatched ADAPTER_RUNTIMES id would leave /v1/models listing
+        # less than the operator named.
+        whatsapp_ids = (
+            [settings.whatsapp_runtime_id] if settings.whatsapp_runtime_id else []
+        )
+        for channel, ids in (
+            ("WHATSAPP_RUNTIME_ID", whatsapp_ids),
+            ("ADAPTER_RUNTIMES", settings.adapter_runtimes),
+        ):
+            unmatched = [
+                repr(runtime_id)
+                for runtime_id in ids
+                if runtime_id not in registrations
+            ]
+            if unmatched:
+                raise DefinitionError(
+                    f"{channel} names runtime id(s) {', '.join(unmatched)} "
+                    "that create_app(agents=...) does not register "
+                    f"(registered: {sorted(registrations)}). Refusing to boot."
+                )
 
     return _BootPlan(
         registrations=registrations,
         grants=grants if grants is not None else settings.deploy_grants,
+        grant_source="create_app(grants=...)"
+        if grants is not None
+        else "DEPLOY_GRANTS",
     )
 
 
