@@ -93,6 +93,13 @@ than leaving a claim out.
 
 #### A.1 — Role = class; agent = durable identity + memory with ephemeral activations
 
+> **Extended by ADR-004:** "role" here is no longer only one of the 8
+> packaged predefined roles — an importer-authored `Agent` (from a folder,
+> from Python parameters, or both) resolves through the same
+> `AgentDefinition`/`AgentRuntime` pipeline and inherits this section's
+> class/instance distinction identically. See
+> [ADR-004 — Library-first custom agents](adr-004-library-first-agents.md).
+
 **Current state.** `docs/platform/role.md:16-26` already states the
 `AgentDefinition` (folder-based role) / `AgentRuntime` (live instance)
 distinction correctly, and the code matches it: `resolve()`
@@ -1130,6 +1137,12 @@ sandbox-bwrap.md` (ES).
 
 #### C.15 — Reference backends for platform-generic ports
 
+> **Extended by ADR-004:** these reference backends and the ports behind
+> them are agent-shape-agnostic — available to an importer-defined `Agent`
+> exactly as to a predefined role, since the wiring happens below the
+> resolved `AgentDefinition`, not per role name. See
+> [ADR-004 — Library-first custom agents](adr-004-library-first-agents.md).
+
 **Current state.** `EscalationChannel`, `ConversationSummarizer`, and
 `KnowledgeBase` are `Protocol` ports (`services/escalation.py:24`,
 `services/summaries.py:23`, `services/knowledge.py:23`) with **no concrete
@@ -1206,6 +1219,13 @@ the model does in response to the *intended* prompt.
 ---
 
 ### D. Role composition
+
+> **Extended by ADR-004:** an importer-defined `Agent` can extend
+> `platform/roles/agent` or any predefined role in this tree through the
+> same additive `extends:` inheritance, using a locator that also accepts
+> an importer folder path or an inline Python definition, not only a
+> platform-role name. See
+> [ADR-004 — Library-first custom agents](adr-004-library-first-agents.md).
 
 **Current tree**, verified directly against every `manifest.md`'s `extends:`
 field:
@@ -1359,6 +1379,11 @@ role contract" section.
 
 #### E.18 — Live evaluation pipeline
 
+> **Extended by ADR-004:** this pipeline runs against a resolved
+> `AgentDefinition`/`AgentRuntime`, not a role name, so it applies to an
+> importer-defined `Agent` exactly as it does to a predefined role. See
+> [ADR-004 — Library-first custom agents](adr-004-library-first-agents.md).
+
 **Current state.** No such pipeline exists. Per-PR CI is deterministic
 (offline, fake-model-based) per the existing test suite's own shape
 (`build_test_registry`, `tests/conftest.py:101`, and its consumers). No
@@ -1427,6 +1452,12 @@ nightly-run automation — this pipeline still runs by hand
 ---
 
 ### F. Stale documentation
+
+> **Extended by ADR-004:** the skills-location contradiction between
+> `role.md` and `deployment.md` this section's doc-hygiene work is adjacent
+> to is resolved there, and the generic→predefined terminology rename
+> touches the same files. See
+> [ADR-004 — Library-first custom agents](adr-004-library-first-agents.md).
 
 #### F.19 — `role.md` / `manifesto.md` say roles live under `agents/`; real path is `platform/roles/`
 

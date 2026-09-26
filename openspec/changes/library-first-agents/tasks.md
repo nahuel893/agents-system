@@ -1404,7 +1404,7 @@ notes, per the corrected `_es` doc-twin note above — `adr-003-permission-hiera
 EN/ES twins are each ~75 lines, used here as the closest size reference for
 a new ADR of comparable scope).
 
-- [ ] **PR7-T1 — Write `docs/architecture/adr-004-library-first-agents.md` + its `_es` twin.**
+- [x] **PR7-T1 — Write `docs/architecture/adr-004-library-first-agents.md` + its `_es` twin.**
   New ADR, following this repo's existing ADR structure (see
   `adr-001-runtime-topology.md`/`adr-002-agent-model-and-capabilities.md`/
   `adr-003-permission-hierarchy.md` for section conventions: Summary,
@@ -1444,7 +1444,7 @@ a new ADR of comparable scope).
   the EN ones).
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR7-T2 — Amend ADR-002's superseded/amended sections (EN + `_es`).**
+- [x] **PR7-T2 — Amend ADR-002's superseded/amended sections (EN + `_es`).**
   Add a short "See ADR-004" pointer note at A.1, D, C.15, E.18, and F in
   `docs/architecture/adr-002-agent-model-and-capabilities.md` (re-confirm
   each section's current line number by direct read at task time, per
@@ -1470,7 +1470,7 @@ a new ADR of comparable scope).
   only small additive hunks at the five cited anchors per file).
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR7-T3 — PR7 closing: `state.yaml` final pass + full consistency check.**
+- [x] **PR7-T3 — PR7 closing: `state.yaml` final pass + full consistency check.**
   Update `openspec/changes/library-first-agents/state.yaml`: `phase: archive`
   is NOT set by this task (archive happens separately, at merge, per
   `AGENTS.md`'s SDD-flow mapping — `Closes #NN`-style issue linkage is a
@@ -1507,3 +1507,36 @@ a new ADR of comparable scope).
   `permission-model` change folder to `openspec/specs/` (a process-only gap
   `proposal.md`'s own Modified Capabilities section flagged and deferred) is
   not fixed by any task above — it remains a separate housekeeping item.
+- **PR7-T3 consistency check — 5 spec requirements with no `Satisfies:`
+  citation.** Re-reading every PR1a-PR6 task's `Satisfies:` line against the
+  three spec files' `### Requirement:` titles found 5 titles never quoted
+  verbatim by any task: agent-definition-locator's "The base prompt contract
+  is appended last regardless of locator kind", "untrusted_input ⊥ T3-tier
+  permission exclusion applies regardless of locator kind", "Capability
+  tiers and the T3 sandbox gate apply regardless of locator kind",
+  "Deployment-override subtractive semantics are unaffected by the locator
+  generalization", "Predefined-role discovery stays scoped to the
+  platform-role tree"; and predefined-agent-governance's "Guard 1's per-role
+  version is independent of the package's own SemVer". Direct read of the
+  actual tests shows this is a citation gap, not a coverage gap, for the
+  first 4: `tests/test_agent_folder_plus_overrides.py:123-188` and
+  `tests/test_agent_from_params.py` (PR2-T1's RED) each construct a T3-tier
+  variant through a `FolderLocator`/`InlineLocator`-sourced `Agent` and
+  assert the same `_validate_untrusted_input_exec`/T3-sandbox rejection
+  fires as for a predefined role — covering the base-contract, untrusted_input
+  and T3-sandbox requirements for both non-platform locator kinds;
+  `tests/test_platform_tools_integration.py`'s `PINNED_ROLES`
+  parametrization and the "full existing predefined-role/deployment-override
+  suite green unchanged" verify step repeated across PR1a onward cover
+  discovery scoping and subtractive-override semantics. These 4 tasks'
+  `Satisfies:` lines should be amended, in a future docs-only pass, to also
+  quote these titles. The 5th — Guard 1's per-role version being independent
+  of the package's own SemVer — is a genuine test gap: `design.md` D8
+  describes the two version spaces narratively, but neither
+  `tests/test_role_governance_contract.py` nor
+  `tests/test_check_role_governance_marker.py` has a case exercising it (no
+  `SemVer`/`pyproject`/`__version__` reference in either file). File a
+  follow-up task for a regression test proving a role `version:` MAJOR bump
+  does not require, and a package MINOR release does not substitute for, a
+  `BREAKING CHANGE:` marker on `platform/roles/**/manifest.md`, or vice
+  versa.
