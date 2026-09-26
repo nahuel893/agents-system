@@ -103,5 +103,5 @@ Valores por defecto: 100 filas por llamada (como máximo el `HARD_ROW_CEILING` d
 ## Seguimientos
 
 - **Qué roles predefinidos equipan `sql_query`.** Ninguno en este cambio: agregar una herramienta a un rol entregado cambia lo que reciben quienes importan la librería y es una decisión propia, relevante para SemVer.
-- **Un escenario en vivo contra un modelo real** (plan de pruebas en vivo, Fase 1) necesita un rol que declare la herramienta y el harness en vivo de la Fase 0 (#78).
+- **Escenarios en vivo a través de la aplicación real.** `tests/test_live_eval_sql_query.py` ya ejecuta la herramienta contra un modelo real (una pregunta ad hoc, y un pedido de borrado que debe dejar los datos intactos) mediante un rol exclusivo de test y el runtime directo; ejecutarla a través de la API HTTP necesita un rol que declare la herramienta y el harness en vivo de la Fase 0 (#78).
 - **Reevaluar `pglast`** si su licencia llegara a ser compatible con la librería, para eliminar la diferencia entre parsers en su origen.

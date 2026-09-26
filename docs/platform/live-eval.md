@@ -345,3 +345,8 @@ is what keeps this documented floor case from failing its own smoke test.
 - Offline tests: `tests/test_eval_schema.py`, `tests/test_eval_runner.py`,
   `tests/test_eval_reporting.py`, `tests/test_eval_provider.py`
 - Live tests: `tests/test_live_eval_sales_agent.py`, `tests/test_live_eval_roles.py`
+- Read-only SQL tool scenarios (#80): `tests/test_live_eval_sql_query.py` —
+  also needs the PostgreSQL setup of `tests/test_sql_query_integration.py`
+  (`DATABASE_URL`, `SQL_DATABASE_URL`) and skips without it; its delete-request
+  scenario asserts the data is unchanged on every run, because the database
+  role enforces that regardless of the model

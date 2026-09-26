@@ -103,5 +103,5 @@ Defaults: 100 rows per call (at most the platform's `HARD_ROW_CEILING`, 500) and
 ## Follow-ups
 
 - **Which predefined roles equip `sql_query`.** None does in this change: adding a tool to a shipped role changes what importers get and is a SemVer-relevant decision of its own.
-- **A live scenario against a real model** (live-test plan, Phase 1) needs a role that declares the tool and the Phase 0 live harness (#78).
+- **Live scenarios through the real application.** `tests/test_live_eval_sql_query.py` already runs the tool against a real model (an ad hoc question, and a delete request that must leave the data unchanged) through a test-only role and the direct runtime; running it through the HTTP API needs a role that declares the tool and the Phase 0 live harness (#78).
 - **Re-evaluate `pglast`** if its licensing ever fits the library, to remove the parser differential at the source.
