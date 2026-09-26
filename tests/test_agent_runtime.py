@@ -1872,9 +1872,71 @@ async def test_tool_call_to_unknown_tool_records_denied_outcome() -> None:
 
     await agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=())
 
+    # The model's own tool name was never a real registered connector (it
+    # never reached the equipped surface), so it carries no monitoring value
+    # -- and, per test_denied_tool_call_never_leaks_attacker_tool_name_below,
+    # it must never become the label verbatim. Only the fixed placeholder is
+    # recorded, regardless of how benign this particular literal looks.
+    assert (
+        metrics.tool_calls_total.labels(
+            tool="_unrecognized_", outcome="denied"
+        )._value.get()
+        == 1
+    )
     assert (
         metrics.tool_calls_total.labels(
             tool="nonexistent_tool", outcome="denied"
+        )._value.get()
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_denied_tool_call_never_leaks_attacker_tool_name() -> None:
+    """Label hygiene for the "denied" (not_in_surface) outcome specifically:
+
+    `tool_name` there comes straight from the model's own `tool_calls`
+    output (`call["name"]`) -- untrusted, since it is never checked against
+    the equipped surface before this point (that IS why it is "denied").
+    A prompt-injected or hallucinating model can put arbitrary text there,
+    including PII, and it must never reach the `agent_tool_calls_total`
+    label or the exported `/metrics` text -- unlike "ok"/"blocked"/
+    "timeout"/"error", where `tool_name` is already bound to a real,
+    equipped `ToolSpec` name and is safe to record as is.
+    """
+    from prometheus_client import generate_latest
+
+    from agents_system.agent.graph import AgentRuntime
+
+    attacker_tool_name = (
+        'leak_+15551234567_session_secret="XYZ"\nagent_turns 999 # injected'
+    )
+    first_response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_injection_probe",
+                "name": attacker_tool_name,
+                "args": {},
+                "type": "tool_call",
+            }
+        ],
+    )
+    final_response = AIMessage(content="I cannot use that tool.")
+    model = ToolAwareFakeModel(responses=[first_response, final_response])
+
+    runtime = _make_runtime()  # empty surface -> any call is "not_in_surface"
+    metrics = _fresh_metrics()
+    agent = AgentRuntime(runtime, model, metrics=metrics)
+
+    await agent.run_turn([HumanMessage(content="Hi")], session_id="s1", permissions=())
+
+    output = generate_latest(metrics.registry).decode()
+    assert attacker_tool_name not in output
+    assert "+15551234567" not in output
+    assert (
+        metrics.tool_calls_total.labels(
+            tool="_unrecognized_", outcome="denied"
         )._value.get()
         == 1
     )

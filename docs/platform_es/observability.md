@@ -80,10 +80,15 @@ existente.
 **Outcomes de llamada a herramienta**: `denied` es un `PolicyViolation`
 para una herramienta que nunca estuvo en la superficie equipada
 (`reason="not_in_surface"` -- territorio Layer-1, p. ej. un nombre de
-herramienta alucinado). `blocked` es una falla de revalidación Layer-2
-sobre una herramienta que SÍ estaba equipada (`reason` en
-`{"revalidation_required", "permission_revoked"}` --
-`harness/interceptor.py`). `timeout` es `tool_call_timeout_s`
+herramienta alucinado o inyectado por prompt injection). Como ese nombre
+nunca se validó contra la superficie equipada, es texto no confiable
+provisto por el modelo -- el label `tool` de una muestra `denied` es
+siempre el placeholder fijo `_unrecognized_`, nunca el nombre de
+herramienta que dio el modelo (ver "Higiene de labels" más abajo).
+`blocked` es una falla de revalidación Layer-2 sobre una herramienta que SÍ
+estaba equipada (`reason` en `{"revalidation_required",
+"permission_revoked"}` -- `harness/interceptor.py`); su label `tool` es el
+nombre real de esa herramienta equipada. `timeout` es `tool_call_timeout_s`
 disparándose para esa llamada. `error` es cualquier otra cosa que el
 propio connector lance -- se registra y se vuelve a lanzar sin cambios,
 igual que el outcome `error` a nivel turno.
@@ -102,14 +107,22 @@ configurados por el operador -- **nunca** un id de usuario, número de
 teléfono, id de correlación/request, o texto de mensaje. Concretamente:
 `runtime_id` (ver abajo), `outcome`/`limit`/`direction` (enums de string
 fijos), `tool` (un nombre de connector del `ToolRegistry` finito, inyectado
-por el operador). No hay ningún parámetro en `record_turn`/
-`record_tool_call`/`record_limit_trip` por el cual un valor no acotado
-pudiera llegar a un label -- `tests/test_observability_metrics.py` y
-`tests/test_agent_runtime.py` lo fijan: un test pinea el esquema exacto de
-nombres de labels, otro corre un turno real con un `session_id` con forma
-de número de teléfono y verifica que nunca aparece en ningún lado del
-texto exportado (`session_id` ni siquiera es un label -- no es parámetro
-de ninguna función de registro).
+por el operador -- **excepto** para una llamada `denied`, donde el nombre
+de herramienta que dio el modelo nunca se validó contra ese registro:
+`_execute_tools` (`agent/graph.py`) sustituye ese único caso por el
+placeholder fijo `_unrecognized_`, así un nombre de herramienta atacante o
+alucinado nunca puede llegar al almacén de labels). No hay ningún
+parámetro en `record_turn`/`record_tool_call`/`record_limit_trip` por el
+cual un valor no acotado pudiera llegar a un label --
+`tests/test_observability_metrics.py` y `tests/test_agent_runtime.py` lo
+fijan: un test pinea el esquema exacto de nombres de labels, uno corre un
+turno real con un `session_id` con forma de número de teléfono y verifica
+que nunca aparece en ningún lado del texto exportado (`session_id` ni
+siquiera es un label -- no es parámetro de ninguna función de registro), y
+otro corre una llamada `denied` cuyo nombre es un payload con forma de
+ataque (un número de teléfono más metacaracteres del formato de
+exposición de Prometheus) y verifica que ni el payload ni su substring de
+PII aparecen nunca en el texto exportado.
 
 ## `runtime_id`
 

@@ -73,12 +73,17 @@ without changing any existing error-handling behavior.
 
 **Tool-call outcomes**: `denied` is a `PolicyViolation` for a tool that was
 never in the equipped surface at all (`reason="not_in_surface"` — Layer-1
-territory, e.g. a hallucinated tool name). `blocked` is a Layer-2
-revalidation failure on a tool that WAS equipped
-(`reason` in `{"revalidation_required", "permission_revoked"}` —
-`harness/interceptor.py`). `timeout` is `tool_call_timeout_s` firing for
-that one call. `error` is anything else the connector itself raises —
-recorded, then re-raised unchanged, same as the turn-level `error` outcome.
+territory, e.g. a hallucinated or prompt-injected tool name). Because that
+name was never checked against the equipped surface, it is untrusted,
+model-supplied text — the `tool` label for a `denied` sample is always the
+fixed placeholder `_unrecognized_`, never the model's own tool name (see
+"Label hygiene" below). `blocked` is a Layer-2 revalidation failure on a
+tool that WAS equipped (`reason` in
+`{"revalidation_required", "permission_revoked"}` —
+`harness/interceptor.py`); its `tool` label is that equipped tool's real
+name. `timeout` is `tool_call_timeout_s` firing for that one call. `error`
+is anything else the connector itself raises — recorded, then re-raised
+unchanged, same as the turn-level `error` outcome.
 
 **Honesty rule for tokens/cost** — same contract as slice 1's `TurnUsage`:
 `agent_tokens_total`/`agent_cost_usd_total` are only incremented when the
@@ -92,13 +97,21 @@ Labels are bounded, code-defined enums or operator-configured identifiers —
 **never** a user id, phone number, correlation/request id, or message text.
 Concretely: `runtime_id` (see below), `outcome`/`limit`/`direction` (fixed
 string enums), `tool` (a connector name from the finite, operator-injected
-`ToolRegistry`). There is no parameter on `record_turn`/`record_tool_call`/
-`record_limit_trip` through which an unbounded value could reach a label —
-`tests/test_observability_metrics.py` and `tests/test_agent_runtime.py`
-both lock this down: one test pins the exact label-name schema, another
-drives a real turn with a phone-number-shaped `session_id` and asserts it
-never appears anywhere in the exported text (`session_id` is never a label
-at all — it is not even a parameter of any recording function).
+`ToolRegistry` — **except** for a `denied` tool call, where the model's own
+tool name was never checked against that registry at all; `_execute_tools`
+(`agent/graph.py`) substitutes the fixed placeholder `_unrecognized_` for
+that one case specifically, so an attacker- or hallucination-supplied tool
+name can never reach the label store). There is no parameter on
+`record_turn`/`record_tool_call`/`record_limit_trip` through which an
+unbounded value could reach a label — `tests/test_observability_metrics.py`
+and `tests/test_agent_runtime.py` both lock this down: one test pins the
+exact label-name schema, one drives a real turn with a phone-number-shaped
+`session_id` and asserts it never appears anywhere in the exported text
+(`session_id` is never a label at all — it is not even a parameter of any
+recording function), and another drives a `denied` tool call whose name is
+an attacker-shaped payload (a phone number plus Prometheus exposition-format
+metacharacters) and asserts neither the payload nor its PII substring ever
+appears in the exported text.
 
 ## `runtime_id`
 

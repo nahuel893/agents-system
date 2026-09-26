@@ -289,6 +289,12 @@ async def _call_model(
     return {"messages": [response], "turn_usage": turn_usage}
 
 
+#: The fixed `tool` label value recorded for a "denied"/not_in_surface tool
+#: call, in place of the model-supplied `tool_name` -- see the note in
+#: `_execute_tools`'s `PolicyViolation` handling below.
+_UNRECOGNIZED_TOOL_LABEL = "_unrecognized_"
+
+
 async def _execute_tools(
     state: AgentState,
     equipped: EquippedRuntime,
@@ -320,7 +326,11 @@ async def _execute_tools(
     when the call exceeds tool_call_timeout_s, and "error" for anything else
     the connector itself raises -- recorded, then re-raised unchanged so
     error handling behavior is exactly what it was before this metric
-    existed.
+    existed. The "denied" branch records the fixed `_UNRECOGNIZED_TOOL_LABEL`
+    instead of the model-supplied `tool_name` -- that name was never checked
+    against the equipped surface, so it is untrusted (possibly
+    prompt-injected or hallucinated) text with no monitoring value, and must
+    never reach the `tool` label (label hygiene, same rule as `session_id`).
     """
     last_message = state["messages"][-1]
     tool_calls: list[dict[str, Any]] = getattr(last_message, "tool_calls", []) or []
@@ -394,12 +404,24 @@ async def _execute_tools(
                     tool=tool_name,
                     reason=violation.reason,
                 )
-                policy_outcome = (
-                    "denied" if violation.reason == "not_in_surface" else "blocked"
+                not_in_surface = violation.reason == "not_in_surface"
+                policy_outcome = "denied" if not_in_surface else "blocked"
+                # "denied"/not_in_surface means `tool_name` was never checked
+                # against the equipped surface -- by definition it is not a
+                # real registered connector name, so it is untrusted, model-
+                # supplied text (a prompt-injected or hallucinated "tool"
+                # call) with zero monitoring value. Recording it verbatim as
+                # a Prometheus label would let that text -- including PII --
+                # reach the process-wide, persistent /metrics label store
+                # (see docs/platform/observability.md's "Label hygiene").
+                # Every OTHER outcome's tool_name is already bound to a real,
+                # equipped ToolSpec and stays as is.
+                metric_tool_name = (
+                    _UNRECOGNIZED_TOOL_LABEL if not_in_surface else tool_name
                 )
                 record_tool_call(
                     metrics,
-                    tool=tool_name,
+                    tool=metric_tool_name,
                     outcome=policy_outcome,
                     duration_s=time.monotonic() - call_start,
                 )
