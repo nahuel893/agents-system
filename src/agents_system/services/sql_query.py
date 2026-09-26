@@ -18,8 +18,9 @@ check:
    statement independently of the guard. At most `row_limit + 1` rows are
    fetched, and the wrapped `LIMIT` already stops the server there.
 5. Rows are bounded in BYTES by the database too (`gated_cursor`): the row
-   cap alone lets one accepted query return hundreds of MB (`rpad`,
-   `string_agg`), all of it buffered here and handed to the model. The
+   cap alone lets one accepted query return hundreds of MB (`replace`,
+   `||`; `rpad`, `string_agg` where a deployment allows them), all of it
+   buffered here and handed to the model. The
    query runs as a cursor; the server measures each row and sends one
    larger than the whole budget as NULLs, and the connector fetches
    `FETCH_BATCH` rows at a time, keeping the running total itself and

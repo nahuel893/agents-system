@@ -140,10 +140,6 @@ DEFAULT_ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
         "avg",
         "min",
         "max",
-        "string_agg",
-        "array_agg",
-        "json_agg",
-        "jsonb_agg",
         "bool_and",
         "bool_or",
         "every",
@@ -205,8 +201,6 @@ DEFAULT_ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
         "substr",
         "left",
         "right",
-        "lpad",
-        "rpad",
         "replace",
         "reverse",
         "concat",
@@ -216,7 +210,6 @@ DEFAULT_ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
         "strpos",
         "regexp_replace",
         "overlay",
-        "format",
         "to_char",
         "to_number",
         "starts_with",
@@ -262,8 +255,19 @@ DEFAULT_ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
 Every entry is side-effect free: it reads its arguments and nothing else. No
 entry sleeps, takes a lock, reads or changes a setting, touches the
 filesystem or a large object, advances a sequence, or runs SQL held in a
-string (`query_to_xml` and friends would bypass the relation allowlist). A
-deployment may pass a larger set; it then owns the review of what it adds.
+string (`query_to_xml` and friends would bypass the relation allowlist).
+
+Left out on purpose, though harmless in every other way: functions that
+build a large value from short input. `rpad`/`lpad` take a length and
+`format` a width (`rpad('x', 250000000)` asks for 250 MB), and `string_agg`,
+`array_agg`, `json_agg` and `jsonb_agg` keep every row's value in memory.
+PostgreSQL has no per-query memory limit: a few such columns in one short
+query got a database in a 1 GB container OOM-killed, and the whole cluster
+restarted. Leaving them out does not bound memory - plain `||` through
+chained subqueries doubles a value per level - it only stops one short call
+from asking for gigabytes; the bound is the database host's (ADR-007).
+
+A deployment may pass a larger set; it then owns the review of what it adds.
 """
 
 # Node types that never belong in a read-only query, wherever they appear.

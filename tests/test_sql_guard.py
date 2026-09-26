@@ -107,7 +107,7 @@ def test_a_single_trailing_semicolon_is_accepted() -> None:
             " interval '1 day') AS d"
         ),
         (
-            "SELECT lower(name), length(name), string_agg(product, ', ')"
+            "SELECT lower(name), length(name), count(DISTINCT product)"
             " FROM clients_v JOIN sales_v ON true GROUP BY 1, 2"
         ),
         "SELECT * FROM sales_v s WHERE s.amount > 0 ORDER BY s.sold_at DESC LIMIT 5",
@@ -999,6 +999,53 @@ def test_a_deployment_can_extend_the_function_allowlist() -> None:
         allowed_functions=DEFAULT_ALLOWED_FUNCTIONS | {"md5"},
     )
     assert guard_query("SELECT md5(product) FROM sales_v", policy, row_limit=5).sql
+
+
+#: Functions that build a large value from short input: a padding length or
+#: a format width, or an aggregate that keeps every row's value in memory.
+_VALUE_BUILDERS = frozenset(
+    {"rpad", "lpad", "format", "string_agg", "array_agg", "json_agg", "jsonb_agg"}
+)
+
+
+def test_the_default_allowlist_holds_no_function_that_builds_large_values() -> None:
+    # PostgreSQL has no per-query memory limit: one short call to any of
+    # these asks the database host for up to 1 GB per value.
+    assert not _VALUE_BUILDERS & DEFAULT_ALLOWED_FUNCTIONS
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # Review probes that OOM-killed a 1 GB database and restarted it.
+        "SELECT " + ", ".join(f"rpad('x', 250000000) AS c{i}" for i in range(5)),
+        (
+            "SELECT "
+            + ", ".join(
+                f"length(string_agg(g::text || '{'x' * 200}', '{sep}')) AS c{i}"
+                for i, sep in enumerate(["", "-", "+", "*"])
+            )
+            + " FROM generate_series(1, 1500000) AS g"
+        ),
+        "SELECT format('%250000000s', 'x')",
+        "SELECT lpad('', 250000000, 'x') FROM sales_v",
+        "SELECT array_agg(product) FROM sales_v",
+        "SELECT json_agg(s) FROM sales_v AS s",
+        "SELECT jsonb_agg(amount) FROM sales_v",
+    ],
+    ids=["rpad", "string_agg", "format", "lpad", "array_agg", "json_agg", "jsonb_agg"],
+)
+def test_value_builders_are_refused_by_default(sql: str) -> None:
+    assert _reject_code(sql) == "function_not_allowed"
+
+
+def test_a_deployment_can_opt_back_in_to_a_value_builder() -> None:
+    policy = QueryPolicy(
+        allowed_relations=_SINGLE_SCHEMA_POLICY.allowed_relations,
+        allowed_functions=DEFAULT_ALLOWED_FUNCTIONS | {"string_agg"},
+    )
+    sql = "SELECT string_agg(product, ', ') FROM sales_v"
+    assert guard_query(sql, policy, row_limit=5).sql
 
 
 # ---------------------------------------------------------------------------

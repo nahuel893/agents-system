@@ -37,7 +37,11 @@ from agents_system.connectors.sql_query_connector import (
 from agents_system.models.base import get_engine
 from agents_system.services import sql_query
 from agents_system.services.db_role import verify_query_role
-from agents_system.services.sql_guard import GuardedQuery, guard_query
+from agents_system.services.sql_guard import (
+    DEFAULT_ALLOWED_FUNCTIONS,
+    GuardedQuery,
+    guard_query,
+)
 from agents_system.services.sql_query import json_cell
 
 pytestmark = pytest.mark.integration
@@ -48,6 +52,17 @@ _CONFIG = SqlQueryConfig(
     views={_VIEW: "One row per sale: id, product, amount, sold_on."},
     row_limit=10,
     statement_timeout_ms=2_000,
+)
+
+#: A deployment that opts back in to the functions the default allowlist
+#: leaves out because they build large values from short input: the byte
+#: gate and the role's temp_file_limit must still hold for it.
+_BUILDERS = DEFAULT_ALLOWED_FUNCTIONS | {"rpad", "lpad", "string_agg"}
+_BUILDERS_CONFIG = SqlQueryConfig(
+    views=_CONFIG.views,
+    row_limit=_CONFIG.row_limit,
+    statement_timeout_ms=_CONFIG.statement_timeout_ms,
+    allowed_functions=_BUILDERS,
 )
 
 #: SQLSTATEs PostgreSQL uses to refuse a write: read_only_sql_transaction and
@@ -115,7 +130,9 @@ async def test_a_query_that_would_spill_past_the_cap_is_stopped_by_the_database(
 ) -> None:
     # A hash of 300 values of 1 MB spills far past work_mem; the role's
     # temp_file_limit stops it at 256 MB instead of letting it fill the disk.
-    config = SqlQueryConfig(views=_CONFIG.views, statement_timeout_ms=20_000)
+    config = SqlQueryConfig(
+        views=_CONFIG.views, statement_timeout_ms=20_000, allowed_functions=_BUILDERS
+    )
     connector = build_sql_query_connector(sql_engine, config)
 
     result = await connector(
@@ -173,7 +190,10 @@ _REPRESENTATIVE_QUERIES = (
         "SELECT count(*) FROM sales_v WHERE product ILIKE 'PRODUCT-1%' "
         "AND sold_on >= date '2026-01-01' + interval '10 days'"
     ),
-    "SELECT string_agg(DISTINCT product, ',' ORDER BY product) FROM sales_v",
+    (
+        "SELECT product, percentile_cont(0.5) WITHIN GROUP (ORDER BY amount) "
+        "FROM sales_v GROUP BY product ORDER BY product"
+    ),
     (
         "SELECT d::date, coalesce(sum(s.amount), 0) FROM generate_series("
         "date '2026-01-01', date '2026-01-03', interval '1 day') AS d "
@@ -270,23 +290,39 @@ async def test_rows_are_capped_by_the_server_and_order_is_kept(
     assert [row[0] for row in result["rows"]] == list(range(40, 30, -1))
 
 
+def _doubled(levels: int, base: str) -> str:
+    """`s || s` through *levels* nested subqueries: no function at all."""
+    query = f"(SELECT '{base}' AS s) AS l0"
+    for level in range(1, levels + 1):
+        query = f"(SELECT s || s AS s FROM {query}) AS l{level}"
+    return f"SELECT s AS blob FROM {query}"
+
+
 #: Queries whose rows fit the row cap but whose bytes do not: one row can
 #: carry up to PostgreSQL's 1 GB per value, well inside the statement timeout.
+#: The default allowlist leaves out the functions that do this from short
+#: input, but `replace` and plain `||` still build large values.
 _AMPLIFIERS = (
-    "SELECT rpad('x', 5000000, 'x') AS c FROM generate_series(1, 20) AS g",
-    "SELECT lpad('', 5000000, 'x') AS blob FROM sales_v",
+    ("SELECT replace('" + "x" * 1000 + "', 'x', '" + "x" * 1000 + "') AS blob", False),
+    (_doubled(6, "x" * 2000), False),
+    ("SELECT rpad('x', 5000000, 'x') AS c FROM generate_series(1, 20) AS g", True),
+    ("SELECT lpad('', 5000000, 'x') AS blob FROM sales_v", True),
     (
-        "SELECT string_agg(rpad('x', 1000, 'x'), '') AS blob "
-        "FROM generate_series(1, 20000) AS g"
+        (
+            "SELECT string_agg(rpad('x', 1000, 'x'), '') AS blob "
+            "FROM generate_series(1, 20000) AS g"
+        ),
+        True,
     ),
 )
 
 
-@pytest.mark.parametrize("sql", _AMPLIFIERS)
+@pytest.mark.parametrize("sql,opted_in", _AMPLIFIERS)
 async def test_an_oversized_value_never_leaves_the_database(
-    sql_engine: AsyncEngine, sql: str
+    sql_engine: AsyncEngine, sql: str, opted_in: bool
 ) -> None:
-    connector = build_sql_query_connector(sql_engine, _CONFIG)
+    config = _BUILDERS_CONFIG if opted_in else _CONFIG
+    connector = build_sql_query_connector(sql_engine, config)
 
     result = await connector({"sql": sql})
 
@@ -304,7 +340,7 @@ async def test_many_small_rows_are_cut_at_the_byte_budget_in_order(
 
     result = await connector(
         {
-            "sql": "SELECT g, rpad('x', 1000, 'x') AS c "
+            "sql": f"SELECT g, '{'x' * 1000}' AS c "
             "FROM generate_series(1, 100) AS g ORDER BY g"
         }
     )
@@ -326,10 +362,7 @@ async def test_a_column_named_like_the_gate_keeps_its_own_value(
 
     same_name = await connector({"sql": "SELECT 5 AS sql_query_rows FROM sales_v"})
     whole_row = await connector(
-        {
-            "sql": "SELECT s AS sql_query_rows, rpad('x', 100, 'x') AS big "
-            "FROM sales_v AS s"
-        }
+        {"sql": f"SELECT s AS sql_query_rows, '{'x' * 100}' AS big FROM sales_v AS s"}
     )
 
     assert "error" not in same_name, same_name
@@ -360,7 +393,9 @@ async def test_the_byte_gate_writes_no_temporary_files(
     # the volume that also holds the data files.
     before = await _temp_bytes(admin_engine)
 
-    result = await build_sql_query_connector(sql_engine, _CONFIG)({"sql": _WIDE_ROWS})
+    result = await build_sql_query_connector(sql_engine, _BUILDERS_CONFIG)(
+        {"sql": _WIDE_ROWS}
+    )
     await sql_engine.dispose()  # a backend flushes its statistics as it exits
 
     assert result["truncated_bytes"] is True
@@ -370,7 +405,9 @@ async def test_the_byte_gate_writes_no_temporary_files(
 
 
 async def test_the_gated_plan_keeps_no_rows(admin_engine: AsyncEngine) -> None:
-    guarded = guard_query(_WIDE_ROWS, _CONFIG.policy(), row_limit=_CONFIG.row_limit)
+    guarded = guard_query(
+        _WIDE_ROWS, _BUILDERS_CONFIG.policy(), row_limit=_CONFIG.row_limit
+    )
     declare = sql_query.gated_cursor(
         guarded.sql, _CONFIG.byte_limit, sql_query.new_cursor_name()
     )
@@ -402,7 +439,10 @@ async def test_the_database_computes_only_the_rows_the_budget_needs(
     # spends the budget, so the server builds one batch and stops. Built in
     # full, the same query ran into the statement timeout.
     config = SqlQueryConfig(
-        views=_CONFIG.views, row_limit=100, statement_timeout_ms=5_000
+        views=_CONFIG.views,
+        row_limit=100,
+        statement_timeout_ms=5_000,
+        allowed_functions=_BUILDERS,
     )
     connector = build_sql_query_connector(sql_engine, config)
 

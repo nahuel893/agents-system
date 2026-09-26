@@ -37,6 +37,13 @@
 -- `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC` and grant it to the roles that
 -- need it, or the check will refuse.
 --
+-- Memory is the one limit no role setting provides: PostgreSQL does not
+-- bound a query's memory, and a model-written query can ask for gigabytes.
+-- Run the tool against a database whose host fails an oversized allocation
+-- (vm.overcommit_memory = 2, no tighter container memory limit) instead of
+-- OOM-killing it, which restarts every session on the server - ideally a
+-- dedicated replica (ADR-007).
+--
 -- Usage - run as a superuser: temp_file_limit is a superuser-only setting.
 -- The password and the view list come from the caller, never from this
 -- file. Pass them bare: psql quotes them itself. The view list must match
