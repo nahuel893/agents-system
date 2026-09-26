@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import uuid
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import httpx
 import structlog
@@ -17,10 +18,17 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agents_system import __version__
+from agents_system.agent.spec import Agent
 from agents_system.config import Settings, get_settings
-from agents_system.harness.loader import _SAFE_SEGMENT, DefinitionError, RootConfig
+from agents_system.harness.loader import (
+    _SAFE_SEGMENT,
+    DefinitionError,
+    RoleLocator,
+    RootConfig,
+)
 from agents_system.harness.registry import RegistryFactory
 from agents_system.integration import openai_router, webhook_router
+from agents_system.integration.openai_adapter import parse_model_id
 from agents_system.integration.whatsapp_client import WhatsAppClient
 from agents_system.models.base import get_engine, get_session_factory
 from agents_system.observability import RequestIdMiddleware, setup_logging
@@ -36,9 +44,6 @@ from agents_system.services.participants import (
     ParticipantDirectory,
 )
 from agents_system.services.redis import close_redis_pool, get_redis_client
-
-if TYPE_CHECKING:
-    from agents_system.agent.spec import Agent
 
 
 def _checkpointer_ttl_config(checkpointer_ttl_s: int | None) -> dict[str, Any] | None:
@@ -102,6 +107,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     earlier one raises.
     """
     settings = get_settings()
+    # ADR-004 D5 -- the runtimes to build, from `create_app(agents=...)` or,
+    # when it got none, from Settings. Resolved here, before any resource
+    # exists, so an invalid registration fails boot with nothing to unwind.
+    plan = _boot_plan(app, settings)
 
     async with AsyncExitStack() as resource_stack:
         # Startup — create async engine and store on app state
@@ -144,36 +153,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # D-012 — build runtime cache once at startup.
         # Imports are deferred to avoid loading heavy dependencies (torch, sentence-
         # transformers) when they are not needed (e.g. during testing with mocked state).
-        #
-        # Which runtimes to build is the union of every channel that needs
-        # one, NOT `adapter_runtimes` alone. That list is the OpenAI adapter's
-        # `/v1/models` surface; gating the whole cache on it made an adapter
-        # setting silently decide whether the WhatsApp route had anything to
-        # serve. With `adapter_runtimes` defaulting to empty, that meant
-        # inbound WhatsApp answered 200 and ran no turn, with only a
-        # `webhook.runtime_unresolved` warning to say why.
-        required_runtimes = list(settings.adapter_runtimes)
-        if settings.whatsapp_runtime_id and (
-            settings.whatsapp_runtime_id not in required_runtimes
-        ):
-            required_runtimes.append(settings.whatsapp_runtime_id)
+        _logger = structlog.get_logger()
+        if settings.adapter_runtimes and not settings.adapter_api_key:
+            # Reachable only under ALLOW_INSECURE=true — the Settings
+            # validator fails closed otherwise (D-014 S5, BLOCKER 1).
+            # Guarded on `adapter_runtimes`, not on every registration: a
+            # runtime built for another channel is never published on /v1,
+            # so it is not what this warning is about.
+            _logger.warning(
+                "adapter.open_mode",
+                message=(
+                    "ADAPTER_API_KEY is not set and ALLOW_INSECURE=true. "
+                    "The /v1/* endpoints are OPEN — never do this in production."
+                ),
+            )
 
-        if required_runtimes:
-            _logger = structlog.get_logger()
-            if settings.adapter_runtimes and not settings.adapter_api_key:
-                # Reachable only under ALLOW_INSECURE=true — the Settings
-                # validator fails closed otherwise (D-014 S5, BLOCKER 1).
-                # Guarded on `adapter_runtimes`, not on the union: a runtime
-                # built for another channel is never published on /v1, so it
-                # is not what this warning is about.
-                _logger.warning(
-                    "adapter.open_mode",
-                    message=(
-                        "ADAPTER_API_KEY is not set and ALLOW_INSECURE=true. "
-                        "The /v1/* endpoints are OPEN — never do this in production."
-                    ),
-                )
-
+        if plan.registrations:
             from agents_system.agent.graph import AgentRuntime, _effective_limits
             from agents_system.harness.factory import build_runtime
             from agents_system.harness.loader import resolve
@@ -272,19 +267,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             roots: RootConfig | None = getattr(app.state, "roots", None)
 
             runtimes: dict[str, AgentRuntime] = {}
-            for model_id in required_runtimes:
-                if "__" not in model_id:
-                    _logger.error(
-                        "adapter.invalid_runtime_id",
-                        model_id=model_id,
-                        reason="Expected '{deployment}__{role}' format",
-                    )
-                    continue
-                prefix, role = model_id.split("__", 1)
-                deployment: str | None = None if prefix == "_generic" else prefix
-                if deployment is not None and roots is None:
+            for runtime_id, registration in plan.registrations.items():
+                client = registration.client
+                if client is not None and roots is None:
                     raise DefinitionError(
-                        f"Runtime {model_id!r} specifies client override {deployment!r}, "
+                        f"Runtime {runtime_id!r} specifies client override {client!r}, "
                         "which requires an explicit RootConfig(deployments_root=...) passed to create_app(). "
                         "agents_system does not derive a default deployments_root for client overrides."
                     )
@@ -292,14 +279,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # create_app (or None for generic roles). Resolving here only
                 # gets the role/untrusted_input/limits facts this loop needs
                 # below -- the permission GRANT itself is looked up
-                # separately (settings.deploy_grants), immediately before
+                # separately (`plan.grants`), immediately before
                 # build_runtime: permission-model PR3 (issue #38) removed
                 # AD-5's auto-grant-of-the-role's-full-permission-set, so
                 # `definition.permissions` (what the role DECLARES it may
                 # need) is no longer treated as what a deployment GRANTS it.
                 definition = resolve(
-                    role,
-                    client=deployment,
+                    registration.locator,
+                    client=client,
                     roots=roots,
                 )
 
@@ -311,18 +298,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # deployment (e.g. an untrusted_input=false role bound to
                 # WhatsApp) is a boot failure, not a per-message surprise
                 # caught (or missed) later. Scoped to the exact WhatsApp
-                # model_id only — the OpenAI adapter is an accepted risk,
+                # runtime id only — the OpenAI adapter is an accepted risk,
                 # not enforced here (see ADR-002 C.13 "OpenAI adapter").
                 if (
                     settings.whatsapp_runtime_id
-                    and model_id == settings.whatsapp_runtime_id
+                    and runtime_id == settings.whatsapp_runtime_id
                     and not definition.untrusted_input
                 ):
                     raise DefinitionError(
-                        f"Channel 'whatsapp' is bound to role {role!r} "
-                        f"(runtime {model_id!r}), which resolves "
+                        f"Channel 'whatsapp' is bound to {registration.subject} "
+                        f"(runtime {runtime_id!r}), which resolves "
                         "untrusted_input=False. WhatsApp delivers "
-                        "untrusted external input, so this role must "
+                        "untrusted external input, so it must "
                         "declare untrusted_input: true (ADR-002 C.11/C.13) "
                         "to be bound to it. Refusing to boot."
                     )
@@ -331,33 +318,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # expires. Reserve explicit non-turn headroom for surrounding
                 # persistence and provider-send work; adapter-only runtimes do
                 # not run under this lease and remain unconstrained by it.
-                if model_id == settings.whatsapp_runtime_id:
+                if runtime_id == settings.whatsapp_runtime_id:
                     effective_limits = _effective_limits(definition.execution_limits)
                     total_timeout_s = effective_limits["total_execution_timeout_s"]
                     non_turn_headroom_s = 60
                     lease_seconds = DEFAULT_LEASE_DURATION.total_seconds()
                     if total_timeout_s + non_turn_headroom_s >= lease_seconds:
                         raise ValueError(
-                            f"WhatsApp runtime {model_id!r} has "
+                            f"WhatsApp runtime {runtime_id!r} has "
                             f"total_execution_timeout_s={total_timeout_s}; with "
                             f"non_turn_headroom_s={non_turn_headroom_s}, it must be "
                             f"less than outbox lease_seconds={lease_seconds}"
                         )
 
                 # permission-model PR3 (issue #38, design.md Resolved
-                # Decision 5) -- DEPLOY_GRANTS is the SOLE grant source for
-                # this boot path. A configured runtime with no matching
-                # entry fails boot loudly (same style as the
-                # whatsapp_runtime_id failure below) rather than silently
-                # defaulting to an empty or full-role grant.
-                if model_id not in settings.deploy_grants:
+                # Decision 5) -- the grant source is the SOLE grant for this
+                # boot path. A configured runtime with no matching entry
+                # fails boot loudly (same style as the whatsapp_runtime_id
+                # failure below) rather than silently defaulting to an empty
+                # or full-role grant.
+                if runtime_id not in plan.grants:
+                    example = (
+                        f'DEPLOY_GRANTS=\'{{"{runtime_id}": ["read:catalog"]}}\''
+                        if plan.grant_source == "DEPLOY_GRANTS"
+                        else f"grants={{{runtime_id!r}: ['read:catalog']}}"
+                    )
                     raise DefinitionError(
-                        f"Runtime {model_id!r} (role {role!r}) has no "
-                        "DEPLOY_GRANTS entry. Boot requires an explicit "
+                        f"Runtime {runtime_id!r} ({registration.subject}) has no "
+                        f"{plan.grant_source} entry. Boot requires an explicit "
                         "deploy-time grant for every configured runtime -- "
-                        "set DEPLOY_GRANTS to a JSON object mapping this "
-                        "runtime id to its granted permission wire names, "
-                        f'e.g. DEPLOY_GRANTS=\'{{"{model_id}": ["read:catalog"]}}\'. '
+                        f"map this runtime id in {plan.grant_source} to its "
+                        f"granted permission wire names, e.g. {example}. "
                         "Refusing to boot."
                     )
 
@@ -368,17 +359,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # tool surface and its skill files -- resolved against the
                 # library's guessed default.
                 equipped = build_runtime(
-                    role_type=role,
+                    role_type=registration.locator,
                     registry=registry,
-                    granted_permissions=settings.deploy_grants[model_id],
-                    client=deployment,
+                    granted_permissions=plan.grants[runtime_id],
+                    client=client,
                     roots=roots,
                     session_provider=session_provider,
                 )
-                runtimes[model_id] = AgentRuntime(
+                runtimes[runtime_id] = AgentRuntime(
                     runtime=equipped, model=model, checkpointer=checkpointer
                 )
-                _logger.info("adapter.runtime_cached", model_id=model_id)
+                _logger.info("adapter.runtime_cached", model_id=runtime_id)
 
             app.state.runtimes = runtimes
             # What /v1 may publish, which is NOT the whole cache. The cache
@@ -423,9 +414,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         elif settings.whatsapp_token and settings.whatsapp_phone_number_id:
             # #141 review follow-up -- WhatsApp is otherwise fully
             # configured to receive AND reply (both outbound credentials
-            # set), yet `whatsapp_runtime_id` is empty or malformed (missing
-            # the `{deployment}__{role}` separator -- see the `"__" not in
-            # model_id` skip above). `POST /webhook` is mounted
+            # set), yet `whatsapp_runtime_id` is empty or, on the
+            # Settings-driven path, malformed (missing the
+            # `{deployment}__{role}` separator -- `_settings_registrations`
+            # skips it). `POST /webhook` is mounted
             # UNCONDITIONALLY (`include_router(webhook_router)` below) and
             # durably accepts every signed inbound message regardless of
             # this value, so the old behaviour -- warn and boot anyway --
@@ -437,12 +429,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             #
             # A well-formed, truthy `whatsapp_runtime_id` cannot reach this
             # branch while itself being the reason `webhook_runtime` is
-            # `None`: it is unconditionally appended to `required_runtimes`
-            # above whenever truthy, and every id with the `__` separator
-            # that reaches the `required_runtimes` loop either raises before
-            # this code runs (an unsafe `untrusted_input` role, an execution
-            # timeout too close to the outbox lease) or lands in
-            # `runtimes[model_id]` -- there is no silent "resolved but not
+            # `None`: `_boot_plan` either registers it or, for
+            # `create_app(agents=...)`, refuses it as unmatched; every
+            # registration reaches the runtime loop above, which either
+            # raises before this code runs
+            # (an unsafe `untrusted_input` role, an execution timeout too
+            # close to the outbox lease, a missing grant) or lands in
+            # `runtimes[runtime_id]` -- there is no silent "resolved but not
             # cached" path for a well-formed id. If that stops being true,
             # a well-formed-but-unresolved id must first be covered by a
             # test before this message claims it again.
@@ -581,9 +574,15 @@ async def _outbox_backlog(engine: Any) -> OutboxBacklogCounts | None:
         return None
 
 
+_MAX_RUNTIME_ID_LENGTH = 64
+"""A runtime id lands in URLs, every log line of its turns and /metrics
+labels, so it is short by contract, not only safe by character class."""
+
+
 def _validate_runtime_id(runtime_id: str) -> str:
-    """Reject a runtime id that is empty or contains anything other than
-    letters, digits, underscore or hyphen (design.md D6).
+    """Reject a runtime id that is empty, longer than
+    ``_MAX_RUNTIME_ID_LENGTH``, or contains anything other than letters,
+    digits, underscore or hyphen (design.md D6).
 
     A runtime id is deployer-chosen (design.md D5) and becomes part of
     URLs (``/v1/models``), structured logs and metrics labels once
@@ -595,6 +594,18 @@ def _validate_runtime_id(runtime_id: str) -> str:
     Malformed ids fail here, at registration time, rather than surfacing as
     a confusing lookup miss at first request.
     """
+    if not isinstance(runtime_id, str):
+        raise DefinitionError(
+            f"Invalid runtime id of type {type(runtime_id).__name__}: a "
+            "runtime id must be a str."
+        )
+    if len(runtime_id) > _MAX_RUNTIME_ID_LENGTH:
+        # Never echo the whole value: the length is the problem.
+        raise DefinitionError(
+            f"Invalid runtime id {runtime_id[:_MAX_RUNTIME_ID_LENGTH]!r}... "
+            f"({len(runtime_id)} characters). A runtime id is at most "
+            f"{_MAX_RUNTIME_ID_LENGTH} characters."
+        )
     if not _SAFE_SEGMENT.fullmatch(runtime_id):
         raise DefinitionError(
             f"Invalid runtime id {runtime_id!r}. Must match "
@@ -602,6 +613,188 @@ def _validate_runtime_id(runtime_id: str) -> str:
             "hyphen only, non-empty, not starting with '-' or '_'."
         )
     return runtime_id
+
+
+def _validate_client(runtime_id: str, client: object) -> str:
+    """Reject a ``clients`` value that is not a client name: a ``str``
+    matching ``loader._SAFE_SEGMENT``, the rule the loader applies when it
+    joins that name onto ``deployments_root``.
+
+    A ``None`` (``os.environ.get(...)`` for an unset variable) would
+    otherwise pass as "no client" and serve the role WITHOUT its
+    subtractive override, silently. The error names the id, never the
+    value.
+    """
+    if not isinstance(client, str):
+        raise DefinitionError(
+            f"clients[{runtime_id!r}] must be a deployment client name (str), "
+            f"got {type(client).__name__}. Refusing to boot."
+        )
+    if not _SAFE_SEGMENT.fullmatch(client):
+        raise DefinitionError(
+            f"clients[{runtime_id!r}] is not a valid deployment client name. "
+            f"It must match {_SAFE_SEGMENT.pattern} -- letters, digits, "
+            "underscore and hyphen only, non-empty, not starting with '-' or "
+            "'_'. Refusing to boot."
+        )
+    return client
+
+
+@dataclasses.dataclass(frozen=True)
+class _Registration:
+    """One runtime the lifespan builds (design.md D5): what to resolve, and
+    the deployment client (if any) to resolve it for."""
+
+    locator: RoleLocator
+    client: str | None
+    subject: str
+    """``role 'sales-agent'`` or ``agent 'triage-bot'`` -- names it in boot errors."""
+
+
+@dataclasses.dataclass(frozen=True)
+class _BootPlan:
+    """Every runtime to build, keyed by runtime id, and where its grants come from."""
+
+    registrations: dict[str, _Registration]
+    grants: Mapping[str, Any]
+    grant_source: str
+    """``create_app(grants=...)``, or ``DEPLOY_GRANTS`` when it got none."""
+
+
+def _explicit_registrations(
+    agents: Mapping[str, Agent | str],
+    clients: Mapping[str, str] | None,
+) -> dict[str, _Registration]:
+    """``create_app(agents=...)``: each id is opaque and validated, never
+    parsed. A ``str`` is a predefined-role name; an ``Agent`` is its own
+    locator."""
+    clients = clients or {}
+    # A client names a subtractive deployment override: one keyed by a
+    # typo'd id would silently serve that agent WITHOUT its narrowing.
+    unknown = [repr(key) for key in clients if key not in agents]
+    if unknown:
+        raise DefinitionError(
+            f"clients names runtime id(s) {', '.join(unknown)} that agents "
+            "does not register. Refusing to boot."
+        )
+    registrations: dict[str, _Registration] = {}
+    for runtime_id, agent in agents.items():
+        _validate_runtime_id(runtime_id)
+        if isinstance(agent, Agent):
+            if runtime_id in clients:
+                # design.md D5 / Q5: deployment overrides stay
+                # predefined-role-only. Fail loud, not a silent no-op.
+                raise DefinitionError(
+                    f"clients[{runtime_id!r}] is set, but agents[{runtime_id!r}] "
+                    f"is an Agent ({agent.name!r}). A client deployment "
+                    "override applies only to a predefined role registered "
+                    "by name (a str). Refusing to boot."
+                )
+            registrations[runtime_id] = _Registration(
+                agent._to_locator(), None, f"agent {agent.name!r}"
+            )
+        elif isinstance(agent, str):
+            client = (
+                _validate_client(runtime_id, clients[runtime_id])
+                if runtime_id in clients
+                else None
+            )
+            registrations[runtime_id] = _Registration(agent, client, f"role {agent!r}")
+        else:
+            raise DefinitionError(
+                f"agents[{runtime_id!r}] must be an Agent or a predefined role "
+                f"name (str), got {type(agent).__name__}."
+            )
+    return registrations
+
+
+def _settings_registrations(runtime_ids: Sequence[str]) -> dict[str, _Registration]:
+    """The Settings-driven fallback, used when ``create_app`` got no
+    ``agents``: the ``{deployment}__{role}`` ids in ``ADAPTER_RUNTIMES``/
+    ``WHATSAPP_RUNTIME_ID``, read by the adapter's ``parse_model_id`` -- the
+    one parser left for them, until ADR-004 PR4b replaces this source with
+    ``AGENT_REGISTRATIONS``. A malformed id is logged and skipped, as before.
+    """
+    registrations: dict[str, _Registration] = {}
+    for model_id in runtime_ids:
+        try:
+            client, role = parse_model_id(model_id)
+        except ValueError:
+            structlog.get_logger().error(
+                "adapter.invalid_runtime_id",
+                model_id=model_id,
+                reason="Expected '{deployment}__{role}' format",
+            )
+            continue
+        registrations[model_id] = _Registration(role, client, f"role {role!r}")
+    return registrations
+
+
+def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
+    """Which runtimes to build, validated before the lifespan creates any
+    resource, so a bad registration fails boot before anything is served."""
+    agents: Mapping[str, Agent | str] | None = getattr(app.state, "agents", None)
+    grants: Mapping[str, Any] | None = getattr(app.state, "grants", None)
+    clients: Mapping[str, str] | None = getattr(app.state, "clients", None)
+
+    # Every channel's runtime, not just the OpenAI adapter's: gating the
+    # cache on `adapter_runtimes` alone once left inbound WhatsApp with
+    # nothing to serve.
+    channel_ids = list(settings.adapter_runtimes)
+    if settings.whatsapp_runtime_id and settings.whatsapp_runtime_id not in channel_ids:
+        channel_ids.append(settings.whatsapp_runtime_id)
+
+    for runtime_id, granted in (grants or {}).items():
+        # A str (or bytes) satisfies Sequence[str] but would be granted one
+        # character at a time; a non-iterable cannot be a grant at all.
+        if isinstance(granted, str | bytes) or not isinstance(granted, Iterable):
+            raise DefinitionError(
+                f"grants[{runtime_id!r}] must be a list of permission wire "
+                f"names, got {type(granted).__name__}. A bare string is not "
+                "a grant list. Refusing to boot."
+            )
+
+    if agents is None:
+        if clients is not None:
+            raise DefinitionError(
+                "create_app got clients but no agents: clients names the "
+                "deployment client of a registered predefined role, so it "
+                "needs agents to register one. Refusing to boot."
+            )
+        registrations = _settings_registrations(channel_ids)
+    else:
+        registrations = _explicit_registrations(agents, clients)
+        # A channel id is looked up in the registration as an opaque key,
+        # never parsed. One that matches nothing fails boot: an unmatched
+        # WHATSAPP_RUNTIME_ID would accept messages no runtime answers, and
+        # an unmatched ADAPTER_RUNTIMES id would leave /v1/models listing
+        # less than the operator named.
+        whatsapp_ids = (
+            [settings.whatsapp_runtime_id] if settings.whatsapp_runtime_id else []
+        )
+        for channel, ids in (
+            ("WHATSAPP_RUNTIME_ID", whatsapp_ids),
+            ("ADAPTER_RUNTIMES", settings.adapter_runtimes),
+        ):
+            unmatched = [
+                repr(runtime_id)
+                for runtime_id in ids
+                if runtime_id not in registrations
+            ]
+            if unmatched:
+                raise DefinitionError(
+                    f"{channel} names runtime id(s) {', '.join(unmatched)} "
+                    "that create_app(agents=...) does not register "
+                    f"(registered: {sorted(registrations)}). Refusing to boot."
+                )
+
+    return _BootPlan(
+        registrations=registrations,
+        grants=grants if grants is not None else settings.deploy_grants,
+        grant_source="create_app(grants=...)"
+        if grants is not None
+        else "DEPLOY_GRANTS",
+    )
 
 
 def create_app(
@@ -637,22 +830,27 @@ def create_app(
     agents:
         Deployer-chosen runtime id -> either an ``Agent`` (a custom,
         library-defined agent) or a bare ``str`` (a predefined platform-role
-        name, resolved exactly as before this parameter existed). Replaces
-        the old ``{deployment}__{role}`` runtime-id encoding entirely --
-        every id here is an opaque string, never parsed. ``None`` (the
-        default) falls back to the existing ``Settings``-driven boot path,
-        so a caller that never passes it (e.g. ``demo.py``'s ``build_app``)
-        is unaffected. NOTE: in this slice the mapping is only validated and
-        stashed on ``app.state.agents`` -- ``lifespan()`` does not read it
-        yet.
+        name, resolved exactly as the legacy runtime id resolved it). Every
+        id is opaque, never parsed: at most 64 letters, digits, ``_`` or
+        ``-``, not starting with ``_`` or ``-``. The lifespan builds a
+        runtime for EVERY entry at boot, and one entry that fails to resolve
+        or equip fails the whole boot. ``WHATSAPP_RUNTIME_ID`` and each
+        ``ADAPTER_RUNTIMES`` id must be a key here, or boot fails naming it;
+        ``/v1/models`` lists only the ``ADAPTER_RUNTIMES`` ids. ``None`` (the
+        default) keeps the ``Settings``-driven boot path, so a caller that
+        never passes it (e.g. ``demo.py``'s ``build_app``) is unaffected.
     grants:
-        Runtime id -> granted permission wire names, keyed by the same ids
-        as ``agents``. ``None`` falls back to ``settings.deploy_grants``.
-        Stashed on ``app.state.grants``; not yet read by ``lifespan()``.
+        Runtime id -> granted permission wire names (a list, never a bare
+        string), keyed by the same ids as ``agents``. Nothing is granted
+        automatically: a registered id with no entry fails boot. ``None``
+        falls back to ``settings.deploy_grants`` (``DEPLOY_GRANTS``), keyed
+        by the same ids.
     clients:
-        Runtime id -> deployment client name, meaningful only when
-        ``agents[id]`` is a ``str`` (a predefined role). Stashed on
-        ``app.state.clients``; not yet read by ``lifespan()``.
+        Runtime id -> deployment client name, valid only for a registered
+        ``str`` (predefined role) entry. An entry for an ``Agent``, for an
+        id ``agents`` does not register, or without ``agents`` fails boot,
+        and so does a value that is not a client-name ``str`` (``None``
+        included: leave the id out for no client).
     participant_directory:
         Resolves an inbound channel address to an identity. Absent means the
         inbound route fails closed and runs no turn.
@@ -660,8 +858,9 @@ def create_app(
         Records completed turns. Absent means none are recorded.
     roots:
         Consumer-owned path configuration for platform and deployment roles.
-        Client overrides (<client>__<role>) require an explicit RootConfig
-        specifying deployments_root.
+        A client override (``clients[id]``, or a legacy
+        ``<client>__<role>`` id) requires an explicit RootConfig specifying
+        deployments_root.
     title:
         OpenAPI title.
     """

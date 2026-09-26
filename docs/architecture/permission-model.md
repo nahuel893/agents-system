@@ -52,6 +52,8 @@ DEPLOY_GRANTS='{"acme__sales-agent": ["read:catalog", "write:orders"]}'
 
 Boot fails loudly, naming the runtime id, when a configured runtime has no matching entry — there is no automatic grant, and a role's declared permissions never silently become its grant. The resulting grant is persisted on the runtime (`EquippedRuntime.deploy_grant_ceiling`) independently of the role's declared set, and it is what bounds execution-time revalidation above: Layer-2 checks a sensitive tool's required permissions against this ceiling, never against the role's full declared set. Library consumers (not booting through `agents_system.main`) grant the same way, explicitly, via `build_runtime(..., granted_permissions=[...])`.
 
+An application that registers its agents with `create_app(agents=..., grants=...)` (ADR-004) grants per runtime id it chose, e.g. `grants={"acme-sales": ["read:catalog", "write:orders"]}`; without `grants=`, `DEPLOY_GRANTS` is the source, keyed by those same registered ids. The rules are the same: an id with no entry fails boot, naming it and the source; a value must be a list (a bare string fails boot instead of being granted one character at a time); and `build_runtime` still refuses any T3 grant to an `untrusted_input` agent (R4), a custom `Agent` included. See `docs/platform/deployment.md`.
+
 ---
 
 ## What permission filtering governs

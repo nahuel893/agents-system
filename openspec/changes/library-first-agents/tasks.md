@@ -856,7 +856,7 @@ parser at `:280-281`). Depends on PR4a-i (params must exist before
 `lifespan()` can consume them). Estimated lines: ~245. **This PR is
 breaking** — see PR4a-ii-T4.
 
-- [ ] **PR4a-ii-T1 — Predefined-role registration: byte-for-byte equivalent to today.**
+- [x] **PR4a-ii-T1 — Predefined-role registration: byte-for-byte equivalent to today.**
   RED: extend `tests/test_main.py` with a registration-path test asserting
   `create_app(registry_factory=..., agents={"acme-sales": "sales-agent"},
   grants={"acme-sales": ["read:catalog"]}, clients={"acme-sales": "acme"})`
@@ -894,7 +894,7 @@ breaking** — see PR4a-ii-T4.
   id is rejected", "An arbitrary id string with no embedded convention is
   accepted". <!-- sdd-owner: implementation -->
 
-- [ ] **PR4a-ii-T2 — Custom `Agent` registration + `clients`-on-`Agent` misuse rejected.**
+- [x] **PR4a-ii-T2 — Custom `Agent` registration + `clients`-on-`Agent` misuse rejected.**
   RED: extend `tests/test_main.py` asserting `create_app(registry_factory=...,
   agents={"triage-bot": <Agent.from_folder(...) instance>},
   grants={"triage-bot": [...]})` boots and serves `"triage-bot"` through the
@@ -923,7 +923,7 @@ breaking** — see PR4a-ii-T4.
   unresolvable registration, before serving begins", "One bad registration
   entry blocks the whole boot". <!-- sdd-owner: implementation -->
 
-- [ ] **PR4a-ii-T3 — WhatsApp/adapter-binding-preserved regression suite.**
+- [x] **PR4a-ii-T3 — WhatsApp/adapter-binding-preserved regression suite.**
   RED: extend `tests/test_main.py` with the full set of WhatsApp/adapter
   regression scenarios the spec names for this capability, now expressed
   against the `agents`-driven registration path instead of the old
@@ -968,7 +968,7 @@ breaking** — see PR4a-ii-T4.
   agent", "A client-override registration with no RootConfig fails boot".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR4a-ii-T4 — PR4a-ii closing: full verification + BREAKING CHANGE marker.**
+- [x] **PR4a-ii-T4 — PR4a-ii closing: full verification + BREAKING CHANGE marker.**
   Verify: `.venv/bin/pytest -q` (full suite), `.venv/bin/ruff check .`,
   `.venv/bin/ruff format --check .`, `.venv/bin/mypy src/`. Confirm `git diff
   --stat` against PR4a-ii's branch base; flag if it exceeds ~400 lines. **This
@@ -978,6 +978,17 @@ breaking** — see PR4a-ii-T4.
   specifically named as breaking) so release-please's `bump-minor-pre-major:
   true` config records it at the next release, matching the mechanism the
   `permission-model` release already used (v0.1.0 → v0.2.0).
+  <!-- sdd-owner: implementation -->
+
+- [x] **PR4a-ii review fixes (PR #95).**
+  1. Unvalidated `clients` values (MEDIUM). `clients={id: None}` (an unset
+     environment variable) passed every `clients` guard, and
+     `clients.get(id)` served the role generic, without its subtractive
+     override, with no error and no log. `_validate_client` now requires a
+     `str` matching `_SAFE_SEGMENT` for every `clients` value before the
+     registration is built, and fails boot naming the id, not the value.
+     Test: `test_registration_rejects_a_clients_value_that_is_not_a_client_name`
+     (`None`, `42`, `""`, `"../client-a"`).
   <!-- sdd-owner: implementation -->
 
 ---
