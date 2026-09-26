@@ -16,9 +16,14 @@ the role were misconfigured:
 - Every relation must resolve, by PostgreSQL's own identifier rules
   (unquoted folds to lower case, quoted is exact, CTE names shadow only
   inside their scope), to an allowlisted `schema.view`.
-- Every function call must be an unqualified name on a function allowlist;
-  qualified calls, custom operators, bind parameters, casts to non-built-in
-  types and string literals other than plain '...' are refused.
+- Every function call must be an unqualified name on a function allowlist,
+  read from the canonical rendering itself (the name PostgreSQL receives);
+  qualified calls (in FROM too), custom operators, bind parameters, casts to
+  non-built-in types and string literals other than plain '...' are refused.
+- The guard's own cost is bounded: the text is capped at `max_sql_length`
+  characters and the parsed tree at `max_nodes` nodes, and every check is a
+  linear pass (function names are checked during the one render of the
+  statement, never by rendering each node on its own).
 - What reaches the database is NOT the model's text but the canonical
   rendering of the validated tree: every identifier quoted exactly as it was
   resolved, every relation schema-qualified, comments dropped, and the whole
@@ -42,6 +47,7 @@ from dataclasses import dataclass, field
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.generators.postgres import PostgresGenerator
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
@@ -54,6 +60,11 @@ _RESULT_ALIAS = "sql_query_result"
 DEFAULT_MAX_SQL_LENGTH = 10_000
 """Longest query text the guard parses. A real analytical question fits in a
 fraction of this; anything longer is refused before the parser sees it."""
+
+DEFAULT_MAX_NODES = 2_500
+"""Most syntax-tree nodes the guard validates. A real analytical query has a
+few hundred at most; the budget bounds the guard's own work (every check is
+linear in the tree) independently of how the text packs its nodes."""
 
 DEFAULT_ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
     {
@@ -325,6 +336,7 @@ class QueryPolicy:
     allowed_relations: frozenset[tuple[str, str]]
     allowed_functions: frozenset[str] = field(default=DEFAULT_ALLOWED_FUNCTIONS)
     max_sql_length: int = DEFAULT_MAX_SQL_LENGTH
+    max_nodes: int = DEFAULT_MAX_NODES
 
     def __post_init__(self) -> None:
         if not self.allowed_relations:
@@ -339,6 +351,8 @@ class QueryPolicy:
                 )
         if self.max_sql_length < 1:
             raise ValueError("max_sql_length must be positive.")
+        if self.max_nodes < 1:
+            raise ValueError("max_nodes must be positive.")
 
     def relation_names(self) -> list[str]:
         return sorted(f"{schema}.{name}" for schema, name in self.allowed_relations)
@@ -374,7 +388,19 @@ def _parse_single_statement(sql: str) -> exp.Expr:
     return statements[0]
 
 
-def _check_nodes(statement: exp.Expr, policy: QueryPolicy) -> None:
+def _check_size(statement: exp.Expr, policy: QueryPolicy, max_nodes: int) -> None:
+    for count, _ in enumerate(statement.walk(), start=1):
+        if count > max_nodes:
+            raise _reject(
+                "too_complex",
+                f"The query is too complex for this tool (more than "
+                f"{policy.max_nodes} syntax elements). Simplify it: fewer "
+                "conditions or expressions, or aggregate in fewer steps.",
+            )
+
+
+def _check_nodes(statement: exp.Expr) -> None:
+    """Structural checks: one pass over the tree, nothing rendered."""
     for node in statement.walk():
         if isinstance(node, _WRITE_OR_CONTROL_NODES):
             raise _reject("forbidden_clause")
@@ -392,15 +418,25 @@ def _check_nodes(statement: exp.Expr, policy: QueryPolicy) -> None:
                 "Explicit OPERATOR(...) calls are not allowed; use the plain "
                 "built-in operators.",
             )
-        if isinstance(node, exp.DataType):
-            _check_type(node)
-        if isinstance(node, exp.Func):
-            _check_function(node, policy)
+        if (
+            isinstance(node, exp.DataType)
+            and node.this == exp.DataType.Type.USERDEFINED
+        ):
+            raise _reject("type_not_allowed")
+        # `schema.fn(...)` escapes the pinned search path and can reach a
+        # deployment-owned function even when the bare name is allowlisted.
+        # In a select list the qualifier is a Dot parent; a table function in
+        # FROM carries it on its Table parent instead. Function NAMES are
+        # checked as they are rendered (`_CheckedRenderer`).
+        if isinstance(node, exp.Func) and (
+            isinstance(node.parent, exp.Dot) or _is_qualified_table(node.parent)
+        ):
+            raise _qualified_function_rejected()
 
 
-def _check_type(node: exp.DataType) -> None:
-    rendered = node.sql(dialect=_DIALECT).upper()
-    if node.this == exp.DataType.Type.USERDEFINED or rendered.startswith("REG"):
+def _check_type(rendered: str) -> None:
+    # reg* types (regclass, regproc, ...) look objects up in the catalogs.
+    if rendered.upper().startswith("REG"):
         raise _reject("type_not_allowed")
 
 
@@ -427,27 +463,73 @@ def _is_qualified_table(node: exp.Expr | None) -> bool:
     )
 
 
-def _check_function(node: exp.Func, policy: QueryPolicy) -> None:
-    # `schema.fn(...)` escapes the pinned search path and can reach a
-    # deployment-owned function even when the bare name is allowlisted. In
-    # a select list the qualifier is a Dot parent; a table function in FROM
-    # carries it on its Table parent instead.
-    if isinstance(node.parent, exp.Dot) or _is_qualified_table(node.parent):
-        raise _qualified_function_rejected()
+def _check_function(node: exp.Func, rendered: str, policy: QueryPolicy) -> None:
+    """Check the name *node* reaches the database with, read from *rendered*."""
     if isinstance(node, _SYNTAX_NODES):
         return
-    anonymous = isinstance(node, exp.Anonymous | exp.AnonymousAggFunc)
-    rendered = node.sql(dialect=_DIALECT, normalize_functions=False)
     match = _CALL_NAME.match(rendered)
     if match is None:
-        if anonymous:
+        if isinstance(node, exp.Anonymous | exp.AnonymousAggFunc):
             # A quoted or otherwise unusual name: not what the allowlist holds.
             raise _function_not_allowed(rendered.split("(", 1)[0])
         # A typed node rendered as a keyword or operator form (CASE,
         # CURRENT_DATE, `->`): no function name reaches the database.
         return
     if match.group(1).lower() not in policy.allowed_functions:
-        raise _function_not_allowed(match.group(1))
+        raise _function_not_allowed(match.group(1).lower())
+
+
+class _CheckedRenderer(PostgresGenerator):
+    """The canonical renderer, checking every function and type as it writes it.
+
+    A function's name is read from its own rendering, so the name checked is
+    the name PostgreSQL receives, whatever sqlglot parsed it into. Doing that
+    inside the single render of the statement keeps the guard linear:
+    rendering each node on its own re-rendered its whole subtree, and since
+    AND/OR are function nodes, a long boolean chain made the guard quadratic.
+    """
+
+    def __init__(self, policy: QueryPolicy) -> None:
+        super().__init__(dialect=_DIALECT, identify=True, comments=False)
+        self._policy = policy
+        self._checked: set[int] = set()
+        self._tree: exp.Expr | None = None
+
+    def preprocess(self, expression: exp.Expr) -> exp.Expr:
+        self._tree = super().preprocess(expression)
+        return self._tree
+
+    def sql(
+        self,
+        expression: str | exp.Expr | None,
+        key: str | None = None,
+        comment: bool = True,
+    ) -> str:
+        rendered = super().sql(expression, key, comment)
+        if key is None and isinstance(expression, exp.Func | exp.DataType):
+            self._checked.add(id(expression))
+            if isinstance(expression, exp.DataType):
+                _check_type(rendered)
+            else:
+                _check_function(expression, rendered, self._policy)
+        return rendered
+
+    def render(self, statement: exp.Expr) -> str:
+        text = self.generate(statement, copy=True)
+        if self._tree is None:  # preprocess() did not run: nothing was checked
+            raise _reject("unparseable")
+        # Fail closed: a function or type the render did not pass through
+        # `sql()` was not checked. The only exception is the inner links of
+        # an AND/OR or same-operator chain, which sqlglot writes iteratively
+        # as the operator itself - never as a name followed by `(`.
+        for node in self._tree.walk():
+            if (
+                isinstance(node, exp.Func | exp.DataType)
+                and id(node) not in self._checked
+                and not isinstance(node, exp.Connector | exp.Binary)
+            ):
+                raise _reject("unparseable")
+        return text
 
 
 def _relation_not_allowed(shown: str, policy: QueryPolicy) -> QueryRejectedError:
@@ -520,19 +602,29 @@ def _check_relations(statement: exp.Expr, policy: QueryPolicy) -> list[str]:
 
 
 def _validate(
-    sql: str, policy: QueryPolicy
+    sql: str, policy: QueryPolicy, *, max_nodes: int
 ) -> tuple[exp.Select | exp.SetOperation, list[str]]:
-    """Parse *sql* and run every check; relations come back schema-qualified."""
-    statement = normalize_identifiers(_parse_single_statement(sql), dialect=_DIALECT)
+    """Parse *sql* and run the structural and relation checks.
+
+    Relations come back schema-qualified. Function names and types are
+    checked by `_render`, which every accepted query goes through.
+    """
+    parsed = _parse_single_statement(sql)
+    _check_size(parsed, policy, max_nodes)
+    statement = normalize_identifiers(parsed, dialect=_DIALECT)
     if not isinstance(statement, exp.Select | exp.SetOperation):
         raise _reject("not_select")
-    _check_nodes(statement, policy)
+    _check_nodes(statement)
     return statement, _check_relations(statement, policy)
 
 
-def _render(statement: exp.Expr) -> str:
-    """Canonical text: every identifier quoted as resolved, no comments."""
-    return statement.sql(dialect=_DIALECT, identify=True, comments=False)
+def _render(statement: exp.Expr, policy: QueryPolicy) -> str:
+    """Canonical text: every identifier quoted as resolved, no comments.
+
+    Every function name and type is checked against *policy* as it is
+    written (see `_CheckedRenderer`).
+    """
+    return _CheckedRenderer(policy).render(statement)
 
 
 def guard_query(sql: object, policy: QueryPolicy, *, row_limit: int) -> GuardedQuery:
@@ -555,18 +647,23 @@ def guard_query(sql: object, policy: QueryPolicy, *, row_limit: int) -> GuardedQ
             "send a shorter one.",
         )
 
-    statement, relations = _validate(sql, policy)
-    rendered = _render(statement)
+    statement, relations = _validate(sql, policy, max_nodes=policy.max_nodes)
+    rendered = _render(statement, policy)
 
     # Fixed point: the rendering is what executes, so it must itself pass
     # every check and render back to exactly the same text. A renderer that
     # wrote a construct back in a form that reads differently fails here
     # instead of reaching the database with an unchecked meaning.
+    # The rendering only adds a schema to each relation (one identifier per
+    # table), so its tree is at most twice the size the budget admitted.
     try:
-        executed, relations = _validate(rendered, policy)
+        executed, relations = _validate(
+            rendered, policy, max_nodes=2 * policy.max_nodes
+        )
+        rerendered = _render(executed, policy)
     except QueryRejectedError as error:
         raise _reject("unparseable") from error
-    if _render(executed) != rendered:
+    if rerendered != rendered:
         raise _reject("unparseable")
 
     wrapped = (

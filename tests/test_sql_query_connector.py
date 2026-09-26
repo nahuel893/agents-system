@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import threading
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time, timedelta
@@ -21,6 +22,7 @@ from typing import Any, Self
 import pytest
 from sqlalchemy.exc import DBAPIError, OperationalError
 
+from agents_system.connectors import sql_query_connector
 from agents_system.connectors.sql_query_connector import (
     QUERY_SQL_PERMISSION,
     SQL_QUERY_TOOL_NAME,
@@ -190,6 +192,27 @@ async def test_the_model_query_runs_as_the_guarded_rendering_and_is_rolled_back(
     assert "note" not in executed
     assert executed.endswith("LIMIT 4")
     assert engine.rolled_back
+
+
+async def test_the_guard_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The guard is CPU-bound. On the event loop it would stall every other
+    # turn, and the harness's per-call asyncio.timeout could not interrupt it.
+    real_guard = sql_query_connector.guard_query
+    threads: list[int] = []
+
+    def recording_guard(*args: Any, **kwargs: Any) -> Any:
+        threads.append(threading.get_ident())
+        return real_guard(*args, **kwargs)
+
+    monkeypatch.setattr(sql_query_connector, "guard_query", recording_guard)
+
+    result = await _run(_Engine(rows=[("a", 1)]), "SELECT product FROM sales_v")
+
+    assert "error" not in result
+    assert threads
+    assert threads[0] != threading.get_ident()
 
 
 async def test_the_session_argument_is_never_used() -> None:

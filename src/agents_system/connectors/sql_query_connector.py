@@ -34,6 +34,7 @@ thing this tool must never run on.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -236,7 +237,12 @@ def build_sql_query_connector(engine: Any, config: SqlQueryConfig) -> AsyncConne
             }
 
         try:
-            guarded = guard_query(inputs.get("sql"), policy, row_limit=row_limit)
+            # CPU-bound parsing and rendering: off the event loop, so it
+            # stalls no other turn and the harness's per-call timeout keeps
+            # control of this one.
+            guarded = await asyncio.to_thread(
+                guard_query, inputs.get("sql"), policy, row_limit=row_limit
+            )
         except QueryRejectedError as rejection:
             _logger.info("sql_query.rejected", reason=rejection.code)
             return {

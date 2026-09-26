@@ -10,10 +10,15 @@ connector ever sends to the database.
 
 from __future__ import annotations
 
+import contextlib
+import time
+from typing import Any
+
 import pytest
 
 from agents_system.services.sql_guard import (
     DEFAULT_ALLOWED_FUNCTIONS,
+    DEFAULT_MAX_SQL_LENGTH,
     QueryPolicy,
     QueryRejectedError,
     guard_query,
@@ -147,6 +152,68 @@ def test_unparseable_input_is_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The guard's own cost is bounded
+# ---------------------------------------------------------------------------
+
+_OR_TERM = "amount = 1"
+
+
+def _or_chain(terms: int) -> str:
+    return "SELECT 1 FROM sales_v WHERE " + " OR ".join([_OR_TERM] * terms)
+
+
+def _guard_seconds(sql: str, policy: QueryPolicy = _SINGLE_SCHEMA_POLICY) -> float:
+    started = time.perf_counter()
+    with contextlib.suppress(QueryRejectedError):
+        guard_query(sql, policy, row_limit=10)
+    return time.perf_counter() - started
+
+
+def test_guard_time_stays_linear_on_a_long_boolean_chain() -> None:
+    # AND and OR are function nodes in sqlglot's tree. Rendering each one on
+    # its own to read its name re-rendered the whole chain below it, so the
+    # guard was quadratic: about 3 s for 400 terms, 30 s at the length cap.
+    assert _guard_seconds(_or_chain(400)) < 1.0
+
+
+def test_a_max_length_boolean_chain_is_refused_quickly() -> None:
+    fits = (DEFAULT_MAX_SQL_LENGTH - len(_or_chain(1))) // len(f" OR {_OR_TERM}")
+    sql = _or_chain(fits + 1)
+    assert len(sql) <= DEFAULT_MAX_SQL_LENGTH
+
+    assert _reject_code(sql) == "too_complex"
+    assert _guard_seconds(sql) < 1.0
+
+
+def test_a_query_over_the_node_budget_is_refused() -> None:
+    policy = QueryPolicy(
+        allowed_relations=_SINGLE_SCHEMA_POLICY.allowed_relations, max_nodes=50
+    )
+
+    assert _reject_code(_or_chain(20), policy) == "too_complex"
+    assert guard_query(_or_chain(5), policy, row_limit=10).sql
+
+
+def test_the_node_budget_applies_to_the_query_not_to_its_qualified_rendering() -> None:
+    # The rendering adds a schema to every relation, so it can outgrow the
+    # budget the query itself met; that must not turn into a refusal.
+    ctes = ", ".join(f"c{i} AS (SELECT * FROM sales_v)" for i in range(10))
+    sql = f"WITH {ctes} SELECT 1"
+    policy = QueryPolicy(
+        allowed_relations=_SINGLE_SCHEMA_POLICY.allowed_relations, max_nodes=85
+    )
+
+    assert guard_query(sql, policy, row_limit=10).sql
+
+
+def test_the_node_budget_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        QueryPolicy(
+            allowed_relations=_SINGLE_SCHEMA_POLICY.allowed_relations, max_nodes=0
+        )
+
+
+# ---------------------------------------------------------------------------
 # Single-statement enforcement
 # ---------------------------------------------------------------------------
 
@@ -241,8 +308,8 @@ def test_a_rendering_that_does_not_revalidate_unchanged_is_refused(
 
     real_render = sql_guard._render
 
-    def drifting_render(statement: object) -> str:
-        return real_render(statement) + " UNION SELECT note FROM secret"
+    def drifting_render(statement: Any, policy: QueryPolicy) -> str:
+        return real_render(statement, policy) + " UNION SELECT note FROM secret"
 
     monkeypatch.setattr(sql_guard, "_render", drifting_render)
 
@@ -403,6 +470,61 @@ def test_an_unqualified_table_function_stays_accepted() -> None:
         "SELECT g FROM generate_series(1, 3) AS g", _SINGLE_SCHEMA_POLICY, row_limit=5
     )
     assert "GENERATE_SERIES(1, 3)" in guarded.sql.upper()
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "SELECT 1 FROM sales_v WHERE a = 1 AND b = 2 AND {f} IS NULL",
+        "SELECT 1 FROM sales_v WHERE a = 1 OR {f} IS NULL OR b = 2",
+        "SELECT 1 + 2 + {f} + 3",
+        "SELECT CASE WHEN {f} IS NULL THEN 1 END",
+        "SELECT count(*) FILTER (WHERE {f} IS NULL) FROM sales_v",
+        "SELECT sum(1) OVER (PARTITION BY {f}) FROM sales_v",
+        "WITH c AS (SELECT {f}) SELECT * FROM c",
+        "SELECT * FROM generate_series(1, {f}::int)",
+        "SELECT * FROM sales_v, LATERAL (SELECT {f}) AS x",
+        "SELECT ARRAY[{f}]",
+        "SELECT CAST({f} AS text)",
+        "SELECT 1 UNION SELECT {f}",
+        "SELECT EXISTS (SELECT {f})",
+        "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY {f}) FROM sales_v",
+        "SELECT 1 FROM sales_v LIMIT {f}",
+        "SELECT extract(year FROM {f})",
+    ],
+)
+def test_a_disallowed_function_is_found_in_every_position(template: str) -> None:
+    # Function names are checked while the statement is rendered; every
+    # position a call can take must pass through that check.
+    assert _reject_code(template.format(f="pg_sleep(1)")) == "function_not_allowed"
+
+
+def test_a_function_the_renderer_did_not_check_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlglot import exp
+    from sqlglot.generators.postgres import PostgresGenerator
+
+    from agents_system.services import sql_guard
+
+    def skipping_sql(
+        self: Any, expression: Any, key: str | None = None, comment: bool = True
+    ) -> str:
+        if isinstance(expression, exp.Anonymous):
+            return PostgresGenerator.sql(self, expression, key, comment)
+        return real_sql(self, expression, key, comment)
+
+    policy = QueryPolicy(
+        allowed_relations=_SINGLE_SCHEMA_POLICY.allowed_relations,
+        allowed_functions=DEFAULT_ALLOWED_FUNCTIONS | {"deployment_fn"},
+    )
+    sql = "SELECT deployment_fn(product) FROM sales_v"
+    assert guard_query(sql, policy, row_limit=5).sql
+
+    real_sql = sql_guard._CheckedRenderer.sql
+    monkeypatch.setattr(sql_guard._CheckedRenderer, "sql", skipping_sql)
+
+    assert _reject_code(sql, policy) == "unparseable"
 
 
 @pytest.mark.parametrize(
