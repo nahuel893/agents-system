@@ -25,7 +25,10 @@ the role were misconfigured:
   `numeric`, `int`, `struct`, ...) opens a bracket, and every such level
   doubles the work (nested `ARRAY[...]` took 33 s at 141 characters). The
   text is capped at `max_sql_length` characters, then tokenized (a linear
-  scan) and refused unless it has at most `max_tokens` tokens, at most
+  scan) and refused unless the parser would read at most `max_tokens`
+  tokens (a token inside `k` brackets opened by a type keyword counts
+  `2**k`), it opens at most `MAX_SQUARE_BRACKETS` square brackets (each
+  subscript costs the parser about twenty tokens' work), and it has at most
   `max_depth` levels of bracket/CASE nesting and at most `MAX_TYPE_NESTING`
   levels opened by a type keyword. The parser then runs with a budget on the
   nodes it builds, abandoned attempts included, and the parsed tree must
@@ -75,9 +78,12 @@ DEFAULT_MAX_SQL_LENGTH = 10_000
 a fraction of this; anything longer is refused before any other work."""
 
 DEFAULT_MAX_TOKENS = 600
-"""Most tokens (keywords, names, literals, operators) the guard parses. A
-real analytical query has a few hundred; the cap is checked on the token
-stream, before the parser runs."""
+"""Most token reads (keywords, names, literals, operators) the guard lets the
+parser make. A token counts once, and once more for every time the parser
+reads it again: inside `k` brackets opened by a type keyword it counts
+`2**k` (see `MAX_TYPE_NESTING`). A real analytical query has a few hundred
+tokens, each read once; the cap is checked on the token stream, before the
+parser runs."""
 
 DEFAULT_MAX_DEPTH = 20
 """Deepest nesting of brackets, parentheses and CASE ... END the guard
@@ -90,7 +96,15 @@ MAX_TYPE_NESTING = 4
 a data-type keyword (`ARRAY[`, `numeric(`, `int[`, `struct(`). sqlglot
 tries each such bracket as a type first and then parses it again as an
 expression, so the work doubles per level; four levels cover arrays of
-arrays and typed casts, and cost at most 16 times a plain parse."""
+arrays and typed casts. What those levels enclose is also paid for in
+`max_tokens`: each token inside `k` of them counts `2**k`."""
+
+MAX_SQUARE_BRACKETS = 16
+"""Most square brackets (array constructors, subscripts, slices) a query may
+open, counted before the parser runs. sqlglot re-analyses every subscript's
+index while it parses it (type annotation and simplification), about twenty
+plain tokens' worth of work: at the token cap, `x[1], x[1], ...` took nearly
+three times as long as any other shape. A real query uses a handful."""
 
 DEFAULT_MAX_NODES = 2_500
 """Most syntax-tree nodes the guard validates, and most nodes the parser may
@@ -428,6 +442,7 @@ class _Limits:
     depth: int
     nodes: int
     tree_depth: int
+    square_brackets: int
 
     @classmethod
     def of(cls, policy: QueryPolicy) -> _Limits:
@@ -436,20 +451,23 @@ class _Limits:
             depth=policy.max_depth,
             nodes=policy.max_nodes,
             tree_depth=_TREE_LEVELS_PER_DEPTH * policy.max_depth,
+            square_brackets=MAX_SQUARE_BRACKETS,
         )
 
     def for_rendering(self) -> _Limits:
         """Caps for the guard's own rendering of a tree these caps admitted.
 
         The rendering adds a schema to every relation and writes `x::t` as
-        `CAST(x AS t)`: at most twice the tokens and nodes, and no more
-        bracket levels than the tree it was written from has levels.
+        `CAST(x AS t)`: at most twice the tokens, nodes and square brackets,
+        and no more bracket levels than the tree it was written from has
+        levels.
         """
         return _Limits(
             tokens=2 * self.tokens,
             depth=self.tree_depth,
             nodes=2 * self.nodes,
             tree_depth=self.tree_depth,
+            square_brackets=2 * self.square_brackets,
         )
 
 
@@ -472,10 +490,13 @@ def _tokenize(sql: str) -> list[Token]:
 def _check_tokens(tokens: list[Token], limits: _Limits) -> None:
     """Refuse, in one pass over the tokens, what would make the parser slow.
 
-    Runs before the parser: the token count bounds its input, the nesting
-    depth bounds its recursion, and the type nesting bounds its backtracking
-    (see `MAX_TYPE_NESTING`). A bracket or CASE inside a string, a quoted
-    identifier or a comment is part of that one token and does not count.
+    Runs before the parser: the token reads bound its work (a token inside
+    `k` brackets opened by a type keyword is read `2**k` times, see
+    `MAX_TYPE_NESTING`), the square brackets bound its costliest construct
+    (see `MAX_SQUARE_BRACKETS`), the nesting depth bounds its recursion, and
+    the type nesting bounds its backtracking. A bracket or CASE inside a
+    string, a quoted identifier or a comment is part of that one token and
+    does not count.
     """
     if len(tokens) > limits.tokens:
         raise _too_complex()
@@ -483,24 +504,38 @@ def _check_tokens(tokens: list[Token], limits: _Limits) -> None:
     open_levels: list[tuple[bool, int]] = []
     type_nesting = 0
     closed_depth = 0  # depth of the level the previous token closed
+    reads = 0
+    square_brackets = 0
     previous: TokenType | None = None
     for token in tokens:
         kind = token.token_type
         if kind in _OPENERS or kind == TokenType.CASE:
             by_type = kind in _OPENERS and previous in _TYPE_TOKENS
             depth = (open_levels[-1][1] if open_levels else 0) + 1
-            if kind == TokenType.L_BRACKET and previous == TokenType.R_BRACKET:
-                # `x[1][2]` subscripts the value just closed: the parser
-                # recurses once per link (and walks the chain each time),
-                # so a chain nests like brackets inside brackets.
-                depth = closed_depth + 1
+            if kind == TokenType.L_BRACKET:
+                square_brackets += 1
+                if previous == TokenType.R_BRACKET:
+                    # `x[1][2]` subscripts the value just closed: the parser
+                    # recurses once per link (and walks the chain each
+                    # time), so a chain nests like brackets inside brackets.
+                    depth = closed_depth + 1
             open_levels.append((by_type, depth))
             type_nesting += by_type
-            if depth > limits.depth or type_nesting > MAX_TYPE_NESTING:
+            if (
+                depth > limits.depth
+                or type_nesting > MAX_TYPE_NESTING
+                or square_brackets > limits.square_brackets
+            ):
                 raise _too_complex()
         elif (kind in _CLOSERS or kind == TokenType.END) and open_levels:
             by_type, closed_depth = open_levels.pop()
             type_nesting -= by_type
+        # Read once per level of type-opened brackets around it (an opener
+        # counts inside the level it opens, a closer outside the one it
+        # closes).
+        reads += 1 << type_nesting
+        if reads > limits.tokens:
+            raise _too_complex()
         previous = kind
 
 

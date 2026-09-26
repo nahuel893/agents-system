@@ -234,9 +234,9 @@ def test_the_node_budget_applies_to_the_query_not_to_its_qualified_rendering() -
 #: after the caller gives up.
 _NESTED_ARRAY_19 = "SELECT " + "ARRAY[" * 19 + "1" + "]" * 19
 
-#: The worst case at the caps takes about 20 ms on a developer machine and
-#: about four times that on a CI runner under coverage; this budget keeps a
-#: margin over both.
+#: The worst case at the caps takes about 25 ms on a developer machine and
+#: about three times that under coverage; a CI runner is slower again. This
+#: budget keeps a margin over all of them.
 _GUARD_BUDGET_S = 0.2
 
 
@@ -308,6 +308,43 @@ def test_size_and_nesting_are_refused_before_the_parser_runs(
     )
 
 
+def test_square_brackets_are_capped_before_the_parser_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # sqlglot re-analyses every subscript's index while it parses it (type
+    # annotation and simplification): at the token cap, `x[1], x[1], ...`
+    # cost nearly three times as much as any other shape.
+    from agents_system.services import sql_guard
+
+    def subscripts(count: int) -> str:
+        return "SELECT " + ", ".join(["x[1]"] * count)
+
+    assert _reject_code(subscripts(100)) == "too_complex"
+
+    cap = sql_guard.MAX_SQUARE_BRACKETS
+    assert guard_query(subscripts(cap), _SINGLE_SCHEMA_POLICY, row_limit=5).sql
+
+    def no_parser(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the parser must not run")
+
+    monkeypatch.setattr(sql_guard, "_parse_single_statement", no_parser)
+    assert _reject_code(subscripts(cap + 1)) == "too_complex"
+    # Array constructors and slices open square brackets too.
+    assert _reject_code("SELECT ARRAY[1], " + subscripts(cap)[7:]) == "too_complex"
+    assert _reject_code("SELECT x[1:2], " + subscripts(cap)[7:]) == "too_complex"
+
+
+def test_tokens_inside_brackets_opened_by_a_type_keyword_count_per_read() -> None:
+    # The parser reads such a bracket twice (as a type, then as an
+    # expression), so everything inside k of them is read 2**k times: four
+    # levels around a 60-item list cost as much as 1,900 plain tokens.
+    items = ", ".join(["1"] * 60)
+
+    assert guard_query(f"SELECT ARRAY[{items}]", _SINGLE_SCHEMA_POLICY, row_limit=5).sql
+    assert _reject_code(f"SELECT ARRAY[ARRAY[ARRAY[ARRAY[{items}]]]]") == "too_complex"
+    assert _reject_code(f"SELECT int[int[int[int[{items}]]]]") == "too_complex"
+
+
 def test_brackets_inside_strings_identifiers_and_comments_do_not_count() -> None:
     sql = (
         "SELECT '"
@@ -360,6 +397,32 @@ def _fill(prefix: str, unit: str, suffix: str = "", sep: str = "") -> str:
     return prefix + sep.join([unit] * count) + suffix
 
 
+def _fill_to_caps(prefix: str, unit: str, suffix: str = "", sep: str = "") -> str:
+    """*prefix*, then as many *unit*s as every cap checked before the parser
+    admits, then *suffix*: the largest query of that shape the parser sees."""
+    from agents_system.services import sql_guard
+
+    limits = sql_guard._Limits.of(_SINGLE_SCHEMA_POLICY)
+
+    def admitted(count: int) -> bool:
+        text = prefix + sep.join([unit] * count) + suffix
+        try:
+            sql_guard._check_tokens(sql_guard._tokenize(text), limits)
+        except QueryRejectedError:
+            return False
+        return True
+
+    count = 1
+    while admitted(count + 1):
+        count += 1
+    return prefix + sep.join([unit] * count) + suffix
+
+
+_TYPED_4 = "NULL[NULL[NULL[NULL["
+"""Four brackets opened by a type keyword (sqlglot's `NULL` is one): the
+costliest opener a scan of every type keyword found."""
+
+
 @functools.cache
 def _worst_cases() -> dict[str, str]:
     from agents_system.services import sql_guard
@@ -389,6 +452,27 @@ def _worst_cases() -> dict[str, str]:
         "struct-depth-40": "SELECT " + _nest("struct(", ")", 40),
         # Quadratic in the parser: a subscript chain.
         "subscript-chain": _fill("SELECT ARRAY[1]", "[1]"),
+        # Costly per token in the parser: subscripts side by side, and the
+        # contents of brackets opened by a type keyword (read 2**k times),
+        # both at the token cap and at the caps checked before parsing.
+        "subscripts": _fill("SELECT ", "x[1]", sep=", "),
+        "subscripts-at-caps": _fill_to_caps(
+            _fill_to_caps("SELECT ", "x[1]", sep=", ") + ", ", "x::text::int", sep=", "
+        ),
+        "typed-siblings": _fill("SELECT ", _TYPED_4 + "1]]]]", sep=", "),
+        "typed-siblings-at-caps": _fill_to_caps(
+            "SELECT ", _TYPED_4 + "1]]]]", sep=", "
+        ),
+        "typed-list": _fill("SELECT " + _TYPED_4, "1", "]]]]", sep=", "),
+        "typed-list-at-caps": _fill_to_caps(
+            "SELECT " + _TYPED_4, "1", "]]]]", sep=", "
+        ),
+        "int-typed-siblings-at-caps": _fill_to_caps(
+            "SELECT ", "int[int[int[int[1]]]]", sep=", "
+        ),
+        "array-typed-list-at-caps": _fill_to_caps(
+            "SELECT ARRAY[ARRAY[ARRAY[ARRAY[", "1", "]]]]", sep=", "
+        ),
         # Nesting at the depth cap.
         "parens-at-depth": "SELECT " + _nest("(", ")", depth),
         "scalar-subqueries-at-depth": "SELECT " + _nest("(SELECT ", ")", depth),
