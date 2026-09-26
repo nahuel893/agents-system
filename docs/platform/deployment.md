@@ -161,6 +161,36 @@ purpose_extension: >
 
 ---
 
+## Serving: registering runtimes with `create_app`
+
+An application registers what it serves when it builds the app (ADR-004). Each runtime id is the application's own choice, and it is opaque: nothing parses it for a role or a deployment.
+
+```python
+app = create_app(
+    registry_factory=build_registry,
+    roots=RootConfig(deployments_root=Path("deployments")),
+    agents={
+        "acme-sales": "sales-agent",  # a predefined role
+        "triage-bot": Agent.from_folder("agents/triage-bot"),  # a custom agent
+    },
+    clients={"acme-sales": "acme"},  # deployments/acme/sales-agent/ narrows it
+    grants={
+        "acme-sales": ["read:catalog", "write:orders"],
+        "triage-bot": ["read:catalog"],
+    },
+)
+```
+
+- **Every registered id is built at boot.** One entry that fails to resolve or equip fails the whole boot; no runtime is served while another is dropped.
+- **An id** is 1-64 letters, digits, `_` or `-`, starting with a letter or digit.
+- **`clients`** is valid only for a predefined role registered by name. It fails boot for an `Agent` entry, for an id `agents` does not register, and without `agents`: a client names a subtractive override, and a silently ignored one would serve the agent without its narrowing. A client override needs an explicit `RootConfig(deployments_root=...)`.
+- **`grants`** is the explicit deploy-time grant, one list per registered id. Nothing is granted automatically: an id with no entry fails boot, and so does a bare string in place of a list. Without `grants=`, `DEPLOY_GRANTS` is the source, keyed by the same ids. See `docs/architecture/permission-model.md`.
+- **Channels look ids up.** `WHATSAPP_RUNTIME_ID` and every `ADAPTER_RUNTIMES` id must be a registered id, or boot fails naming it. `/v1/models` lists only the `ADAPTER_RUNTIMES` ids, never every registered one.
+
+Without `agents=`, `create_app` keeps the Settings-driven boot: `ADAPTER_RUNTIMES`/`WHATSAPP_RUNTIME_ID` carry `{deployment}__{role}` ids (`_generic__{role}` for no deployment).
+
+---
+
 ## Memory scoping in deployments
 
 The memory layer follows the same two-level scope:

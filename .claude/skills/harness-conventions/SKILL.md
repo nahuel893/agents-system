@@ -40,7 +40,7 @@ Cross-cutting: `config.py` (pydantic Settings — **`.env` overrides code defaul
 
 ## Runtime lifecycle & persistence
 
-- Runtimes are built **once at startup** in `main.py:lifespan` and cached in `app.state.runtimes` keyed by `"{deployment}__{role}"`. Resolve, don't rebuild.
+- Runtimes are built **once at startup** in `main.py:lifespan` and cached in `app.state.runtimes` keyed by runtime id: the opaque ids `create_app(agents=...)` registers, or, without `agents=`, the `"{deployment}__{role}"` ids from Settings. Resolve, don't rebuild.
 - Conversation persistence is **opt-in** per invocation: pass `thread_id` (WhatsApp = normalized phone) to engage the Redis checkpointer; omit it for stateless callers (Open WebUI sends full history). The checkpointer builds its **own** Redis connection (the shared pool uses `decode_responses=True`, which corrupts binary checkpoints).
 - The system prompt is injected at model-call time, **not** persisted in graph state.
 
