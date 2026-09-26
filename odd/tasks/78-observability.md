@@ -7,15 +7,18 @@ performs, per `docs/delivery/live-test-plan.md`'s Phase 0 and Principle
 three slices; this document tracks all of them so a later slice resumes with
 full context.
 
-## Scope (this document covers all of #78; only Slice 1 is implemented so far)
-- Slice 1 (this work unit): real token usage and cost per turn.
-- Slice 2 (pending): process memory/CPU sampling, turn/tool durations, and
-  exposing all of it via `/metrics` or `GET /health`.
+## Scope (this document covers all of #78; Slices 1 and 2 are implemented)
+- Slice 1 (done): real token usage and cost per turn.
+- Slice 2 (this work unit, done): process memory/CPU sampling, turn/tool
+  durations, and exposing all of it via `GET /metrics`.
 - Slice 3 (pending): the real-app live harness (API, webhook, Postgres,
   Redis, audit-to-DB) that later phases (#79, #76-extends) build on.
 
-Out of scope for Slice 1 (tracked as Slice 2/3 above): `/metrics`, process
-memory/CPU, turn/tool durations, the real-app live harness.
+Out of scope for Slices 1/2 (tracked as Slice 3 above): the real-app live
+harness. Out of scope for Slice 2 specifically (per its own PR description):
+alerts/OpenTelemetry (ADR-005 section 6/7 — this slice unblocks them, does
+not build them), and per-tool-call durations in the live-eval report
+(available instead via `/metrics`'s histogram — see Slice 2's Design below).
 
 ## TDD mode
 Strict TDD (per `.pi/ops/prompts/common-rules.txt` item 10 and the repo's
@@ -193,11 +196,122 @@ global CLAUDE.md). Runner: `pytest -q` from the worktree root with
   `ruff format --check .` 366 files already formatted; `mypy src/` success,
   69 source files; `pytest -q` 1421 passed, 97 deselected, 17 xfailed.
 
-## Slice 2 — process memory/CPU, durations, `/metrics` (pending)
-Not started. Per the issue: process memory/CPU sampling (no `psutil`/
-`resource.getrusage` anywhere in `src/` today), turn + per-tool-call
-duration, exposed via `/metrics` or folded into `GET /health`
-(`main.py:health()`).
+## Slice 2 — process memory/CPU, durations, `GET /metrics`
+
+### Design
+- New `src/agents_system/observability/metrics.py` (new direct dependency:
+  `prometheus-client`, confirmed clean by the repo's `dependency-audit` CI
+  job / a local `pip-audit --local` run). Every metric is built against an
+  explicit `CollectorRegistry` via `build_metrics(registry)` — never bound
+  to `prometheus_client`'s own ambient default registry — so a test builds
+  its own throw-away set (`build_metrics(CollectorRegistry())`) with no
+  collision risk. `DEFAULT_METRICS`/`DEFAULT_REGISTRY` are the process-wide
+  set built once at import time; `build_metrics` also registers the
+  default `ProcessCollector` on the same registry (resident memory + CPU
+  seconds on Linux, confirmed by a runtime test, not assumed).
+- Counters/histograms (`agent_turns_total`, `agent_turn_duration_seconds`,
+  `agent_tool_calls_total`, `agent_tool_call_duration_seconds`,
+  `agent_limit_trips_total`, `agent_tokens_total`, `agent_cost_usd_total`),
+  recorded at the agent graph's existing choke points
+  (`agent/graph.py::_finish_turn` for turns, `_execute_tools` for tool
+  calls, `_limit_reached` for limit trips) — never scattered elsewhere.
+  Labels are bounded, code-defined enums or operator-configured ids only
+  (`runtime_id`, `outcome`, `tool`, `limit`, `direction`) — never a user
+  id, phone number, correlation id, or message text; locked down by tests
+  that pin the exact label schema and drive a real turn with a
+  phone-number-shaped `session_id`, asserting it never reaches the
+  exported text.
+- `AgentRuntime.__init__` gained two backward-compatible optional
+  parameters: `runtime_id` (defaults to this runtime's own derived
+  provider model id, same default `run_turn`'s `model_id` pricing override
+  already uses) and `metrics` (defaults to the process-wide
+  `DEFAULT_METRICS`). `main.py`'s lifespan passes `runtime_id=model_id`
+  (the operator's own `"{deployment}__{role}"` id) explicitly; every other
+  existing construction site is unaffected.
+- Turn/tool-call outcomes: turns are `ok` (includes a turn that legitimately
+  ended at `_limit_reached` — that is a normal completion, not a failure),
+  `timeout` (`total_execution_timeout_s`), or `error` (anything else —
+  recorded via a new outer `except Exception: record; raise` wrapper around
+  `run_turn_with_usage`'s existing timeout handling, which changes no
+  existing error-handling behavior, only adds observability). Tool calls
+  are `ok`, `denied` (`PolicyViolation(reason="not_in_surface")` — a tool
+  never equipped at all), `blocked` (`reason` in
+  `{"revalidation_required", "permission_revoked"}` — Layer-2 revalidation
+  failure on a tool that WAS equipped), `timeout`
+  (`tool_call_timeout_s`), or `error` (the connector itself raises,
+  likewise recorded-then-re-raised via a new `except Exception` branch).
+- `GET /metrics` (`main.py`, Prometheus text via `generate_latest`): off by
+  default (`Settings.metrics_enabled=False` → 404, absent not merely
+  unauthenticated), Bearer-protected once enabled
+  (`Settings.metrics_api_key`, `secrets.compare_digest`, exactly
+  `integration/openai_adapter.py::verify_bearer`'s fail-closed shape), open
+  only under the existing `ALLOW_INSECURE=true` escape hatch — enforced by
+  `Settings.validate_security_fail_closed` (extended, not replaced) and a
+  new `metrics.open_mode` startup warning mirroring `adapter.open_mode`.
+- Live-eval report (`evals/runner.py`/`reporting.py`): `RunOutcome.duration_s`
+  (real wall-clock sum of a run's turns, `time.monotonic()` around each
+  `run_turn_with_usage` call) and `ScenarioResult.total_duration_s`
+  (summed across runs, `None` as soon as any one run's duration is unknown
+  — same honesty-rule shape as `total_usage`, though duration itself is
+  never "partially unknown" the way a provider-reported token count can
+  be: it is `None` only for a run that crashed before its first turn
+  returned). `write_results` reports it in both outputs (`total_duration_s`
+  JSON field, `Duration (s)` markdown column). Per-tool-call durations were
+  deliberately left out of this report (documented "if cheap" scope
+  decision — would need `TurnResult` to also carry a duration list); use
+  `/metrics`'s `agent_tool_call_duration_seconds` histogram instead.
+- Docs: new `docs/platform/observability.md` + `_es` twin (full metric/label
+  reference, protection model, testing pattern); `docs/platform/live-eval.md`
+  + `_es` twin gained a "Turn duration" section; ADR-005 section 6 (EN+ES)
+  updated to reflect the counters now existing.
+
+### Tasks
+- [x] **S2.1 — `observability/metrics.py`.** `Metrics`/`build_metrics`/
+  `record_turn`/`record_tool_call`/`record_limit_trip`, `DEFAULT_METRICS`/
+  `DEFAULT_REGISTRY`. RED: `tests/test_observability_metrics.py` failed
+  collection (`ModuleNotFoundError`) against pre-implementation code.
+  GREEN: `pytest -q tests/test_observability_metrics.py` 8 passed.
+- [x] **S2.2 — `agent/graph.py` choke points.** `_execute_tools`,
+  `_limit_reached`, `_build_graph`, `AgentRuntime.__init__`/
+  `run_turn_with_usage`/`_finish_turn`. RED: 9 new tests in
+  `tests/test_agent_runtime.py` failed (`TypeError`/`AttributeError`)
+  against pre-implementation code (verified by restoring the pre-slice-2
+  file over the updated tests); the pre-existing 39 tests in that file
+  were unaffected throughout. GREEN: `pytest -q tests/test_agent_runtime.py`
+  48 passed.
+- [x] **S2.3 — `GET /metrics` + `Settings`.** `config.py`
+  (`metrics_enabled`/`metrics_api_key`, `validate_security_fail_closed`
+  extended), `main.py` (`verify_metrics_access`, the route, the startup
+  warning, `runtime_id=model_id` at the `AgentRuntime` construction site).
+  RED: 4 new tests in `tests/test_config.py` + 4 new tests in
+  `tests/test_metrics_endpoint.py` failed against pre-implementation code.
+  GREEN: `pytest -q tests/test_config.py tests/test_metrics_endpoint.py
+  tests/test_main.py tests/test_openai_adapter.py` all passed.
+- [x] **S2.4 — eval report duration.** `evals/runner.py`
+  (`RunOutcome.duration_s`, `ScenarioResult.total_duration_s`),
+  `evals/reporting.py` (JSON field + markdown column). RED: 2 failures in
+  `tests/test_eval_runner.py` + 1 failure in `tests/test_eval_reporting.py`
+  against pre-implementation code. GREEN: `pytest -q tests/test_eval_runner.py
+  tests/test_eval_reporting.py tests/test_live_eval_roles.py
+  tests/test_live_eval_sales_agent.py` 44 passed.
+- [x] **S2.5 — docs.** `docs/platform/observability.md` + `_es` twin (new),
+  `docs/platform/live-eval.md` + `_es` twin ("Turn duration" section +
+  cross-reference), `docs/architecture/adr-005-operational-safety-roadmap.md`
+  + `_es` twin (section 6 updated).
+- [x] **S2.6 — full verification.** Aggregate RED evidence across every
+  implementation file at once (`observability/{__init__,metrics}.py`,
+  `agent/graph.py`, `config.py`, `main.py`, `evals/{runner,reporting}.py`
+  restored to pre-slice-2 content, updated tests kept): 22 failures +
+  1 collection error (8 more tests) across `test_agent_runtime.py`,
+  `test_eval_reporting.py`, `test_eval_runner.py`, `test_config.py`,
+  `test_metrics_endpoint.py`, `test_observability_metrics.py`; the 203
+  pre-existing tests in that same file set stayed green throughout,
+  confirming no regression. Restoring the implementation returned to
+  GREEN. Full-suite result: `ruff check .` all checks passed; `ruff format
+  --check .` 383 files already formatted; `mypy src/` success, 71 source
+  files; `pytest -q` 1562 passed, 101 deselected, 17 xfailed.
+- [ ] **S2.7 — commit + PR.** Work-unit commit and PR recorded below once
+  pushed.
 
 ## Slice 3 — real-app live harness (pending)
 Not started. A harness that boots the actual application (HTTP API, WhatsApp
@@ -211,3 +325,13 @@ Slice 1 is additive: `TurnMessages`/`TurnUsage`/`model_prices` are new, and
 Reverting the commit restores the previous hardcoded-zero `usage` response
 and the previous `list[AnyMessage]` return value; no migration, no data
 change.
+
+Slice 2 is additive too: `observability/metrics.py` is new;
+`AgentRuntime`'s `runtime_id`/`metrics` parameters are optional with
+backward-compatible defaults; `GET /metrics` is a new route, off by default
+(`metrics_enabled=False`); `RunOutcome.duration_s`/
+`ScenarioResult.total_duration_s` are new fields with `None`/computed
+defaults. Reverting the commit removes the endpoint and the counters; no
+migration, no data change, no existing behavior altered (verified by the
+aggregate RED/GREEN check in S2.6, which pinned the 203 pre-existing tests
+in the same files as unaffected).

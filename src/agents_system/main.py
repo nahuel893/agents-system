@@ -5,14 +5,18 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import secrets
 import uuid
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
 import structlog
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -32,6 +36,7 @@ from agents_system.integration.openai_adapter import parse_model_id
 from agents_system.integration.whatsapp_client import WhatsAppClient
 from agents_system.models.base import get_engine, get_session_factory
 from agents_system.observability import RequestIdMiddleware, setup_logging
+from agents_system.observability.metrics import DEFAULT_REGISTRY
 from agents_system.services.admission import TurnAdmissionLimiter
 from agents_system.services.db_role import role_is_read_only
 from agents_system.services.outbox import (
@@ -94,6 +99,54 @@ async def _bi_role_is_read_only(engine: Any) -> bool | None:
     return await role_is_read_only(engine, log_event="bi.read_only_check_failed")
 
 
+#: #78 Phase 0 Slice 2 -- same HTTPBearer mechanism as
+#: integration/openai_adapter.py's `_http_bearer` (a distinct instance: the
+#: two endpoints are protected by two independent keys/settings fields).
+_metrics_http_bearer = HTTPBearer(auto_error=False)
+
+
+async def verify_metrics_access(
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(_metrics_http_bearer)
+    ] = None,
+) -> None:
+    """FastAPI dependency gating `GET /metrics` (#78 Phase 0 Slice 2).
+
+    Follows `integration/openai_adapter.py`'s `verify_bearer` fail-closed
+    spirit, with one extra step in front of it (ADR-005 section 6 / issue
+    #78's scope note: "unauthenticated exposure only under an explicit
+    setting"):
+
+    - `metrics_enabled` is `False` (the default): 404 -- the endpoint does
+      not exist. Absent, not merely unauthenticated, so probing for it
+      reveals nothing about whether metrics are configured at all.
+    - `metrics_enabled` is `True` + `metrics_api_key` set: Bearer auth
+      enforced (constant-time compare), identical shape to `verify_bearer`.
+    - `metrics_enabled` is `True` + `metrics_api_key` empty: open. Refused
+      at boot by `Settings.validate_security_fail_closed` unless
+      `allow_insecure=True` was also set explicitly (dev-only escape hatch,
+      same as the adapter's own open mode).
+    """
+    settings = get_settings()
+    if not settings.metrics_enabled:
+        raise HTTPException(status_code=404)
+
+    expected_key = settings.metrics_api_key
+    if not expected_key:
+        # Open mode — Settings itself already refused to boot this way
+        # without allow_insecure=True.
+        return
+
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or malformed Authorization header (expected Bearer token).",
+        )
+
+    if not secrets.compare_digest(credentials.credentials, expected_key):
+        raise HTTPException(status_code=401, detail="Invalid bearer token.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage startup / shutdown resources.
@@ -111,6 +164,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # when it got none, from Settings. Resolved here, before any resource
     # exists, so an invalid registration fails boot with nothing to unwind.
     plan = _boot_plan(app, settings)
+
+    # #78 Phase 0 Slice 2 -- unconditional (unlike the ADAPTER_API_KEY
+    # warning below, which is scoped to `required_runtimes`): /metrics has
+    # no channel/runtime dependency at all, so this is the only place that
+    # sees every boot where it would be open.
+    if settings.metrics_enabled and not settings.metrics_api_key:
+        # Reachable only under ALLOW_INSECURE=true -- the Settings validator
+        # fails closed otherwise (see validate_security_fail_closed).
+        structlog.get_logger().warning(
+            "metrics.open_mode",
+            message=(
+                "METRICS_API_KEY is not set and ALLOW_INSECURE=true. "
+                "GET /metrics is OPEN — never do this in production."
+            ),
+        )
 
     async with AsyncExitStack() as resource_stack:
         # Startup — create async engine and store on app state
@@ -366,8 +434,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     roots=roots,
                     session_provider=session_provider,
                 )
+                # #78 Phase 0 Slice 2 -- runtime_id=runtime_id gives this
+                # runtime's metrics the operator-meaningful
+                # "{deployment}__{role}" label instead of AgentRuntime's own
+                # derived provider-model-id default (see AgentRuntime's
+                # `runtime_id` parameter docstring in agent/graph.py).
                 runtimes[runtime_id] = AgentRuntime(
-                    runtime=equipped, model=model, checkpointer=checkpointer
+                    runtime=equipped,
+                    model=model,
+                    checkpointer=checkpointer,
+                    runtime_id=runtime_id,
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
 
@@ -975,5 +1051,18 @@ def create_app(
                 "outbox_leased_expired": outbox_leased_expired,
             },
         }
+
+    @application.get("/metrics", dependencies=[Depends(verify_metrics_access)])
+    async def metrics() -> Response:
+        """Prometheus text exposition of the process-wide metrics registry
+        (#78 Phase 0 Slice 2). Access is gated by `verify_metrics_access`
+        above -- absent (404) unless `metrics_enabled` is set, then bearer-
+        protected exactly like `integration/openai_adapter.py`'s
+        `verify_bearer` whenever `metrics_api_key` is configured.
+        """
+        return Response(
+            content=generate_latest(DEFAULT_REGISTRY),
+            media_type=CONTENT_TYPE_LATEST,
+        )
 
     return application

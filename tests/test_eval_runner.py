@@ -452,6 +452,59 @@ async def test_run_scenario_a_crashed_run_has_no_usage() -> None:
     assert result.total_usage.model_calls is None
 
 
+# ---------------------------------------------------------------------------
+# #78 Phase 0 Slice 2 -- turn duration in the eval report
+# ---------------------------------------------------------------------------
+
+
+async def test_run_scenario_records_turn_duration_per_run() -> None:
+    """RunOutcome.duration_s is a real wall-clock sum of this run's turns;
+    ScenarioResult.total_duration_s carries the same total for one run."""
+    from conftest import build_test_registry
+
+    model = ToolAwareFakeModel(
+        responses=[AIMessage(content="Yes, Item Alpha is in stock.")]
+    )
+
+    result = await run_scenario(
+        _scenario(),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    assert result.runs[0].duration_s is not None
+    assert result.runs[0].duration_s >= 0
+    assert result.total_duration_s is not None
+    assert result.total_duration_s == pytest.approx(result.runs[0].duration_s)
+
+
+async def test_run_scenario_a_crashed_run_before_any_turn_has_no_duration() -> None:
+    """A run that raises before any turn returns has RunOutcome.duration_s
+    == None -- never a guessed number for a run that never completed a turn
+    (same honesty posture as `usage` above)."""
+    from conftest import build_test_registry
+
+    class _ExplodingModel(ToolAwareFakeModel):
+        def _generate(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("simulated model failure")
+
+    model = _ExplodingModel(responses=[AIMessage(content="unreachable")])
+
+    result = await run_scenario(
+        _scenario(tools_called=("catalog_search",)),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    assert result.runs[0].duration_s is None
+
+
 async def test_run_scenario_total_usage_is_unknown_when_one_of_several_runs_crashed() -> (
     None
 ):

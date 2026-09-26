@@ -226,6 +226,35 @@ como `"usage": null` al nivel superior, nunca un objeto con campos `null`
 (`{"prompt_tokens": null, ...}` falla la validación de Pydantic del lado
 del cliente).
 
+## Duración de turno (issue #78 Phase 0 Slice 2)
+
+`run_scenario` cronometra la llamada a `run_turn_with_usage` de cada turno
+con `time.monotonic()` real (wall-clock) y suma los turnos de una corrida
+en `RunOutcome.duration_s`; `ScenarioResult.total_duration_s` suma la
+duración de cada corrida en un total por escenario. Ambas salidas de
+`write_results` lo reportan (`total_duration_s` en el JSON, `duration_s`
+por corrida en `run_details`, y la columna `Duration (s)` en la tabla
+markdown).
+
+Misma postura de honestidad que tokens/costo arriba: `duration_s` es
+`None` sólo para una corrida que falló antes de que su PRIMER turno
+retornara (todavía no había nada que cronometrar) -- una corrida que falla
+a mitad del escenario igual reporta la suma real y parcial de los turnos
+que sí se completaron antes de fallar. `ScenarioResult.total_duration_s`
+es `None` apenas la duración de UNA corrida es desconocida, la misma regla
+de grano más grueso que ya aplica `total_usage`.
+
+**Las duraciones por llamada a herramienta se dejaron afuera de este
+reporte a propósito** (el propio calificador "if cheap" del issue): meterlas
+en este reporte por corrida necesitaría que `TurnResult` también cargue una
+lista de duraciones de llamadas a herramientas, algo que este slice no
+agregó. Están disponibles en cambio vía el histograma
+`agent_tool_call_duration_seconds` de `/metrics` -- ver
+`docs/platform_es/observability.md`, que también cubre memoria/CPU del
+proceso, los contadores
+`agent_turns_total`/`agent_tool_calls_total`/`agent_limit_trips_total`, y
+el propio modelo de protección de `GET /metrics`.
+
 ## Correrlo como pipeline propio de un rol
 
 `agents_system.evals.runner.run_scenario(scenario, *, model, model_name,
@@ -269,6 +298,8 @@ harness está discriminando correctamente, no un bug del pipeline.
 
 - ADR-002 E.18: `docs/architecture/adr-002-agent-model-and-capabilities.md`
 - Backends de referencia que el eval runner conecta: `docs/platform_es/reference-backends.md`
+- Métricas de proceso/turno/herramientas y `GET /metrics` (issue #78 Phase 0
+  Slice 2): `docs/platform_es/observability.md`
 - Código del runner: `src/agents_system/evals/{schema,runner,reporting,provider}.py`
 - Pruebas offline: `tests/test_eval_schema.py`, `tests/test_eval_runner.py`,
   `tests/test_eval_reporting.py`, `tests/test_eval_provider.py`
