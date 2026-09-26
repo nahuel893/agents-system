@@ -10,9 +10,40 @@ and pydantic-settings reads the subclass's fields from the same environment.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
+
+#: Review finding 6 (PR #87) -- a generous but finite sanity ceiling on a
+#: per-million-token price. No real hosted provider prices anywhere near
+#: this; it exists only to reject a malformed config (a misplaced decimal,
+#: a unit mix-up) at boot rather than silently computing an absurd cost.
+_MAX_PRICE_PER_MILLION = 10_000.0
+
+
+class ModelPrice(BaseModel):
+    """Cost per million tokens for one model id (issue #78 Phase 0).
+
+    Both prices are USD per 1,000,000 tokens -- the unit every hosted
+    provider quotes in, so a value here can be copy-pasted from a pricing
+    page without conversion.
+
+    Review finding 6 (PR #87): `extra="forbid"` so a typo'd key (e.g.
+    `input_tokens_per_million`) fails loudly instead of being silently
+    ignored while a required field stays missing; `allow_inf_nan=False` plus
+    a finite upper bound so `Infinity`/`NaN`/an absurd value (`1e308`) can
+    never make `cost_usd` compute as `inf`/`nan` -- a malformed price is
+    refused at boot, never turned into a meaningless number later.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    input_per_million: float = Field(
+        ge=0, le=_MAX_PRICE_PER_MILLION, allow_inf_nan=False
+    )
+    output_per_million: float = Field(
+        ge=0, le=_MAX_PRICE_PER_MILLION, allow_inf_nan=False
+    )
 
 
 class Settings(BaseSettings):
@@ -167,6 +198,17 @@ class Settings(BaseSettings):
     # matching entry here -- there is no automatic grant.
     # e.g. DEPLOY_GRANTS='{"acme__sales-agent": ["read:catalog", "write:orders"]}'
     deploy_grants: dict[str, tuple[str, ...]] = {}
+
+    # #78 Phase 0 -- cost table for real per-turn token usage. Keyed by the
+    # same model id a caller already names to select a runtime: the
+    # "{deployment}__{role}" adapter/webhook runtime id
+    # (`AgentRuntime.run_turn`'s own `model_id` parameter, passed by
+    # `integration/openai_adapter.py`), or a live-eval's own `model_name`
+    # (`evals/provider.py:model_display_name`). A model id with no entry
+    # here means cost is honestly `None` -- `agent/graph.py` never guesses a
+    # price. e.g.
+    # MODEL_PRICES='{"acme__sales-agent": {"input_per_million": 0.14, "output_per_million": 0.28}}'
+    model_prices: dict[str, ModelPrice] = {}
 
     # Any OpenAI-compatible chat endpoint (MiniMax, vLLM, LM Studio, ...),
     # selected with adapter_provider="openai_compatible".

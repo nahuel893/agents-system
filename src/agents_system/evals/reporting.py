@@ -44,13 +44,26 @@ def write_results(
     lines = [
         f"# Live-eval results -- {timestamp}",
         "",
-        "| Scenario | Role | Model | Runs | Success rate |",
-        "|---|---|---|---|---|",
+        "| Scenario | Role | Model | Runs | Success rate | Tokens | Cost (USD) |",
+        "|---|---|---|---|---|---|---|",
     ]
     for result in results:
+        total_usage = result.total_usage
+        # #78 Phase 0 -- "n/a" (never a guessed 0) whenever a run's model
+        # reported no usage_metadata -- see TurnUsage's honesty rule.
+        tokens = (
+            "n/a"
+            if total_usage is None or total_usage.total_tokens is None
+            else str(total_usage.total_tokens)
+        )
+        cost = (
+            "n/a"
+            if total_usage is None or total_usage.cost_usd is None
+            else f"{total_usage.cost_usd:.4f}"
+        )
         lines.append(
             f"| {result.scenario} | {result.role} | {result.model} | "
-            f"{len(result.runs)} | {result.success_rate:.0%} |"
+            f"{len(result.runs)} | {result.success_rate:.0%} | {tokens} | {cost} |"
         )
     markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

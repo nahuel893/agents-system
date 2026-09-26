@@ -283,7 +283,23 @@ async def chat_completions(request: Request) -> dict[str, Any]:
 
     async with turn_stack:
         try:
-            result_messages: list[AnyMessage] = await runtime.run_turn(
+            # Review finding 5 (PR #87) -- `run_turn_with_usage` (not
+            # `run_turn`) is the explicit, type-safe way to get `.usage`;
+            # see `agent/graph.py`'s `TurnResult` docstring for why this
+            # replaced the earlier `TurnMessages` list subclass.
+            #
+            # Review finding 4 (PR #87) -- deliberately NOT passing
+            # `model_id=model_id` (the client's own "{deployment}__{role}"
+            # routing id) here anymore: that id names WHICH runtime to call,
+            # not which provider model bills the tokens, and using it as the
+            # Settings.model_prices key broke pricing for every other entry
+            # point keyed differently (the eval pipeline) and left the
+            # WhatsApp webhook worker's turns permanently unpriced (it never
+            # had a routing id like this to pass). Omitting it here lets
+            # `AgentRuntime` fall back to its own derived default --
+            # `model_display_name(model)`, the actual provider model id --
+            # so every entry point prices under the same, correct key.
+            turn_result = await runtime.run_turn_with_usage(
                 messages=lc_messages,
                 session_id=session_id,
             )
@@ -304,7 +320,7 @@ async def chat_completions(request: Request) -> dict[str, Any]:
             ) from None
 
     # Extract final assistant text
-    assistant_text = _extract_assistant_text(result_messages)
+    assistant_text = _extract_assistant_text(turn_result.messages)
 
     now = int(time.time())
     return {
@@ -319,10 +335,41 @@ async def chat_completions(request: Request) -> dict[str, Any]:
                 "finish_reason": "stop",
             }
         ],
-        # Token usage is zeros for MVP — Open WebUI tolerates this (design open question)
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        },
+        # #78 Phase 0 — real usage from the provider's own AIMessage.usage_metadata
+        # (agent/graph.py's TurnUsage), replacing the old hardcoded zeros.
+        # Honesty rule: `run_turn_with_usage` returns TurnUsage.total_tokens
+        # (and the other counts) as None whenever any of this turn's model
+        # calls reported no usage_metadata. Review finding 1 (PR #87):
+        # `_usage_payload` turns that into a top-level `"usage": null`, never
+        # an object with null fields (the official openai SDK's
+        # CompletionUsage requires non-Optional ints).
+        "usage": _usage_payload(turn_result.usage),
+    }
+
+
+def _usage_payload(usage: Any) -> dict[str, int] | None:
+    """Build the OpenAI-shaped `usage` object from a `TurnUsage` (or `None`
+    when the runtime reported none at all) -- see the honesty note above.
+
+    Review finding 1 (PR #87) -- returns `None` (JSON `null`) for the WHOLE
+    object whenever any field is unknown, never an object with `null`
+    fields. The official `openai` SDK's `CompletionUsage` requires
+    non-Optional ints for every field, while `ChatCompletion.usage` itself
+    is `Optional[CompletionUsage]` -- so `{"prompt_tokens": null, ...}`
+    crashes client-side Pydantic validation, but a top-level `"usage": null`
+    deserializes cleanly as `response.usage is None`. Verified against the
+    real SDK in `tests/test_openai_adapter.py`
+    (`openai.types.chat.ChatCompletion.model_validate`).
+    """
+    if (
+        usage is None
+        or usage.input_tokens is None
+        or usage.output_tokens is None
+        or usage.total_tokens is None
+    ):
+        return None
+    return {
+        "prompt_tokens": usage.input_tokens,
+        "completion_tokens": usage.output_tokens,
+        "total_tokens": usage.total_tokens,
     }

@@ -25,7 +25,7 @@ import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
-from agents_system.agent.graph import AgentRuntime
+from agents_system.agent.graph import AgentRuntime, TurnUsage
 from agents_system.audit.sink import AuditSink
 from agents_system.evals.schema import Scenario, ScenarioAssertions
 from agents_system.harness.factory import EquippedRuntime, build_runtime
@@ -85,6 +85,39 @@ class RunOutcome:
     passed: bool
     failures: tuple[AssertionFailure, ...] = ()
     error: str | None = None
+    #: #78 Phase 0 -- this run's real token usage/cost, summed across every
+    #: turn `scenario.turns` made (`_sum_turn_usage` below). `None` when the
+    #: run raised before any turn returned (see `error` above).
+    usage: TurnUsage | None = None
+
+
+def _sum_turn_usage(turns: Sequence[TurnUsage]) -> TurnUsage:
+    """Sum several `TurnUsage` values -- a run's turns, or a scenario's runs
+    -- into one total (#78 Phase 0), applying `TurnUsage`'s own honesty rule
+    at this coarser grain too: one unknown field in any input makes that
+    field unknown for the whole sum, rather than silently under-reporting.
+    """
+    if any(turn.model_calls is None for turn in turns):
+        model_calls = None
+    else:
+        model_calls = sum(turn.model_calls for turn in turns)  # type: ignore[misc]
+    if any(turn.total_tokens is None for turn in turns):
+        input_tokens = output_tokens = total_tokens = None
+    else:
+        input_tokens = sum(turn.input_tokens for turn in turns)  # type: ignore[misc]
+        output_tokens = sum(turn.output_tokens for turn in turns)  # type: ignore[misc]
+        total_tokens = sum(turn.total_tokens for turn in turns)  # type: ignore[misc]
+    if any(turn.cost_usd is None for turn in turns):
+        cost_usd = None
+    else:
+        cost_usd = sum(turn.cost_usd for turn in turns)  # type: ignore[misc]
+    return TurnUsage(
+        model_calls=model_calls,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        cost_usd=cost_usd,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -106,7 +139,37 @@ class ScenarioResult:
             return 0.0
         return sum(1 for run in self.runs if run.passed) / len(self.runs)
 
+    @property
+    def total_usage(self) -> TurnUsage | None:
+        """This scenario's real token usage/cost, summed across every run
+        (#78 Phase 0) -- `None` only when there are no runs at all.
+
+        Review finding 2 (PR #87): if even ONE run's usage is unknown
+        (`RunOutcome.usage is None` -- a run that raised before completing a
+        turn), the WHOLE scenario's total is honestly unknown too, applying
+        `TurnUsage`'s own honesty rule at this coarser grain. The previous
+        implementation filtered unknown runs out and summed only the known
+        ones, which for a flaky scenario (some runs pass, one crashes)
+        silently under-reported a partial sum as if it were the complete
+        total -- `write_results`'s markdown table would show a real-looking
+        number instead of `n/a`.
+        """
+        if not self.runs:
+            return None
+        if any(run.usage is None for run in self.runs):
+            return TurnUsage(
+                model_calls=None,
+                input_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+                cost_usd=None,
+            )
+        return _sum_turn_usage(
+            [run.usage for run in self.runs if run.usage is not None]
+        )
+
     def to_dict(self) -> dict[str, Any]:
+        total_usage = self.total_usage
         return {
             "scenario": self.scenario,
             "role": self.role,
@@ -115,12 +178,16 @@ class ScenarioResult:
             "passed": sum(1 for run in self.runs if run.passed),
             "success_rate": self.success_rate,
             "audit_events_captured": self.audit_events_captured,
+            "total_tokens": total_usage.total_tokens if total_usage else None,
+            "total_cost_usd": total_usage.cost_usd if total_usage else None,
             "run_details": [
                 {
                     "run": index,
                     "passed": run.passed,
                     "error": run.error,
                     "failures": [dataclasses.asdict(f) for f in run.failures],
+                    "total_tokens": run.usage.total_tokens if run.usage else None,
+                    "cost_usd": run.usage.cost_usd if run.usage else None,
                 }
                 for index, run in enumerate(self.runs)
             ],
@@ -397,15 +464,31 @@ async def run_scenario(
             assert equipped is not None  # exactly one branch above set it
             agent = AgentRuntime(equipped, model)
             history: list[AnyMessage] = []
+            # #78 Phase 0 (review finding 5) -- one TurnUsage per turn this
+            # run makes; summed into the RunOutcome below.
+            # `run_turn_with_usage` (not `run_turn`) is the explicit,
+            # type-safe way to get `.usage` -- see `TurnResult`'s docstring
+            # for why this replaced the earlier `TurnMessages` list subclass.
+            turn_usages: list[TurnUsage] = []
             try:
                 for turn in scenario.turns:
                     history = [*history, HumanMessage(content=turn)]
-                    history = await agent.run_turn(
-                        history, session_id=f"eval-{scenario.name}-{index}"
+                    turn_result = await agent.run_turn_with_usage(
+                        history,
+                        session_id=f"eval-{scenario.name}-{index}",
+                        # Prices this run's usage under the same id
+                        # ScenarioResult.model already reports.
+                        model_id=model_name,
                     )
+                    turn_usages.append(turn_result.usage)
+                    history = turn_result.messages
                 outcome = evaluate_assertions(scenario.assertions, history)
                 outcomes.append(
-                    RunOutcome(passed=outcome.passed, failures=outcome.failures)
+                    RunOutcome(
+                        passed=outcome.passed,
+                        failures=outcome.failures,
+                        usage=_sum_turn_usage(turn_usages) if turn_usages else None,
+                    )
                 )
             except Exception as exc:
                 # a failed run, not a crashed eval: one bad run must not
