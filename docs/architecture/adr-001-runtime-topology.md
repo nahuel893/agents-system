@@ -103,8 +103,9 @@ speculatively.
 
 Ten concurrent turns are dominated by LLM latency, which is I/O. One event loop
 handles that comfortably. A single process needs no shared-state work at all:
-`_seq_counter` is correct within one process, one audit queue means one
-`dropped_count`, and 30 connections fit inside `max_connections` untouched.
+the sequence allocator is DB-backed and process-count-agnostic since #9, one
+audit queue means one `dropped_count`, and 30 connections fit inside
+`max_connections` untouched.
 
 This means the launch configuration is **the current code plus D-030 and D-033**
 — not a re-architecture. Stage A is reachable now.
@@ -123,7 +124,7 @@ Inventoried by reading the runtime, not assumed:
 
 | State | Location | Survives N processes? |
 |---|---|---|
-| `_seq_counter` | module dict, `audit/recorder.py:44` | **No — D-042.** Every process counts the `"none"` fallback correlation from 1, so two workers emitting a contextless event in the same instant violate `uq_audit_event_correlation_sequence` and lose the whole batch. |
+| ~~`_seq_counter`~~ sequence allocation | now `audit_sequence` table, allocated atomically in `AuditSink._flush_batch` | **Yes — fixed by D-042 (#9).** The counter moved to the database: an atomic per-`correlation_id` upsert against `audit_sequence` (migration `005_audit_sequence`), executed inside the same transaction each batch already commits with. PostgreSQL's own row lock on that row serializes concurrent writers from any process. |
 | Audit queue + `dropped_count` | in-memory, `audit/sink.py` | **Partially.** Each process gets its own queue of 1000 and its own counter; nothing aggregates them, so audit loss becomes N invisible numbers instead of one. Needs D-046. |
 | Connection pools | SQLAlchemy, unconfigured | **No — D-032.** 4 server processes exhaust `max_connections` at today's defaults, and 3 plus a running sync script already do. |
 | Local BGE-M3 embedder | process RAM | **No.** N × 4.3 GB. Resolved by decision 1. |
@@ -138,9 +139,11 @@ Inventoried by reading the runtime, not assumed:
 ### 4. What a restart loses
 
 - **Up to 1000 queued audit events per process**, plus whatever the drainer held
-  mid-batch. Worse today than it needs to be: `AuditSink.stop()` cancels the
-  drainer before its shutdown flush can run (**D-041**, pinned as a strict
-  xfail), so even a graceful shutdown drops the tail.
+  mid-batch, on a hard process kill. A graceful shutdown no longer adds to that
+  loss: `AuditSink.stop()` (fixed by **D-041** / #8) now awaits the drainer's own
+  shutdown-drain tail instead of cancelling it out from under it, bounded by a
+  `timeout` (default 5s) that falls back to cancelling — and counting the
+  remainder as dropped — only if the drainer itself is wedged.
 - **Nothing else.** Conversation state lives in the Redis checkpointer and dedup
   marks live in Redis with a 300 s TTL, so both survive a restart. In-flight
   turns are lost, which is why D-030's background execution has to be paired
@@ -157,8 +160,8 @@ Ordered as they must be done, with what changed for each:
 | **D-030** webhook returns 200 before the turn | high | Unchanged, and now unblocked. Required for Stage A. |
 | **D-031** dedup claim/release | medium | Must land with D-030, per above. |
 | **D-032** pool sizing | **low** | **Raised.** It is the binding constraint at 4+ server processes, so it is a prerequisite for Stage B, not an optimization. Set `pool_size`/`max_overflow` from settings on both engines, and size them as `max_connections` ÷ expected processes — leaving room for the sync scripts, which open their own pair of engines and can push a 3-process deployment over the limit on their own. |
-| **D-042** `_seq_counter` | medium | Now decidable. Since Stage B is a real target, the fix must be one that survives N processes: move the sequence to the database (a per-correlation sequence or an INSERT-time expression), not a smarter in-process counter. Per-request cleanup alone is not sufficient. |
-| **D-041** `stop()` loses the queue tail | medium | Unchanged, and more important at Stage B, where N processes each lose a tail on every deploy. |
+| **D-042** `_seq_counter` | medium | **Done — #9.** Was: now decidable, since Stage B is a real target, the fix must be one that survives N processes — move the sequence to the database (a per-correlation sequence or an INSERT-time expression), not a smarter in-process counter; per-request cleanup alone is not sufficient. Shipped exactly that: an atomic per-`correlation_id` upsert against `audit_sequence`. |
+| **D-041** `stop()` loses the queue tail | medium | **Done — #8.** Was: unchanged, and more important at Stage B, where N processes each lose a tail on every deploy. `stop()` now awaits the drainer's shutdown-drain tail instead of cancelling it. |
 | **D-046** expose `dropped_count` | medium | Raised in value: at Stage B it is the only way to see aggregate audit loss. |
 | **D-036** server provisioning | high | Now has its input: Stage A ships one unit; Stage B needs the unit count parameterised and the pool sized to match. |
 

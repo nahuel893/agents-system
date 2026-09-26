@@ -2,7 +2,8 @@
 
 Each ``record_*`` helper:
   - Captures ``correlation_id`` from ``structlog.contextvars.get("request_id")`` at call time.
-  - Auto-assigns ``sequence`` from a per-process in-memory counter (guarded by ``asyncio.Lock``).
+  - Writes ``sequence`` as ``PLACEHOLDER_SEQUENCE`` — the real value is allocated
+    atomically, per event, at flush time by ``AuditSink._flush_batch`` (issue #9).
   - Auto-assigns ``event_id`` (UUID4) and ``occurred_at`` (UTC now).
   - Deep-copies ``definition`` to extract role/deployment (no shared mutable refs).
   - Calls ``Redactor.redact(payload, audit_policy)`` to get (redacted_payload, pii_keys).
@@ -13,7 +14,6 @@ Full spec: REQ-AUDIT-50..
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -38,19 +38,22 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Per-correlation sequence counter
+# Sequence placeholder (issue #9, ADR-001 D-042)
 # ---------------------------------------------------------------------------
-_seq_lock = asyncio.Lock()
-_seq_counter: dict[str, int] = {}
-
-
-async def _allocate_sequence(correlation_id: str) -> int:
-    """Allocate the next sequence number for ``correlation_id`` (async-safe)."""
-    async with _seq_lock:
-        current = _seq_counter.get(correlation_id, 0)
-        next_seq = current + 1
-        _seq_counter[correlation_id] = next_seq
-        return next_seq
+#: Written into every event's ``sequence`` field at construction time, in
+#: place of the module-level ``_seq_counter``/``_allocate_sequence`` this
+#: recorder used to keep. That in-process counter was correct within one
+#: process and wrong across N: every process counted the ``"none"`` fallback
+#: ``correlation_id`` (used whenever there is no bound request context) from
+#: 1 independently, so two workers emitting a contextless event in the same
+#: instant could allocate the same sequence and collide on
+#: ``uq_audit_event_correlation_sequence``. There is no in-process fix for
+#: that — the counter has to live somewhere every process shares. The real,
+#: authoritative sequence is now allocated atomically at flush time, against
+#: the ``audit_sequence`` table, by ``AuditSink._flush_batch`` (migration
+#: ``005_audit_sequence``). This placeholder is overwritten there before the
+#: event is mapped to its ORM row and is never persisted.
+PLACEHOLDER_SEQUENCE = 0
 
 
 def _now_utc() -> datetime:
@@ -93,7 +96,9 @@ def _build_and_redact(
 # Per-family helpers
 # ---------------------------------------------------------------------------
 
-# NOTE: All helpers are async because _allocate_sequence is async.
+# NOTE: All helpers stay async for call-site compatibility (`await record_*(...)`
+# throughout the harness), even though none of them awaits anything internally
+# now that sequence allocation moved out of the recorder (issue #9).
 
 
 async def record_tool_call_attempted(
@@ -111,7 +116,7 @@ async def record_tool_call_attempted(
     from agents_system.audit.events import ToolCallAttempted
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload: dict[str, Any] = {
@@ -155,7 +160,7 @@ async def record_tool_call_blocked(
     from agents_system.audit.events import ToolCallBlocked
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload = {"tool_name": tool_name, "reason": reason}
@@ -184,7 +189,7 @@ async def record_tool_granted(
     from agents_system.audit.events import ToolGranted
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload = {"tool_name": tool_name}
@@ -213,7 +218,7 @@ async def record_tool_denied(
     from agents_system.audit.events import ToolDenied
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload = {"tool_name": tool_name, "reason": reason}
@@ -242,7 +247,7 @@ async def record_unknown_tool(
     from agents_system.audit.events import UnknownTool
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload = {"tool_name": tool_name}
@@ -270,7 +275,7 @@ async def record_skill_loaded(
     from agents_system.audit.events import SkillLoaded
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload = {"skill": skill}
@@ -299,7 +304,7 @@ async def record_skill_missing(
     from agents_system.audit.events import SkillMissing
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload = {"skill": skill, "path": path}
@@ -330,7 +335,7 @@ async def record_runtime_built(
     from agents_system.audit.events import RuntimeBuilt
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload = {"tools": tools_count, "denied": denied_count, "skills": skills_count}
@@ -361,7 +366,7 @@ async def record_runtime_initialized(
     from agents_system.audit.events import RuntimeInitialized
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload = {"tools": tools_count, "model_type": model_type}
@@ -390,7 +395,7 @@ async def record_runtime_timeout(
     from agents_system.audit.events import RuntimeTimeout
 
     correlation_id = _correlation_id_from_context()
-    sequence = await _allocate_sequence(correlation_id)
+    sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
     raw_payload = {"total_execution_timeout_s": total_execution_timeout_s}

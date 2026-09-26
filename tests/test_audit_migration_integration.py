@@ -24,17 +24,21 @@ sat behind the marker and never ran anywhere. It is wired into the
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
+import random
 import subprocess
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar, Self
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from agents_system.models.base import get_engine
 
@@ -229,6 +233,68 @@ async def test_downgrade_removes_partitions_created_after_install(
     _run_alembic("upgrade head", url)
 
 
+async def test_upgrade_to_005_seeds_audit_sequence_from_existing_events(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """PR #72 review, finding 2 (HIGH): 005 must not restart live counters.
+
+    Every deployment that predates 005 already has ``audit_event`` rows --
+    above all under the shared ``"none"`` fallback correlation_id. Without a
+    backfill, the first contextless event after the upgrade is numbered 1
+    again: ``ORDER BY sequence`` interleaves old and new history, and a row
+    can reuse a persisted ``(occurred_at, correlation_id, sequence)`` key.
+
+    Seeded from ``MAX(sequence)`` (not ``count(*)``): the old per-process
+    counters restarted at 1 on every boot, so history has gaps and repeats.
+    Rows sit in a monthly partition AND in ``DEFAULT``, because the backfill
+    has to read every partition to be right.
+    """
+    from agents_system.audit.sink import AuditSink
+
+    url = _require_test_database_url()
+    _run_alembic("downgrade 004", url)
+
+    history = [
+        ("none", 1, "now()"),
+        ("none", 2, "now()"),
+        ("none", 1, "now() - INTERVAL '1 second'"),  # a restarted worker
+        ("none", 5, "now() + INTERVAL '10 years'"),  # lands in DEFAULT
+        ("req-7f3a9c01", 7, "now()"),
+    ]
+    async with migrated_engine.begin() as conn:
+        for correlation_id, sequence, occurred_at in history:
+            await conn.execute(
+                text(
+                    "INSERT INTO audit_event (event_id, occurred_at, correlation_id, "
+                    "sequence, event_type, payload) VALUES (gen_random_uuid(), "
+                    f"{occurred_at}, :cid, :seq, 'tool_call', '{{}}'::jsonb)"
+                ),
+                {"cid": correlation_id, "seq": sequence},
+            )
+
+    _run_alembic("upgrade head", url)
+
+    async with migrated_engine.connect() as conn:
+        seeded = dict(
+            (
+                await conn.execute(
+                    text("SELECT correlation_id, next_seq FROM audit_sequence")
+                )
+            ).all()
+        )
+    assert seeded == {"none": 5, "req-7f3a9c01": 7}, (
+        f"audit_sequence must start at each correlation_id's persisted maximum: {seeded}"
+    )
+
+    sink = AuditSink(
+        session_factory=async_sessionmaker(migrated_engine, expire_on_commit=False)
+    )
+    with patch("agents_system.audit.sink.logger") as mock_logger:
+        await sink._flush_batch([_tool_event("none")])
+        mock_logger.exception.assert_not_called()
+    assert (await _sequences_for(migrated_engine, "none"))[-1] == 6
+
+
 class TestOrmMatchesTheMigration:
     """D-043: catch ORM/DDL divergence as a class, not one column at a time.
 
@@ -352,7 +418,6 @@ class TestAuditSinkWritesThroughTheProductionPath:
         self, migrated_engine: AsyncEngine
     ) -> None:
         """A mapped row must persist, keep its offset, and land in its month."""
-        from sqlalchemy.ext.asyncio import async_sessionmaker
 
         from agents_system.models.audit_event import map_to_audit_event
 
@@ -403,3 +468,340 @@ class TestAuditSinkWritesThroughTheProductionPath:
             f"row landed in {partition!r}, not its month's partition; "
             "audit_event_default means the monthly bounds are wrong"
         )
+
+
+def _tool_event(correlation_id: str, **marker: int) -> Any:
+    """A real event, shaped as the recorder builds it (placeholder sequence).
+
+    ``marker`` lands in the payload so a test can read back which worker,
+    round and batch position produced each persisted row.
+    """
+    from agents_system.audit.events import ToolCallAttempted
+
+    return ToolCallAttempted(
+        event_id=uuid.uuid4(),
+        occurred_at=datetime.now(UTC),
+        correlation_id=correlation_id,
+        sequence=0,  # placeholder; _flush_batch must overwrite it
+        role="test-role",
+        tool_name="test_tool",
+        payload={"tool_name": "test_tool", **marker},
+        pii_keys=[],
+    )
+
+
+async def _sequences_for(engine: AsyncEngine, correlation_id: str) -> list[int]:
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text("SELECT sequence FROM audit_event WHERE correlation_id = :cid"),
+            {"cid": correlation_id},
+        )
+        return sorted(row[0] for row in result)
+
+
+class _FirstUpsertGate:
+    """Parks each flush right after its FIRST ``audit_sequence`` upsert.
+
+    That is the instant a flush holds exactly one sequence-row lock. Once
+    every party holds one, all are released together -- so if their
+    remaining upserts ask for each other's rows, PostgreSQL sees the cycle on
+    every run instead of on most runs. A party that cannot arrive because it
+    is itself queued behind another's row lock (exactly what a globally
+    consistent lock order produces) is waited out after ``patience_s``.
+    """
+
+    def __init__(self, parties: int, patience_s: float) -> None:
+        self._parties = parties
+        self._patience_s = patience_s
+        self._arrived = 0
+        self._everyone_holds_a_lock = asyncio.Event()
+
+    async def arrive(self) -> None:
+        self._arrived += 1
+        if self._arrived >= self._parties:
+            self._everyone_holds_a_lock.set()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(
+                self._everyone_holds_a_lock.wait(), timeout=self._patience_s
+            )
+
+
+class _GatedSession:
+    """A real ``AsyncSession``, parked at the gate after its first ``execute()``.
+
+    Timing only: every statement still runs against PostgreSQL unchanged.
+    """
+
+    def __init__(self, inner: AsyncSession, gate: _FirstUpsertGate) -> None:
+        self._inner = inner
+        self._gate = gate
+        self._gated = False
+
+    async def __aenter__(self) -> Self:
+        await self._inner.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self._inner.__aexit__(*exc_info)
+
+    async def execute(self, statement: Any, params: Any = None) -> Any:
+        result = await self._inner.execute(statement, params)
+        if not self._gated:
+            self._gated = True
+            await self._gate.arrive()
+        return result
+
+    def add(self, row: Any) -> None:
+        self._inner.add(row)
+
+    async def commit(self) -> None:
+        await self._inner.commit()
+
+
+def _gated_factory(
+    engine: AsyncEngine, gate: _FirstUpsertGate
+) -> Callable[[], _GatedSession]:
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    return lambda: _GatedSession(maker(), gate)
+
+
+class TestAuditSequenceAllocationIsProcessSafe:
+    """Issue #9 (ADR-001 D-042) — the one claim a mock cannot prove.
+
+    The former `_allocate_sequence`/`_seq_counter` was a module-level dict:
+    correct within one process, wrong across N, because every process
+    counted the `"none"` fallback correlation_id from 1 independently. A
+    mock-based unit test cannot show that failure mode -- mocks share one
+    process's memory, so "two workers" collapse into one. Only a real
+    PostgreSQL round trip, through two genuinely separate connections/engines
+    driving concurrent `AuditSink._flush_batch` calls for the SAME
+    correlation_id, proves the atomic upsert (`audit_sequence`, migration
+    005) actually serializes them.
+    """
+
+    async def test_two_concurrent_flushes_allocate_a_gapless_duplicate_free_sequence(
+        self, migrated_engine: AsyncEngine
+    ) -> None:
+        """Two 'workers' flushing concurrently for one correlation_id must not
+        collide, lose rows, or leave gaps in the allocated sequence.
+        """
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from agents_system.audit.events import ToolCallAttempted
+        from agents_system.audit.sink import AuditSink
+
+        url = _require_test_database_url()
+        correlation_id = f"process-safety-{uuid.uuid4()}"
+        events_per_worker = 5
+        total = events_per_worker * 2
+
+        def _make_batch() -> list[ToolCallAttempted]:
+            return [
+                ToolCallAttempted(
+                    event_id=uuid.uuid4(),
+                    occurred_at=datetime.now(UTC),
+                    correlation_id=correlation_id,
+                    sequence=0,  # placeholder; _flush_batch must overwrite it
+                    role="test-role",
+                    tool_name="test_tool",
+                    payload={"tool_name": "test_tool"},
+                    pii_keys=[],
+                )
+                for _ in range(events_per_worker)
+            ]
+
+        # Two independent engines -- two independent connection pools, the
+        # closest a single test process can get to "two worker processes"
+        # without actually forking. One engine/one connection would let
+        # PostgreSQL trivially serialize the two flushes for free and prove
+        # nothing about the allocator itself.
+        worker_engine_a = get_engine(url)
+        worker_engine_b = get_engine(url)
+        try:
+            sink_a = AuditSink(
+                session_factory=async_sessionmaker(
+                    worker_engine_a, expire_on_commit=False
+                )
+            )
+            sink_b = AuditSink(
+                session_factory=async_sessionmaker(
+                    worker_engine_b, expire_on_commit=False
+                )
+            )
+
+            with patch("agents_system.audit.sink.logger") as mock_logger:
+                await asyncio.gather(
+                    sink_a._flush_batch(_make_batch()),
+                    sink_b._flush_batch(_make_batch()),
+                )
+                # _flush_batch swallows and logs any commit failure (it must
+                # never crash the drainer) -- a unique-constraint collision on
+                # `uq_audit_event_correlation_sequence` would surface here as
+                # a call to `logger.exception`, not as a raised exception.
+                mock_logger.exception.assert_not_called()
+        finally:
+            await worker_engine_a.dispose()
+            await worker_engine_b.dispose()
+
+        async with migrated_engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT sequence FROM audit_event WHERE correlation_id = :cid"),
+                {"cid": correlation_id},
+            )
+            sequences = sorted(row[0] for row in result)
+
+        assert len(sequences) == total, (
+            f"expected {total} rows for {correlation_id!r}, got {len(sequences)}: "
+            f"{sequences} -- a missing row means a batch silently lost a "
+            "unique-constraint collision"
+        )
+        assert len(set(sequences)) == total, f"duplicate sequence values: {sequences}"
+        assert sequences == list(range(1, total + 1)), (
+            f"sequence must be contiguous and gap-free: {sequences}"
+        )
+
+    async def test_opposite_order_batches_do_not_deadlock_or_drop_events(
+        self, migrated_engine: AsyncEngine
+    ) -> None:
+        """Two flushes naming the same two correlation_ids in opposite orders.
+
+        Review of PR #72, finding 1 (CRITICAL): ``_flush_batch`` used to upsert
+        ``audit_sequence`` once per event, in FIFO order, inside the batch's
+        single transaction -- so each flush took its row locks in its own
+        arrival order. Worker A holding ``c1`` and waiting for ``c2`` while
+        worker B holds ``c2`` and waits for ``c1`` is a textbook deadlock:
+        PostgreSQL aborts one transaction, the drainer's blanket ``except``
+        logs ``audit.drain_failed``, and that whole batch is gone. An
+        unsynchronised probe hit it in 18 of 20 runs; ``_FirstUpsertGate``
+        makes it every run.
+
+        Allocating per distinct ``correlation_id`` in one global (sorted)
+        order removes the cycle: B queues behind A on ``c1`` instead.
+        """
+        from agents_system.audit.sink import AuditSink
+
+        url = _require_test_database_url()
+        suffix = uuid.uuid4()
+        c1, c2 = f"deadlock-1-{suffix}", f"deadlock-2-{suffix}"
+        rounds = 2
+
+        engine_a = get_engine(url)
+        engine_b = get_engine(url)
+        dropped = 0
+        try:
+            with patch("agents_system.audit.sink.logger") as mock_logger:
+                for _ in range(rounds):
+                    gate = _FirstUpsertGate(parties=2, patience_s=0.5)
+                    sink_a = AuditSink(session_factory=_gated_factory(engine_a, gate))  # type: ignore[arg-type]
+                    sink_b = AuditSink(session_factory=_gated_factory(engine_b, gate))  # type: ignore[arg-type]
+                    await asyncio.gather(
+                        sink_a._flush_batch([_tool_event(c1), _tool_event(c2)]),
+                        sink_b._flush_batch([_tool_event(c2), _tool_event(c1)]),
+                    )
+                    dropped += sink_a.dropped_count + sink_b.dropped_count
+                failures = [
+                    call.kwargs.get("error")
+                    for call in mock_logger.exception.call_args_list
+                ]
+        finally:
+            await engine_a.dispose()
+            await engine_b.dispose()
+
+        assert not failures, (
+            f"a flush failed (a deadlock victim is a whole lost batch): {failures}"
+        )
+        assert dropped == 0
+        for cid in (c1, c2):
+            sequences = await _sequences_for(migrated_engine, cid)
+            assert sequences == list(range(1, 2 * rounds + 1)), (
+                f"{cid}: expected one contiguous 1..{2 * rounds}, got {sequences}"
+            )
+
+    async def test_concurrent_interleaved_flushes_lose_nothing_and_keep_fifo_order(
+        self, migrated_engine: AsyncEngine
+    ) -> None:
+        """N workers, shuffled multi-correlation batches, no synchronisation.
+
+        The realistic shape of Stage B: every worker's batch mixes the same
+        correlation_ids (``"none"`` above all) in its own arrival order. No
+        batch may fail, every event must persist, each correlation_id's
+        sequence must be one gap-free run -- and within one batch, events of
+        one correlation_id must keep the order they were queued in.
+        """
+        from agents_system.audit.sink import AuditSink
+
+        url = _require_test_database_url()
+        suffix = uuid.uuid4()
+        correlations = [f"interleave-{n}-{suffix}" for n in range(4)]
+        workers, rounds, per_correlation = 3, 6, 3
+        rng = random.Random(72)
+
+        engines = [get_engine(url) for _ in range(workers)]
+        sinks = [
+            AuditSink(session_factory=async_sessionmaker(e, expire_on_commit=False))
+            for e in engines
+        ]
+        try:
+            with patch("agents_system.audit.sink.logger") as mock_logger:
+                for round_no in range(rounds):
+                    batches = []
+                    for _worker in range(workers):
+                        slots = correlations * per_correlation
+                        rng.shuffle(slots)
+                        batches.append(slots)
+                    await asyncio.gather(
+                        *(
+                            sink._flush_batch(
+                                [
+                                    _tool_event(cid, worker=w, round=round_no, idx=i)
+                                    for i, cid in enumerate(batch)
+                                ]
+                            )
+                            for w, (sink, batch) in enumerate(
+                                zip(sinks, batches, strict=True)
+                            )
+                        )
+                    )
+                failures = [
+                    call.kwargs.get("error")
+                    for call in mock_logger.exception.call_args_list
+                ]
+        finally:
+            for engine in engines:
+                await engine.dispose()
+
+        assert not failures, f"a flush failed and dropped its batch: {failures}"
+        assert sum(sink.dropped_count for sink in sinks) == 0
+
+        expected_per_correlation = workers * rounds * per_correlation
+        async with migrated_engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT correlation_id, sequence, "
+                        "(payload->>'worker')::int, (payload->>'round')::int, "
+                        "(payload->>'idx')::int "
+                        "FROM audit_event WHERE correlation_id = ANY(:cids)"
+                    ),
+                    {"cids": correlations},
+                )
+            ).all()
+
+        for cid in correlations:
+            sequences = sorted(r[1] for r in rows if r[0] == cid)
+            assert sequences == list(range(1, expected_per_correlation + 1)), (
+                f"{cid}: expected 1..{expected_per_correlation}, got {sequences}"
+            )
+
+        by_batch: dict[tuple[str, int, int], list[tuple[int, int]]] = {}
+        for cid, sequence, worker, round_no, idx in rows:
+            by_batch.setdefault((cid, worker, round_no), []).append((idx, sequence))
+        for key, pairs in by_batch.items():
+            in_queue_order = [sequence for _idx, sequence in sorted(pairs)]
+            assert in_queue_order == sorted(in_queue_order), (
+                f"{key}: sequence does not follow queue order: {sorted(pairs)}"
+            )
+            assert in_queue_order == list(
+                range(in_queue_order[0], in_queue_order[0] + len(in_queue_order))
+            ), f"{key}: one batch's range is not contiguous: {in_queue_order}"
