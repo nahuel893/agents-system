@@ -806,7 +806,7 @@ recommendation") — split here because the combined PR4a's own design-time
 estimate (~380-430) was already Medium-High risk, and the orchestrator
 requested a pre-split rather than a measure-then-split during apply.
 
-- [ ] **PR4a-i-T1 — `create_app` gains `agents`/`grants`/`clients` params + `_validate_runtime_id`.**
+- [x] **PR4a-i-T1 — `create_app` gains `agents`/`grants`/`clients` params + `_validate_runtime_id`.**
   RED: create `tests/test_create_app_agents_param.py` covering the signature
   half of spec Requirement "create_app accepts an explicit {id: Agent}
   registration": `create_app(registry_factory=..., agents={"acme-sales":
@@ -836,7 +836,7 @@ requested a pre-split rather than a measure-then-split during apply.
   "Runtime ids are deployer-chosen, non-empty, and unique per registration"
   (the `_validate_runtime_id` half). <!-- sdd-owner: implementation -->
 
-- [ ] **PR4a-i-T2 — PR4a-i closing: full verification.**
+- [x] **PR4a-i-T2 — PR4a-i closing: full verification.**
   Verify: `.venv/bin/pytest -q` (full suite — confirms the new unused params
   do not change any existing boot behavior), `.venv/bin/ruff check .`,
   `.venv/bin/ruff format --check .`, `.venv/bin/mypy src/`. Confirm `git diff
