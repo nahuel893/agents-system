@@ -18,3 +18,7 @@ Issue: #11 — Pool sizing from settings, both engines
 - Rebased verification: `ruff check .`, `ruff format --check .`, and `mypy src/` passed. Full `pytest -q` passed: 2281 passed, 184 deselected, 17 xfailed.
 - Commits: `cebe1b8` (implementation and tests); `a03a224` (documentation); `67fc28b` (verification record).
 - PR #107 CI: all checks passed.
+- RED: `pytest -q tests/test_config.py tests/test_get_engine.py` failed with the old `database_max_overflow=0` default and no capacity validation; `mypy tests/test_get_engine.py` reported the incompatible `Settings` argument for `get_medallion_engine`.
+- GREEN: `pytest -q tests/test_config.py tests/test_get_engine.py` passed: 83 passed, 2 xfailed. The focused mypy run no longer reports the medallion argument mismatch; it still reports five pre-existing `_env_file` constructor errors in the test file.
+- Verification before push: `ruff check .`, `ruff format --check .`, and `mypy src/` passed. Full `pytest -q` passed after rebasing check: 2283 passed, 184 deselected, 17 xfailed.
+- Commits: `e5b3a9d` (capacity validation, defaults, tests, and annotations); `74992e3` (bilingual ADR updates).
