@@ -313,7 +313,15 @@ global CLAUDE.md). Runner: `pytest -q` from the worktree root with
 - [x] **S2.7 — commit + PR.** Work-unit commit: `24157a1`
   ("feat(observability): /metrics with process, turn and tool metrics
   (#78 2/3)"). PR: https://github.com/nahuel893/agents-system/pull/96,
-  `Refs #78` (not `Closes` — Slice 3 remains). Not merged; CI pending.
+  `Refs #78` (not `Closes` — Slice 3 remains). Not merged.
+  **CI**: all 12 checks green (`ci`, `secret-scan`, `dependency-audit`,
+  `shellcheck`, and every integration job) after 4 small follow-up
+  commits (`b0095db` records this commit id in this doc; `2464eb7`,
+  `3509346`, `5268393`, `d2e3d45` fix a `secret-scan` (gitleaks)
+  false positive on the `GET /metrics` curl example's placeholder
+  token — see `.gitleaksignore`'s new entries for the full triage
+  trail). No production code changed by any of these four; all are
+  docs/`.gitleaksignore` only.
 
 ## Slice 3 — real-app live harness (pending)
 Not started. A harness that boots the actual application (HTTP API, WhatsApp
