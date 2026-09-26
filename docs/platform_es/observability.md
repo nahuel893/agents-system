@@ -26,7 +26,7 @@ explícitamente:
 ```bash
 export METRICS_ENABLED=true
 export METRICS_API_KEY=un-token-largo-y-aleatorio
-curl -H "Authorization: Bearer un-token-largo-y-aleatorio" http://localhost:8000/metrics
+curl -H "Authorization: Bearer $METRICS_API_KEY" http://localhost:8000/metrics
 ```
 
 **Modelo de protección**: sigue exactamente el espíritu fail-closed de

@@ -23,7 +23,7 @@ unauthenticated, until an operator explicitly turns it on:
 ```bash
 export METRICS_ENABLED=true
 export METRICS_API_KEY=some-long-random-token
-curl -H "Authorization: Bearer some-long-random-token" http://localhost:8000/metrics
+curl -H "Authorization: Bearer $METRICS_API_KEY" http://localhost:8000/metrics
 ```
 
 **Protection model** follows `integration/openai_adapter.py`'s
