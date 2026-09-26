@@ -93,6 +93,15 @@ ignore = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# `uv run pytest` (this repo's actual CI invocation) runs the `pytest`
+# console script directly, which does NOT prepend the current directory to
+# `sys.path` the way `python -m pytest` does locally -- so
+# `tests/test_check_role_governance_marker.py`'s `from scripts.check_...
+# import ...` (PR6-T2) resolved locally but raised `ModuleNotFoundError: No
+# module named 'scripts'` in CI. This is pytest's own built-in fix: it
+# inserts each rootdir-relative path here into `sys.path` before collection,
+# regardless of how pytest itself was invoked.
+pythonpath = ["."]
 markers = [
     "integration: requires real models / external services (slow, opt-in)",
     "live: live-eval pipeline against a real local model (#169, ADR-002 E.18; manual/nightly, opt-in)",
