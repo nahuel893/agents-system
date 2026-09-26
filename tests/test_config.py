@@ -131,8 +131,8 @@ def test_get_settings_returns_singleton():
 def test_adapter_config_defaults():
     """adapter_api_key, adapter_provider, and adapter_runtimes have correct defaults.
 
-    `adapter_runtimes` is empty because runtime ids are "{deployment}__{role}"
-    and the platform knows no deployment names. It also means the default
+    `adapter_runtimes` is empty because runtime ids are deployer-chosen
+    (ADR-004) and the platform knows no deployment names. It also means the default
     configuration exposes no runtime at all through `/v1/*`, which is the
     safer end of the change: the fail-closed guard below still refuses the
     moment a runtime IS configured without a key.
@@ -164,12 +164,10 @@ def test_deploy_grants_parses_json_env(monkeypatch: pytest.MonkeyPatch) -> None:
     same one adapter_runtimes above already uses for a structured field)."""
     monkeypatch.setenv(
         "DEPLOY_GRANTS",
-        '{"whatsapp__sales-agent": ["read:catalog", "write:orders"]}',
+        '{"wa-sales": ["read:catalog", "write:orders"]}',
     )
     settings = Settings(_env_file=None)
-    assert settings.deploy_grants == {
-        "whatsapp__sales-agent": ("read:catalog", "write:orders")
-    }
+    assert settings.deploy_grants == {"wa-sales": ("read:catalog", "write:orders")}
 
 
 def test_deploy_grants_accepts_direct_construction() -> None:
@@ -177,9 +175,9 @@ def test_deploy_grants_accepts_direct_construction() -> None:
     plain dict[str, list[str]] and normalizes values to tuples."""
     settings = Settings(
         _env_file=None,
-        deploy_grants={"_generic__sales-agent": ["read:catalog"]},
+        deploy_grants={"sales": ["read:catalog"]},
     )
-    assert settings.deploy_grants == {"_generic__sales-agent": ("read:catalog",)}
+    assert settings.deploy_grants == {"sales": ("read:catalog",)}
 
 
 # ---------------------------------------------------------------------------

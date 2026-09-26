@@ -183,7 +183,7 @@ treated the same as an unknown one rather than raising).
 **Configuring prices**: `Settings.model_prices` (env var `MODEL_PRICES`) is a
 JSON object keyed by the PROVIDER MODEL id (e.g. `"gpt-4o"`,
 `"deepseek/deepseek-v4-flash"`) -- never a caller-chosen routing id such as
-the OpenAI adapter's `"{deployment}__{role}"` request model -- valued by USD
+a registered runtime id (the OpenAI adapter's request `model`) -- valued by USD
 price per million input/output tokens:
 
 ```bash

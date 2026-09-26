@@ -32,11 +32,11 @@ tasks_progress:
     - PR4a-ii-T2
     - PR4a-ii-T3
     - PR4a-ii-T4
-  pending:
     - PR4b-T1
     - PR4b-T2
     - PR4b-T3
     - PR4b-T4
+  pending:
     - PR5-T1
     - PR5-T2
     - PR5-T3
@@ -283,3 +283,62 @@ pr4a_ii:
     - A well-formed client name with no deployments/<client>/<role> folder
       still serves the generic role, logging only loader.override_not_found.
       That is the loader's existing rule, shared with legacy ids.
+pr4b:
+  status: implemented
+  branch: feat/adr-004-4b-env-migration
+  pr_url: https://github.com/nahuel893/agents-system/pull/98
+  files_changed:
+    - src/agents_system/config.py
+    - src/agents_system/main.py
+    - src/agents_system/integration/openai_adapter.py
+    - src/agents_system/demo.py
+    - tests/test_agent_registrations_parsing.py
+    - tests/test_no_duplicated_runtime_id_parsing.py
+    - tests/test_main.py
+    - tests/test_openai_adapter.py
+    - tests/test_config.py
+    - tests/test_demo_entrypoint.py
+    - README.md
+    - docs/platform/deployment.md
+    - docs/platform_es/deployment.md
+    - docs/platform/demo-entrypoint.md
+    - docs/platform_es/demo-entrypoint.md
+    - docs/platform/live-eval.md
+    - docs/platform_es/live-eval.md
+    - docs/architecture/permission-model.md
+    - docs/architecture_es/permission-model.md
+    - docs/architecture/webhook-delivery.md
+    - docs/architecture_es/webhook-delivery.md
+    - .claude/skills/harness-conventions/SKILL.md
+    - openspec/changes/library-first-agents/tasks.md
+    - openspec/changes/library-first-agents/state.yaml
+  diff_lines_authored: 1336
+  diff_budget_note: >-
+    Above the ~280 estimate and the 400-line default budget. src is ~290
+    changed lines (the AGENT_REGISTRATIONS parser and fallback, the helper
+    deletion, comment/docstring corrections); tests ~795, mostly migrating
+    the Settings-driven boot tests off {deployment}__{role} ids plus the new
+    parsing, env-registration and no-parsing regression tests; docs ~185
+    across README and five EN/ES pairs, including the migration guide.
+    Nothing was trimmed; recommend size:exception.
+  deviations:
+    - Every AGENT_REGISTRATIONS entry is built at boot, like agents=, not
+      only the ids ADAPTER_RUNTIMES/WHATSAPP_RUNTIME_ID name.
+    - AGENT_REGISTRATIONS ids and values fail boot naming the variable; the
+      role and client in a value must match _SAFE_SEGMENT, so the removed
+      _generic sentinel is rejected as a client or role name.
+    - An unregistered ADAPTER_RUNTIMES/WHATSAPP_RUNTIME_ID id on the
+      Settings path fails boot with a static migration hint naming
+      AGENT_REGISTRATIONS; the hint is the one place main.py still names
+      the old scheme, as text.
+    - The no-parsing gate is tests/test_no_duplicated_runtime_id_parsing.py,
+      an AST scan for "__" split/partition/membership/f-string building and
+      the "_generic" literal, with self-tests on the removed helpers.
+    - README, demo-entrypoint (EN/ES) env examples moved to opaque ids here,
+      not in PR5-T2, because they would fail boot after this PR. PR5-T2 keeps the
+      demo.py move and the invocation line.
+    - MODEL_PRICES is unchanged (keyed by the provider model id); its stale
+      config.py comment and the live-eval/adapter wording were corrected.
+  follow_ups:
+    - .env.example still shows a DEPLOY_GRANTS key shaped like the old
+      scheme; it is maintainer-edited, so it was left for a manual update.

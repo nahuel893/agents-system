@@ -54,33 +54,41 @@ def clear_settings_cache() -> Any:
     get_settings.cache_clear()
 
 
-def _default_deploy_grants(model_ids: set[str]) -> dict[str, tuple[str, ...]]:
-    """Best-effort real-permission grant for every model id, so tests using
-    `_make_settings` that are not ABOUT deploy grants keep booting exactly
-    as before permission-model PR3 (issue #38) removed AD-5's
+# ADR-004 PR4b -- the runtime ids the Settings-driven tests below name in
+# ADAPTER_RUNTIMES/WHATSAPP_RUNTIME_ID, and the AGENT_REGISTRATIONS value
+# each is registered with. `_make_settings` registers exactly the ids a test
+# names; an id missing here (e.g. "not-registered") stays unregistered.
+_ENV_REGISTRATIONS = {
+    "sales": "sales-agent",
+    "operator": "operator-agent",
+}
+
+
+def _default_deploy_grants(registrations: dict[str, str]) -> dict[str, tuple[str, ...]]:
+    """Best-effort real-permission grant for every registered id, so tests
+    using `_make_settings` that are not ABOUT deploy grants keep booting
+    exactly as before permission-model PR3 (issue #38) removed AD-5's
     auto-grant-of-the-role's-full-permission-set. Resolves each id's role
     against the REAL platform/deployment roots (the same default `main.py`
     itself uses when a test passes no explicit `roots`) and grants exactly
     that role's own declared permissions -- equivalent to the removed
     auto-grant, for every test that never mocked `harness.loader.resolve`.
-    A model id that fails to resolve here (e.g. one whose test supplies its
-    own non-default `roots=` to `create_test_app`) is simply skipped: that
+    A role that fails to resolve here (e.g. one whose test supplies its own
+    non-default `roots=` to `create_test_app`) is simply skipped: that
     test's own earlier boot-time check fires before DEPLOY_GRANTS would be
     consulted regardless.
     """
     from agents_system.harness.loader import resolve as _resolve
+    from agents_system.main import _parse_agent_registration
 
     grants: dict[str, tuple[str, ...]] = {}
-    for model_id in model_ids:
-        if "__" not in model_id:
-            continue
-        prefix, role = model_id.split("__", 1)
-        client = None if prefix == "_generic" else prefix
+    for runtime_id, value in registrations.items():
+        role, client = _parse_agent_registration(value)
         try:
             definition = _resolve(role, client=client)
         except Exception:  # noqa: S112 -- best-effort test scaffolding, see docstring
             continue
-        grants[model_id] = definition.permissions
+        grants[runtime_id] = definition.permissions
     return grants
 
 
@@ -88,27 +96,39 @@ def _make_settings(**overrides: object) -> Settings:
     # #141 review follow-up -- whatsapp_token/whatsapp_phone_number_id are
     # deliberately NOT defaulted to non-empty here: main.py's lifespan now
     # fails closed at boot when both are configured but whatsapp_runtime_id
-    # is empty or malformed, and the platform default whatsapp_runtime_id
-    # ("") is exactly that. Most tests using this helper are not about
-    # WhatsApp at all; a test that needs WhatsApp actually configured sets
-    # its own whatsapp_token/whatsapp_phone_number_id alongside a
-    # well-formed whatsapp_runtime_id.
+    # is empty, and the platform default whatsapp_runtime_id ("") is
+    # exactly that. Most tests using this helper are not about WhatsApp at
+    # all; a test that needs WhatsApp actually configured sets its own
+    # whatsapp_token/whatsapp_phone_number_id alongside a registered
+    # whatsapp_runtime_id.
     defaults: dict[str, object] = {
         "database_url": "postgresql+asyncpg://localhost:5432/agentsys_test",
         "redis_url": "redis://localhost:6379/0",
-        "adapter_runtimes": ["_generic__sales-agent"],
+        "adapter_runtimes": ["sales"],
     }
     defaults.update(overrides)
 
+    # ADR-004 PR4b -- the Settings-driven boot builds what
+    # AGENT_REGISTRATIONS registers, and every channel id must be one of
+    # those. Register the ids this test names, unless it passes its own.
+    named: set[str] = set(defaults.get("adapter_runtimes") or [])  # type: ignore[arg-type]
+    whatsapp_id = defaults.get("whatsapp_runtime_id")
+    if whatsapp_id:
+        named.add(whatsapp_id)  # type: ignore[arg-type]
+    if "agent_registrations" not in overrides:
+        defaults["agent_registrations"] = {
+            runtime_id: _ENV_REGISTRATIONS[runtime_id]
+            for runtime_id in named
+            if runtime_id in _ENV_REGISTRATIONS
+        }
+
     # permission-model PR3 (issue #38) -- boot now requires an explicit
-    # DEPLOY_GRANTS entry per configured runtime id. A test that IS about
+    # DEPLOY_GRANTS entry per registered runtime id. A test that IS about
     # deploy grants passes its own `deploy_grants=` override, which wins.
     if "deploy_grants" not in overrides:
-        model_ids: set[str] = set(defaults.get("adapter_runtimes") or [])  # type: ignore[arg-type]
-        whatsapp_id = defaults.get("whatsapp_runtime_id")
-        if whatsapp_id:
-            model_ids.add(whatsapp_id)  # type: ignore[arg-type]
-        defaults["deploy_grants"] = _default_deploy_grants(model_ids)
+        defaults["deploy_grants"] = _default_deploy_grants(
+            defaults["agent_registrations"]  # type: ignore[arg-type]
+        )
 
     return Settings(**defaults)  # type: ignore[arg-type]
 
@@ -147,7 +167,7 @@ async def test_lifespan_uses_explicit_deploy_grants() -> None:
     (DEPLOY_GRANTS) — never from definition.permissions (AD-5's auto-grant
     is gone)."""
     test_settings = _make_settings(
-        deploy_grants={"_generic__sales-agent": ("read:catalog", "write:orders")}
+        deploy_grants={"sales": ("read:catalog", "write:orders")}
     )
 
     fake_definition = MagicMock()
@@ -236,7 +256,7 @@ async def test_lifespan_boot_fails_without_deploy_grants_entry() -> None:
             pass
 
     message = str(exc_info.value)
-    assert "_generic__sales-agent" in message
+    assert "'sales'" in message
     assert "DEPLOY_GRANTS" in message
 
 
@@ -249,9 +269,7 @@ async def test_lifespan_boot_fails_for_untrusted_role_granted_t3_permission() ->
     (UntrustedInputGrantError propagating out of build_runtime), not equip
     the runtime silently. `harness.loader.resolve` is deliberately left
     unpatched so the REAL resolved untrusted_input applies."""
-    test_settings = _make_settings(
-        deploy_grants={"_generic__sales-agent": ("exec:command",)}
-    )
+    test_settings = _make_settings(deploy_grants={"sales": ("exec:command",)})
 
     mock_engine = MagicMock()
     mock_engine.dispose = AsyncMock()
@@ -603,7 +621,7 @@ def test_build_chat_model_ollama_defaults_leave_base_url_unset() -> None:
 # ---------------------------------------------------------------------------
 
 
-WHATSAPP_RUNTIME_ID = "_generic__sales-agent"
+WHATSAPP_RUNTIME_ID = "sales"
 
 
 def _runtime_lease_invariant_patches(
@@ -678,7 +696,7 @@ async def test_lifespan_enforces_whatsapp_runtime_timeout_within_outbox_lease(
                 async with lifespan(app):
                     pass
             message = str(excinfo.value)
-            assert WHATSAPP_RUNTIME_ID in message
+            assert repr(WHATSAPP_RUNTIME_ID) in message
             assert str(timeout_s) in message
             assert "lease" in message
             assert "600" in message
@@ -806,7 +824,7 @@ async def test_lifespan_uses_full_lease_duration_when_it_exceeds_one_day() -> No
 
 def _bi_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
-        "adapter_runtimes": ["_generic__sales-agent"],
+        "adapter_runtimes": ["sales"],
         "whatsapp_checkpointer_enabled": False,
         "bi_database_url": "postgresql+asyncpg://bi_readonly:pw@localhost:5432/acme",
     }
@@ -1102,7 +1120,8 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
     test_settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
-        adapter_runtimes=["_generic__sales-agent"],
+        agent_registrations={"sales": "sales-agent"},
+        adapter_runtimes=["sales"],
     )
 
     with (
@@ -1163,7 +1182,7 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
     from agents_system.harness.registry import ToolRegistry
     from agents_system.main import create_app, lifespan
 
-    built: list[str] = []
+    built: list[tuple[Any, Any]] = []
 
     def _awaitable_engine() -> MagicMock:
         engine = MagicMock()
@@ -1172,17 +1191,16 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
 
     def spy_build_runtime(*args: Any, **kwargs: Any) -> Any:
         role = kwargs.get("role_type") or (args[0] if args else None)
-        client = kwargs.get("client")
-        tag = f"{client}__{role}" if client else f"_generic__{role}"
-        built.append(tag)
+        built.append((role, kwargs.get("client")))
         raise RuntimeError("stop here — the call itself is what is asserted")
 
     test_settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
+        agent_registrations={"wa-sales": "sales-agent"},
         adapter_runtimes=[],  # nothing published on /v1 ...
-        whatsapp_runtime_id="_generic__sales-agent",  # ... but WhatsApp needs one
-        deploy_grants={"_generic__sales-agent": ("read:catalog",)},
+        whatsapp_runtime_id="wa-sales",  # ... but WhatsApp needs one
+        deploy_grants={"wa-sales": ("read:catalog",)},
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",
@@ -1210,7 +1228,7 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
         except RuntimeError as exc:
             assert "stop here" in str(exc), exc
 
-    assert built == ["_generic__sales-agent"], (
+    assert built == [("sales-agent", None)], (
         "the WhatsApp runtime was not built; adapter_runtimes gated it"
     )
 
@@ -1260,8 +1278,9 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
     test_settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
-        adapter_runtimes=["client-a__sales-agent"],
-        deploy_grants={"client-a__sales-agent": ("read:catalog",)},
+        agent_registrations={"acme-sales": "sales-agent@client-a"},
+        adapter_runtimes=["acme-sales"],
+        deploy_grants={"acme-sales": ("read:catalog",)},
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",
@@ -1306,7 +1325,8 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
 
 
 async def test_client_runtime_without_explicit_roots_raises_definition_error() -> None:
-    """A <client>__<role> runtime with no explicit roots raises DefinitionError.
+    """A "{role}@{client}" registration with no explicit roots raises
+    DefinitionError.
 
     agents_system does not derive a default deployments root; a consumer must pass
     RootConfig explicitly to create_app.
@@ -1325,7 +1345,8 @@ async def test_client_runtime_without_explicit_roots_raises_definition_error() -
     test_settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
-        adapter_runtimes=["client-a__sales-agent"],
+        agent_registrations={"acme-sales": "sales-agent@client-a"},
+        adapter_runtimes=["acme-sales"],
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",
@@ -1348,8 +1369,8 @@ async def test_client_runtime_without_explicit_roots_raises_definition_error() -
             async with lifespan(application):
                 pass
 
-        assert "client-a__sales-agent" in str(exc_info.value)
-        assert "client-a" in str(exc_info.value)
+        assert "'acme-sales'" in str(exc_info.value)
+        assert "'client-a'" in str(exc_info.value)
 
 
 async def test_client_whatsapp_runtime_without_explicit_roots_raises_definition_error() -> (
@@ -1370,8 +1391,9 @@ async def test_client_whatsapp_runtime_without_explicit_roots_raises_definition_
     test_settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
+        agent_registrations={"wa-sales": "sales-agent@client-a"},
         adapter_runtimes=[],
-        whatsapp_runtime_id="client-a__sales-agent",
+        whatsapp_runtime_id="wa-sales",
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",
@@ -1394,11 +1416,12 @@ async def test_client_whatsapp_runtime_without_explicit_roots_raises_definition_
             async with lifespan(application):
                 pass
 
-        assert "client-a__sales-agent" in str(exc_info.value)
+        assert "'wa-sales'" in str(exc_info.value)
+        assert "'client-a'" in str(exc_info.value)
 
 
 async def test_generic_runtime_boots_without_explicit_roots() -> None:
-    """Generic (_generic__role) runtimes remain usable with no explicit roots."""
+    """A registration with no client ("{role}") needs no explicit roots."""
     from unittest.mock import AsyncMock, MagicMock, patch
 
     from agents_system.harness.registry import ToolRegistry
@@ -1412,8 +1435,9 @@ async def test_generic_runtime_boots_without_explicit_roots() -> None:
     test_settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
         allow_insecure=True,
-        adapter_runtimes=["_generic__sales-agent"],
-        deploy_grants={"_generic__sales-agent": ("read:catalog",)},
+        agent_registrations={"sales": "sales-agent"},
+        adapter_runtimes=["sales"],
+        deploy_grants={"sales": ("read:catalog",)},
         whatsapp_checkpointer_enabled=False,
         embedding_provider="openai",
         openai_api_key="test-key",
@@ -1438,7 +1462,7 @@ async def test_generic_runtime_boots_without_explicit_roots() -> None:
         sink_cls.return_value.start = AsyncMock()
         sink_cls.return_value.stop = AsyncMock()
         async with lifespan(application):
-            assert "_generic__sales-agent" in application.state.runtimes
+            assert "sales" in application.state.runtimes
 
 
 # ---------------------------------------------------------------------------
@@ -1464,7 +1488,7 @@ async def test_create_app_refuses_to_boot_when_whatsapp_role_is_not_untrusted_in
 
     test_settings = _make_settings(
         adapter_runtimes=[],
-        whatsapp_runtime_id="_generic__operator-agent",
+        whatsapp_runtime_id="operator",
         whatsapp_checkpointer_enabled=False,
     )
     mock_engine = MagicMock()
@@ -1512,7 +1536,7 @@ async def test_create_app_boots_when_whatsapp_role_is_untrusted_input_true() -> 
     untrusted_input=True, so binding it to WhatsApp boots normally."""
     test_settings = _make_settings(
         adapter_runtimes=[],
-        whatsapp_runtime_id="_generic__sales-agent",
+        whatsapp_runtime_id="sales",
         whatsapp_checkpointer_enabled=False,
     )
     mock_engine = MagicMock()
@@ -1536,7 +1560,7 @@ async def test_create_app_boots_when_whatsapp_role_is_untrusted_input_true() -> 
         app = create_test_app()
 
         async with lifespan(app):
-            assert "_generic__sales-agent" in app.state.runtimes
+            assert "sales" in app.state.runtimes
 
 
 @pytest.mark.asyncio
@@ -1545,7 +1569,7 @@ async def test_boot_check_does_not_apply_to_adapter_only_runtimes() -> None:
     not enforced by this check: an untrusted_input=False role published only
     through adapter_runtimes (no whatsapp_runtime_id) still boots."""
     test_settings = _make_settings(
-        adapter_runtimes=["_generic__operator-agent"],
+        adapter_runtimes=["operator"],
         whatsapp_runtime_id="",
         whatsapp_checkpointer_enabled=False,
     )
@@ -1570,7 +1594,7 @@ async def test_boot_check_does_not_apply_to_adapter_only_runtimes() -> None:
         app = create_test_app()
 
         async with lifespan(app):
-            assert "_generic__operator-agent" in app.state.runtimes
+            assert "operator" in app.state.runtimes
 
 
 # ---------------------------------------------------------------------------
@@ -1588,7 +1612,7 @@ async def test_lifespan_starts_and_stops_the_webhook_worker_around_dependencies(
     AsyncExitStack's LIFO teardown runs the worker's own stop() first among
     the callbacks pushed so far, ahead of the dependencies it used."""
     test_settings = _make_settings(
-        whatsapp_runtime_id="_generic__sales-agent",
+        whatsapp_runtime_id="sales",
         whatsapp_checkpointer_enabled=False,
     )
     fake_definition = MagicMock()
@@ -1648,7 +1672,7 @@ async def test_lifespan_starts_and_stops_the_webhook_worker_around_dependencies(
             assert app.state.runtimes
             # Constructed with the dependencies it needs already in place.
             _, kwargs = mock_worker_cls.call_args
-            assert kwargs["runtime"] is app.state.runtimes["_generic__sales-agent"]
+            assert kwargs["runtime"] is app.state.runtimes["sales"]
             assert kwargs["whatsapp_client"] is app.state.whatsapp_client
             assert kwargs["directory"] is app.state.participant_directory
             assert kwargs["recorder"] is app.state.conversation_recorder
@@ -1746,19 +1770,18 @@ async def test_lifespan_fails_closed_when_runtime_id_is_empty_with_credentials()
 
 
 @pytest.mark.asyncio
-async def test_lifespan_fails_closed_when_runtime_id_is_malformed_with_credentials() -> (
+async def test_lifespan_fails_closed_when_runtime_id_is_unregistered_with_credentials() -> (
     None
 ):
-    """A whatsapp_runtime_id missing the required '{deployment}__{role}'
-    separator is the other #141 review-comment case: it resolves to no
-    runtime just as surely as an unset one, and must fail boot the same way."""
+    """A whatsapp_runtime_id that AGENT_REGISTRATIONS does not register is
+    the other #141 review-comment case: it resolves to no runtime just as
+    surely as an unset one, and must fail boot too, naming the id (ADR-004
+    PR4b: there is no id format left to be malformed -- only unregistered)."""
     test_settings = _make_settings(
         adapter_runtimes=[],
         whatsapp_token="test-token",
         whatsapp_phone_number_id="1234567890",
-        whatsapp_runtime_id="not-well-formed",
-        # No Redis in the plain CI job: the malformed id gets past the empty
-        # check and reaches checkpointer setup, so keep it off here.
+        whatsapp_runtime_id="not-registered",
         whatsapp_checkpointer_enabled=False,
     )
     mock_engine = MagicMock()
@@ -1774,7 +1797,10 @@ async def test_lifespan_fails_closed_when_runtime_id_is_malformed_with_credentia
     ):
         app = create_test_app()
 
-        with pytest.raises(DefinitionError, match="whatsapp_runtime_id"):
+        with pytest.raises(
+            DefinitionError,
+            match="WHATSAPP_RUNTIME_ID names runtime id.*'not-registered'",
+        ):
             async with lifespan(app):
                 pass
 
@@ -1821,7 +1847,7 @@ async def test_lifespan_boots_normally_with_credentials_and_valid_runtime_id() -
     test_settings = _make_settings(
         whatsapp_token="test-token",
         whatsapp_phone_number_id="1234567890",
-        whatsapp_runtime_id="_generic__sales-agent",
+        whatsapp_runtime_id="sales",
         whatsapp_checkpointer_enabled=False,
     )
     fake_definition = MagicMock()
@@ -1885,6 +1911,31 @@ def _registration_settings(**overrides: object) -> Settings:
     return Settings(**values)  # type: ignore[arg-type]
 
 
+_REGISTRATION_ENV_VARS = (
+    "AGENT_REGISTRATIONS",
+    "ADAPTER_RUNTIMES",
+    "WHATSAPP_RUNTIME_ID",
+    "DEPLOY_GRANTS",
+)
+
+
+def _env_settings(monkeypatch: pytest.MonkeyPatch, **env: str) -> Settings:
+    """Settings read from the process environment, the way an operator
+    configures the Settings-driven boot: only the variables in `env` are
+    set, every other registration variable is cleared."""
+    for name in _REGISTRATION_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    return Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        allow_insecure=True,
+        database_url="postgresql+asyncpg://localhost:5432/agentsys_test",
+        redis_url="redis://localhost:6379/0",
+        whatsapp_checkpointer_enabled=False,
+    )
+
+
 def _registration_patches(settings: Settings) -> tuple[Any, ...]:
     mock_engine = MagicMock()
     mock_engine.dispose = AsyncMock()
@@ -1910,19 +1961,25 @@ async def _boot(app: Any, settings: Settings, *extra: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_registration_of_a_predefined_role_matches_the_legacy_id() -> None:
+async def test_registration_of_a_predefined_role_matches_the_env_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """spec: 'A predefined role is registered under a deployer-chosen id' --
     `agents={"acme-sales": "sales-agent"}` + `clients={"acme-sales":
-    "client-a"}` builds the same runtime, field for field, that the legacy
-    `client-a__sales-agent` id builds for the same role, client and grant."""
+    "client-a"}` builds the same runtime, field for field, that the
+    Settings-driven boot builds from `AGENT_REGISTRATIONS='{"acme-sales":
+    "sales-agent@client-a"}'` for the same role, client and grant: both paths
+    run one loop (ADR-004 PR4b-T2)."""
     roots = RootConfig(deployments_root=_FIXTURE_DEPLOYMENTS)
 
-    legacy = create_test_app(roots=roots)
+    from_env = create_test_app(roots=roots)
     await _boot(
-        legacy,
-        _registration_settings(
-            adapter_runtimes=["client-a__sales-agent"],
-            deploy_grants={"client-a__sales-agent": _SALES_GRANT},
+        from_env,
+        _env_settings(
+            monkeypatch,
+            AGENT_REGISTRATIONS='{"acme-sales": "sales-agent@client-a"}',
+            ADAPTER_RUNTIMES='["acme-sales"]',
+            DEPLOY_GRANTS='{"acme-sales": ["read:catalog", "write:orders"]}',
         ),
     )
     registered = create_test_app(
@@ -1933,8 +1990,9 @@ async def test_registration_of_a_predefined_role_matches_the_legacy_id() -> None
     )
     await _boot(registered, _registration_settings(adapter_runtimes=["acme-sales"]))
 
+    assert set(from_env.state.runtimes) == {"acme-sales"}
     assert set(registered.state.runtimes) == {"acme-sales"}
-    old = legacy.state.runtimes["client-a__sales-agent"]["runtime"]
+    old = from_env.state.runtimes["acme-sales"]["runtime"]
     new = registered.state.runtimes["acme-sales"]["runtime"]
     assert new.definition == old.definition
     assert new.definition.deployment == "client-a"
@@ -1944,6 +2002,7 @@ async def test_registration_of_a_predefined_role_matches_the_legacy_id() -> None
     assert new.skills == old.skills
     assert new.deploy_grant_ceiling == old.deploy_grant_ceiling
     assert registered.state.adapter_model_ids == frozenset({"acme-sales"})
+    assert from_env.state.adapter_model_ids == frozenset({"acme-sales"})
 
 
 @pytest.mark.parametrize("bad_id", ["", "bad id", "-leading-hyphen"])
@@ -2431,3 +2490,260 @@ async def test_registration_still_applies_r4_at_grant_time() -> None:
 
     with pytest.raises(UntrustedInputGrantError):
         await _boot(app, _registration_settings())
+
+
+# ---------------------------------------------------------------------------
+# ADR-004 PR4b — the Settings-driven boot reads AGENT_REGISTRATIONS
+#
+# Without `create_app(agents=...)`, the lifespan builds its registrations
+# from AGENT_REGISTRATIONS ({id: "role" | "role@client"}) and runs them
+# through the same loop. ADAPTER_RUNTIMES/WHATSAPP_RUNTIME_ID/DEPLOY_GRANTS
+# name those ids as opaque keys: the `{deployment}__{role}` scheme is gone.
+# Every test in this section has "env_registration" in its name.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_env_registration_serves_a_role_without_a_sentinel_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """spec: 'A runtime id needs no _generic sentinel to mean "no
+    deployment"' -- a value with no `@client` is the role alone."""
+    app = create_test_app()
+
+    await _boot(
+        app,
+        _env_settings(
+            monkeypatch,
+            AGENT_REGISTRATIONS='{"support-bot": "sales-agent"}',
+            ADAPTER_RUNTIMES='["support-bot"]',
+            DEPLOY_GRANTS='{"support-bot": ["read:catalog"]}',
+        ),
+    )
+
+    assert set(app.state.runtimes) == {"support-bot"}
+    definition = app.state.runtimes["support-bot"]["runtime"].definition
+    assert definition.role_name == "sales-agent"
+    assert definition.deployment is None
+    assert app.state.adapter_model_ids == frozenset({"support-bot"})
+
+
+@pytest.mark.asyncio
+async def test_env_registration_treats_a_legacy_shaped_id_as_opaque(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """spec: 'A legacy-shaped id string is treated as opaque, not parsed' --
+    `acme__sales-agent` is one key; it serves the role its registration
+    names (operator-agent), with no client."""
+    app = create_test_app()
+
+    await _boot(
+        app,
+        _env_settings(
+            monkeypatch,
+            AGENT_REGISTRATIONS='{"acme__sales-agent": "operator-agent"}',
+            ADAPTER_RUNTIMES='["acme__sales-agent"]',
+            DEPLOY_GRANTS='{"acme__sales-agent": ["read:session"]}',
+        ),
+    )
+
+    definition = app.state.runtimes["acme__sales-agent"]["runtime"].definition
+    assert definition.role_name == "operator-agent"
+    assert definition.deployment is None
+
+
+@pytest.mark.asyncio
+async def test_env_registration_builds_every_entry_and_publishes_only_adapter_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Like `agents=`, every AGENT_REGISTRATIONS entry is built at boot;
+    /v1 publishes only the ADAPTER_RUNTIMES ids, and WhatsApp binds its own."""
+    app = create_test_app()
+    worker = _mock_worker()
+
+    await _boot(
+        app,
+        _env_settings(
+            monkeypatch,
+            AGENT_REGISTRATIONS=(
+                '{"acme-sales": "sales-agent", "wa-sales": "sales-agent",'
+                ' "back-office": "operator-agent"}'
+            ),
+            ADAPTER_RUNTIMES='["acme-sales"]',
+            WHATSAPP_RUNTIME_ID="wa-sales",
+            DEPLOY_GRANTS=(
+                '{"acme-sales": ["read:catalog"], "wa-sales": ["read:catalog"],'
+                ' "back-office": ["read:session"]}'
+            ),
+        ),
+        patch(
+            "agents_system.services.webhook_worker.DeferredWebhookWorker",
+            return_value=worker,
+        ),
+    )
+
+    assert set(app.state.runtimes) == {"acme-sales", "wa-sales", "back-office"}
+    assert app.state.adapter_model_ids == frozenset({"acme-sales"})
+    worker.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_env_registration_grant_is_keyed_by_the_new_id_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """spec: 'An id migrated from the old key format resolves correctly' --
+    the old `_generic__sales-agent` DEPLOY_GRANTS key is never consulted for
+    the runtime now registered as `acme-sales`."""
+    app = create_test_app()
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(
+            app,
+            _env_settings(
+                monkeypatch,
+                AGENT_REGISTRATIONS='{"acme-sales": "sales-agent"}',
+                DEPLOY_GRANTS='{"_generic__sales-agent": ["read:catalog"]}',
+            ),
+        )
+
+    message = str(exc_info.value)
+    assert "'acme-sales'" in message
+    assert "DEPLOY_GRANTS" in message
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.parametrize(
+    ("registrations", "named"),
+    [
+        ('{"acme-sales": "sales-agent@client-a@x"}', "'sales-agent@client-a@x'"),
+        ('{"acme-sales": "sales-agent@"}', "'sales-agent@'"),
+        ('{"acme-sales": "../sales-agent"}', "'../sales-agent'"),
+        # The removed sentinel is not a valid runtime id either.
+        ('{"_generic__sales-agent": "sales-agent"}', "'_generic__sales-agent'"),
+        ('{"bad id": "sales-agent"}', "'bad id'"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_env_registration_fails_boot_on_a_malformed_entry(
+    monkeypatch: pytest.MonkeyPatch, registrations: str, named: str
+) -> None:
+    """A malformed AGENT_REGISTRATIONS id or value fails boot, naming it and
+    the variable, before any runtime is built -- never logged and skipped."""
+    app = create_test_app(roots=RootConfig(deployments_root=_FIXTURE_DEPLOYMENTS))
+    build_runtime = MagicMock(side_effect=AssertionError("must not be reached"))
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(
+            app,
+            _env_settings(
+                monkeypatch,
+                AGENT_REGISTRATIONS=registrations,
+                DEPLOY_GRANTS='{"acme-sales": ["read:catalog"]}',
+            ),
+            patch("agents_system.harness.factory.build_runtime", build_runtime),
+        )
+
+    message = str(exc_info.value)
+    assert "AGENT_REGISTRATIONS" in message
+    assert named in message
+    build_runtime.assert_not_called()
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.parametrize(
+    ("channel", "env"),
+    [
+        ("ADAPTER_RUNTIMES", {"ADAPTER_RUNTIMES": '["_generic__sales-agent"]'}),
+        ("WHATSAPP_RUNTIME_ID", {"WHATSAPP_RUNTIME_ID": "acme__sales-agent"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_env_registration_fails_boot_for_an_unmigrated_channel_id(
+    monkeypatch: pytest.MonkeyPatch, channel: str, env: dict[str, str]
+) -> None:
+    """A deployment still configured with `{deployment}__{role}` ids and no
+    AGENT_REGISTRATIONS fails boot naming the id, the channel and the
+    variable to migrate to -- the id is never parsed into a role."""
+    app = create_test_app()
+    build_runtime = MagicMock(side_effect=AssertionError("must not be reached"))
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(
+            app,
+            _env_settings(monkeypatch, **env),
+            patch("agents_system.harness.factory.build_runtime", build_runtime),
+        )
+
+    message = str(exc_info.value)
+    (runtime_id,) = (
+        [env["WHATSAPP_RUNTIME_ID"]]
+        if channel == "WHATSAPP_RUNTIME_ID"
+        else ["_generic__sales-agent"]
+    )
+    assert repr(runtime_id) in message
+    assert channel in message
+    assert "AGENT_REGISTRATIONS" in message
+    build_runtime.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_env_registration_one_unresolvable_entry_blocks_the_whole_boot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """spec: 'One bad registration entry blocks the whole boot' -- on the
+    Settings-driven path too: a role that does not exist fails boot, and the
+    valid entry is not served."""
+    app = create_test_app()
+
+    with pytest.raises(DefinitionError, match="no-such-agent"):
+        await _boot(
+            app,
+            _env_settings(
+                monkeypatch,
+                AGENT_REGISTRATIONS=(
+                    '{"acme-sales": "sales-agent", "ghost": "no-such-agent"}'
+                ),
+                DEPLOY_GRANTS=(
+                    '{"acme-sales": ["read:catalog"], "ghost": ["read:catalog"]}'
+                ),
+            ),
+        )
+
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.asyncio
+async def test_env_registration_is_ignored_when_create_app_gets_agents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`create_app(agents=...)` is the whole registration: AGENT_REGISTRATIONS
+    is the fallback for when it is absent, never merged into it."""
+    app = create_test_app(
+        agents={"acme-sales": "sales-agent"}, grants={"acme-sales": _SALES_GRANT}
+    )
+
+    await _boot(
+        app,
+        _env_settings(
+            monkeypatch, AGENT_REGISTRATIONS='{"back-office": "operator-agent"}'
+        ),
+    )
+
+    assert set(app.state.runtimes) == {"acme-sales"}
+
+
+@pytest.mark.asyncio
+async def test_env_registration_leaves_demo_build_app_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """design.md D5: `demo.py`'s `build_app` passes no `agents=` and needs no
+    change -- with nothing registered in the environment it boots with an
+    empty runtime cache."""
+    from agents_system.demo import build_app
+
+    app = build_app(engine=MagicMock(), model=MagicMock())
+
+    await _boot(app, _env_settings(monkeypatch))
+
+    assert app.state.runtimes == {}
+    assert app.state.adapter_model_ids == frozenset()

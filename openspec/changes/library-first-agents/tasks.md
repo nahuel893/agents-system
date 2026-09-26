@@ -1008,7 +1008,7 @@ path must exist before the env-boot path can build one from `Settings`).
 Estimated lines: ~280 (design.md Testing Strategy table: ~260-300). **This
 PR is breaking** — see PR4b-T4.
 
-- [ ] **PR4b-T1 — `Settings.agent_registrations` + `_parse_agent_registration`.**
+- [x] **PR4b-T1 — `Settings.agent_registrations` + `_parse_agent_registration`.**
   RED: create `tests/test_agent_registrations_parsing.py` covering the env
   half of spec Requirements "The {deployment}__{role} scheme and its
   sentinel are removed" and "to_model_id/parse_model_id and the inline
@@ -1038,7 +1038,7 @@ PR is breaking** — see PR4b-T4.
   (env-parsing half), "A legacy-shaped id string is treated as opaque, not
   parsed". <!-- sdd-owner: implementation -->
 
-- [ ] **PR4b-T2 — Settings-driven fallback wiring when `agents is None`.**
+- [x] **PR4b-T2 — Settings-driven fallback wiring when `agents is None`.**
   RED: extend `tests/test_main.py` with env-driven boot migration cases:
   `create_app(registry_factory=...)` called with no `agents` param (the
   default), but `AGENT_REGISTRATIONS='{"acme-sales": "sales-agent@acme"}'`
@@ -1064,7 +1064,7 @@ PR is breaking** — see PR4b-T4.
   deployment'", "An id migrated from the old key format resolves correctly".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR4b-T3 — Delete `to_model_id`/`parse_model_id`; delete obsolete tests.**
+- [x] **PR4b-T3 — Delete `to_model_id`/`parse_model_id`; delete obsolete tests.**
   RED: add `test_to_model_id_import_raises_import_error` (or extend
   `tests/test_openai_adapter.py`) asserting `from agents_system.integration
   .openai_adapter import to_model_id` raises `ImportError` after this task's
@@ -1094,7 +1094,7 @@ PR is breaking** — see PR4b-T4.
   caller importing the deleted functions fails at import time".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR4b-T4 — PR4b closing: full verification + BREAKING CHANGE marker.**
+- [x] **PR4b-T4 — PR4b closing: full verification + BREAKING CHANGE marker.**
   Verify: `.venv/bin/pytest -q` (full suite), `.venv/bin/ruff check .`,
   `.venv/bin/ruff format --check .`, `.venv/bin/mypy src/`. Confirm `git diff
   --stat` against PR4b's branch base; flag if it exceeds ~400 lines. **This

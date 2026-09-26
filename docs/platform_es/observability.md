@@ -133,10 +133,11 @@ el override `model_id` de precios del Slice 1), así que cada sitio de
 construcción existente (`evals/runner.py`, uso directo de la librería vía
 `agents_system.AgentRuntime`) queda sin afectar. El lifespan de `main.py`
 -- el único caller con un id más significativo a mano -- pasa
-explícitamente el `runtime_id` propio del operador
-(`"{deployment}__{role}"`), así que las métricas de un despliegue real
-quedan etiquetadas con el id que el operador configuró, no con qué modelo
-subyacente resulta estar sirviéndolo.
+explícitamente el runtime id registrado: la clave opaca con la que se
+registró el runtime, en `create_app(agents=...)` o en
+`AGENT_REGISTRATIONS`. Así, las métricas de un despliegue real quedan
+etiquetadas con el id que el operador eligió, no con qué modelo subyacente
+resulta estar sirviéndolo.
 
 ## Patrón de testing
 
