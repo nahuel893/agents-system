@@ -46,7 +46,11 @@ def _relation(
     can_select: bool = True,
     can_write: bool = False,
     finding: str = "relation",
+    security_barrier: bool | None = None,
 ) -> dict[str, Any]:
+    # The catalog query reports security_barrier for plain views only.
+    if security_barrier is None and relkind == "v":
+        security_barrier = True
     return {
         "finding": finding,
         "schema_name": schema,
@@ -54,6 +58,7 @@ def _relation(
         "relkind": relkind,
         "can_select": can_select,
         "can_write": can_write,
+        "security_barrier": security_barrier,
     }
 
 
@@ -152,8 +157,31 @@ def test_an_allowlisted_base_table_is_a_problem() -> None:
 
 
 def test_a_materialized_view_is_an_acceptable_allowlisted_relation() -> None:
+    # It holds its own rows: no filter of the view runs at query time, so
+    # there is nothing for the model's predicates to be pushed below.
     findings = [_relation("sales_v", relkind="m"), _relation("clients_v")]
     assert evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED).safe
+
+
+@pytest.mark.parametrize("barrier", [False, None])
+def test_an_allowlisted_view_without_security_barrier_is_a_problem(
+    barrier: bool | None,
+) -> None:
+    # Without security_barrier the planner may evaluate the model's predicate
+    # below the view's own row filter, on rows the view hides: an error
+    # raised only for some hidden values (a division by zero) tells the
+    # model what they are, one call at a time.
+    findings = [
+        {**_relation("sales_v"), "security_barrier": barrier},
+        _relation("clients_v"),
+    ]
+
+    check = evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED)
+
+    assert not check.safe
+    assert any(
+        "security_barrier" in p and "reporting.sales_v" in p for p in check.problems
+    )
 
 
 def test_a_writable_sequence_is_a_problem() -> None:

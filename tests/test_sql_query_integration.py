@@ -668,6 +668,11 @@ _DROP_SECURITY_DEFINER = "DROP FUNCTION sql_tool_fixture.lower(text)"
             "ALTER ROLE sql_readonly RESET temp_file_limit",
             "ALTER ROLE sql_readonly SET temp_file_limit = '256MB'",
         ),
+        # A plain view without security_barrier.
+        (
+            "ALTER VIEW sql_tool_fixture.sales_v RESET (security_barrier)",
+            "ALTER VIEW sql_tool_fixture.sales_v SET (security_barrier = true)",
+        ),
     ],
 )
 async def test_an_unsafe_role_is_detected_and_the_tool_refuses(
@@ -687,6 +692,66 @@ async def test_an_unsafe_role_is_detected_and_the_tool_refuses(
         await sql_engine.dispose()
 
     assert await verify_query_role(sql_engine, _ALLOWED) is True
+
+
+#: A view that hides rows by a join, a common per-audience pattern: only
+#: product-1 is visible (at most 45.00); product-0 holds the hidden 50.00.
+_CREATE_FILTERED_VIEW = (
+    "CREATE TABLE sql_tool_fixture.visible_products (p text PRIMARY KEY)",
+    "INSERT INTO sql_tool_fixture.visible_products VALUES ('product-1')",
+    (
+        "CREATE VIEW sql_tool_fixture.product_1_v AS SELECT s.id, s.product, s.amount "
+        "FROM sql_tool_fixture.sales AS s "
+        "JOIN sql_tool_fixture.visible_products AS f ON f.p = s.product"
+    ),
+    "GRANT SELECT ON sql_tool_fixture.product_1_v TO sql_readonly",
+)
+_DROP_FILTERED_VIEW = (
+    "DROP VIEW IF EXISTS sql_tool_fixture.product_1_v",
+    "DROP TABLE IF EXISTS sql_tool_fixture.visible_products",
+)
+
+#: An error oracle: a division by zero for any row above the threshold. The
+#: visible rows stop at 45.00; only a hidden row lies above 47.
+_ORACLE = (
+    "SELECT count(*) AS n FROM sql_tool_fixture.product_1_v "
+    "WHERE 1 / (CASE WHEN amount > 47 THEN 0 ELSE 1 END) = 1"
+)
+
+
+async def test_a_row_filtering_view_must_be_a_security_barrier_view(
+    sql_engine: AsyncEngine, admin_engine: AsyncEngine
+) -> None:
+    # Without security_barrier the planner pushes the model's predicate below
+    # the view's join, onto rows the view hides: the data_error / rows
+    # outcome then answers "is there a hidden row above x?", one call at a
+    # time (a binary search recovered the hidden maximum in 17 calls).
+    allowed = _ALLOWED | {("sql_tool_fixture", "product_1_v")}
+    config = SqlQueryConfig(
+        views={**_CONFIG.views, "sql_tool_fixture.product_1_v": "product-1 sales"}
+    )
+    connector = build_sql_query_connector(sql_engine, config)
+    for statement in _CREATE_FILTERED_VIEW:
+        await _admin(admin_engine, statement)
+    try:
+        leaky_verdict = await verify_query_role(sql_engine, allowed)
+        leaky = await connector({"sql": _ORACLE})
+
+        await _admin(
+            admin_engine,
+            "ALTER VIEW sql_tool_fixture.product_1_v SET (security_barrier = true)",
+        )
+        barrier_verdict = await verify_query_role(sql_engine, allowed)
+        barrier = await connector({"sql": _ORACLE})
+    finally:
+        for statement in _DROP_FILTERED_VIEW:
+            await _admin(admin_engine, statement)
+
+    assert leaky_verdict is False
+    assert leaky["error_kind"] == "role_not_read_only"
+    assert barrier_verdict is True
+    assert "error" not in barrier, barrier
+    assert barrier["rows"] == [[8]]
 
 
 async def test_a_qualified_security_definer_call_is_refused_at_both_layers(

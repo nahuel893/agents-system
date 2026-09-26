@@ -26,8 +26,10 @@ CREATE TABLE sql_tool_fixture.secrets (id integer PRIMARY KEY, note text NOT NUL
 INSERT INTO sql_tool_fixture.secrets VALUES (1, 'never readable by the SQL tool');
 
 -- A simple view like this one is auto-updatable: only the role's missing
--- INSERT/UPDATE/DELETE privileges stop a write through it.
-CREATE VIEW sql_tool_fixture.sales_v AS
+-- INSERT/UPDATE/DELETE privileges stop a write through it. Every view the
+-- tool may read must be a security_barrier view (the role check refuses any
+-- other), so the model's predicates never run on rows a view filters out.
+CREATE VIEW sql_tool_fixture.sales_v WITH (security_barrier) AS
 SELECT id, product, amount, sold_on FROM sql_tool_fixture.sales;
 
 CREATE VIEW sql_tool_fixture.secrets_v AS

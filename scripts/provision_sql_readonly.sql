@@ -18,6 +18,13 @@
 --     SELECT on exactly the listed views - every other table, view, sequence
 --     and schema privilege it held is revoked.
 --
+-- Every listed view must be a materialized view or a security_barrier view
+-- (CREATE VIEW ... WITH (security_barrier) or ALTER VIEW ... SET
+-- (security_barrier = true)); the script refuses any other. Without the
+-- option the planner may run the model's conditions before the view's own
+-- WHERE or JOIN, on rows the view hides, and an error raised only for some
+-- values tells the model what those rows hold.
+--
 -- The tool re-checks all of this on every call (services/db_role.py,
 -- check_query_role) and refuses to run while the role can write anything or
 -- read anything beyond its allowlist, while it belongs to any other role,
@@ -140,6 +147,22 @@ BEGIN
               AND c.relkind IN ('v', 'm')
         ) THEN
             RAISE EXCEPTION 'sql_views entry "%" is not an existing view', entry;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM pg_class AS c
+            JOIN pg_namespace AS n ON n.oid = c.relnamespace
+            WHERE n.nspname = parts[1]
+              AND c.relname = parts[2]
+              AND c.relkind = 'v'
+              AND NOT coalesce(
+                  (SELECT o.option_value::boolean
+                   FROM pg_options_to_table(c.reloptions) AS o
+                   WHERE o.option_name = 'security_barrier'),
+                  false)
+        ) THEN
+            RAISE EXCEPTION 'sql_views entry "%" is not a security_barrier view; run ALTER VIEW %.% SET (security_barrier = true) first',
+                entry, quote_ident(parts[1]), quote_ident(parts[2]);
         END IF;
         EXECUTE format('GRANT USAGE ON SCHEMA %I TO sql_readonly', parts[1]);
         EXECUTE format('GRANT SELECT ON %I.%I TO sql_readonly', parts[1], parts[2]);

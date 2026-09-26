@@ -117,6 +117,13 @@ _QUERY_ROLE_FINDINGS = text(
                     THEN pg_catalog.has_any_column_privilege(c.oid, 'SELECT')
                     ELSE false
                END AS can_select,
+               CASE WHEN c.relkind = 'v'
+                    THEN coalesce(
+                        (SELECT o.option_value::boolean
+                         FROM pg_catalog.pg_options_to_table(c.reloptions) AS o
+                         WHERE o.option_name = 'security_barrier'),
+                        false)
+               END AS security_barrier,
                CASE WHEN c.relkind IN ('r', 'p', 'v', 'm', 'f')
                     THEN pg_catalog.has_any_column_privilege(
                              c.oid, 'INSERT, UPDATE, REFERENCES')
@@ -134,18 +141,19 @@ _QUERY_ROLE_FINDINGS = text(
           AND n.nspname NOT LIKE 'pg\_temp\_%'
     )
     SELECT CASE WHEN relkind = 'S' THEN 'sequence' ELSE 'relation' END AS finding,
-           schema_name, object_name, relkind, can_select, can_write
+           schema_name, object_name, relkind, can_select, can_write,
+           security_barrier
     FROM privileges
     WHERE can_select OR can_write
     UNION ALL
-    SELECT 'schema', n.nspname, NULL, NULL, false, true
+    SELECT 'schema', n.nspname, NULL, NULL, false, true, NULL
     FROM pg_catalog.pg_namespace AS n
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname NOT LIKE 'pg\_toast%'
       AND n.nspname NOT LIKE 'pg\_temp\_%'
       AND pg_catalog.has_schema_privilege(n.oid, 'CREATE')
     UNION ALL
-    SELECT 'function', n.nspname, p.proname, NULL, false, false
+    SELECT 'function', n.nspname, p.proname, NULL, false, false, NULL
     FROM pg_catalog.pg_proc AS p
     JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
     WHERE p.prosecdef
@@ -160,7 +168,10 @@ _QUERY_ROLE_FINDINGS = text(
 relations it can SELECT from or write to, sequences it can advance, schemas
 it can create objects in, and SECURITY DEFINER functions it can call (they
 run with their owner's privileges, so they reach what this role cannot).
-Privileges granted to PUBLIC count, because they reach this role too. Each privilege function sits behind a CASE on
+Privileges granted to PUBLIC count, because they reach this role too. For a
+plain view, `security_barrier` says whether the view's own filters run
+before any condition of the query (the option's text form, such as `on`,
+read as a boolean). Each privilege function sits behind a CASE on
 `relkind` because WHERE clauses have no evaluation order: without it the
 planner may ask `has_sequence_privilege` about a TOAST table and fail. Static
 text, no caller input (AD-2 holds here)."""
@@ -213,7 +224,15 @@ def evaluate_query_role(
     can create no schema and write no relation, sequence or schema; it can
     execute no SECURITY DEFINER function outside the system schemas; it can
     SELECT from no relation outside *allowed*; and every allowlisted
-    relation it can read is a view or materialized view.
+    relation it can read is a materialized view or a `security_barrier`
+    view.
+
+    Why `security_barrier`: a view's own WHERE or JOIN is what hides rows
+    from this role, and without the option the planner may evaluate the
+    model's conditions first, on the hidden rows. A condition that raises an
+    error for some values (`1 / (CASE WHEN amount > x THEN 0 ELSE 1 END)`)
+    then tells the model whether a hidden row matches, one call at a time.
+    A materialized view holds only its own rows, so it needs no barrier.
     """
     if facts is None:
         return QueryRoleCheck(problems=("the current role was not found",), warnings=())
@@ -262,6 +281,14 @@ def evaluate_query_role(
         readable.add(key)
         if finding.get("relkind") not in _VIEW_RELKINDS:
             problems.append(f"allowlisted relation {shown} is not a view")
+        elif (
+            finding.get("relkind") == "v"
+            and finding.get("security_barrier") is not True
+        ):
+            problems.append(
+                f"allowlisted view {shown} is not a security_barrier view "
+                "(ALTER VIEW ... SET (security_barrier = true))"
+            )
 
     for schema, name in sorted(allowed - readable):
         warnings.append(f"role cannot read allowlisted view {schema}.{name}")
