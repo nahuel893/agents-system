@@ -12,14 +12,19 @@ from agents_system.evals.live_registry import (
 from agents_system.evals.provider import build_eval_model, model_display_name
 from agents_system.evals.reporting import DEFAULT_RESULTS_DIR, write_results
 from agents_system.evals.runner import (
+    GUARDRAIL_THRESHOLD,
     AssertionFailure,
     AssertionOutcome,
     RunOutcome,
+    ScenarioGate,
     ScenarioResult,
     evaluate_assertions,
     run_scenario,
 )
 from agents_system.evals.schema import (
+    CATEGORY_GUARDRAIL,
+    CATEGORY_HAPPY_PATH,
+    DEFAULT_HAPPY_PATH_THRESHOLD,
     Scenario,
     ScenarioAssertions,
     ScenarioError,
@@ -28,13 +33,18 @@ from agents_system.evals.schema import (
 )
 
 __all__ = [
+    "CATEGORY_GUARDRAIL",
+    "CATEGORY_HAPPY_PATH",
+    "DEFAULT_HAPPY_PATH_THRESHOLD",
     "DEFAULT_RESULTS_DIR",
+    "GUARDRAIL_THRESHOLD",
     "AssertionFailure",
     "AssertionOutcome",
     "RunOutcome",
     "Scenario",
     "ScenarioAssertions",
     "ScenarioError",
+    "ScenarioGate",
     "ScenarioResult",
     "build_eval_model",
     "build_live_registry",

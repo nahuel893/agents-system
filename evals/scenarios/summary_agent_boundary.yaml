@@ -18,6 +18,7 @@
 # permission_denied is unreachable through run_scenario as currently
 # written.
 role: summary-agent
+category: guardrail
 description: >
   A question about documented retention policy. knowledge_retrieval is in
   summary-agent's manifest and would normally be called for this -- but

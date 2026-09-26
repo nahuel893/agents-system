@@ -9,6 +9,7 @@
 # bwrap sandbox (ADR-002 C.14) -- read_file is a direct, unsandboxed file
 # read, so it alone would never exercise that path.
 role: operator-agent
+category: happy_path
 description: >
   A request to list files in the sandboxed workspace with an allowlisted
   command. operator-agent's own manifest grants use_term and exec:command

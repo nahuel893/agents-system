@@ -9,8 +9,10 @@ where results land.
 This test proves the PIPELINE runs end to end against a real model, not that
 the model is good: a low success rate on a small model (e.g. `qwen2.5:3b`) is
 expected and acceptable -- ADR-002 E.18 names it a deliberate floor/regression
-case. Only structural completeness is asserted here; the success rate is
-reported, not gated.
+case. Structural completeness is asserted unconditionally; the success rate
+IS gated (#81, `ScenarioResult.gate`) against `sales_agent_smoke.yaml`'s own
+deliberately lenient threshold override (20%, not the 80% happy-path
+default) -- see that file's header comment for why.
 """
 
 from __future__ import annotations
@@ -56,14 +58,20 @@ async def test_sales_agent_smoke_scenario_runs_against_a_real_model() -> None:
     print(
         f"\nlive-eval: scenario={result.scenario} role={result.role} "
         f"model={result.model} runs={len(result.runs)} "
-        f"success_rate={result.success_rate:.0%}"
+        f"success_rate={result.success_rate:.0%} category={result.category} "
+        f"exercised={result.exercised_count} threshold={result.threshold:.0%} "
+        f"gate={'pass' if result.gate.passed else 'fail'}"
     )
     for index, run in enumerate(result.runs):
         status = "pass" if run.passed else "fail"
         detail = run.error or "; ".join(f"{f.kind}: {f.detail}" for f in run.failures)
         print(f"  run {index}: {status} {detail}".rstrip())
 
-    # Structural completeness, not a quality gate: proves every run actually
-    # executed (no runner-level crash swallowed the whole scenario) and that
-    # results were written for the PR record -- not that the model passed.
+    # Structural completeness: proves every run actually executed (no
+    # runner-level crash swallowed the whole scenario) and that results were
+    # written for the PR record.
     assert len(result.runs) == _RUNS
+    # #81 -- the actual quality gate: a happy-path scenario below its
+    # threshold, or a guardrail scenario that broke (or was never exercised),
+    # fails the test loudly, naming the scenario, rate, threshold and model.
+    assert result.gate.passed, result.gate.reason

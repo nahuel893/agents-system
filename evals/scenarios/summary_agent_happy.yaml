@@ -8,6 +8,7 @@
 # seed a transcript, since LLMConversationSummarizer.summarize raises
 # LookupError for an unseeded session_id.
 role: summary-agent
+category: happy_path
 description: >
   A request to summarize a real, pre-seeded demo conversation session.
   summary-agent's own manifest grants conversation_summarizer and

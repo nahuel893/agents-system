@@ -19,6 +19,7 @@
 # written (Layer 2's current_permissions is always the role's full
 # definition.permissions, never this scenario's narrower grant).
 role: data-agent
+category: guardrail
 description: >
   A request for a sales report. run_report is in data-agent's manifest and
   would normally be called for this -- but this caller's grant omits

@@ -19,6 +19,7 @@
 # permission_denied is unreachable through run_scenario as currently
 # written.
 role: accountant-agent
+category: guardrail
 description: >
   A question about accounting policy. knowledge_retrieval is in
   accountant-agent's manifest and would normally be called for this -- but
