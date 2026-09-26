@@ -92,7 +92,9 @@ _QUERY_ROLE_FACTS = text(
                  WHERE m.member = r.oid
                  ORDER BY 1) AS member_of,
            pg_catalog.has_database_privilege(
-               pg_catalog.current_database(), 'CREATE') AS can_create_schemas
+               pg_catalog.current_database(), 'CREATE') AS can_create_schemas,
+           (SELECT s.setting::bigint FROM pg_catalog.pg_settings AS s
+            WHERE s.name = 'temp_file_limit') AS temp_file_limit_kb
     FROM pg_catalog.pg_roles AS r
     WHERE r.rolname = current_user
     """
@@ -102,7 +104,9 @@ _QUERY_ROLE_FACTS = text(
 only the role default tells whether the ROLE is read-only. `member_of` lists
 the roles this one belongs to directly: a predefined role such as
 `pg_execute_server_program` grants capabilities that neither a READ ONLY
-transaction nor relation privileges contain, so any membership is unsafe."""
+transaction nor relation privileges contain, so any membership is unsafe.
+`temp_file_limit_kb` is the session's cap on temporary files (-1: none); only
+a superuser can change it, so for this role it is the role's own setting."""
 
 _QUERY_ROLE_FINDINGS = text(
     r"""
@@ -170,6 +174,12 @@ _ELEVATED_ATTRIBUTES = (
 )
 _VIEW_RELKINDS = frozenset({"v", "m"})
 
+MAX_TEMP_FILE_LIMIT_KB = 1_048_576
+"""Highest `temp_file_limit` (in kB, so 1 GiB) the check accepts for the
+tool's role. The cap applies per session: every connection the tool's engine
+holds may write that much at once, on the volume that usually also holds the
+data files and the WAL. `scripts/provision_sql_readonly.sql` sets 256 MB."""
+
 
 @dataclass(frozen=True)
 class QueryRoleCheck:
@@ -197,7 +207,9 @@ def evaluate_query_role(
     """Decide whether the role behind *facts*/*findings* is safe for the tool.
 
     Safe means all of: the role's own default makes every transaction
-    read-only; it has no elevated attribute and belongs to no other role; it
+    read-only; it has no elevated attribute and belongs to no other role; its
+    temporary files are capped (`temp_file_limit` set, at most
+    `MAX_TEMP_FILE_LIMIT_KB`); it
     can create no schema and write no relation, sequence or schema; it can
     execute no SECURITY DEFINER function outside the system schemas; it can
     SELECT from no relation outside *allowed*; and every allowlisted
@@ -218,6 +230,14 @@ def evaluate_query_role(
         problems.append(f"role is a member of other roles: {', '.join(member_of)}")
     if facts.get("can_create_schemas"):
         problems.append("role can create schemas in this database")
+    temp_limit = facts.get("temp_file_limit_kb")
+    if temp_limit is None or int(temp_limit) < 0:
+        problems.append("temp_file_limit is not set for this role (no cap)")
+    elif int(temp_limit) > MAX_TEMP_FILE_LIMIT_KB:
+        problems.append(
+            f"temp_file_limit is {int(temp_limit)} kB, above the "
+            f"{MAX_TEMP_FILE_LIMIT_KB} kB ceiling"
+        )
 
     readable: set[tuple[str, str]] = set()
     for finding in findings:

@@ -10,14 +10,19 @@
 --   * default_transaction_read_only = on, plus server-side statement, lock and
 --     idle-in-transaction timeouts as a backstop to the tool's own
 --     per-transaction limits;
+--   * temp_file_limit (default 256MB, per session): a sort or hash of huge
+--     values stops at that much temporary disk instead of filling the volume
+--     that holds the data files. Only a superuser can change it, so the role
+--     cannot raise it;
 --   * CONNECT on this database, USAGE on the schemas of the listed views, and
 --     SELECT on exactly the listed views - every other table, view, sequence
 --     and schema privilege it held is revoked.
 --
 -- The tool re-checks all of this on every call (services/db_role.py,
 -- check_query_role) and refuses to run while the role can write anything or
--- read anything beyond its allowlist, while it belongs to any other role, or
--- while it can call a SECURITY DEFINER function outside the system schemas.
+-- read anything beyond its allowlist, while it belongs to any other role,
+-- while its temporary files are uncapped (or capped above 1GB), or while it
+-- can call a SECURITY DEFINER function outside the system schemas.
 -- Privileges granted to PUBLIC reach this role too; on PostgreSQL 14 and
 -- older run `REVOKE CREATE ON SCHEMA public FROM PUBLIC` (the default since
 -- 15), and for a SECURITY DEFINER function in a schema this role can use
@@ -25,14 +30,16 @@
 -- `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC` and grant it to the roles that
 -- need it, or the check will refuse.
 --
--- Usage - run as a superuser or the owner of the listed views. The password
--- and the view list come from the caller, never from this file. Pass both
--- bare: psql quotes them itself. The view list must match the tool's
--- configured `views` exactly:
+-- Usage - run as a superuser: temp_file_limit is a superuser-only setting.
+-- The password and the view list come from the caller, never from this
+-- file. Pass them bare: psql quotes them itself. The view list must match
+-- the tool's configured `views` exactly; sql_temp_file_limit is optional
+-- (at most 1GB, which the tool's check enforces):
 --
 --   psql "$ADMIN_DATABASE_URL" \
 --     -v sql_password=change-me \
 --     -v sql_views=reporting.sales_v,reporting.clients_v \
+--     -v sql_temp_file_limit=256MB \
 --     -f scripts/provision_sql_readonly.sql
 --
 -- Idempotent: safe to re-run, and re-running REPAIRS drift - every setting is
@@ -64,6 +71,11 @@ ALTER ROLE sql_readonly SET default_transaction_read_only = on;
 ALTER ROLE sql_readonly SET statement_timeout = '10s';
 ALTER ROLE sql_readonly SET lock_timeout = '1s';
 ALTER ROLE sql_readonly SET idle_in_transaction_session_timeout = '30s';
+\if :{?sql_temp_file_limit}
+\else
+\set sql_temp_file_limit 256MB
+\endif
+ALTER ROLE sql_readonly SET temp_file_limit = :'sql_temp_file_limit';
 
 GRANT CONNECT ON DATABASE :"DBNAME" TO sql_readonly;
 -- CREATE on the database would let the role create schemas; the per-call

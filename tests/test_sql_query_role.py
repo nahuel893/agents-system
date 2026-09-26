@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from agents_system.services.db_role import (
+    MAX_TEMP_FILE_LIMIT_KB,
     evaluate_query_role,
     verify_query_role,
 )
@@ -33,6 +34,7 @@ _SAFE_FACTS: dict[str, Any] = {
     "rolbypassrls": False,
     "member_of": [],
     "can_create_schemas": False,
+    "temp_file_limit_kb": 262_144,
 }
 
 
@@ -90,6 +92,36 @@ def test_default_transaction_read_only_off_is_a_problem() -> None:
 def test_elevated_role_attributes_are_problems(attribute: str) -> None:
     check = evaluate_query_role(_facts(**{attribute: True}), _SAFE_FINDINGS, _ALLOWED)
     assert not check.safe
+
+
+@pytest.mark.parametrize("limit_kb", [-1, None])
+def test_unlimited_temporary_files_are_a_problem(limit_kb: int | None) -> None:
+    # -1 is PostgreSQL's default: no cap on the temporary files a session
+    # may write. A sort or hash of huge values can then fill the volume that
+    # also holds the data files and the WAL.
+    check = evaluate_query_role(
+        _facts(temp_file_limit_kb=limit_kb), _SAFE_FINDINGS, _ALLOWED
+    )
+
+    assert not check.safe
+    assert any("temp_file_limit" in p for p in check.problems)
+
+
+def test_a_temporary_file_limit_above_the_ceiling_is_a_problem() -> None:
+    check = evaluate_query_role(
+        _facts(temp_file_limit_kb=MAX_TEMP_FILE_LIMIT_KB + 1), _SAFE_FINDINGS, _ALLOWED
+    )
+
+    assert not check.safe
+
+
+@pytest.mark.parametrize("limit_kb", [0, 1_024, MAX_TEMP_FILE_LIMIT_KB])
+def test_a_bounded_temporary_file_limit_is_safe(limit_kb: int) -> None:
+    check = evaluate_query_role(
+        _facts(temp_file_limit_kb=limit_kb), _SAFE_FINDINGS, _ALLOWED
+    )
+
+    assert check.safe
 
 
 def test_any_write_privilege_is_a_problem() -> None:

@@ -100,6 +100,33 @@ async def test_the_provisioned_role_verifies_as_safe(sql_engine: AsyncEngine) ->
     assert await verify_query_role(sql_engine, _ALLOWED) is True
 
 
+async def test_the_provisioned_role_caps_its_temporary_files(
+    sql_engine: AsyncEngine,
+) -> None:
+    async with sql_engine.connect() as conn:
+        limit = (await conn.exec_driver_sql("SHOW temp_file_limit")).scalar()
+
+    assert limit == "256MB"
+
+
+async def test_a_query_that_would_spill_past_the_cap_is_stopped_by_the_database(
+    sql_engine: AsyncEngine,
+) -> None:
+    # A hash of 300 values of 1 MB spills far past work_mem; the role's
+    # temp_file_limit stops it at 256 MB instead of letting it fill the disk.
+    config = SqlQueryConfig(views=_CONFIG.views, statement_timeout_ms=20_000)
+    connector = build_sql_query_connector(sql_engine, config)
+
+    result = await connector(
+        {
+            "sql": "SELECT count(*) FROM (SELECT DISTINCT rpad(g::text, 1000000, 'x') "
+            "FROM generate_series(1, 300) AS g) AS d"
+        }
+    )
+
+    assert result["error_kind"] == "query_failed", result
+
+
 async def test_a_query_runs_under_the_read_only_role(sql_engine: AsyncEngine) -> None:
     connector = build_sql_query_connector(sql_engine, _CONFIG)
 
@@ -587,6 +614,11 @@ _DROP_SECURITY_DEFINER = "DROP FUNCTION sql_tool_fixture.lower(text)"
             _ON_THIS_DATABASE.format(statement="REVOKE CREATE ON DATABASE %I FROM"),
         ),
         (_CREATE_SECURITY_DEFINER, _DROP_SECURITY_DEFINER),
+        # PostgreSQL's default: no cap on temporary files.
+        (
+            "ALTER ROLE sql_readonly RESET temp_file_limit",
+            "ALTER ROLE sql_readonly SET temp_file_limit = '256MB'",
+        ),
     ],
 )
 async def test_an_unsafe_role_is_detected_and_the_tool_refuses(
