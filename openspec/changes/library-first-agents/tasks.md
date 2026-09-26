@@ -464,7 +464,7 @@ Depends on PR1a + PR1b (`Agent._to_locator()` produces `FolderLocator`/
 `Agent`-authored chain can rely on it). Estimated lines: ~350 (design.md
 Testing Strategy table: ~330-370).
 
-- [ ] **PR2-T1 — `Agent` frozen dataclass core + `_to_locator()` (pure-Python branch).**
+- [x] **PR2-T1 — `Agent` frozen dataclass core + `_to_locator()` (pure-Python branch).**
   RED: create `tests/test_agent_from_params.py` covering spec Requirement
   "`Agent(...)` Python-parameter construction resolves without disk":
   `Agent(name="triage-bot", extends="agent", tools=["catalog_search"],
@@ -498,7 +498,7 @@ Testing Strategy table: ~330-370).
   disk", "A pure-Python agent resolves with no folder", "A pure-Python agent
   still receives every library invariant". <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T2 — `Agent.from_folder` + folder/params compose (override precedence).**
+- [x] **PR2-T2 — `Agent.from_folder` + folder/params compose (override precedence).**
   RED: create `tests/test_agent_from_folder.py` and
   `tests/test_agent_folder_plus_overrides.py` covering spec Requirements
   "`Agent.from_folder` produces the loader's `AgentDefinition` shape" and
@@ -541,7 +541,7 @@ Testing Strategy table: ~330-370).
   "A field not passed as a parameter keeps the folder's value".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T3 — `extends: str | Agent` (eager Agent-to-Agent, lazy str) + additive inheritance (Option B).**
+- [x] **PR2-T3 — `extends: str | Agent` (eager Agent-to-Agent, lazy str) + additive inheritance (Option B).**
   RED: create `tests/test_agent_extends_agent.py` and
   `tests/test_agent_extends_predefined_role.py` covering spec Requirements
   "Additive inheritance from the generic agent or any predefined role (Option
@@ -579,7 +579,7 @@ Testing Strategy table: ~330-370).
   tool surface", "An importer agent extending the generic agent starts from
   the minimal floor". <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T4 — Public export: `__init__.py` + `test_public_api.py`.**
+- [x] **PR2-T4 — Public export: `__init__.py` + `test_public_api.py`.**
   RED: add a `test_agent_export` parametrize case to `tests/test_public_api.py`
   (matching that file's own existing per-export pattern, `_EXPECTED_EXPORTS`
   dict at `:26-40`) asserting `agents_system.Agent` resolves lazily to
@@ -602,7 +602,7 @@ Testing Strategy table: ~330-370).
   at all to use any of the three locator kinds this capability defines).
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR2-T5 — PR2 closing: docstrings + docs + full verification.**
+- [x] **PR2-T5 — PR2 closing: docstrings + docs + full verification.**
   Add a module docstring to `agent/spec.py` (one paragraph, cross-referencing
   `design.md`'s D3/D6 and the spec's "Agent Python API" requirements — no new
   prose invented beyond what `design.md`/`spec.md` already state). Update

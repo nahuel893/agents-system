@@ -1074,6 +1074,35 @@ def _parse_untrusted_input(
     return value
 
 
+def _apply_agent_folder_overrides(
+    definition: RawDefinition, overrides: Mapping[str, Any]
+) -> RawDefinition:
+    """Apply `Agent.from_folder(path, **overrides)`'s Python parameters
+    (design.md D3) onto a folder-read `RawDefinition`, field by field,
+    REPLACING — never merging — the folder's own value: an explicitly passed
+    field wins outright, and a field never passed keeps exactly what the
+    folder declared.
+
+    `overrides` keys are `Agent`'s own field names (validated against
+    `agent.spec._AGENT_OVERRIDABLE_FIELDS` at `Agent.__init__` time); `name`
+    is the one renamed key (`Agent.name` -> `RawDefinition.role_name`, so an
+    overridden name is reflected consistently in both places). A key with no
+    `RawDefinition` counterpart (`extends` — resolved into a locator, never
+    stored on `RawDefinition`; `skill_contents` — not yet threaded into
+    `RawDefinition` in this PR, see design.md's own Testing Strategy note)
+    has nothing to replace here and is left unapplied.
+    """
+    if not overrides:
+        return definition
+    raw_field_names = {field.name for field in dataclasses.fields(RawDefinition)}
+    changes: dict[str, Any] = {}
+    for key, value in overrides.items():
+        target = "role_name" if key == "name" else key
+        if target in raw_field_names:
+            changes[target] = value
+    return dataclasses.replace(definition, **changes) if changes else definition
+
+
 def _load_role_files(
     locator: RoleLocator, roots: RootConfig
 ) -> tuple[RawDefinition, RoleLocator | None, bool]:
@@ -1169,6 +1198,8 @@ def _load_role_files(
         command_tools=list(command_tool_declarations),
         command_tool_declarations=command_tool_declarations,
     )
+    if isinstance(locator, FolderLocator) and locator.overrides:
+        definition = _apply_agent_folder_overrides(definition, locator.overrides)
     return definition, parent, is_abstract
 
 

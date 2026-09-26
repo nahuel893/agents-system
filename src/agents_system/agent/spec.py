@@ -1,0 +1,170 @@
+"""``Agent`` — the library-first, Python-native way to define a custom agent
+(ADR-004, design.md D3/D6).
+
+An ``Agent`` is a frozen, immutable value object. It never touches disk (or,
+for a folder-backed one, never touches disk until something actually resolves
+it — see ``from_folder``): it only builds a ``RoleLocator``
+(``harness.loader.RoleLocator``, design.md D1) via ``_to_locator()``, which
+``harness.loader.resolve()``/``harness.factory.build_runtime()`` then read,
+merge, and validate through the exact same pipeline a predefined platform
+role already goes through — see the ``agent-definition-locator`` spec's
+"Agent(...) Python-parameter construction resolves without disk",
+"Agent.from_folder produces the loader's AgentDefinition shape", and "Folder
+content and Python parameters compose, with parameters as the override
+layer" requirements. Placed at ``agent/spec.py``, not a sibling ``agent.py``
+module, because ``agent/`` is already a package (``agent/graph.py`` etc. —
+design.md D6); importing ``Agent`` pulls in only this module and
+``harness.loader``, never ``agent.graph`` (and therefore never LangGraph).
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import pathlib
+from collections.abc import Mapping
+from typing import Any
+
+from agents_system.harness.loader import (
+    DefinitionError,
+    FolderLocator,
+    InlineLocator,
+    RawDefinition,
+    RoleLocator,
+)
+
+
+def _coerce_execution_limits(
+    value: Mapping[str, Any] | str | None,
+) -> dict[str, Any] | str | None:
+    """``RawDefinition.execution_limits`` is typed ``dict[str, Any] | str |
+    None`` — narrower than ``Agent.execution_limits``'s ``Mapping``, so a
+    non-``dict`` ``Mapping`` (unlikely in practice, but not ruled out by the
+    field's own type) is copied into a real ``dict`` here rather than passed
+    through unchanged."""
+    if isinstance(value, Mapping):
+        return dict(value)
+    return value
+
+
+@dataclasses.dataclass(frozen=True)
+class Agent:
+    """A custom agent definition, built entirely in Python, from a folder, or
+    both (design.md D3).
+
+    ``extends`` accepts a bare/prefixed predefined-role name (resolved
+    lazily, at chain-walk time, by the same fail-loud algorithm the
+    ``agent-definition-locator`` spec's "extends:" requirements describe —
+    design.md D2) or another already-built ``Agent`` (resolved eagerly, at
+    ``_to_locator()`` call time, since the parent object already exists in
+    memory — no I/O, and cycle-free by construction because Python cannot
+    build an object before its own dependencies exist).
+
+    ``skill_contents`` carries inline skill text (consumed by the skills
+    capability — PR3); it is validated here (every key must also be listed in
+    ``skills``) but not yet threaded into a resolved ``AgentDefinition`` in
+    this module, per design.md's own Testing Strategy note for this PR ("no
+    ``_load_skills`` wiring here").
+    """
+
+    name: str
+    extends: str | Agent = "platform/roles/agent"
+    tools: tuple[str, ...] = ()
+    permissions: tuple[str, ...] = ()
+    skills: tuple[str, ...] = ()
+    skill_contents: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    context: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    autonomy: str = ""
+    escalation_rules: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    delegation_policy: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    memory_policy: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    audit_policy: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    execution_limits: Mapping[str, Any] | str | None = None
+    untrusted_input: bool | None = None
+    system_prompt: str = ""
+    version: str = "1.0"
+    _folder: pathlib.Path | None = dataclasses.field(default=None, repr=False)
+    _folder_overrides: Mapping[str, Any] = dataclasses.field(
+        default_factory=dict, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        unlisted = self.skill_contents.keys() - set(self.skills)
+        if unlisted:
+            raise DefinitionError(
+                "Agent: skill_contents names a skill not listed in `skills`: "
+                f"{sorted(unlisted)}"
+            )
+        if self._folder is not None:
+            unknown = set(self._folder_overrides) - _AGENT_OVERRIDABLE_FIELDS
+            if unknown:
+                raise DefinitionError(
+                    f"Agent.from_folder: unknown override(s) {sorted(unknown)}"
+                )
+
+    @classmethod
+    def from_folder(cls, path: str | pathlib.Path, /, **overrides: Any) -> Agent:
+        """Build an ``Agent`` lazily from ``path``'s ``role.md``/
+        ``manifest.md``/``policy.md`` (the same three-file contract a
+        platform role uses).
+
+        No filesystem access happens here, matching ``RootConfig``'s own
+        "validate at first use" philosophy — ``path`` is read the first time
+        this ``Agent``'s locator is actually resolved.
+
+        ``overrides`` REPLACES (never merges with) the folder's own field,
+        applied after the read (design.md D3's explicit non-merge choice) — a
+        caller wanting additive tools writes ``tools=[*folder_tools,
+        "extra"]`` explicitly, so the direction of the merge is never a
+        hidden per-field guess.
+        """
+        folder_path = pathlib.Path(path)
+        return cls(
+            name=str(overrides.get("name", folder_path.name)),
+            _folder=folder_path,
+            _folder_overrides=dict(overrides),
+        )
+
+    def _to_locator(self) -> RoleLocator:
+        if self._folder is not None:
+            return FolderLocator(
+                path=self._folder,
+                root=self._folder.parent,
+                overrides=self._folder_overrides,
+            )
+        raw = RawDefinition(
+            role_name=self.name,
+            version=self.version,
+            deployment=None,
+            system_prompt=self.system_prompt,
+            tools=list(self.tools),
+            skills=list(self.skills),
+            context=dict(self.context),
+            permissions=list(self.permissions),
+            autonomy=self.autonomy,
+            escalation_rules=dict(self.escalation_rules),
+            delegation_policy=dict(self.delegation_policy),
+            memory_policy=dict(self.memory_policy),
+            audit_policy=dict(self.audit_policy),
+            execution_limits=_coerce_execution_limits(self.execution_limits),
+            untrusted_input=self.untrusted_input,
+        )
+        parent: RoleLocator | None
+        if isinstance(self.extends, Agent):
+            # Eager — the parent object already exists, so resolving it to a
+            # locator is pure Python, no I/O, no cycle risk.
+            parent = self.extends._to_locator()
+        else:
+            # Lazy — a bare/prefixed platform-role name (or, reachable only
+            # through a folder-based chain, an importer-root-relative path),
+            # walked by design.md D2's algorithm at chain-walk time.
+            parent = self.extends
+        return InlineLocator(raw=raw, parent=parent)
+
+
+#: design.md D3 — the set of `Agent`'s own dataclass field names an
+#: `Agent.from_folder(path, **overrides)` call may legally name. Computed
+#: from the dataclass itself (never hand-duplicated) so a new field is
+#: automatically overridable without a second edit here.
+_AGENT_OVERRIDABLE_FIELDS: frozenset[str] = frozenset(
+    field.name for field in dataclasses.fields(Agent)
+) - {"_folder", "_folder_overrides"}

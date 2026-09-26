@@ -48,6 +48,21 @@ The injection flow, end to end::
     agent = agents_system.AgentRuntime(equipped, model=my_chat_model)
     reply = await agent.run_turn(messages, session_id="s1")
 
+Step 3's role need not be a bare platform-role string. An
+``agents_system.Agent`` — built entirely in Python, from a folder, or a
+composition of both — resolves through the exact same
+``resolve``/``build_runtime`` pipeline, via its own ``_to_locator()``::
+
+    my_agent = agents_system.Agent(
+        name="triage-bot",
+        extends="sales-agent",  # or another Agent instance
+        tools=["catalog_search"],
+        permissions=["read:catalog"],
+    )
+    definition = agents_system.resolve(my_agent._to_locator(), roots=roots)
+
+See the library-first-agents ADR for the full ``Agent`` shape.
+
 This module is populated lazily (PEP 562 module ``__getattr__``): importing
 ``agents_system`` does not import FastAPI, LangGraph, or any other heavy
 submodule — those are only imported the first time you actually touch the
@@ -77,6 +92,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "FactoryError": ("agents_system.harness.factory", "FactoryError"),
     "InjectionError": ("agents_system.harness.injector", "InjectionError"),
     "AgentRuntime": ("agents_system.agent.graph", "AgentRuntime"),
+    "Agent": ("agents_system.agent.spec", "Agent"),
 }
 
 # PLE0605/PLE0604 false positive: ruff's static check cannot see that
