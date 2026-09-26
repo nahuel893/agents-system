@@ -8,5 +8,16 @@
 # Format: one gitleaks Fingerprint per line (`commit:file:rule-id:line`),
 # preceded by a comment explaining why it is safe to ignore. Comment lines
 # start with `#`; gitleaks skips them.
-#
-# Currently empty: a full-history scan finds no leaks.
+
+# Issue #78 Phase 0 Slice 2 (PR #96) -- the curl-auth-header rule matched a
+# documentation EXAMPLE token in the GET /metrics curl example
+# (`curl -H "Authorization: Bearer some-long-random-token" ...` / its ES
+# twin), not a real credential -- there is nothing to rotate. The current
+# file content (as of the follow-up commit right after these) already
+# rewrites the example to reference $METRICS_API_KEY instead of a literal
+# value, the same safe pattern docs/platform/demo-entrypoint.md uses for
+# $ADAPTER_API_KEY; these two entries only silence the now-historical
+# commit's own diff, which gitleaks re-scans on every PR regardless of
+# later fixes.
+24157a189645fc9fc080cd7900ce884f11c21017:docs/platform/observability.md:curl-auth-header:26
+24157a189645fc9fc080cd7900ce884f11c21017:docs/platform_es/observability.md:curl-auth-header:29
