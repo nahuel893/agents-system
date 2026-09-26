@@ -4,7 +4,7 @@
 
 A role is a declarative behavioral identity. It defines what an agent is allowed to be and do within the platform — not a Python class, not a service, and not a prompt string.
 
-A role is defined by a folder under `platform/roles/`. The folder contains three files: `role.md` (identity), `manifest.md` (capabilities), and `policy.md` (behavior), plus an optional `skills/` subdirectory. The harness reads the agent definition folder at instantiation time and assembles the agent's capabilities from it.
+A role is defined by a folder under `platform/roles/`. The folder contains three files: `role.md` (identity), `manifest.md` (capabilities), and `policy.md` (behavior). The harness reads the agent definition folder at instantiation time and assembles the agent's capabilities from it. A predefined platform role's own folder never carries a `skills/` subdirectory of its own — its skills resolve only from a deployment (see `deployment.md`'s `skills/` precedence). A custom agent built with `Agent.from_folder(path)` may add its own `skills/` subdirectory to `path`, checked ahead of an inline `skill_contents` override for the same name. Deployment-sourced skills remain exclusively a predefined-role mechanism (see `deployment.md`'s `skills/` precedence) — they cannot be combined with a folder- or inline-sourced agent.
 
 **A role is not:**
 - A live process or a thread

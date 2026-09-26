@@ -26,15 +26,20 @@ skill-resolver: pass content, preserve author intent). The ADR-002 B.9 base
 contract (``_BASE_PROMPT_CONTRACT``) is always the LAST block, regardless of
 skills or escalation content — see ``_compose_prompt``.
 
-Skills are deployment-specific: they live in
-``deployments/{client}/{role_type}/skills/{name}.md``. A generic role (no
-client) has no skills, so its prompt is the role body plus its escalation
-block (if any).
+Skill content resolves through a 4-source precedence (design.md D4, PR3):
+(1) the definition's own ``inline_skills`` (``Agent(skill_contents=...)``),
+(2) its own ``skills_folder`` (``Agent.from_folder(path)``'s ``skills/``),
+(3) ``deployments/{client}/{role_type}/skills/{name}.md`` — the original,
+unchanged mechanism, which is still the ONLY source a predefined platform
+role ever resolves skills from, and (4) none of the above, which fails
+loud. A generic role with no client and no importer-owned source has no
+skills, so its prompt is the role body plus its escalation block (if any).
 """
 
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -122,61 +127,125 @@ class EquippedRuntime:
     """
 
 
+def _resolved_skill_path(skills_folder: pathlib.Path, name: str) -> pathlib.Path | None:
+    """The real, on-disk path of ``skills_folder/{name}.md``, or ``None`` if
+    following symlinks/``..`` would walk it outside ``skills_folder`` itself.
+
+    ``skills_folder`` is always a ``FolderLocator.path``-derived value
+    (loader.py D4), never a caller-suppliable separate one — but nothing
+    upstream checks that ITS OWN ``skills/`` directory holds no symlink
+    escaping it, so this mirrors ``harness.loader._resolve_within_root``'s
+    resolve-then-check pattern (design.md's Threat Matrix) rather than
+    assuming that containment is inherited for free. Never raises: every
+    escape is reported as "not found here", exactly like a missing file.
+    """
+    try:
+        real_root = skills_folder.resolve()
+        resolved = (skills_folder / f"{name}.md").resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not resolved.is_relative_to(real_root):
+        return None
+    return resolved
+
+
 def _load_skills(
     definition: AgentDefinition,
     client: str | None,
     roots: RootConfig,
 ) -> tuple[LoadedSkill, ...]:
-    """Load every declared skill file from the deployment's skills/ directory."""
+    """Load every declared skill's content, per D4's 4-source precedence:
+
+    1. ``definition.inline_skills[name]`` — an importer's own Python-supplied
+       content (``Agent(skill_contents=...)``).
+    2. ``definition.skills_folder / f"{name}.md"`` — an importer's own folder
+       (``Agent.from_folder(path)``'s ``path/skills/``), checked only when
+       that file exists.
+    3. ``deployments_root/{client}/{role_name}/skills/{name}.md`` — the
+       existing, unchanged mechanism; reachable only when ``client`` is
+       given, and the ONLY source a predefined platform role ever resolves
+       skills from (it never has a ``skills_folder``/``inline_skills`` of its
+       own — see loader.py's ``_load_role_files``).
+    4. None of the above → ``FactoryError``, naming every source checked.
+    """
     if not definition.skills:
         return ()
-
-    if client is None:
-        # Generic roles declare no skills; reaching here means a definition was
-        # built with skills but no deployment to load them from.
-        raise FactoryError(
-            f"Role '{definition.role_name}' declares skills {list(definition.skills)} "
-            f"but no client deployment was given to load them from."
-        )
 
     # Guarded at the point of use, the same way the loader guards
     # `platform_root`. Defence in depth, and honestly labelled as such: on
     # the public path `build_runtime` calls `resolve` first, which already
     # raises for an absent root whenever `client is not None`, so this guard
-    # fires only for a direct call to this private function. It stays because
-    # the alternative reading -- a skills path built from an absent root --
-    # reports "skill file missing" for every skill, which blames the
-    # deployment author for a consumer's misconfiguration.
-    skills_dir = (
-        _require_deployments_root(roots.deployments_root)
-        / client
-        / definition.role_name
-        / "skills"
-    )
+    # fires only for a direct call to this private function. Computed once,
+    # eagerly, whenever a client is given — exactly like before this PR —
+    # so a broken deployments_root fails loud even when every declared skill
+    # would actually have resolved from `inline_skills`/`skills_folder`.
+    deployment_skills_dir: pathlib.Path | None = None
+    if client is not None:
+        deployment_skills_dir = (
+            _require_deployments_root(roots.deployments_root)
+            / client
+            / definition.role_name
+            / "skills"
+        )
 
     loaded: list[LoadedSkill] = []
     for name in definition.skills:
-        path = skills_dir / f"{name}.md"
-        if not path.exists():
+        folder_path = (
+            _resolved_skill_path(definition.skills_folder, name)
+            if definition.skills_folder is not None
+            else None
+        )
+        deployment_path = (
+            deployment_skills_dir / f"{name}.md"
+            if deployment_skills_dir is not None
+            else None
+        )
+
+        content: str | None
+        if name in definition.inline_skills:
+            content = definition.inline_skills[name]
+        elif folder_path is not None and folder_path.exists():
+            content = folder_path.read_text(encoding="utf-8").strip()
+        elif deployment_path is not None and deployment_path.exists():
+            content = deployment_path.read_text(encoding="utf-8").strip()
+        else:
+            content = None
+
+        if content is None:
+            expected_folder_path = (
+                definition.skills_folder / f"{name}.md"
+                if definition.skills_folder is not None
+                else None
+            )
+            checked = [
+                "its inline content",
+                f"its own folder ({expected_folder_path})"
+                if expected_folder_path is not None
+                else "its own folder (none — not an importer-folder agent)",
+                f"its deployment ({deployment_path})"
+                if deployment_path is not None
+                else "its deployment (none — no client deployment was given)",
+            ]
+            failure_path = expected_folder_path or deployment_path
             logger.error(
                 "factory.skill_missing",
                 skill=name,
                 role=definition.role_name,
                 deployment=definition.deployment,
-                path=str(path),
+                path=str(failure_path) if failure_path is not None else "<none>",
             )
             # D-007: record skill_missing event before raising
             _emit(
                 "record_skill_missing",
                 definition=definition,
                 skill=name,
-                path=str(path),
+                path=str(failure_path) if failure_path is not None else "<none>",
             )
             raise FactoryError(
-                f"Skill '{name}' declared by {definition.role_name}/"
-                f"{client} has no file at {path}"
+                f"Skill '{name}' declared by {definition.role_name} was not "
+                f"found in any of its sources: {'; '.join(checked)}."
             )
-        content = path.read_text(encoding="utf-8").strip()
+
         loaded.append(LoadedSkill(name=name, content=content))
         logger.info(
             "factory.skill_loaded",
