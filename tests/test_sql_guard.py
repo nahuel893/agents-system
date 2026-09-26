@@ -11,6 +11,7 @@ connector ever sends to the database.
 from __future__ import annotations
 
 import contextlib
+import functools
 import time
 from typing import Any
 
@@ -233,13 +234,15 @@ def test_the_node_budget_applies_to_the_query_not_to_its_qualified_rendering() -
 #: after the caller gives up.
 _NESTED_ARRAY_19 = "SELECT " + "ARRAY[" * 19 + "1" + "]" * 19
 
-#: Tests must finish well inside this, including on a slow CI runner.
+#: The worst case at the caps takes about 20 ms on a developer machine and
+#: about four times that on a CI runner under coverage; this budget keeps a
+#: margin over both.
 _GUARD_BUDGET_S = 0.2
 
 
 def _best_guard_seconds(sql: str, policy: QueryPolicy = _SINGLE_SCHEMA_POLICY) -> float:
-    """Best of three runs: a real blow-up is slow every time, noise is not."""
-    return min(_guard_seconds(sql, policy) for _ in range(3))
+    """Best of five runs: a real blow-up is slow every time, noise is not."""
+    return min(_guard_seconds(sql, policy) for _ in range(5))
 
 
 def test_nested_array_is_refused_before_the_parser_runs() -> None:
@@ -357,6 +360,7 @@ def _fill(prefix: str, unit: str, suffix: str = "", sep: str = "") -> str:
     return prefix + sep.join([unit] * count) + suffix
 
 
+@functools.cache
 def _worst_cases() -> dict[str, str]:
     from agents_system.services import sql_guard
 

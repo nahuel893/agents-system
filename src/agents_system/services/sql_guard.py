@@ -74,7 +74,7 @@ DEFAULT_MAX_SQL_LENGTH = 10_000
 """Longest query text the guard tokenizes. A real analytical question fits in
 a fraction of this; anything longer is refused before any other work."""
 
-DEFAULT_MAX_TOKENS = 1_000
+DEFAULT_MAX_TOKENS = 600
 """Most tokens (keywords, names, literals, operators) the guard parses. A
 real analytical query has a few hundred; the cap is checked on the token
 stream, before the parser runs."""
@@ -679,7 +679,9 @@ class _CheckedRenderer(PostgresGenerator):
         return rendered
 
     def render(self, statement: exp.Expr) -> str:
-        text = self.generate(statement, copy=True)
+        # No copy: the guard renders each tree once and never uses it again,
+        # and copying a tree at the size caps cost more than rendering it.
+        text = self.generate(statement, copy=False)
         if self._tree is None:  # preprocess() did not run: nothing was checked
             raise _reject("unparseable")
         # Fail closed: a function or type the render did not pass through
@@ -855,10 +857,8 @@ def _guard(sql: str, policy: QueryPolicy, row_limit: int) -> GuardedQuery:
     if rerendered != rendered:
         raise _reject("unparseable")
 
-    wrapped = (
-        exp.select("*").from_(executed.subquery(_RESULT_ALIAS)).limit(row_limit + 1)
-    )
-    final = wrapped.sql(dialect=_DIALECT, identify=True, comments=False)
-    if f"({rendered})" not in final:
-        raise _reject("unparseable")
+    # Static text around the validated rendering and an integer: exactly
+    # what rendering the wrapped tree produced, without copying and
+    # rendering the whole tree a third time.
+    final = f'SELECT * FROM ({rendered}) AS "{_RESULT_ALIAS}" LIMIT {row_limit + 1}'
     return GuardedQuery(sql=final, relations=tuple(sorted(set(relations))))
