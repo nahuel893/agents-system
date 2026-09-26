@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from prometheus_client import CollectorRegistry, Counter, Histogram
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 from prometheus_client.process_collector import ProcessCollector
 
 #: Turn-level outcomes `AgentRuntime.run_turn_with_usage` reports (graph.py).
@@ -77,6 +77,7 @@ class Metrics:
     limit_trips_total: Counter
     tokens_total: Counter
     cost_usd_total: Counter
+    audit_events_dropped: Gauge
 
 
 def build_metrics(registry: CollectorRegistry) -> Metrics:
@@ -134,6 +135,11 @@ def build_metrics(registry: CollectorRegistry) -> Metrics:
             "agent_cost_usd",
             "Estimated USD cost of tokens billed, by runtime id.",
             ["runtime_id"],
+            registry=registry,
+        ),
+        audit_events_dropped=Gauge(
+            "agent_audit_events_dropped",
+            "Audit events dropped by the in-process asynchronous audit sink.",
             registry=registry,
         ),
     )

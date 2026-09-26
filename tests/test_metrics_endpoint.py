@@ -31,9 +31,11 @@ def _make_client(
     metrics_enabled: bool,
     metrics_api_key: str,
     monkeypatch: pytest.MonkeyPatch,
+    audit_dropped_count: int = 0,
 ) -> TestClient:
     app = create_test_app()
     app.state.engine = MagicMock()
+    app.state.audit_sink = MagicMock(dropped_count=audit_dropped_count)
 
     import agents_system.main as main_mod
 
@@ -84,6 +86,21 @@ def test_metrics_enabled_correct_bearer_200_prometheus_text(
     # any turn/tool activity in this process.
     assert "process_resident_memory_bytes" in response.text
     assert "process_cpu_seconds_total" in response.text
+
+
+def test_metrics_exposes_audit_dropped_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The current sink loss count is observable without a live audit sink."""
+    client = _make_client(
+        metrics_enabled=True,
+        metrics_api_key="secret",
+        audit_dropped_count=7,
+        monkeypatch=monkeypatch,
+    )
+
+    response = client.get("/metrics", headers={"Authorization": "Bearer secret"})
+
+    assert response.status_code == 200
+    assert "agent_audit_events_dropped 7.0" in response.text
 
 
 def test_metrics_enabled_without_key_is_open(monkeypatch: pytest.MonkeyPatch) -> None:

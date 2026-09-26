@@ -44,6 +44,30 @@ curl -H "Authorization: Bearer $METRICS_API_KEY" http://localhost:8000/metrics
   uses. A boot under this combination also logs one `metrics.open_mode`
   warning.
 
+## Health and readiness
+
+`GET /health` is a **liveness** endpoint: it always returns HTTP 200 and its
+body's `status` is `ok` or `degraded`. It reports PostgreSQL, Redis, webhook
+outbox state, the chat provider used by configured runtimes, and audit loss.
+When no runtime is configured, the provider status is `not_configured` and no
+provider request is made. Otherwise, the probe is a credential-free `HEAD`
+request to its base URL, bounded to one second and cached for five seconds per
+configured provider target. Any HTTP response
+(including authentication or route errors) proves reachability; a transport or
+timeout failure makes `provider.status` `error` with the fixed
+`"unreachable"` reason. It never sends tokens, credentials, or a provider
+error message in the response.
+
+`GET /ready` returns the same body but is the **readiness** endpoint: it is
+200 only when the body's status is `ok`, otherwise 503. Configure an
+orchestrator's liveness probe to use `/health` and its readiness/traffic gate
+to use `/ready`.
+
+The `audit.dropped_count` health field is the process-local total of audit
+events the asynchronous sink could not persist. No outbox silent-loss counter
+exists: outbox work is durable and terminal failures remain visible as
+backlog/worker state instead of being dropped.
+
 ## What is measured
 
 Recorded at the agent loop's existing choke points
@@ -61,6 +85,7 @@ metric objects live in `src/agents_system/observability/metrics.py`.
 | `agent_tool_calls_total` | Counter | `tool`, `outcome` | Every tool call attempt: `outcome` is `ok`, `denied`, `blocked`, `timeout`, or `error`. |
 | `agent_tool_call_duration_seconds` | Histogram | `tool`, `outcome` | Same as above. |
 | `agent_limit_trips_total` | Counter | `limit` | An execution limit fires — today only `"max_tool_calls"` (the `_limit_reached` terminal node; ADR-005 section 6's "limit trips"). |
+| `agent_audit_events_dropped` | Gauge | none | Current process-local `AuditSink.dropped_count`, sampled when `GET /metrics` is served. |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total`, and the rest of `prometheus_client`'s default `ProcessCollector` | Gauge/Counter | none | Always, for the running process — confirmed present on Linux by `tests/test_observability_metrics.py`, not merely assumed from the library's docs. |
 
 **Turn outcomes**: `ok` also covers a turn that legitimately ended at the

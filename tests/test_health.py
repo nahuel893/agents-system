@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,7 +13,19 @@ from conftest import create_test_app
 from httpx import ASGITransport, AsyncClient
 
 from agents_system.config import get_settings
+from agents_system.main import ProviderHealthProbe
 from agents_system.services.outbox import OutboxBacklogCounts
+
+
+class FakeProviderProbe:
+    """Offline provider-probe fake for health endpoint tests."""
+
+    def __init__(self, reachable: bool = True) -> None:
+        self.reachable = reachable
+        self.probe = AsyncMock(side_effect=self._probe)
+
+    async def _probe(self, settings: object) -> bool:
+        return self.reachable
 
 
 @pytest.fixture(autouse=True)
@@ -24,7 +37,10 @@ def clear_settings_cache():
 
 @pytest.fixture
 def app():
-    return create_test_app()
+    application = create_test_app()
+    application.state.runtimes = {"test": object()}
+    application.state.provider_probe = FakeProviderProbe()
+    return application
 
 
 @pytest.fixture
@@ -67,6 +83,70 @@ async def test_health_all_ok(app):
     assert body["status"] == "ok"
     assert body["postgres"] == "ok"
     assert body["redis"] == "ok"
+    assert body["provider"] == {"status": "ok", "reason": None}
+
+
+async def test_health_skips_provider_probe_when_no_runtime_is_configured(app):
+    """Offline deployments have no provider dependency to make readiness fail."""
+    _, mock_redis = _mock_healthy_deps(app)
+    del app.state.runtimes
+    probe = app.state.provider_probe
+
+    with (
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agents_system.main._outbox_backlog",
+            new=AsyncMock(
+                return_value=OutboxBacklogCounts(pending=0, leased=0, leased_expired=0)
+            ),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == {"status": "not_configured", "reason": None}
+    probe.probe.assert_not_awaited()
+
+
+async def test_health_and_ready_report_provider_outage_without_network(app):
+    """A fake failed probe degrades readiness but never makes liveness 5xx."""
+    _, mock_redis = _mock_healthy_deps(app)
+    app.state.provider_probe = FakeProviderProbe(reachable=False)
+
+    with (
+        patch("agents_system.main.get_redis_client", return_value=mock_redis),
+        patch(
+            "agents_system.main._outbox_backlog",
+            new=AsyncMock(
+                return_value=OutboxBacklogCounts(pending=0, leased=0, leased_expired=0)
+            ),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            health = await ac.get("/health")
+            ready = await ac.get("/ready")
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "degraded"
+    assert health.json()["provider"] == {"status": "error", "reason": "unreachable"}
+    assert ready.status_code == 503
+    assert ready.json()["status"] == "degraded"
+
+
+async def test_provider_probe_caches_a_fake_result_without_network():
+    """The bounded probe caches by configured provider target for five seconds."""
+    request = AsyncMock()
+    probe = ProviderHealthProbe(request=request)
+    settings = SimpleNamespace(adapter_provider="ollama", ollama_base_url="http://fake")
+
+    assert await probe.probe(settings) is True
+    assert await probe.probe(settings) is True
+    request.assert_awaited_once_with("http://fake")
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +302,7 @@ async def test_health_reports_worker_running_and_zero_backlog(app):
         "outbox_leased": 0,
         "outbox_leased_expired": 0,
     }
+    assert body["audit"] == {"dropped_count": 0}
 
 
 async def test_health_degrades_when_worker_not_running_with_pending_backlog(app):
@@ -252,6 +333,7 @@ async def test_health_degrades_when_worker_not_running_with_pending_backlog(app)
         "outbox_leased": 1,
         "outbox_leased_expired": 0,
     }
+    assert body["audit"] == {"dropped_count": 0}
 
 
 async def test_health_stays_ok_when_worker_running_despite_backlog(app):
