@@ -34,6 +34,7 @@ dependencies = [
     "langchain-ollama>=0.3.10",
     "alembic>=1.13",
     "prometheus-client>=0.20,<1.0",
+    "sqlglot>=30.19,<31",
 ]
 
 [project.optional-dependencies]
@@ -119,6 +120,8 @@ strict = true
 
 [[tool.mypy.overrides]]
 module = [
+    "asyncpg",
+    "asyncpg.*",
     "sentence_transformers.*",
     "yaml",
 ]

@@ -61,6 +61,12 @@ más abajo.
   `connectors/sales_reports.py:CATALOG:443`); el propio docstring del módulo
   `services/reports.py` afirma que la plataforma nunca construye texto SQL a
   partir de la entrada del llamador. Es diseño, no un descuido.
+  **Actualización (#80):** la herramienta de solo lectura `sql_query` ya
+  existe, bajo una enmienda explícita de esa regla
+  ([ADR-007](../architecture_es/adr-007-read-only-sql-tool.md)); todavía
+  ningún rol predefinido la equipa, por lo que sus escenarios de la Fase 1
+  (tests/test_live_eval_sql_query.py) la ejecutan con un rol exclusivo de
+  test.
 - **No existen métricas de tokens/costo/memoria/CPU.**
   `POST /v1/chat/completions` devuelve `usage` fijado en
   `{prompt_tokens:0, completion_tokens:0, total_tokens:0}`

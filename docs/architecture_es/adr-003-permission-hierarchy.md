@@ -20,7 +20,7 @@ Los valores de tier no cambian: T0 es acceso inherente, T1 lectura acotada, T2 e
 
 R1 se aplica en el momento de definir la clase mediante `Permission.__init_subclass__`: una hija puede heredar el tier de su padre, conservarlo o escalarlo, pero no declarar uno inferior. Todas las comparaciones de tier usan el mapeo ordinal explícito `tier_rank` / `_RANK`, no comparaciones directas de enums.
 
-Las familias de acción incorporadas son `Read` (T0), `Write` (T2), `Send` (T2), `Exec` (T3), `Run` (T2) y `Spawn` (T2). Los nombres con alcance de recurso resuelven a subclases dedicadas. `ReadFiles(Read)` escala explícitamente `read:files` a T3.
+Las familias de acción incorporadas son `Read` (T0), `Write` (T2), `Send` (T2), `Exec` (T3), `Run` (T2), `Spawn` (T2) y `Query` (T2; su único wire name, `query:sql`, es el permiso de la herramienta SQL de solo lectura — a propósito no es una subclase de `Read`, así que ningún grant `read:*` la cubre; ver [ADR-007](adr-007-read-only-sql-tool.md)). Los nombres con alcance de recurso resuelven a subclases dedicadas. `ReadFiles(Read)` escala explícitamente `read:files` a T3.
 
 ### Aplicación en herramientas y grants
 

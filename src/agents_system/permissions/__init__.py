@@ -10,6 +10,7 @@ from __future__ import annotations
 from .base import Permission
 from .builtins import (
     Exec,
+    Query,
     Read,
     Run,
     Send,
@@ -43,6 +44,7 @@ __all__ = [
     "PermissionRegistrationCollisionError",
     "PermissionRegistry",
     "PermissionTierMismatchError",
+    "Query",
     "Read",
     "Run",
     "Send",

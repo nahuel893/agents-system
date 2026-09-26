@@ -593,7 +593,7 @@ def _ensure_command_tool_permission_registered(wire_name: str) -> None:
     """Register one manifest-declared command-tool permission to `Run`, the
     first time this exact wire name is seen.
 
-    Unlike the 18 shipped wire names `permissions/builtins.py` registers at
+    Unlike the 19 shipped wire names `permissions/builtins.py` registers at
     import time, a command tool's `permission` is authored per-manifest
     (design.md: "`declaration.permission`, which always resolves to `Run`
     (T2)") — there is no fixed table to register ahead of time.
