@@ -321,7 +321,41 @@ global CLAUDE.md). Runner: `pytest -q` from the worktree root with
   false positive on the `GET /metrics` curl example's placeholder
   token — see `.gitleaksignore`'s new entries for the full triage
   trail). No production code changed by any of these four; all are
-  docs/`.gitleaksignore` only.
+  docs/`.gitleaksignore` only. (These commit ids were later rewritten by
+  the S2.8 rebase; see S2.8 for the post-rebase ids.)
+- [x] **S2.8 — review fix: denied-tool-call label leak.** A review of
+  PR #96 found that `agent_tool_calls_total{tool=...}` recorded the
+  model's own raw tool name for a `denied` (`not_in_surface`) tool
+  call — untrusted, model-supplied text (prompt-injected or
+  hallucinated) that had never been checked against the equipped
+  surface, so it could carry PII or grow the label's cardinality
+  without bound.
+  - RED: reverted the eventual fix in the working tree and re-ran
+    `test_tool_call_to_unknown_tool_records_denied_outcome` plus a new
+    `test_denied_tool_call_never_leaks_attacker_tool_name` (attacker
+    payload: a phone number plus Prometheus exposition-format
+    metacharacters) — both failed (`assert 0.0 == 1` on the
+    `_unrecognized_` label).
+  - GREEN: fix commit `ad2f0d8` (`fix(observability): never label
+    agent_tool_calls_total with a denied tool's raw name`) —
+    `_execute_tools` now substitutes the fixed placeholder
+    `_unrecognized_` for that one outcome only; every other outcome
+    keeps its already-equipped tool name. Docs updated (EN+ES). Both
+    tests pass; full offline suite `pytest -q` 1666 passed, 101
+    deselected, 17 xfailed; `ruff check`, `ruff format --check`,
+    `mypy src/` all clean.
+  - The fix was applied by rebasing the branch onto the then-current
+    `origin/main` (`ca827bd`, PR #95 having merged meanwhile), which
+    rewrote every prior commit's id — see the branch log for the
+    current ids of the S2.1–S2.7 commits.
+  - Follow-up commit `b111630` (`chore(security): refresh
+    gitleaksignore fingerprints after PR #96 rebase`) — the rebase
+    changed the commit SHAs the three `.gitleaksignore` entries from
+    S2.7 keyed on, so `secret-scan` re-flagged the same
+    already-triaged documentation-placeholder finding under the new
+    SHAs; only the SHAs were refreshed, same reasoning as before.
+  - PR #96 all 12 CI checks green again after both commits. Not
+    merged.
 
 ## Slice 3 — real-app live harness (pending)
 Not started. A harness that boots the actual application (HTTP API, WhatsApp
