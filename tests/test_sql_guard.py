@@ -358,6 +358,70 @@ def test_brackets_inside_strings_identifiers_and_comments_do_not_count() -> None
     assert guard_query(sql, _SINGLE_SCHEMA_POLICY, row_limit=5).sql
 
 
+_END_FILLED = (
+    "SELECT DEC[end, ARRAY(end || XML(end, NULL[NULL[1]], NULL[end + int[end || "
+    "text(end, int[date[end, NULL[end, NULL[NULL[1]], 1]]])]]))]"
+)
+"""A review probe: sqlglot reads an unquoted `end` as a column name, so an
+`END` that closes no CASE must not close a level in the pre-scan, or every
+cap checked there is undercounted (126 ms locally, 251 ms under coverage)."""
+
+
+def test_an_end_that_closes_no_case_is_refused_before_the_parser_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents_system.services import sql_guard
+
+    parsed: list[str] = []
+
+    def recording_parser(sql: str, *args: Any, **kwargs: Any) -> Any:
+        # The guard turns any exception into a rejection, so the calls are
+        # recorded rather than failed on.
+        parsed.append(sql)
+        raise AssertionError("the parser must not run")
+
+    monkeypatch.setattr(sql_guard, "_parse_single_statement", recording_parser)
+    depth = sql_guard.DEFAULT_MAX_DEPTH
+    typed = sql_guard.MAX_TYPE_NESTING
+
+    for sql in (
+        # Unquoted `end` is a reserved word in PostgreSQL: never a column
+        # (and the guard does not take it as a bare column label either).
+        "SELECT end FROM sales_v",
+        "SELECT 1 end",
+        "SELECT CASE WHEN true THEN end END",
+        # An `end` column would close each CASE early in the pre-scan.
+        "SELECT " + _nest("CASE WHEN true THEN end + ", " END", 2 * depth),
+        "SELECT " + _nest("(end + ", ")", depth + 1),
+        "SELECT " + _nest("(end + ", ")", 2 * depth),
+        "SELECT " + _nest("ARRAY[end, ", "]", typed + 1),
+        _END_FILLED,
+        # A bracket closed by END, or a CASE closed by a bracket.
+        "SELECT (1 END",
+        "SELECT CASE WHEN true THEN 1)",
+        "SELECT ARRAY[CASE WHEN true THEN 1] END",
+        # A bracket closed by another kind, or a closer with nothing open.
+        "SELECT (1]",
+        "SELECT ARRAY[1)",
+        "SELECT 1)",
+        "SELECT (1))",
+    ):
+        assert _reject_code(sql) == "unparseable", sql
+        assert parsed == [], sql
+
+
+def test_end_as_a_label_a_quoted_end_and_case_in_brackets_stay_accepted() -> None:
+    for sql in (
+        'SELECT "end" FROM sales_v',
+        "SELECT min(amount) AS start, max(amount) AS end FROM sales_v",
+        "SELECT CASE WHEN true THEN 1 END AS end",
+        "SELECT (CASE WHEN amount > 0 THEN (1) ELSE 2 END) FROM sales_v",
+        "SELECT ARRAY[CASE WHEN true THEN 1 END, 2]",
+        "SELECT CASE WHEN (CASE WHEN true THEN 1 END) = 1 THEN 'a' END",
+    ):
+        assert guard_query(sql, _SINGLE_SCHEMA_POLICY, row_limit=5).sql
+
+
 def test_a_tree_nested_without_brackets_is_capped() -> None:
     # `- - - 1` and `1::int::int` nest in the tree, not in the text; the
     # tree's depth is checked before anything walks it recursively.
@@ -481,6 +545,10 @@ def _worst_cases() -> dict[str, str]:
         ),
         "exists-at-depth": "SELECT " + _nest("EXISTS (SELECT ", ")", depth),
         "case-at-depth": "SELECT " + _nest("CASE WHEN true THEN ", " END", depth),
+        # An unquoted `end` as filler: sqlglot reads it as a column name.
+        "end-filled": _END_FILLED,
+        "end-past-depth": "SELECT " + _nest("(end + ", ")", 2 * depth),
+        "end-typed-past-caps": "SELECT " + _nest("ARRAY[end, ", "]", 2 * typed),
         # Breadth at the token cap.
         "or-chain": _fill("SELECT 1 FROM sales_v WHERE ", "amount = 1", sep=" OR "),
         "and-chain": _fill("SELECT 1 FROM sales_v WHERE ", "amount > 1", sep=" AND "),

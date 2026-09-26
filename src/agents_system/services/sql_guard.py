@@ -30,7 +30,9 @@ the role were misconfigured:
   `2**k`), it opens at most `MAX_SQUARE_BRACKETS` square brackets (each
   subscript costs the parser about twenty tokens' work), and it has at most
   `max_depth` levels of bracket/CASE nesting and at most `MAX_TYPE_NESTING`
-  levels opened by a type keyword. The parser then runs with a budget on the
+  levels opened by a type keyword; every level must be closed by its own
+  token (an END that closes no CASE is refused, see `_check_tokens`). The
+  parser then runs with a budget on the
   nodes it builds, abandoned attempts included, and the parsed tree must
   stay within `max_nodes` nodes and `4 * max_depth` levels (long AND/OR and
   same-operator chains, which sqlglot handles iteratively, count as one), so
@@ -120,7 +122,14 @@ keeps every recursive pass after parsing far from Python's recursion
 limit."""
 
 _OPENERS = frozenset({TokenType.L_PAREN, TokenType.L_BRACKET, TokenType.L_BRACE})
-_CLOSERS = frozenset({TokenType.R_PAREN, TokenType.R_BRACKET, TokenType.R_BRACE})
+_CLOSES = {
+    TokenType.L_PAREN: TokenType.R_PAREN,
+    TokenType.L_BRACKET: TokenType.R_BRACKET,
+    TokenType.L_BRACE: TokenType.R_BRACE,
+    TokenType.CASE: TokenType.END,
+}
+"""The one token that closes each level the pre-scan opens."""
+_LEVEL_CLOSERS = frozenset(_CLOSES.values())
 _TYPE_TOKENS = frozenset(_POSTGRES.parser_class.TYPE_TOKENS)
 
 DEFAULT_ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
@@ -497,11 +506,21 @@ def _check_tokens(tokens: list[Token], limits: _Limits) -> None:
     the type nesting bounds its backtracking. A bracket or CASE inside a
     string, a quoted identifier or a comment is part of that one token and
     does not count.
+
+    Every level must be closed by its own token: a bracket by its matching
+    bracket, a CASE by END. sqlglot reads an unquoted `end` elsewhere as a
+    column name, so an END that closed whatever level was innermost let
+    `ARRAY[end, ...` or `(end + ...` open levels the scan forgot at once,
+    undercounting every cap here. PostgreSQL reserves `end`: outside a CASE
+    it is only valid as a column label, so an END that closes no CASE is
+    refused, except right after AS (`max(x) AS end`), where it is a label
+    and closes nothing.
     """
     if len(tokens) > limits.tokens:
         raise _too_complex()
-    # Per open level: whether a type keyword opened it, and its depth.
-    open_levels: list[tuple[bool, int]] = []
+    # Per open level: the token that opened it, whether a type keyword
+    # opened it, and its depth.
+    open_levels: list[tuple[TokenType, bool, int]] = []
     type_nesting = 0
     closed_depth = 0  # depth of the level the previous token closed
     reads = 0
@@ -509,9 +528,9 @@ def _check_tokens(tokens: list[Token], limits: _Limits) -> None:
     previous: TokenType | None = None
     for token in tokens:
         kind = token.token_type
-        if kind in _OPENERS or kind == TokenType.CASE:
+        if kind in _CLOSES:
             by_type = kind in _OPENERS and previous in _TYPE_TOKENS
-            depth = (open_levels[-1][1] if open_levels else 0) + 1
+            depth = (open_levels[-1][2] if open_levels else 0) + 1
             if kind == TokenType.L_BRACKET:
                 square_brackets += 1
                 if previous == TokenType.R_BRACKET:
@@ -519,7 +538,7 @@ def _check_tokens(tokens: list[Token], limits: _Limits) -> None:
                     # recurses once per link (and walks the chain each
                     # time), so a chain nests like brackets inside brackets.
                     depth = closed_depth + 1
-            open_levels.append((by_type, depth))
+            open_levels.append((kind, by_type, depth))
             type_nesting += by_type
             if (
                 depth > limits.depth
@@ -527,8 +546,12 @@ def _check_tokens(tokens: list[Token], limits: _Limits) -> None:
                 or square_brackets > limits.square_brackets
             ):
                 raise _too_complex()
-        elif (kind in _CLOSERS or kind == TokenType.END) and open_levels:
-            by_type, closed_depth = open_levels.pop()
+        elif kind in _LEVEL_CLOSERS and not (
+            kind == TokenType.END and previous == TokenType.ALIAS
+        ):
+            if not open_levels or _CLOSES[open_levels[-1][0]] != kind:
+                raise _reject("unparseable")
+            _, by_type, closed_depth = open_levels.pop()
             type_nesting -= by_type
         # Read once per level of type-opened brackets around it (an opener
         # counts inside the level it opens, a closer outside the one it
