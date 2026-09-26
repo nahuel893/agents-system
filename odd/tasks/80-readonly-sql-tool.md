@@ -12,12 +12,12 @@ TDD: on (issue prompt: "Strict TDD"). Runner: `pytest` from the worktree root wi
 
 Delivery strategy: single PR (explicit instruction). Forecast is well above the ~400-line heuristic because tests, bilingual ADR and the integration job travel with the behavior; reported in the PR body. Branch: `feat/80-readonly-sql-tool`.
 
-- [ ] T1 — Application-layer guard (`services/sql_guard.py`): parser-based single-SELECT validation, relation and function allowlists, canonical re-rendering, row-limit wrapping. Route: inline (executor).
-- [ ] T2 — Permission family `Query` + `query:sql` (T2) and the `sql_query` connector: read-only transaction, per-statement timeout, per-call role verification, N+1 fetch, JSON-safe cells, fixed error texts. Route: inline (executor).
-- [ ] T3 — Database layer: `scripts/provision_sql_readonly.sql`, `verify_query_role`, Postgres integration test proving the role refuses writes with the application bypassed, CI wiring.
-- [ ] T4 — ADR-007 (EN + ES) amending AD-2, tool docs (EN + ES), `reports.py` docstring pointer, live-test-plan gap update.
+- [x] T1 — Application-layer guard (`services/sql_guard.py`): parser-based single-SELECT validation, relation and function allowlists, canonical re-rendering, row-limit wrapping. Route: inline (executor). RED: collection ImportError (module missing). GREEN: 123 guard tests. Commit `26e4f30`.
+- [x] T2 — Permission family `Query` + `query:sql` (T2) and the `sql_query` connector: read-only transaction, per-statement timeout, per-call role verification, N+1 fetch, JSON-safe cells, fixed error texts. Route: inline (executor). RED: collection ImportError. GREEN: 59 connector and role tests; full offline suite green. Execution lives in `services/sql_query.py` because connectors may not call `rollback()` (static contract test). Commit `06fe05b`.
+- [x] T3 — Database layer: `scripts/provision_sql_readonly.sql`, `verify_query_role`, Postgres integration test proving the role refuses writes with the application bypassed, CI wiring. RED: 34 failed / 1 passed before the role existed. GREEN: 45 passed on a throwaway PostgreSQL 16. Found and fixed: the planner evaluated `has_sequence_privilege` on a TOAST table, so privilege calls now sit behind CASE; provisioning made atomic. Commit `127832d`.
+- [x] T4 — ADR-007 (EN + ES) amending AD-2, tool docs (EN + ES), `reports.py` docstring pointer, live-test-plan gap update. Docs-only plus a docstring; offline suite green.
 - [ ] T5 — Full offline suite, lint, format, mypy; rebase; PR; CI.
 
 Acceptance: the #80 acceptance criteria. The live-model scenario depends on a role granting the tool and on the Phase 0 live harness (#78); tracked as a follow-up if not exercised here.
 
-Progress / evidence: (updated per task)
+Progress / evidence: T1 to T4 done; T5 in progress.

@@ -54,7 +54,10 @@ blocks a merge on a low success rate. See **Gating** below.
   reports through `run_report` (`connectors/report_connector.py:build_report_connector:211`,
   catalog `connectors/sales_reports.py:CATALOG:443`); `services/reports.py`'s
   own module docstring states the platform never builds SQL text from caller
-  input. By design, not an oversight.
+  input. By design, not an oversight. **Update (#80):** the read-only
+  `sql_query` tool now exists, under an explicit amendment of that rule
+  ([ADR-007](../architecture/adr-007-read-only-sql-tool.md)); no predefined
+  role equips it yet, so its Phase 1 scenario needs a role that does.
 - **No token/cost/memory/CPU metrics.** `POST /v1/chat/completions` returns
   `usage` hardcoded to `{prompt_tokens:0, completion_tokens:0,
   total_tokens:0}` (`integration/openai_adapter.py:322-327`). No `psutil`, no

@@ -44,7 +44,7 @@ ADR-002 C.10. Toda herramienta declara un `tier` que clasifica qué tan peligros
 |---|---|---|---|
 | **T0** | Inherente — todo agente lo necesita para funcionar | lectura de sesión | Todo agente, vía `base`/`agent` |
 | **T1** | Lectura acotada | búsqueda en base de conocimiento, lectura de reporte de ventas | Roles cuyo manifiesto declara el permiso `read:*` correspondiente |
-| **T2** | Escritura/envío acotado | escritor de pedidos, `send:message` | Siempre revalidado en tiempo de llamada |
+| **T2** | Escritura/envío acotado, o una consulta que escribe el modelo | escritor de pedidos, `send:message`, `sql_query` | Siempre revalidado en tiempo de llamada |
 | **T3** | Ejecución en el host | `use_term`, `read_file` | Solo la rama `operator-agent` |
 
 De tier se derivan dos consecuencias deterministas, ambas reemplazando (como superconjunto de, nunca un recorte de) la heurística anterior basada en el prefijo `write:`/`send:`:
@@ -275,9 +275,25 @@ Resuelve un número de teléfono entrante asociándolo a un registro de cliente 
 
 ---
 
+### `sql_query` (Consulta SQL de solo lectura)
+
+| Campo | Valor |
+|---|---|
+| Conector | `connectors/sql_query_connector.py`, sobre un engine dedicado para el rol `sql_readonly` (`scripts/provision_sql_readonly.sql`). |
+| Permisos requeridos | `query:sql` (la familia `Query`) |
+| Tier | `T2` — la consulta la escribe el modelo; la decisión de tier está en ADR-007 |
+| Entradas | `sql` (string: una sentencia PostgreSQL `SELECT` o `WITH … SELECT` sobre las vistas permitidas del despliegue). |
+| Salidas | `columns` (lista), `rows` (lista de listas, apta para JSON; los importes como strings), `row_count`, `truncated` (coincidieron más filas que `row_limit`), `row_limit`, `empty_result`, `relations` (vistas leídas). |
+| Errores | Textos fijos con un `error_kind`: `query_rejected` (con un código `reason`), `query_timeout`, `refused_by_database`, `query_invalid`, `data_error`, `query_failed`, `database_unavailable`, `role_not_read_only`, `sql_not_configured`. Ninguno incluye salida de la base de datos ni del driver. |
+
+Ejecuta una consulta de solo lectura escrita por el modelo, para preguntas que el catálogo fijo de `run_report` no puede responder. Es la única herramienta que ejecuta SQL escrito por el modelo, por lo que su límite es el rol de base de datos y no la aplicación: el rol solo puede leer las vistas permitidas y no puede escribir nada, cada llamada corre en una transacción `READ ONLY` con un timeout de sentencia del lado del servidor, y la herramienta vuelve a verificar el rol en cada llamada y se niega a ejecutar si pudiera escribir o leer fuera de la lista permitida. Por encima, un guard de aplicación parsea la consulta y ejecuta solo su representación canónica, acotada a `row_limit + 1` filas. Ningún rol predefinido la equipa; un despliegue la registra con `build_sql_query_tool_spec(engine, SqlQueryConfig(views=...))`. El aprovisionamiento, el modelo de amenazas y la enmienda a AD-2 están en [ADR-007](../architecture_es/adr-007-read-only-sql-tool.md).
+
+---
+
 ## Referencias cruzadas
 
 - Modelo de permisos y reglas de inyección por conector: `docs/architecture/permission-model.md`
+- Herramienta SQL de solo lectura, su límite de confianza y la enmienda a AD-2: `docs/architecture_es/adr-007-read-only-sql-tool.md`
 - Pipeline de inyección y orden de precedencia: `docs/platform_es/harness.md`
 - Habilidades (*skills* — contraparte de comportamiento de las herramientas): `docs/platform_es/skill.md`
 - Campo `tools` en el `manifest.md` del agente: `docs/platform_es/role.md`
