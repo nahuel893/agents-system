@@ -146,6 +146,21 @@ SALES_AGENT_PERMISSIONS: tuple[str, ...] = (
     "send:message",
 )
 
+#: Runtime id for `boot_live_harness(bind_webhook_to_role=False)`'s
+#: WhatsApp-bound placeholder (#79, Phase 1) -- see its own docstring.
+_WEBHOOK_PLACEHOLDER_RUNTIME_ID = "live-harness-webhook-placeholder"
+
+
+def _webhook_placeholder_agent() -> Agent:
+    """A minimal, always-boot-safe agent for `WHATSAPP_RUNTIME_ID` when a
+    scenario's own *role* does not itself resolve `untrusted_input: true`
+    (most predefined platform roles, and a bare `Agent(...)`'s inherited
+    default, do not) and never calls `deliver_webhook` -- see
+    `boot_live_harness`'s own `bind_webhook_to_role` docstring. Explicit
+    `untrusted_input=True` overrides whatever its own `extends:` chain
+    resolves, exactly like any other `Agent(...)` field."""
+    return Agent(name=_WEBHOOK_PLACEHOLDER_RUNTIME_ID, untrusted_input=True)
+
 
 def _free_port() -> int:
     """Bind an ephemeral port, close it immediately, and return its number.
@@ -780,6 +795,7 @@ async def boot_live_harness(
     seed_demo: bool = False,
     extra_tool_specs: Sequence[ToolSpec] = (),
     tool_wrappers: Mapping[str, Callable[[ToolSpec], ToolSpec]] | None = None,
+    bind_webhook_to_role: bool = True,
 ) -> AsyncIterator[LiveHarness]:
     """Boot the real application against a fresh throwaway database and
     yield a `LiveHarness`. See this module's docstring for the full design.
@@ -798,16 +814,33 @@ async def boot_live_harness(
     `SALES_AGENT_PERMISSIONS` default (correct only when *role* is left at
     its own `"sales-agent"` default). *terminal_policy* is forwarded to the
     live registry so `use_term`/`read_file` can be genuinely exercised
-    instead of always refusing. *seed_demo* additionally loads
-    `demo/load_demo_company.py`'s fixture data (catalog, clients, sales) into
-    the throwaway database, needed by any scenario touching `catalog_search`,
-    `client_lookup`, or `run_report`. *extra_tool_specs* are registered on
+    instead of always refusing. *seed_demo* additionally creates a SECOND
+    throwaway database and loads `demo/load_demo_company.py`'s fixture data
+    (catalog, clients, sales) into it -- separate from *database_url* itself
+    (the app's own alembic-managed operational schema, which the demo
+    loader's own safety guard refuses to load into) -- and points the
+    registry's reference-backend engine at it, needed by any scenario
+    touching `catalog_search`, `client_lookup`, or `run_report`.
+    *extra_tool_specs* are registered on
     top of the reference backends -- see `live_registry_factory_adapter`'s
     own docstring for why they must already be fully built (and, for a
     database-backed one, already provisioned) before this call.
     *tool_wrappers* replaces a base tool with the result of calling a
     function on it -- see `live_registry_factory_adapter`'s own docstring
     for when this is the right choice instead of *extra_tool_specs*.
+
+    *bind_webhook_to_role* (#79, Phase 1): `True` (the default, #78's
+    original behaviour) binds `WHATSAPP_RUNTIME_ID` to the SAME `runtime_id`
+    as *role* itself, so `deliver_webhook` exercises *role* directly -- only
+    correct when *role* resolves `untrusted_input: true` (ADR-002 C.11/C.13:
+    `create_app` refuses to boot a WhatsApp-bound role that does not, since
+    the channel delivers untrusted external input). Most predefined roles do
+    NOT (`operator-agent`, `data-agent`, ...), and neither does a bare
+    `Agent(...)`'s inherited default -- pass `False` for any scenario that
+    only drives *role* through `send_chat_completion`/the HTTP API and never
+    calls `deliver_webhook`, which instead binds WHATSAPP_RUNTIME_ID to a
+    separate, minimal, always-`untrusted_input: true` placeholder agent that
+    nothing in the scenario ever talks to.
     """
     admin_url = os.environ.get(_ADMIN_DATABASE_URL_ENV, DEFAULT_ADMIN_DATABASE_URL)
     redis_url = os.environ.get(_REDIS_URL_ENV, DEFAULT_REDIS_URL)
@@ -816,6 +849,13 @@ async def boot_live_harness(
     grant_list = (
         list(permissions) if permissions is not None else list(SALES_AGENT_PERMISSIONS)
     )
+    agents: dict[str, Agent | str] = {runtime_id: role}
+    grants: dict[str, list[str]] = {runtime_id: grant_list}
+    whatsapp_runtime_id = runtime_id
+    if not bind_webhook_to_role:
+        whatsapp_runtime_id = _WEBHOOK_PLACEHOLDER_RUNTIME_ID
+        agents[whatsapp_runtime_id] = _webhook_placeholder_agent()
+        grants[whatsapp_runtime_id] = []
 
     # #113 review (medium finding) -- held for this call's ENTIRE lifetime
     # (boot through teardown), not just around the env mutation below: see
@@ -823,16 +863,33 @@ async def boot_live_harness(
     # note. A second concurrent call blocks here until this one's context
     # manager fully exits, so two booted harnesses can never be up at once
     # invalidating each other's process-global env/`get_settings()` cache.
+    # A SEPARATE throwaway database from *database_url* (#79, Phase 1
+    # review): `_run_migrations` makes *database_url* the app's own
+    # alembic-managed operational schema (`audit_event`, `outbox`, ...), and
+    # `demo/load_demo_company.py`'s own safety guard (`classify_target`)
+    # refuses to load demo data into a database that already holds objects
+    # it does not recognise -- which those alembic tables always are. This
+    # mirrors production's own separation between `DATABASE_URL` (the app)
+    # and `BI_DATABASE_URL` (a dedicated reporting connection, `services/
+    # db_role.py`'s "AD-3"): `registry_engine` below is pointed at whichever
+    # one `catalog_search`/`client_lookup`/`run_report` actually need.
+    demo_db_name = f"{db_name}_demo" if seed_demo else None
+    demo_database_url = (
+        _with_database(admin_url, demo_db_name) if demo_db_name is not None else None
+    )
+
     async with _boot_lock:
         await _create_database(admin_url, db_name)
+        if demo_db_name is not None:
+            await _create_database(admin_url, demo_db_name)
         outbound = FakeWhatsAppServer()
         registry_engine: AsyncEngine | None = None
         harness: LiveHarness | None = None
         try:
             await asyncio.to_thread(_run_migrations, database_url, repo_root=_REPO_ROOT)
-            if seed_demo:
+            if demo_database_url is not None:
                 await asyncio.to_thread(
-                    _seed_demo_company, database_url, repo_root=_REPO_ROOT
+                    _seed_demo_company, demo_database_url, repo_root=_REPO_ROOT
                 )
             await outbound.start()
 
@@ -844,7 +901,7 @@ async def boot_live_harness(
                 "WHATSAPP_TOKEN": "live-harness-test-token",
                 "WHATSAPP_PHONE_NUMBER_ID": "live-harness-test-phone-id",
                 "WHATSAPP_GRAPH_API_URL": outbound.base_url,
-                "WHATSAPP_RUNTIME_ID": runtime_id,
+                "WHATSAPP_RUNTIME_ID": whatsapp_runtime_id,
                 "WHATSAPP_CHECKPOINTER_ENABLED": "true",
                 "ADAPTER_RUNTIMES": json.dumps([runtime_id]),
                 "ADAPTER_API_KEY": secrets.token_hex(16),
@@ -858,11 +915,11 @@ async def boot_live_harness(
             try:
                 settings = get_settings()
                 model, model_name = build_eval_model()
-                registry_engine = create_async_engine(database_url)
+                registry_engine = create_async_engine(demo_database_url or database_url)
 
                 app = create_app(
-                    agents={runtime_id: role},
-                    grants={runtime_id: grant_list},
+                    agents=agents,
+                    grants=grants,
                     registry_factory=live_registry_factory_adapter(
                         registry_engine,
                         model,
@@ -909,3 +966,5 @@ async def boot_live_harness(
             if harness is not None:
                 await _delete_redis_threads(redis_url, harness.used_thread_ids)
             await _drop_database(admin_url, db_name)
+            if demo_db_name is not None:
+                await _drop_database(admin_url, demo_db_name)
