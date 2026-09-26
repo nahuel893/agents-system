@@ -87,7 +87,7 @@ El archivo `policy.md` del despliegue puede:
 El archivo `policy.md` del despliegue no puede:
 - Elevar el nivel de autonomía por encima del límite máximo del rol predefinido.
 - Eliminar una condición de escalamiento definida en la política predefinida. Un mapeo `escalation_rules` simple reemplaza el del rol, así que tiene que repetir cada condición; una directiva `remove:` no puede nombrar una heredada.
-- Reescribir la descripción de una condición heredada, ni cambiar o dejar en blanco el `escalate_to` del rol.
+- Reescribir la descripción de una condición heredada, ni cambiar o dejar en blanco el `escalate_to` del rol. Un mapeo `escalation_rules` simple tiene que repetir `escalate_to`, porque omitirlo lo dejaría en blanco. No necesita repetir las descripciones del rol: un despliegue describe solo las condiciones que agrega, así que las descripciones del rol se conservan también bajo un mapeo simple. `descriptions` tiene que ser un mapeo; un `null` (una clave `descriptions:` sin valor), una lista o un texto lanza `DefinitionError` en lugar de reemplazar las descripciones del rol.
 - Aflojar la redacción de auditoría: poner `audit_policy.capture_tool_input` en un valor verdadero que el rol no tiene, u omitir una clave que lista el `redact_keys` del rol. Un mapeo `audit_policy` simple reemplaza el del rol, así que tiene que conservarlas.
 - Incrementar los límites de ejecución más allá de los valores por defecto de la plataforma.
 

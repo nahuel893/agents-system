@@ -87,7 +87,7 @@ The deployment `policy.md` can:
 The deployment `policy.md` cannot:
 - Elevate autonomy level beyond the predefined role's ceiling
 - Remove an escalation condition defined in the predefined policy. A plain `escalation_rules` mapping replaces the role's, so it must restate every condition; a `remove:` directive may not name an inherited one
-- Reword an inherited condition's description, or change or blank the role's `escalate_to`
+- Reword an inherited condition's description, or change or blank the role's `escalate_to`. A plain `escalation_rules` mapping must restate `escalate_to`, since leaving it out would blank it. It need not restate the role's descriptions: a deployment describes only the conditions it adds, so the role's descriptions carry over a plain mapping too. `descriptions` must be a mapping; a `null` (a bare `descriptions:` key), a list or a string raises `DefinitionError` instead of replacing the role's descriptions
 - Loosen audit redaction: set `audit_policy.capture_tool_input` to a true value the role does not have, or leave out a key the role's `redact_keys` lists. A plain `audit_policy` mapping replaces the role's, so it must keep them
 - Increase execution limits beyond platform defaults. A `null` value counts as the platform default and is checked like any other value; a value that is not a finite, non-negative number (`NaN`, infinity, a negative value, a boolean) raises `DefinitionError`
 

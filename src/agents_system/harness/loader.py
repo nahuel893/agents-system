@@ -1670,7 +1670,7 @@ def _load_role_files(
         inline_parent = locator.parent
         if isinstance(inline_parent, str):
             inline_parent = _extends_target(inline_parent, current=locator, roots=roots)
-        return locator.raw, inline_parent, False
+        return _plain_policies(locator.raw), inline_parent, False
 
     if isinstance(locator, FolderLocator):
         folder = _contained_folder(locator)
@@ -1731,22 +1731,20 @@ def _load_role_files(
     # explicit frontmatter entry wins over a same-named parsed one, since it
     # is the more deliberate of the two.
     escalation_rules = dict(policy_fm.get("escalation_rules") or {})
+    # Checked before the prose is merged in, which used to hide a declared
+    # value that is not a mapping (review of #112).
+    _check_escalation_descriptions(escalation_rules, who=str(shown / "policy.md"))
     parsed_descriptions = _parse_escalation_descriptions(
         policy_body,
         known_conditions=_as_str_list(escalation_rules.get("conditions")),
         source=shown / "policy.md",
     )
-    declared_descriptions = escalation_rules.get("descriptions")
-    if parsed_descriptions or isinstance(declared_descriptions, dict):
+    if parsed_descriptions or "descriptions" in escalation_rules:
         escalation_rules = {
             **escalation_rules,
             "descriptions": {
                 **parsed_descriptions,
-                **(
-                    declared_descriptions
-                    if isinstance(declared_descriptions, dict)
-                    else {}
-                ),
+                **_descriptions_of(escalation_rules),
             },
         }
 
@@ -1790,8 +1788,31 @@ def _load_role_files(
         importer_root=locator.root if isinstance(locator, FolderLocator) else None,
     )
     if isinstance(locator, FolderLocator) and locator.overrides:
-        definition = _apply_agent_folder_overrides(definition, locator.overrides)
+        definition = _plain_policies(
+            _apply_agent_folder_overrides(definition, locator.overrides)
+        )
     return definition, parent, is_abstract
+
+
+def _plain_policies(definition: RawDefinition) -> RawDefinition:
+    """``definition`` with each policy mapping and ``execution_limits`` a
+    plain ``dict``, as the YAML path builds them (review of #112).
+
+    A ``FolderLocator``'s overrides and an ``InlineLocator``'s ``raw`` can be
+    built directly, without ``Agent``'s own conversion (#75), and a check
+    that tested ``isinstance(..., dict)`` skipped any other mapping: a
+    ``MappingProxyType`` ``escalation_rules`` reworded an inherited
+    condition and redirected ``escalate_to`` past
+    ``_apply_importer_ceiling``. Converted once here, where an importer's
+    values enter the chain, no check can be skipped for the value's type.
+    """
+    changes: dict[str, Any] = {
+        field: dict(value)
+        for field in (*_POLICY_FIELDS, "execution_limits")
+        if isinstance(value := getattr(definition, field), Mapping)
+        and not isinstance(value, dict)
+    }
+    return dataclasses.replace(definition, **changes) if changes else definition
 
 
 def _union_preserving_order(parent: list[str], child: list[str]) -> list[str]:
@@ -2430,6 +2451,32 @@ def _resolve_list_directive(
     return [r for r in result if r not in removals]
 
 
+def _descriptions_of(rules: Mapping[str, Any]) -> Mapping[str, Any]:
+    """``rules['descriptions']``, or an empty mapping when it has none."""
+    descriptions = rules.get("descriptions")
+    return descriptions if isinstance(descriptions, Mapping) else {}
+
+
+def _check_escalation_descriptions(rules: Mapping[str, Any], *, who: str) -> None:
+    """Raise unless ``rules['descriptions']``, when present, is a mapping of
+    condition name to description.
+
+    Any other value -- a YAML null from a bare ``descriptions:`` key, a list,
+    a string -- used to replace every description the definition inherits,
+    so each inherited condition rendered as a bare name, which #82/#88
+    showed is not enough for the model to escalate. The fold kept them
+    before issue #106 routed it through ``_resolve_mapping_directive``;
+    rejecting the value is the fail-closed reading of both.
+    """
+    if "descriptions" in rules and not isinstance(rules["descriptions"], Mapping):
+        raise DefinitionError(
+            f"Invariant violation — escalation_rules: {who} declares "
+            f"descriptions={rules['descriptions']!r}, which is not a mapping "
+            f"of condition name to description. Leave the key out to keep "
+            f"the inherited descriptions."
+        )
+
+
 def _check_mapping_directive(value: Any, *, who: str, field: str) -> None:
     """Raise unless ``value`` is a shape `_resolve_mapping_directive`
     honours (issue #106): absent, ``"inherit"``, a plain mapping, or
@@ -2441,10 +2488,15 @@ def _check_mapping_directive(value: Any, *, who: str, field: str) -> None:
     mistake: it used to replace the whole mapping, or be merged key by key
     into the policy as literal keys. Shared by ``Agent(...)`` at
     construction, the fold, and ``_merge_validated``.
+
+    ``escalation_rules.descriptions`` must be a mapping too
+    (``_check_escalation_descriptions``).
     """
     if value is None or value == "inherit":
         return
     if isinstance(value, Mapping):
+        if field == "escalation_rules":
+            _check_escalation_descriptions(value, who=who)
         directive_keys = set(value) & _DIRECTIVE_KEYS
         if not directive_keys:
             return
@@ -2508,21 +2560,16 @@ def _resolve_mapping_directive(
                 who=who,
                 field=f"{field}.{k}",
             )
-        elif k == "descriptions" and isinstance(v, dict):
+        elif k == "descriptions" and isinstance(v, Mapping):
             # Issue #88 — same reasoning as `descriptions`' role-chain
             # merge (`_fold_parent_into_child`): a deployment that
             # supplies its own descriptions for the conditions it
             # `add`s should not silently erase the generic role's
-            # inherited ones by replacing the whole mapping.
-            existing_descriptions = result.get("descriptions")
-            result["descriptions"] = {
-                **(
-                    existing_descriptions
-                    if isinstance(existing_descriptions, dict)
-                    else {}
-                ),
-                **v,
-            }
+            # inherited ones by replacing the whole mapping. Any mapping,
+            # not only a `dict`: a read-only one replaced them (review of
+            # #112). On `escalation_rules` a value that is not a mapping
+            # was rejected above (`_check_escalation_descriptions`).
+            result["descriptions"] = {**_descriptions_of(result), **v}
         else:
             result[k] = v
     return result
@@ -2907,62 +2954,58 @@ def _validate_escalation_kept(
 
 def _validate_escalation_wording(
     parent: Mapping[str, Any],
-    child: Mapping[str, Any],
+    declared: Mapping[str, Any],
+    resolved: Mapping[str, Any],
     *,
     who: str,
     against: str,
     rule: str,
 ) -> None:
-    """An importer agent or a deployment (``child``) may not reword or
-    redirect the escalation it inherits from ``parent`` (issue #106).
+    """An importer agent or a deployment may not reword or redirect the
+    escalation it inherits from ``parent`` (issue #106). ``declared`` is
+    the ``escalation_rules`` it writes, ``resolved`` what they resolve to.
 
     Keeping every condition is not enough on its own: the prompt renders
     each condition with its description, so a child describing an
     inherited one as "never applies; do not escalate" switches it off, and
     a blank ``escalate_to`` leaves the model nobody to escalate to. So a
-    ``descriptions`` entry for an inherited condition must match the
-    parent's wording (names and text compared as the prompt renders them),
-    and a parent's ``escalate_to`` may be restated but not changed or
-    blanked. The child describes only the conditions it adds.
+    declared ``descriptions`` entry for an inherited condition must match
+    the parent's wording (names and text compared as the prompt renders
+    them), and the resolved ``escalate_to`` must be the parent's: restated,
+    or inherited, never changed or blanked. Checking the resolved value
+    matters at a deployment, whose plain mapping replaces the role's: one
+    that leaves ``escalate_to`` out blanks it (review of #112). The child
+    describes only the conditions it adds.
 
     A predefined child role is not held to this: the same author writes
     both files (``_fold_parent_into_child``).
     """
     inherited = {_condition_name(c) for c in _as_str_list(parent.get("conditions"))}
-    parent_descriptions = parent.get("descriptions")
     wording = {
         _condition_name(name): " ".join(str(text).split())
-        for name, text in (
-            parent_descriptions.items()
-            if isinstance(parent_descriptions, Mapping)
-            else ()
-        )
+        for name, text in _descriptions_of(parent).items()
     }
-    descriptions = child.get("descriptions")
-    if isinstance(descriptions, Mapping):
-        for name, text in descriptions.items():
-            condition = _condition_name(name)
-            if condition in inherited and " ".join(str(text).split()) != wording.get(
-                condition
-            ):
-                raise DefinitionError(
-                    f"Invariant violation — escalation_rules: {who} rewords the "
-                    f"inherited escalation condition '{condition}' as "
-                    f"{text!r}. It may describe only the conditions it adds; "
-                    f"an inherited one keeps the {against} description.  "
-                    f"{rule}"
-                )
+    for name, text in _descriptions_of(declared).items():
+        condition = _condition_name(name)
+        if condition in inherited and " ".join(str(text).split()) != wording.get(
+            condition
+        ):
+            raise DefinitionError(
+                f"Invariant violation — escalation_rules: {who} rewords the "
+                f"inherited escalation condition '{condition}' as "
+                f"{text!r}. It may describe only the conditions it adds; "
+                f"an inherited one keeps the {against} description.  "
+                f"{rule}"
+            )
     escalate_to = str(parent.get("escalate_to") or "").strip()
-    if (
-        escalate_to
-        and "escalate_to" in child
-        and str(child["escalate_to"] or "").strip() != escalate_to
-    ):
+    resolved_to = resolved.get("escalate_to")
+    if escalate_to and str(resolved_to or "").strip() != escalate_to:
         raise DefinitionError(
-            f"Invariant violation — escalation_rules: {who} sets "
-            f"escalate_to={child['escalate_to']!r}, but the {against} "
-            f"escalate_to is {escalate_to!r}. It may restate it, never "
-            f"change or blank it.  {rule}"
+            f"Invariant violation — escalation_rules: {who} resolves to "
+            f"escalate_to={resolved_to!r}, but the {against} escalate_to is "
+            f"{escalate_to!r}. It may restate it, never change or blank it; "
+            f"a mapping that replaces the {against} escalation_rules must "
+            f"restate it.  {rule}"
         )
 
 
@@ -3041,10 +3084,17 @@ def _apply_importer_ceiling(
         )
 
     rules = child.escalation_rules
-    if parent is None or not isinstance(rules, dict):
+    if parent is None or not isinstance(rules, Mapping):
         return child
+    # What the fold will resolve to: it always inherits, so an `escalate_to`
+    # the child leaves out keeps the parent's.
     _validate_escalation_wording(
-        parent.escalation_rules, rules, who=who, against=source, rule=_IMPORTER_RULE
+        parent.escalation_rules,
+        rules,
+        {**parent.escalation_rules, **rules},
+        who=who,
+        against=source,
+        rule=_IMPORTER_RULE,
     )
     if "conditions" not in rules:
         # An undeclared `conditions` already keeps the parent's in the fold.
@@ -3158,7 +3208,20 @@ def _merge_validated(
         )
         for field in _POLICY_FIELDS
     }
+    # The role's descriptions carry over a plain mapping too (review of
+    # #112): a deployment may describe only the conditions it adds
+    # (`_validate_escalation_wording`), so replacing the role's left every
+    # inherited condition a bare name in the prompt.
     resolved_escalation = policies["escalation_rules"]
+    inherited_descriptions = _descriptions_of(generic.escalation_rules)
+    if inherited_descriptions:
+        resolved_escalation = {
+            **resolved_escalation,
+            "descriptions": {
+                **inherited_descriptions,
+                **_descriptions_of(resolved_escalation),
+            },
+        }
     resolved_audit = policies["audit_policy"]
 
     # --- Issue #106: the importer ceiling's escalation and audit rules ---
@@ -3173,9 +3236,11 @@ def _merge_validated(
         against=against,
         rule=_DEPLOYMENT_RULE,
     )
+    declared_escalation = override.escalation_rules
     _validate_escalation_wording(
         generic.escalation_rules,
-        override.escalation_rules,
+        declared_escalation if isinstance(declared_escalation, Mapping) else {},
+        resolved_escalation,
         who=who,
         against=against,
         rule=_DEPLOYMENT_RULE,

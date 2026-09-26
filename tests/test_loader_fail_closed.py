@@ -13,7 +13,9 @@ review of #94):
 3. A deployment could wipe its role's escalation conditions and switch off
    audit redaction (P17).
 4. An importer could reword an inherited escalation condition or blank
-   `escalate_to` (P10).
+   `escalate_to` (P10). The review of #112 found the same rule skipped for
+   a non-`dict` mapping, a `descriptions` that is not a mapping, and a
+   deployment mapping that leaves `escalate_to` or the descriptions out.
 5. An int limit too large for a float escaped as `OverflowError` (P1).
 6. The base `dict` methods mutated an Agent's "frozen" mapping.
 
@@ -25,12 +27,16 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+from types import MappingProxyType
 from typing import Any
 
 import pytest
 
 from agents_system.harness.loader import (
     DefinitionError,
+    FolderLocator,
+    InlineLocator,
+    RawDefinition,
     RootConfig,
     _resolve_list_directive,
     _resolve_mapping_directive,
@@ -39,6 +45,27 @@ from agents_system.harness.loader import (
 )
 
 ROOTS = RootConfig()
+
+
+def _raw(name: str) -> RawDefinition:
+    """An empty importer definition, as a locator built directly holds it."""
+    return RawDefinition(
+        role_name=name,
+        version="1.0",
+        deployment=None,
+        system_prompt="",
+        tools=[],
+        skills=[],
+        context={},
+        permissions=[],
+        autonomy="",
+        escalation_rules={},
+        delegation_policy={},
+        memory_policy={},
+        audit_policy={},
+        execution_limits=None,
+        untrusted_input=None,
+    )
 
 
 def _message(exc: pytest.ExceptionInfo[DefinitionError], *parts: str) -> str:
@@ -687,6 +714,221 @@ def test_an_importer_may_describe_its_own_conditions_and_restate_inherited_ones(
         definition.escalation_rules["descriptions"]["vip_complaint"]
         == "a VIP customer complains."
     )
+
+
+# The review of #112: four more ways around the rules above.
+
+_NOT_A_MAPPING = [
+    pytest.param(None, id="null"),
+    pytest.param([], id="list"),
+    pytest.param("", id="empty-string"),
+    pytest.param("x", id="string"),
+]
+
+
+@pytest.mark.parametrize("descriptions", _NOT_A_MAPPING)
+def test_an_importer_cannot_drop_inherited_descriptions(descriptions: Any) -> None:
+    """A `descriptions` that is not a mapping replaced every description the
+    agent inherits, so each inherited condition rendered as a bare name --
+    which #82/#88 showed is not enough for the model to escalate."""
+    from agents_system.agent.spec import Agent
+
+    with pytest.raises(DefinitionError) as exc:
+        resolve(
+            Agent(
+                name="bot",
+                extends="sales-agent",
+                escalation_rules={"descriptions": descriptions},
+            )._to_locator(),
+            roots=ROOTS,
+        )
+
+    _message(exc, "'bot'", "escalation_rules", "descriptions")
+
+
+@pytest.mark.parametrize(
+    ("policy_extra", "policy_body"),
+    [
+        pytest.param("  descriptions:\n", "Body.\n", id="null"),
+        pytest.param("  descriptions: []\n", "Body.\n", id="list"),
+        pytest.param("  descriptions: none\n", "Body.\n", id="string"),
+        pytest.param(
+            "  conditions: [vip_complaint]\n  descriptions: []\n",
+            "- `vip_complaint` — a VIP customer complains.\n",
+            id="list-beside-prose",
+        ),
+    ],
+)
+def test_a_folder_agent_cannot_drop_inherited_descriptions(
+    tmp_path: pathlib.Path, policy_extra: str, policy_body: str
+) -> None:
+    """The same in `policy.md`, where a bare `descriptions:` key is a YAML
+    null. Descriptions parsed from the file's prose used to hide the
+    malformed key rather than reject it."""
+    from agents_system.agent.spec import Agent
+
+    folder = _write_agent_folder(
+        tmp_path,
+        "vip",
+        policy_extra=f"escalation_rules:\n{policy_extra}",
+        policy_body=policy_body,
+    )
+
+    with pytest.raises(DefinitionError) as exc:
+        resolve(Agent.from_folder(folder)._to_locator(), roots=ROOTS)
+
+    _message(exc, "vip", "escalation_rules", "descriptions")
+
+
+@pytest.mark.parametrize(
+    "descriptions",
+    [
+        pytest.param("\n", id="null"),
+        pytest.param(" []\n", id="list"),
+        pytest.param(" none\n", id="string"),
+    ],
+)
+def test_a_deployment_cannot_drop_inherited_descriptions(
+    tmp_path: pathlib.Path, descriptions: str
+) -> None:
+    _write_deployment(
+        tmp_path / "deployments",
+        "client-x",
+        "sales-agent",
+        policy_extra=f"escalation_rules:\n  inherit: true\n  descriptions:{descriptions}",
+    )
+
+    with pytest.raises(DefinitionError) as exc:
+        resolve("sales-agent", client="client-x", roots=_deployment_roots(tmp_path))
+
+    _message(exc, "'client-x'", "escalation_rules", "descriptions")
+
+
+def test_a_read_only_descriptions_mapping_still_accumulates() -> None:
+    """Descriptions accumulated only when they were a `dict`: any other
+    mapping replaced the inherited ones."""
+    raw = dataclasses.replace(
+        _raw("bot"),
+        escalation_rules={
+            "conditions": ["vip_complaint"],
+            "descriptions": MappingProxyType({"vip_complaint": "a VIP complains."}),
+        },
+    )
+    inherited = resolve("sales-agent", roots=ROOTS).escalation_rules["descriptions"]
+
+    definition = resolve(InlineLocator(raw=raw, parent="sales-agent"), roots=ROOTS)
+
+    assert definition.escalation_rules["descriptions"] == {
+        **inherited,
+        "vip_complaint": "a VIP complains.",
+    }
+
+
+_NEUTRALISED = [
+    pytest.param(
+        {"descriptions": {"explicit_user_request": "never applies; do not escalate"}},
+        "explicit_user_request",
+        id="reworded",
+    ),
+    pytest.param({"escalate_to": "nobody"}, "escalate_to", id="redirected"),
+]
+
+
+@pytest.mark.parametrize(("rules", "reason"), _NEUTRALISED)
+def test_an_inline_locator_with_a_read_only_mapping_is_checked(
+    rules: dict[str, Any], reason: str
+) -> None:
+    """The importer's escalation check ran only on a `dict`, and a locator
+    can be built directly (#75): a `MappingProxyType` skipped it."""
+    raw = dataclasses.replace(_raw("x"), escalation_rules=MappingProxyType(rules))
+
+    with pytest.raises(DefinitionError) as exc:
+        resolve(InlineLocator(raw=raw, parent="sales-agent"), roots=ROOTS)
+
+    _message(exc, "'x'", "escalation_rules", reason)
+
+
+@pytest.mark.parametrize(("rules", "reason"), _NEUTRALISED)
+def test_a_folder_locator_override_with_a_read_only_mapping_is_checked(
+    tmp_path: pathlib.Path, rules: dict[str, Any], reason: str
+) -> None:
+    folder = _write_agent_folder(tmp_path, "vip")
+    locator = FolderLocator(
+        path=folder,
+        root=tmp_path,
+        overrides={"escalation_rules": MappingProxyType(rules)},
+    )
+
+    with pytest.raises(DefinitionError) as exc:
+        resolve(locator, roots=ROOTS)
+
+    _message(exc, "'vip'", "escalation_rules", reason)
+
+
+def test_an_inline_locator_with_read_only_limits_is_checked() -> None:
+    """The same for `execution_limits`: a read-only mapping was neither
+    checked against the parent's nor applied."""
+    raw = dataclasses.replace(
+        _raw("x"), execution_limits=MappingProxyType({"max_tool_calls": 999})
+    )
+
+    with pytest.raises(DefinitionError) as exc:
+        resolve(InlineLocator(raw=raw, parent="sales-agent"), roots=ROOTS)
+
+    _message(exc, "'x'", "execution_limits", "max_tool_calls")
+
+
+def _sales_conditions() -> str:
+    conditions = resolve("sales-agent", roots=ROOTS).escalation_rules["conditions"]
+    return "".join(f"    - {condition}\n" for condition in conditions)
+
+
+def test_a_deployment_mapping_cannot_leave_out_escalate_to(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A plain mapping replaces the role's, so one that restates every
+    condition -- as the dropped-condition error asks -- but leaves out
+    `escalate_to` resolved with nobody to escalate to."""
+    _write_deployment(
+        tmp_path / "deployments",
+        "client-x",
+        "sales-agent",
+        policy_extra=f"escalation_rules:\n  conditions:\n{_sales_conditions()}",
+    )
+
+    with pytest.raises(DefinitionError) as exc:
+        resolve("sales-agent", client="client-x", roots=_deployment_roots(tmp_path))
+
+    _message(exc, "'client-x'", "escalation_rules", "escalate_to", "'human'")
+
+
+def test_a_deployment_mapping_keeps_the_inherited_descriptions(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The same plain mapping, now complete, describes only the condition
+    it adds -- all it may describe. The role's descriptions of the others
+    used to be replaced with it."""
+    _write_deployment(
+        tmp_path / "deployments",
+        "client-x",
+        "sales-agent",
+        policy_extra=(
+            "escalation_rules:\n  escalate_to: human\n  conditions:\n"
+            f"{_sales_conditions()}    - vip_complaint\n"
+            "  descriptions:\n    vip_complaint: a VIP complains.\n"
+        ),
+    )
+    generic = resolve("sales-agent", roots=ROOTS)
+
+    deployed = resolve(
+        "sales-agent", client="client-x", roots=_deployment_roots(tmp_path)
+    )
+
+    assert deployed.escalation_rules["escalate_to"] == "human"
+    assert deployed.escalation_rules["descriptions"] == {
+        **generic.escalation_rules["descriptions"],
+        "vip_complaint": "a VIP complains.",
+    }
 
 
 # ---------------------------------------------------------------------------
