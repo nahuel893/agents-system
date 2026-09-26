@@ -22,12 +22,42 @@ and the ``check_*`` functions below it are the reusable, inherited-contract
 checks the formalized suite in ``tests/test_role_contract_suite.py`` applies
 to every role ``discover_concrete_platform_roles`` finds — one definition per
 invariant, shared instead of re-asserted per role or copied per test file.
+
+A fourth thing lives here for Guard 1 (design.md D8; the
+``predefined-agent-governance`` spec): ``RoleGovernanceSnapshot`` and
+``EXPECTED_ROLE_SURFACE`` are ``EXPECTED_ROLE_TOOLS``'s own pattern extended
+to also pin each role's ``permissions`` and ``version`` — an independent,
+reviewed snapshot a manifest change must never update by itself.
+``check_role_governance_snapshot`` is the comparison: a resolved
+tools/permissions divergence from the snapshot must carry both a MAJOR
+``version:`` bump and a ``CHANGELOG.md`` entry naming the role, or it fails,
+naming exactly what diverged and which of the two conditions is unmet. See
+``tests/test_role_governance_contract.py`` for the fixture-scoped RED/GREEN
+suite and the real per-role contract test this feeds.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
+import re
 from typing import Any
+
+
+@dataclasses.dataclass(frozen=True)
+class RoleGovernanceSnapshot:
+    """Guard 1 (design.md D8; ``predefined-agent-governance`` spec): a
+    versioned, independent record of one predefined role's ``tools``/
+    ``permissions`` surface, written and maintained separately from that
+    role's own manifest — a manifest edit MUST NOT, by itself, update this.
+    See ``check_role_governance_snapshot`` for what compares against it.
+    """
+
+    tools: frozenset[str]
+    permissions: frozenset[str]
+    #: "MAJOR.MINOR", the role's frontmatter ``version:`` as of this
+    #: reviewed snapshot.
+    version: str
 
 
 def platform_roles_dir() -> pathlib.Path:
@@ -154,6 +184,268 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
 }
 
 PINNED_ROLES: tuple[str, ...] = tuple(sorted(EXPECTED_ROLE_TOOLS))
+
+
+#: Guard 1 (design.md D8). Independent, versioned expectation of every
+#: predefined role's (tools, permissions, version) surface — seeded from the
+#: CURRENT resolved surface of each PINNED_ROLES member at this PR's merge
+#: time (a reviewed, deliberate copy, same philosophy EXPECTED_ROLE_TOOLS
+#: documents above). Update this dict ONLY in the same PR that also bumps
+#: the affected role's manifest `version:` MAJOR component and adds a
+#: CHANGELOG.md entry naming it — see `check_role_governance_snapshot`.
+EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
+    "agent": RoleGovernanceSnapshot(
+        tools=frozenset({"session_state", "escalation_notifier"}),
+        permissions=frozenset({"read:session", "send:escalation"}),
+        version="1.0",
+    ),
+    "operator-agent": RoleGovernanceSnapshot(
+        tools=frozenset(
+            {"session_state", "escalation_notifier", "use_term", "read_file"}
+        ),
+        permissions=frozenset(
+            {"read:session", "send:escalation", "exec:command", "read:files"}
+        ),
+        version="1.0",
+    ),
+    "support-agent": RoleGovernanceSnapshot(
+        tools=frozenset(
+            {
+                "session_state",
+                "escalation_notifier",
+                "knowledge_retrieval",
+                "conversation_summarizer",
+                "client_lookup",
+                "message_sender",
+            }
+        ),
+        permissions=frozenset(
+            {
+                "read:session",
+                "send:escalation",
+                "read:knowledge_base",
+                "read:conversation_logs",
+                "read:client_registry",
+                "send:message",
+            }
+        ),
+        version="1.0",
+    ),
+    "developer-agent": RoleGovernanceSnapshot(
+        tools=frozenset(
+            {
+                "session_state",
+                "escalation_notifier",
+                "use_term",
+                "read_file",
+                "knowledge_retrieval",
+            }
+        ),
+        permissions=frozenset(
+            {
+                "read:session",
+                "send:escalation",
+                "exec:command",
+                "read:files",
+                "read:knowledge_base",
+            }
+        ),
+        version="1.0",
+    ),
+    "accountant-agent": RoleGovernanceSnapshot(
+        tools=frozenset(
+            {
+                "session_state",
+                "escalation_notifier",
+                "run_report",
+                "knowledge_retrieval",
+            }
+        ),
+        permissions=frozenset(
+            {
+                "read:session",
+                "send:escalation",
+                "read:reports",
+                "read:knowledge_base",
+            }
+        ),
+        version="1.0",
+    ),
+    "data-agent": RoleGovernanceSnapshot(
+        tools=frozenset(
+            {
+                "escalation_notifier",
+                "catalog_search",
+                "client_lookup",
+                "knowledge_retrieval",
+                "run_report",
+                "session_state",
+            }
+        ),
+        permissions=frozenset(
+            {
+                "read:session",
+                "send:escalation",
+                "read:catalog",
+                "read:client_registry",
+                "read:knowledge_base",
+                "read:reports",
+            }
+        ),
+        version="1.1",
+    ),
+    "orchestrator": RoleGovernanceSnapshot(
+        tools=frozenset({"client_lookup", "session_state", "escalation_notifier"}),
+        permissions=frozenset(
+            {
+                "read:session",
+                "send:escalation",
+                "read:client_registry",
+                "write:session",
+                "spawn:data-agent",
+                "spawn:sales-agent",
+                "spawn:summary-agent",
+            }
+        ),
+        version="1.0",
+    ),
+    "sales-agent": RoleGovernanceSnapshot(
+        tools=frozenset(
+            {
+                "escalation_notifier",
+                "catalog_search",
+                "client_lookup",
+                "message_sender",
+                "order_writer",
+                "session_state",
+            }
+        ),
+        permissions=frozenset(
+            {
+                "read:session",
+                "send:escalation",
+                "read:catalog",
+                "read:client_registry",
+                "write:orders",
+                "write:order_items",
+                "read:price_lists",
+                "send:message",
+            }
+        ),
+        version="1.0",
+    ),
+    "summary-agent": RoleGovernanceSnapshot(
+        tools=frozenset(
+            {
+                "escalation_notifier",
+                "conversation_summarizer",
+                "knowledge_retrieval",
+                "session_state",
+            }
+        ),
+        permissions=frozenset(
+            {
+                "read:session",
+                "send:escalation",
+                "read:conversation_logs",
+                "read:knowledge_base",
+                "write:summary_output",
+            }
+        ),
+        version="1.0",
+    ),
+}
+
+
+def _guard1_major_version(value: str) -> int:
+    """The MAJOR component of a role's `MAJOR.MINOR`-shaped `version:`
+    string. Guard 1 compares this component only — MINOR is free to move
+    for any reason (a role's own minor documentation/tuning revision)."""
+    try:
+        return int(str(value).split(".")[0])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _changelog_names_role(role: str, changelog_text: str) -> bool:
+    """Whether *changelog_text* genuinely names *role* — a word-bounded
+    match, not a bare substring occurrence. A plain ``role in changelog_text``
+    check is trivially satisfied by an unrelated word that merely CONTAINS
+    the role's name: the real predefined role ``"agent"`` is itself a
+    substring of the unrelated product name ``"agents-system"``/
+    ``"agents_system"``, which already appears throughout this repository's
+    real ``CHANGELOG.md`` for reasons that have nothing to do with the
+    role's own governance. ``\\b`` alone does not treat ``-``/``_`` as word
+    boundaries, so this also excludes ``sales-agent``/``sales_agent``
+    matching a search for ``"agent"``."""
+    pattern = r"(?<![\w-])" + re.escape(role) + r"(?![\w-])"
+    return re.search(pattern, changelog_text) is not None
+
+
+def check_role_governance_snapshot(
+    role: str,
+    resolved_tools: frozenset[str],
+    resolved_permissions: frozenset[str],
+    resolved_version: str,
+    snapshot: RoleGovernanceSnapshot,
+    changelog_text: str,
+) -> None:
+    """Guard 1 (design.md D8; ``predefined-agent-governance`` spec): a
+    predefined role's ``tools``/``permissions`` surface may diverge from its
+    reviewed *snapshot* only when BOTH (a) *resolved_version*'s MAJOR
+    component is strictly greater than *snapshot.version*'s, and (b)
+    *changelog_text* names *role* somewhere. Neither condition alone is
+    sufficient (spec's own two "still fails" scenarios), and no divergence
+    at all (e.g. a ``role.md``-only prose edit) requires nothing.
+
+    *changelog_text* is always a caller-supplied string — normally
+    ``CHANGELOG.md``'s real content, a plain stand-in in tests — this
+    function never reads the filesystem itself.
+
+    *resolved_tools*/*resolved_permissions*/*resolved_version* are always
+    independent arguments, never derived from *snapshot*: this function can
+    never grade a role against itself.
+    """
+    added_tools = sorted(resolved_tools - snapshot.tools)
+    removed_tools = sorted(snapshot.tools - resolved_tools)
+    added_permissions = sorted(resolved_permissions - snapshot.permissions)
+    removed_permissions = sorted(snapshot.permissions - resolved_permissions)
+    if not (added_tools or removed_tools or added_permissions or removed_permissions):
+        return
+
+    version_bumped = _guard1_major_version(resolved_version) > _guard1_major_version(
+        snapshot.version
+    )
+    changelog_ok = _changelog_names_role(role, changelog_text)
+
+    if version_bumped and changelog_ok:
+        return
+
+    divergence_parts = []
+    if added_tools:
+        divergence_parts.append(f"added tools {added_tools}")
+    if removed_tools:
+        divergence_parts.append(f"removed tools {removed_tools}")
+    if added_permissions:
+        divergence_parts.append(f"added permissions {added_permissions}")
+    if removed_permissions:
+        divergence_parts.append(f"removed permissions {removed_permissions}")
+
+    missing = []
+    if not version_bumped:
+        missing.append(
+            "a MAJOR version bump (snapshot records "
+            f"'{snapshot.version}', resolved is '{resolved_version}')"
+        )
+    if not changelog_ok:
+        missing.append("a CHANGELOG.md entry naming this role")
+
+    raise AssertionError(
+        f"Guard 1: predefined role '{role}' diverged from its governance "
+        f"snapshot ({'; '.join(divergence_parts)}) without "
+        f"{' and '.join(missing)}. Update EXPECTED_ROLE_SURFACE in the same "
+        "PR that satisfies whichever condition above is missing."
+    )
 
 
 def role_chain(role: str) -> tuple[str, ...]:

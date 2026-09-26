@@ -1252,7 +1252,7 @@ rename lands first so this PR's new code uses "predefined role" throughout,
 never "generic role"). Estimated lines: ~320 (design.md Testing Strategy
 table: ~300-340).
 
-- [ ] **PR6-T1 — `RoleGovernanceSnapshot` + `EXPECTED_ROLE_SURFACE` + contract test.**
+- [x] **PR6-T1 — `RoleGovernanceSnapshot` + `EXPECTED_ROLE_SURFACE` + contract test.**
   RED: extend `tests/platform_role_contract.py`'s own test suite (or a new
   `tests/test_role_governance_contract.py`, implementer's choice — keep the
   snapshot/dataclass definitions themselves in `platform_role_contract.py`
@@ -1315,7 +1315,7 @@ table: ~300-340).
   roles discovered under platform_root/roles" (both scenarios).
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR6-T2 — CI marker-detection script + `.github/workflows/ci.yml` job.**
+- [x] **PR6-T2 — CI marker-detection script + `.github/workflows/ci.yml` job.**
   RED: create `tests/test_check_role_governance_marker.py` (a pure unit test
   over the marker-detection function in isolation — D8's own suggested
   approach, chosen over a fixture-PR-diff integration test since this repo
@@ -1360,7 +1360,7 @@ table: ~300-340).
   commit-marker condition that actually produces the eventual CHANGELOG
   entry). <!-- sdd-owner: implementation -->
 
-- [ ] **PR6-T3 — PR6 closing: `CHANGELOG.md` ground-truth confirmation + docs + full verification.**
+- [x] **PR6-T3 — PR6 closing: `CHANGELOG.md` ground-truth confirmation + docs + full verification.**
   Confirm by direct read that `CHANGELOG.md` already exists at the
   repository root (the `[0.2.0]` section) and that
   `release-please-config.json`'s `changelog-path: "CHANGELOG.md"`

@@ -39,10 +39,10 @@ tasks_progress:
     - PR5-T1
     - PR5-T2
     - PR5-T3
-  pending:
     - PR6-T1
     - PR6-T2
     - PR6-T3
+  pending:
     - PR7-T1
     - PR7-T2
     - PR7-T3
@@ -433,3 +433,48 @@ pr5:
       itself marks this "manual run, documented, not CI"); the module's
       loadability and `build_app`/`main` surface are proven by
       `tests/test_demo_entrypoint.py`, which execs the real file.
+pr6:
+  status: implemented
+  branch: feat/adr-004-6-guard1-governance
+  files_changed:
+    - tests/platform_role_contract.py
+    - tests/test_role_governance_contract.py
+    - tests/test_check_role_governance_marker.py
+    - scripts/check_role_governance_marker.py
+    - .github/workflows/ci.yml
+    - openspec/changes/library-first-agents/tasks.md
+    - openspec/changes/library-first-agents/state.yaml
+  diff_lines_authored: 732
+  diff_budget_note: >-
+    Exceeds the ~320 estimate (design.md Testing Strategy table: ~300-340)
+    and the 400-line default budget. tests/test_role_governance_contract.py
+    (246 lines) and tests/platform_role_contract.py's own
+    RoleGovernanceSnapshot/EXPECTED_ROLE_SURFACE additions (276 lines) carry
+    most of it -- one test per spec scenario PR6-T1's own RED list names,
+    plus the nine-role snapshot literal. Nothing was trimmed; recommend
+    size:exception.
+  deviations:
+    - The pytest contract test and its fixture-scoped RED/GREEN suite went
+      in a new tests/test_role_governance_contract.py (the task's own
+      "implementer's choice" alternative to extending
+      tests/platform_role_contract.py's test suite directly);
+      RoleGovernanceSnapshot/EXPECTED_ROLE_SURFACE/
+      check_role_governance_snapshot themselves stay in
+      platform_role_contract.py per D8, matching EXPECTED_ROLE_TOOLS's
+      existing home.
+    - check_role_governance_snapshot takes resolved_tools/resolved_permissions/
+      resolved_version/changelog_text as plain arguments rather than an
+      AgentDefinition -- keeps the fixture-scoped unit tests independent of
+      the full dataclass shape, matching the "fixture-scoped 'currently
+      resolved surface'" framing PR6-T1's RED section itself uses; the real
+      per-role test unpacks a genuine loader.resolve() AgentDefinition into
+      those same arguments.
+    - scripts/check_role_governance_marker.py's main() resolves base/head
+      SHAs by reading GITHUB_EVENT_PATH's JSON payload (pull_request.base/
+      head.sha, or push's before/after) -- the same fields gitleaks-action
+      itself reads for the same two event shapes, not a new convention.
+      main() is exercised only by the new CI job itself, per PR6-T2's own
+      RED scope (a pure unit test over commit_messages_carry_breaking_marker
+      only; "no CI-integration test command applies for the workflow YAML
+      itself").
+  review_fixes: []
