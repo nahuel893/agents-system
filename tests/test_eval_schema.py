@@ -13,6 +13,8 @@ import pathlib
 import pytest
 
 from agents_system.evals.schema import (
+    CATEGORY_GUARDRAIL,
+    CATEGORY_HAPPY_PATH,
     Scenario,
     ScenarioAssertions,
     ScenarioError,
@@ -239,3 +241,94 @@ def test_load_scenarios_loads_every_file_in_a_directory_sorted(
     scenarios = load_scenarios(tmp_path)
 
     assert [s.name for s in scenarios] == ["a_scenario", "b_scenario"]
+
+
+# ---------------------------------------------------------------------------
+# #81 -- scenario category and happy-path threshold override
+# ---------------------------------------------------------------------------
+
+
+def test_load_scenario_category_defaults_to_happy_path(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(tmp_path, "minimal.yaml", _MINIMAL)
+
+    scenario = load_scenario(path)
+
+    assert scenario.category == CATEGORY_HAPPY_PATH
+    assert scenario.threshold is None
+    assert scenario.threshold_reason is None
+
+
+def test_load_scenario_accepts_an_explicit_guardrail_category(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(tmp_path, "guardrail.yaml", _MINIMAL + "\ncategory: guardrail\n")
+
+    scenario = load_scenario(path)
+
+    assert scenario.category == CATEGORY_GUARDRAIL
+
+
+def test_load_scenario_rejects_an_unknown_category(tmp_path: pathlib.Path) -> None:
+    path = _write(tmp_path, "bad.yaml", _MINIMAL + "\ncategory: made-up\n")
+
+    with pytest.raises(ScenarioError, match="category"):
+        load_scenario(path)
+
+
+def test_load_scenario_accepts_a_happy_path_threshold_override_with_a_reason(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = (
+        _MINIMAL
+        + "\ncategory: happy_path\nthreshold: 0.6\n"
+        + "threshold_reason: small model, tool-calling is flaky by design\n"
+    )
+    path = _write(tmp_path, "override.yaml", text)
+
+    scenario = load_scenario(path)
+
+    assert scenario.threshold == 0.6
+    assert scenario.threshold_reason == ("small model, tool-calling is flaky by design")
+
+
+def test_load_scenario_rejects_a_threshold_without_a_reason(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(tmp_path, "bad.yaml", _MINIMAL + "\nthreshold: 0.6\n")
+
+    with pytest.raises(ScenarioError, match="threshold_reason"):
+        load_scenario(path)
+
+
+def test_load_scenario_rejects_a_reason_without_a_threshold(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(tmp_path, "bad.yaml", _MINIMAL + "\nthreshold_reason: because\n")
+
+    with pytest.raises(ScenarioError, match="threshold"):
+        load_scenario(path)
+
+
+def test_load_scenario_rejects_a_threshold_on_a_guardrail_scenario(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = (
+        _MINIMAL + "\ncategory: guardrail\nthreshold: 0.9\nthreshold_reason: because\n"
+    )
+    path = _write(tmp_path, "bad.yaml", text)
+
+    with pytest.raises(ScenarioError, match="guardrail"):
+        load_scenario(path)
+
+
+@pytest.mark.parametrize("bad_threshold", [0, -0.1, 1.5, "high"])
+def test_load_scenario_rejects_an_out_of_range_or_non_numeric_threshold(
+    tmp_path: pathlib.Path, bad_threshold: object
+) -> None:
+    text = _MINIMAL + f"\nthreshold: {bad_threshold!r}\nthreshold_reason: because\n"
+    path = _write(tmp_path, "bad.yaml", text)
+
+    with pytest.raises(ScenarioError, match="threshold"):
+        load_scenario(path)

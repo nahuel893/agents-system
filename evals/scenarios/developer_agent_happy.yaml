@@ -8,6 +8,7 @@
 # adding knowledge_retrieval on top of what operator-agent already grants.
 # Grounded in real seeded content, so the call can plausibly succeed.
 role: developer-agent
+category: happy_path
 description: >
   Asks about a testing convention seeded into the knowledge base.
   developer-agent's own manifest adds knowledge_retrieval and

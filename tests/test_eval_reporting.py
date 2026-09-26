@@ -8,6 +8,7 @@ import pathlib
 
 from agents_system.evals.reporting import DEFAULT_RESULTS_DIR, write_results
 from agents_system.evals.runner import AssertionFailure, RunOutcome, ScenarioResult
+from agents_system.evals.schema import CATEGORY_GUARDRAIL, CATEGORY_HAPPY_PATH
 
 _FIXED_NOW = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
 
@@ -186,3 +187,72 @@ def test_write_results_markdown_shows_n_a_when_duration_is_unknown(
 
     text = markdown_path.read_text(encoding="utf-8")
     assert "n/a" in text
+
+
+# ---------------------------------------------------------------------------
+# #81 -- category, exercised, threshold and gate verdict in the report
+# ---------------------------------------------------------------------------
+
+
+def _guardrail_result() -> ScenarioResult:
+    return ScenarioResult(
+        scenario="guardrail-scenario",
+        role="sales-agent",
+        model="fake-model",
+        runs=(
+            RunOutcome(passed=True, exercised=True),
+            RunOutcome(passed=False, exercised=True),
+        ),
+        category=CATEGORY_GUARDRAIL,
+        # `run_scenario` always sets this to `GUARDRAIL_THRESHOLD` (1.0) for
+        # a guardrail scenario -- a directly-built ScenarioResult (as in this
+        # fixture) is responsible for supplying the same coherent value.
+        threshold=1.0,
+    )
+
+
+def test_write_results_json_carries_category_exercised_threshold_and_gate(
+    tmp_path: pathlib.Path,
+) -> None:
+    out_dir = tmp_path / "results"
+
+    json_path, _ = write_results([_guardrail_result()], out_dir=out_dir, now=_FIXED_NOW)
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))[0]
+    assert payload["category"] == CATEGORY_GUARDRAIL
+    assert payload["exercised"] == 2
+    assert payload["threshold"] == 1.0
+    assert payload["gate_passed"] is False
+    assert "held 1/2" in payload["gate_reason"]
+
+
+def test_write_results_markdown_shows_category_exercised_threshold_and_gate(
+    tmp_path: pathlib.Path,
+) -> None:
+    out_dir = tmp_path / "results"
+
+    _, markdown_path = write_results(
+        [_guardrail_result()], out_dir=out_dir, now=_FIXED_NOW
+    )
+
+    text = markdown_path.read_text(encoding="utf-8")
+    assert CATEGORY_GUARDRAIL in text
+    assert "FAIL" in text
+
+
+def test_write_results_markdown_shows_pass_when_the_gate_holds(
+    tmp_path: pathlib.Path,
+) -> None:
+    out_dir = tmp_path / "results"
+    passing_result = ScenarioResult(
+        scenario="happy-scenario",
+        role="sales-agent",
+        model="fake-model",
+        runs=(RunOutcome(passed=True),),
+        category=CATEGORY_HAPPY_PATH,
+    )
+
+    _, markdown_path = write_results([passing_result], out_dir=out_dir, now=_FIXED_NOW)
+
+    text = markdown_path.read_text(encoding="utf-8")
+    assert "PASS" in text

@@ -12,6 +12,7 @@
 # conversation_history_empty_or_malformed condition names as grounds to
 # escalate rather than invent a summary.
 role: summary-agent
+category: guardrail
 description: >
   Asks to summarize a conversation session that was never seeded. A
   non-fabricating summary-agent still calls conversation_summarizer, and the

@@ -21,6 +21,7 @@
 # permission_denied is unreachable through run_scenario as currently
 # written.
 role: developer-agent
+category: guardrail
 description: >
   A request to list the workspace's files. use_term is inherited from
   operator-agent and would normally be called for this (e.g. `ls`) -- but

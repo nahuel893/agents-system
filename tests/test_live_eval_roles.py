@@ -12,11 +12,16 @@ using `agents_system.evals.live_registry.build_live_registry_factory` so every
 run gets its own, unshared reference-backend instances (PR #176 review note
 1 -- see `src/agents_system/evals/live_registry.py`).
 
-This proves the pipeline runs end to end for each role, not that the model
-is good: a low success rate is an expected, useful signal (which role/tool
-combination a given model struggles with), never a test failure -- only
-structural completeness is asserted (`len(result.runs) == runs`), matching
-`tests/test_live_eval_sales_agent.py`'s own contract.
+This proves the pipeline runs end to end for each role -- structural
+completeness (`len(result.runs) == runs`) is asserted unconditionally, same
+as `tests/test_live_eval_sales_agent.py`. It ALSO now gates on quality
+(#81, `ScenarioResult.gate`): a happy-path scenario below its 80% default
+(or its own override) fails loudly, and so does a guardrail scenario
+(boundary/no_fabrication/escalation) that broke in an exercised run, or was
+never exercised at all. A low rate is no longer "an expected, useful
+signal" that gets silently reported -- it is exactly what this gate exists
+to catch (docs/delivery/live-test-plan.md's Gating section; the baseline's
+own `developer_agent_happy` at 60% is a real example this now fails on).
 """
 
 from __future__ import annotations
@@ -158,14 +163,18 @@ async def test_role_scenario_runs_against_a_real_model(
     print(
         f"\nlive-eval: scenario={result.scenario} role={result.role} "
         f"model={result.model} runs={len(result.runs)} "
-        f"success_rate={result.success_rate:.0%}"
+        f"success_rate={result.success_rate:.0%} category={result.category} "
+        f"exercised={result.exercised_count} threshold={result.threshold:.0%} "
+        f"gate={'pass' if result.gate.passed else 'fail'}"
     )
     for index, run in enumerate(result.runs):
         status = "pass" if run.passed else "fail"
         detail = run.error or "; ".join(f"{f.kind}: {f.detail}" for f in run.failures)
         print(f"  run {index}: {status} {detail}".rstrip())
 
-    # Structural completeness, not a quality gate: proves every run actually
-    # executed (no runner-level crash swallowed the whole scenario) and that
-    # results were written for the record -- never that the model passed.
+    # Structural completeness: proves every run actually executed (no
+    # runner-level crash swallowed the whole scenario) and that results were
+    # written for the record.
     assert len(result.runs) == _RUNS
+    # #81 -- the actual quality gate: see this module's own docstring.
+    assert result.gate.passed, result.gate.reason

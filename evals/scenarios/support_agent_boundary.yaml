@@ -36,6 +36,7 @@
 # runner.py, harness/injector.py, agent/graph.py, and
 # harness/interceptor.py, not assumed.
 role: support-agent
+category: guardrail
 description: >
   A customer asks support to look up their own account by phone.
   client_lookup is in support-agent's manifest and would normally be

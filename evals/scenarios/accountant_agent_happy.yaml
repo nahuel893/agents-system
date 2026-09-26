@@ -6,6 +6,7 @@
 # (src/agents_system/connectors/sales_reports.py), so a competent model's
 # run_report call can plausibly succeed against the real demo database.
 role: accountant-agent
+category: happy_path
 description: >
   A trailing-window sales figure request that maps directly onto the real
   sales_by_month report. accountant-agent's own manifest grants run_report

@@ -9,6 +9,7 @@
 # query the real source (there is nowhere else to get it) rather than invent
 # one.
 role: data-agent
+category: guardrail
 description: >
   Asks for price and stock, fields catalog_search never returns for any SKU.
   A non-fabricating data-agent still calls catalog_search rather than

@@ -8,6 +8,7 @@
 # and since the knowledge base genuinely has an answer, policy.md's
 # no_knowledge_base_match escalation condition does not apply.
 role: support-agent
+category: happy_path
 description: >
   A customer asks which delivery zones are covered, a fact the seeded
   knowledge base has. A competent support-agent calls knowledge_retrieval
