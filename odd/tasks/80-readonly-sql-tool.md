@@ -16,8 +16,10 @@ Delivery strategy: single PR (explicit instruction). Forecast is well above the 
 - [x] T2 — Permission family `Query` + `query:sql` (T2) and the `sql_query` connector: read-only transaction, per-statement timeout, per-call role verification, N+1 fetch, JSON-safe cells, fixed error texts. Route: inline (executor). RED: collection ImportError. GREEN: 59 connector and role tests; full offline suite green. Execution lives in `services/sql_query.py` because connectors may not call `rollback()` (static contract test). Commit `06fe05b`.
 - [x] T3 — Database layer: `scripts/provision_sql_readonly.sql`, `verify_query_role`, Postgres integration test proving the role refuses writes with the application bypassed, CI wiring. RED: 34 failed / 1 passed before the role existed. GREEN: 45 passed on a throwaway PostgreSQL 16. Found and fixed: the planner evaluated `has_sequence_privilege` on a TOAST table, so privilege calls now sit behind CASE; provisioning made atomic. Commit `127832d`.
 - [x] T4 — ADR-007 (EN + ES) amending AD-2, tool docs (EN + ES), `reports.py` docstring pointer, live-test-plan gap update. Docs-only plus a docstring; offline suite green.
-- [ ] T5 — Full offline suite, lint, format, mypy; rebase; PR; CI.
+- [x] T4b — Live scenarios (`tests/test_live_eval_sql_query.py`) through a test-only role: an ad hoc question and a delete request. 3 runs each on a local `qwen2.5:3b` and on an OpenAI-compatible model: 100% pass, data intact.
+- [x] T4c — Self-review found an application-layer breakout: `E'\\'` rendered as `e'\'` let a later string become live SQL (confirmed on PostgreSQL 16; the role still refused it). Fixed: non-standard string literals refused, the rendering re-validated to a fixed point, `standard_conforming_strings` pinned. RED 7 failed / GREEN 131. Added a differential test: EXPLAIN of accepted text, as a role that could read the secret table, names only the allowlisted view's base table.
+- [ ] T5 — Full offline suite, lint, format, mypy; rebase; PR; CI. Local after rebase on `c4d1ec1`: ruff check and format clean, mypy clean (73 files), 1640 passed / 17 xfailed, coverage 96.11% (gate 94), integration 49 passed. PR and CI: see the PR.
 
-Acceptance: the #80 acceptance criteria. The live-model scenario depends on a role granting the tool and on the Phase 0 live harness (#78); tracked as a follow-up if not exercised here.
+Acceptance: the #80 acceptance criteria. The live scenario runs through a test-only role and the direct runtime; running it through the HTTP API needs a predefined role that declares the tool and the Phase 0 harness (#78).
 
-Progress / evidence: T1 to T4 done; T5 in progress.
+Progress / evidence: T1 to T4c done; T5 awaiting CI.
