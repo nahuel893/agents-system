@@ -1211,7 +1211,8 @@ def _read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
     ``O_NOFOLLOW``. A component that is a symlink by now fails the open
     instead of being followed, so the file read is always the one under
     ``root``. The file is opened the same way, non-blocking, and must be a
-    regular file: a FIFO cannot stall the load.
+    regular file: a FIFO cannot stall the load, and a directory or FIFO is
+    refused with its handle closed.
 
     Every refusal is an ``OSError`` (a path outside ``root`` included);
     callers turn it into their own error. Hard links and mounts are out of
@@ -1236,9 +1237,16 @@ def _read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
         )
     finally:
         os.close(fd)
-    with open(file_fd, encoding="utf-8") as handle:
+    # Checked before `open()` takes the handle: `open()` refuses a directory
+    # but never closes a descriptor it was handed, so a folder with a
+    # directory where a file belongs leaked one per load (PR #97 review).
+    try:
         if not stat.S_ISREG(os.fstat(file_fd).st_mode):
             raise OSError(errno.EINVAL, "not a regular file", parts[-1])
+    except BaseException:
+        os.close(file_fd)
+        raise
+    with open(file_fd, encoding="utf-8") as handle:
         return handle.read()
 
 

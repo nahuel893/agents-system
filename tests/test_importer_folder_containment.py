@@ -16,6 +16,7 @@ importer root, and nothing an importer supplies skips the loader's checks.
 from __future__ import annotations
 
 import dataclasses
+import gc
 import os
 import pathlib
 from typing import Any
@@ -347,6 +348,77 @@ def test_a_fifo_is_refused_without_blocking(root: pathlib.Path) -> None:
 
     with pytest.raises(OSError):
         _read_within_root(root, checked)
+
+
+_LEAK_ROUNDS = 20
+
+
+def _open_fd_count() -> int:
+    """How many file descriptors this process holds right now."""
+    gc.collect()  # an unreachable file object from an earlier test holds one
+    for fd_dir in ("/proc/self/fd", "/dev/fd"):
+        if os.path.isdir(fd_dir):
+            return len(os.listdir(fd_dir))
+    pytest.skip("no per-process descriptor directory to count open files")
+
+
+def test_a_directory_is_refused_without_leaking_a_descriptor(
+    root: pathlib.Path,
+) -> None:
+    """PR #97 review: the handle opened for a directory was given to `open()`,
+    which refuses a directory and does not close a descriptor it was handed.
+    Each load of a hostile folder leaked one."""
+    checked = _resolve_within_root(root, root / "vip-support", "role.md")
+    assert checked is not None
+    checked.unlink()
+    checked.mkdir()
+    before = _open_fd_count()
+
+    for _ in range(_LEAK_ROUNDS):
+        with pytest.raises(OSError):
+            _read_within_root(root, checked)
+
+    assert _open_fd_count() == before
+
+
+@pytest.mark.parametrize("filename", _ROLE_FILES)
+def test_role_file_that_is_a_directory_fails_without_leaking(
+    root: pathlib.Path, tmp_path: pathlib.Path, filename: str
+) -> None:
+    """A host that reloads an uploaded folder on demand must not run out of
+    descriptors because the folder has a directory where a file belongs."""
+    target = root / "vip-support" / filename
+    target.unlink()
+    target.mkdir()
+    locator = FolderLocator(path=root / "vip-support", root=root)
+    roots = _roots(tmp_path)
+    before = _open_fd_count()
+
+    for _ in range(_LEAK_ROUNDS):
+        message = _error(locator, roots)
+
+    assert _open_fd_count() == before
+    assert filename in message
+    _assert_no_host_path(message, tmp_path)
+
+
+def test_skill_that_is_a_directory_fails_without_leaking(
+    tmp_path: pathlib.Path,
+) -> None:
+    root = tmp_path / "agents"
+    folder = _agent(root, "vip-support", skills=("tone",))
+    skill = folder / "skills" / "tone.md"
+    skill.unlink()
+    skill.mkdir()
+    roots = _roots(tmp_path)
+    definition = resolve(FolderLocator(path=folder, root=root), roots=roots)
+    before = _open_fd_count()
+
+    for _ in range(_LEAK_ROUNDS):
+        with pytest.raises(FactoryError):
+            _load_skills(definition, None, roots)
+
+    assert _open_fd_count() == before
 
 
 def test_read_within_root_reads_a_contained_file(root: pathlib.Path) -> None:

@@ -110,7 +110,7 @@ An importer folder is a trust boundary: whoever writes inside it may not be whoe
 
 #### Reading after checking (TOCTOU)
 
-A check followed by a read leaves a window: a folder that passed the check can be swapped for a symlink before it is read. The loader closes that window on Linux and macOS with directory-handle reads. After the containment check, it opens the importer root and walks the checked path one folder at a time, opening each one relative to the previous one with `O_NOFOLLOW` (`os.open` with `dir_fd`). The file is opened the same way, non-blocking, and must be a regular file. A path component that became a symlink after the check fails the read instead of being followed, and a named pipe cannot block the load.
+A check followed by a read leaves a window: a folder that passed the check can be swapped for a symlink before it is read. The loader closes that window on Linux and macOS with directory-handle reads. After the containment check, it opens the importer root and walks the checked path one folder at a time, opening each one relative to the previous one with `O_NOFOLLOW` (`os.open` with `dir_fd`). The file is opened the same way, non-blocking, and must be a regular file. A path component that became a symlink after the check fails the read instead of being followed, and a named pipe cannot block the load. A directory or named pipe where a file belongs fails the load with its handle closed, so reloading a hostile folder cannot exhaust the process's file descriptors.
 
 This was chosen over documenting the window because it takes only the standard library on both systems the platform runs on, and it removes the gap instead of describing it.
 
