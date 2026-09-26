@@ -100,6 +100,13 @@ de arquitectura.
 
 #### A.1 — Rol = clase; agente = identidad durable + memoria con activaciones efímeras
 
+> **Extendido por ADR-004:** "rol" aquí ya no es solo uno de los 8 roles
+> predefinidos empaquetados — un `Agent` autorado por quien importa (desde
+> una carpeta, desde parámetros de Python, o ambos) se resuelve mediante el
+> mismo pipeline `AgentDefinition`/`AgentRuntime` y hereda idénticamente la
+> distinción clase/instancia de esta sección. Ver
+> [ADR-004 — Agentes personalizados library-first](adr-004-library-first-agents.md).
+
 **Estado actual.** `docs/platform/role.md:16-26` ya enuncia correctamente
 la distinción `AgentDefinition` (rol basado en carpeta) / `AgentRuntime`
 (instancia viva), y el código coincide: `resolve()`
@@ -1265,6 +1272,13 @@ están documentados en `docs/operations/sandbox-bwrap.md` (EN) y
 
 #### C.15 — Backends de referencia para los puertos genéricos de la plataforma
 
+> **Extendido por ADR-004:** estos backends de referencia y los puertos
+> detrás de ellos son agnósticos a la forma del agente — disponibles para un
+> `Agent` definido por quien importa exactamente igual que para un rol
+> predefinido, ya que el cableado ocurre debajo de la `AgentDefinition`
+> resuelta, no por nombre de rol. Ver
+> [ADR-004 — Agentes personalizados library-first](adr-004-library-first-agents.md).
+
 **Estado actual.** `EscalationChannel`, `ConversationSummarizer` y
 `KnowledgeBase` son puertos `Protocol` (`services/escalation.py:24`,
 `services/summaries.py:23`, `services/knowledge.py:23`) **sin ninguna
@@ -1349,6 +1363,13 @@ que hace el modelo en respuesta al prompt *pretendido*.
 ---
 
 ### D. Composición de roles
+
+> **Extendido por ADR-004:** un `Agent` definido por quien importa puede
+> extender `platform/roles/agent` o cualquier rol predefinido de este árbol
+> mediante la misma herencia aditiva `extends:`, usando un locator que
+> también acepta una ruta de carpeta de quien importa o una definición
+> inline en Python, no solo un nombre de rol de plataforma. Ver
+> [ADR-004 — Agentes personalizados library-first](adr-004-library-first-agents.md).
 
 **Árbol actual**, verificado directamente contra el campo `extends:` de
 cada `manifest.md` real:
@@ -1515,6 +1536,12 @@ probar el contrato del rol".
 
 #### E.18 — Pipeline de evaluación en vivo
 
+> **Extendido por ADR-004:** este pipeline corre contra una
+> `AgentDefinition`/`AgentRuntime` resuelta, no contra un nombre de rol, así
+> que se aplica a un `Agent` definido por quien importa exactamente igual
+> que a un rol predefinido. Ver
+> [ADR-004 — Agentes personalizados library-first](adr-004-library-first-agents.md).
+
 **Estado actual.** No existe tal pipeline. El CI por PR es determinístico
 (offline, basado en un modelo falso) según la propia forma de la suite de
 pruebas existente (`build_test_registry`, `tests/conftest.py:101`, y sus
@@ -1592,6 +1619,12 @@ este pipeline todavía se corre a mano (`pytest -m live`) únicamente. Ver
 ---
 
 ### F. Documentación desactualizada
+
+> **Extendido por ADR-004:** la contradicción sobre la ubicación de skills
+> entre `role.md` y `deployment.md`, cercana al trabajo de higiene
+> documental de esta sección, se resuelve allí, y el renombrado de
+> terminología genérico→predefinido toca los mismos archivos. Ver
+> [ADR-004 — Agentes personalizados library-first](adr-004-library-first-agents.md).
 
 #### F.19 — `role.md` / `manifesto.md` dicen que los roles viven bajo `agents/`; la ruta real es `platform/roles/`
 
