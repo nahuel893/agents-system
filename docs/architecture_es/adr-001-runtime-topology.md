@@ -23,7 +23,7 @@ salva agregando workers. Medido sobre la máquina de desarrollo:
 | `max_connections` de PostgreSQL | 100 | `show max_connections` |
 | `superuser_reserved_connections` | 3 | `show superuser_reserved_connections` |
 | `shared_buffers` | 128 MB (default de fábrica, sin tunear) | `show shared_buffers` |
-| Pool de conexiones | **sin configurar** → default de SQLAlchemy 5 + 10 = 15 por engine | `models/base.py:65` |
+| Pools de conexiones | Configurados por engine: operacional 5 + 0, BI/medallion 3 + 0, herramienta SQL 2 + 0 | `config.py`, `models/base.py` |
 | Engines por proceso **servidor** | **2** (operacional + BI) | `main.py:122`, `main.py:193` |
 | Engines por proceso de **script de sync** | 2 (operacional + medallion) | `scripts/sync_articles.py:36-37` · `sync_clients.py:28-29` |
 | Default de `embedding_provider` | `"local"` | `config.py` |
@@ -36,34 +36,35 @@ del conector (`rag_connector.py:108-109` lo documenta: "BGE-M3 es pesado — car
 una vez por registry, no por llamada"). Ese diseño es correcto, y significa que
 cada proceso worker sostiene su propia copia de 4,3 GB del modelo.
 
-**Las conexiones a la base también son por proceso.** Con el pool en el default
-de SQLAlchemy (`pool_size=5, max_overflow=10`, verificado contra un engine
-async real, no supuesto de los defaults sync), cada engine puede abrir 15
+**Las conexiones a la base también son por proceso.** Cada engine recibe
+límites explícitos desde `Settings`: el pool operacional tiene por defecto 5 +
+0 de overflow, los pools de BI y medallion 3 + 0, y el pool dedicado de la
+herramienta SQL 2 + 0. Todos los pools también reciben 30 segundos de timeout
+para obtener una conexión y un intervalo de reciclado de 30 minutos. Los
+defaults sin overflow son deliberados: la capacidad estable es predecible y la
+herramienta SQL no puede convertir una ráfaga de consultas del modelo en más
 conexiones.
 
-Un proceso **servidor** sostiene dos: el engine operacional, siempre, y el de
-BI cuando `adapter_runtimes` y `bi_database_url` están ambos seteados — que es
-el caso del despliegue de ACME, porque el `data-agent` lo necesita. El engine
-de medallion NO es uno de ellos: `main.py` nunca lo construye. Existe solo en
-`scripts/sync_articles.py` y `scripts/sync_clients.py`, que son procesos
-separados y efímeros que lo emparejan con el operacional.
+### Regla de dimensionamiento del pool
 
-| Procesos servidor | Conexiones | Contra 97 utilizables |
-|---|---|---|
-| 1 | 30 | entra |
-| 2 | 60 | entra |
-| 3 | 90 | entra, con 7 de margen |
-| 4 | 120 | **agota** |
+Para cada despliegue, calcule el límite superior antes de elegir los settings:
 
-O sea: con los defaults de hoy el techo son **cuatro** procesos servidor.
+```text
+total de conexiones = procesos × Σ(pool_size + max_overflow de cada engine del proceso)
+```
 
-El margen de siete conexiones con tres procesos es lo que vale mirar. Un script
-de sync abre su propio par de engines — hasta 30 conexiones más — y esos
-scripts son exactamente lo que un cron dispara mientras el servicio está
-arriba. Tres procesos servidor más un sync corriendo son 120 contra 97: el
-servicio empieza a fallar al pedir conexiones porque se disparó una
-sincronización de catálogo. Dimensionar el pool (D-032) tiene que contemplar
-los scripts, no solo los workers.
+El resultado debe quedar por debajo de `max_connections - conexiones_reservadas`,
+incluyendo procesos de sync o mantenimiento de corta vida que pueden solaparse
+con el servicio. Aplique la fórmula por separado a cada tipo de proceso y luego
+sume los tipos que pueden ejecutarse al mismo tiempo.
+
+**Ejemplo resuelto.** Un despliegue ejecuta tres procesos servidor con los
+engines operacional, BI y de la herramienta SQL, más un proceso de sync
+concurrente con los engines operacional y medallion. Su límite superior es
+`3 × ((5 + 0) + (3 + 0) + (2 + 0)) + 1 × ((5 + 0) + (3 + 0)) = 38` conexiones.
+Con `max_connections=100` y tres conexiones reservadas, 38 queda por debajo de
+las 97 conexiones utilizables. Aumentar la cantidad de workers, habilitar otro
+engine o aumentar overflow exige recalcular este límite primero.
 
 ## Decisión
 
@@ -132,7 +133,7 @@ Inventariado leyendo el runtime, no supuesto:
 |---|---|---|
 | ~~`_seq_counter`~~ asignación de secuencia | ahora tabla `audit_sequence`, asignada atómicamente en `AuditSink._flush_batch` | **Sí — arreglado por D-042 (#9).** El contador se mudó a la base de datos: un upsert atómico por `correlation_id` contra `audit_sequence` (migración `005_audit_sequence`), ejecutado dentro de la misma transacción con la que ya commitea cada lote. El propio row lock de PostgreSQL sobre esa fila serializa a los workers concurrentes de cualquier proceso. |
 | Cola de auditoría + `dropped_count` | en memoria, `audit/sink.py` | **Parcialmente.** Cada proceso tiene su propia cola de 1000 y su propio contador; nada los agrega, así que la pérdida de auditoría se vuelve N números invisibles en lugar de uno. Necesita D-046. |
-| Pools de conexiones | SQLAlchemy, sin configurar | **No — D-032.** 4 procesos servidor agotan `max_connections` con los defaults actuales, y 3 más un script de sync corriendo ya lo hacen. |
+| Pools de conexiones | SQLAlchemy, configurados desde `Settings` | **Sí, si se dimensionan con la fórmula documentada.** Cada tipo de proceso debe incluir todos sus engines habilitados y el solapamiento con procesos de sync o mantenimiento. |
 | Embedder BGE-M3 local | RAM del proceso | **No.** N × 4,3 GB. Resuelto por la decisión 1. |
 | Control de admisión | *no existe* | **N/A — D-033.** No hay semáforo ni límite de turnos concurrentes en ninguna parte del código. La advertencia del roadmap de que "el techo real es 4× lo que escribiste" todavía no aplica, porque no hay nada escrito. |
 | `app.state.runtimes` | cacheado al boot | Sí — solo lectura después de que el lifespan lo construye. |
@@ -167,7 +168,7 @@ Ordenadas como deben hacerse, con lo que cambió en cada una:
 | **D-033** control de admisión | medium | **Requerido para la Etapa A.** Hoy nada acota los turnos concurrentes. Sin límite, 100 conversaciones que llegan abren 100 turnos y agotan el pool sin importar la cantidad de procesos. Es la protección más barata de la lista y hace falta con 10, no solo con 100. |
 | **D-030** el webhook devuelve 200 antes del turno | high | Sin cambios, y ahora desbloqueada. Requerida para la Etapa A. |
 | **D-031** claim/release de dedup | medium | Tiene que aterrizar junto con D-030, por lo dicho arriba. |
-| **D-032** dimensionamiento del pool | **low** | **Elevada.** Es la restricción que ata a partir de 4 procesos servidor, así que es prerrequisito de la Etapa B, no una optimización. Configurar `pool_size`/`max_overflow` desde settings en ambos engines, dimensionados como `max_connections` ÷ procesos esperados — dejando lugar para los scripts de sync, que abren su propio par de engines y pueden pasar del límite a un despliegue de 3 procesos por sí solos. |
+| **D-032** dimensionamiento del pool | **low** | **Hecha — #11.** Cada engine recibe `pool_size`, `max_overflow`, `pool_timeout` y `pool_recycle` desde settings validados. Antes de cambiar la cantidad de workers o los engines habilitados, los operadores tienen que aplicar la regla de dimensionamiento de arriba. |
 | **D-042** `_seq_counter` | medium | **Arreglado — #9.** Era: ahora decidible, como la Etapa B es un objetivo real, el arreglo tiene que sobrevivir a N procesos — mover la secuencia a la base de datos (una secuencia por correlación, o una expresión en el INSERT), no un contador en memoria más astuto; limpiar por request no alcanza. Se envió exactamente eso: un upsert atómico por `correlation_id` contra `audit_sequence`. |
 | **D-041** `stop()` pierde la cola | medium | **Arreglado — #8.** Era: sin cambios, y más importante en la Etapa B, donde N procesos pierden cada uno su cola en cada despliegue. `stop()` ahora espera el flush de cierre del drainer en vez de cancelarlo. |
 | **D-046** exponer `dropped_count` | medium | Sube de valor: en la Etapa B es la única forma de ver la pérdida agregada de auditoría. |
