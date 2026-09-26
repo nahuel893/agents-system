@@ -9,7 +9,7 @@ Issue: #11 — Pool sizing from settings, both engines
 - [x] Document the capacity rule in English and Spanish, verify, commit, and open the PR.
 - [x] Add red tests for the restored operational ceiling and the turn-plus-worker capacity invariant.
 - [x] Restore the default overflow, validate the capacity rule at settings startup, and correct the engine type annotation and admission comment.
-- [ ] Update the ADR-001 worked examples in English and Spanish, then verify, rebase, push, update the PR body, and watch checks.
+- [x] Update the ADR-001 worked examples in English and Spanish, then verify, rebase, push, update the PR body, and watch checks.
 
 ## Evidence
 
@@ -21,4 +21,5 @@ Issue: #11 — Pool sizing from settings, both engines
 - RED: `pytest -q tests/test_config.py tests/test_get_engine.py` failed with the old `database_max_overflow=0` default and no capacity validation; `mypy tests/test_get_engine.py` reported the incompatible `Settings` argument for `get_medallion_engine`.
 - GREEN: `pytest -q tests/test_config.py tests/test_get_engine.py` passed: 83 passed, 2 xfailed. The focused mypy run no longer reports the medallion argument mismatch; it still reports five pre-existing `_env_file` constructor errors in the test file.
 - Verification before push: `ruff check .`, `ruff format --check .`, and `mypy src/` passed. Full `pytest -q` passed after rebasing check: 2283 passed, 184 deselected, 17 xfailed.
-- Commits: `e5b3a9d` (capacity validation, defaults, tests, and annotations); `74992e3` (bilingual ADR updates).
+- Commits: `e5b3a9d` (capacity validation, defaults, tests, and annotations); `74992e3` (bilingual ADR updates); `93d29dd` (review-fix evidence).
+- PR #107: pushed the review fixes, added a `Review fixes` section, and `gh pr checks 107 --watch` passed every check.
