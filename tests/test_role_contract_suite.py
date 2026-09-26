@@ -220,3 +220,20 @@ def test_ungranted_tool_check_catches_a_wrongly_granted_tool() -> None:
         check_ungranted_tools_are_not_injected(
             definition, registry, wrongly_granted_everything
         )
+
+
+def test_platform_role_contract_module_uses_predefined_terminology() -> None:
+    """PR5 (ADR-004): `platform_role_contract.py`'s own doc language for the
+    eight packaged roles says "predefined role", never "generic role"
+    (agent-definition-locator spec's Terminology section) -- "generic" stays
+    reserved for the abstract base->agent tree, which this module never
+    names in its own docs/comments anyway.
+    """
+    import inspect
+    import pathlib
+
+    from platform_role_contract import discover_platform_roles
+
+    source = pathlib.Path(inspect.getfile(discover_platform_roles)).read_text()
+    assert "generic role" not in source.lower()
+    assert "predefined role" in (discover_platform_roles.__doc__ or "").lower()

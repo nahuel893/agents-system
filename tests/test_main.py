@@ -2736,12 +2736,13 @@ async def test_env_registration_is_ignored_when_create_app_gets_agents(
 async def test_env_registration_leaves_demo_build_app_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """design.md D5: `demo.py`'s `build_app` passes no `agents=` and needs no
+    """design.md D5: `examples/demo/app.py`'s `build_app` (moved from
+    `agents_system.demo` by PR5, ADR-004) passes no `agents=` and needs no
     change -- with nothing registered in the environment it boots with an
     empty runtime cache."""
-    from agents_system.demo import build_app
+    from _demo_app import demo_app
 
-    app = build_app(engine=MagicMock(), model=MagicMock())
+    app = demo_app.build_app(engine=MagicMock(), model=MagicMock())
 
     await _boot(app, _env_settings(monkeypatch))
 

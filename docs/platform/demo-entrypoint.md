@@ -1,6 +1,6 @@
 # Demo API entrypoint
 
-`agents_system.demo` serves the fake company database through the platform's
+`examples/demo/app.py` serves the fake company database through the platform's
 OpenAI-compatible adapter. It is the **serve it** half of
 [`demo/load_demo_company.py`](../../demo/load_demo_company.py): load the
 repeatable demo data first, then start an API against it. This is a manual
@@ -74,7 +74,7 @@ full declared set here never hands a T3 permission to an untrusted-input role
 
 ## 3. Satisfy the two startup security checks
 
-`uv run python -m agents_system.demo` boots through `create_app`, and refuses
+`python examples/demo/app.py` boots through `create_app`, and refuses
 to start unless two things hold. Both are enforced fail-closed:
 
 1. **A non-empty webhook secret.** `create_app`'s lifespan runs
@@ -121,7 +121,7 @@ export ALLOW_INSECURE=true
 ## 4. Run it
 
 ```bash
-uv run python -m agents_system.demo
+python examples/demo/app.py
 ```
 
 ## 5. Call the OpenAI-compatible API

@@ -6,15 +6,41 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from _demo_app import demo_app
 from httpx import ASGITransport, AsyncClient
 
 from agents_system.config import Settings
-from agents_system.demo import (
-    _demo_registry_factory,
-    _ensure_read_only_engine,
-    build_app,
-)
 from agents_system.main import lifespan
+
+# PR5 (ADR-004) moved `agents_system.demo` to `examples/demo/app.py`, which
+# ships no `__init__.py` (design.md D7) and is loaded by path through
+# `tests/_demo_app.py` instead of a normal import statement.
+_demo_registry_factory = demo_app._demo_registry_factory
+_ensure_read_only_engine = demo_app._ensure_read_only_engine
+build_app = demo_app.build_app
+
+
+# ---------------------------------------------------------------------------
+# PR5 (ADR-004) -- agents_system.demo relocates to examples/demo/app.py
+# ---------------------------------------------------------------------------
+
+
+def test_agents_system_demo_module_no_longer_exists() -> None:
+    """agent-registration-serving spec: "The installed package contains no
+    application entrypoint" -- `agents_system.demo` must not be importable
+    once PR5 moves it under `examples/`."""
+    import importlib
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("agents_system.demo")
+
+
+def test_examples_demo_app_exposes_build_app_and_main() -> None:
+    """agent-registration-serving spec: "An equivalent example entrypoint
+    exists outside the package" -- `examples/demo/app.py` exposes the same
+    `build_app`/`main` surface `agents_system.demo` did."""
+    assert callable(demo_app.build_app)
+    assert callable(demo_app.main)
 
 
 def _fake_checkpointer_cm_factory(fake_checkpointer: Any) -> Any:
@@ -69,7 +95,7 @@ async def test_ensure_read_only_engine_raises_when_not_read_only_and_insecure_no
 ):
     """A demo DB role that can write must block startup by default."""
     with (
-        patch("agents_system.demo.role_is_read_only", AsyncMock(return_value=False)),
+        patch.object(demo_app, "role_is_read_only", AsyncMock(return_value=False)),
         pytest.raises(SystemExit),
     ):
         await _ensure_read_only_engine(MagicMock(), allow_insecure=False)
@@ -77,19 +103,19 @@ async def test_ensure_read_only_engine_raises_when_not_read_only_and_insecure_no
 
 async def test_ensure_read_only_engine_logs_and_continues_when_allow_insecure() -> None:
     """ALLOW_INSECURE=true bypasses the block but must not raise."""
-    with patch("agents_system.demo.role_is_read_only", AsyncMock(return_value=False)):
+    with patch.object(demo_app, "role_is_read_only", AsyncMock(return_value=False)):
         await _ensure_read_only_engine(MagicMock(), allow_insecure=True)
 
 
 async def test_ensure_read_only_engine_continues_when_unverified() -> None:
     """An undetermined role (DB unreachable) must not fail closed, like BI's check."""
-    with patch("agents_system.demo.role_is_read_only", AsyncMock(return_value=None)):
+    with patch.object(demo_app, "role_is_read_only", AsyncMock(return_value=None)):
         await _ensure_read_only_engine(MagicMock(), allow_insecure=False)
 
 
 async def test_ensure_read_only_engine_continues_when_read_only() -> None:
     """A confirmed read-only role must not raise or warn about anything wrong."""
-    with patch("agents_system.demo.role_is_read_only", AsyncMock(return_value=True)):
+    with patch.object(demo_app, "role_is_read_only", AsyncMock(return_value=True)):
         await _ensure_read_only_engine(MagicMock(), allow_insecure=False)
 
 

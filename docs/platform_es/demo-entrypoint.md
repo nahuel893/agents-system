@@ -1,6 +1,6 @@
 # Entrada de la API de demostración
 
-`agents_system.demo` sirve la base de datos de la empresa ficticia a través del
+`examples/demo/app.py` sirve la base de datos de la empresa ficticia a través del
 adaptador compatible con OpenAI de la plataforma. Es la mitad de **servirlo** de
 [`demo/load_demo_company.py`](../../demo/load_demo_company.py): primero cargá
 los datos repetibles de demostración y después iniciá una API sobre ellos. Es
@@ -78,7 +78,7 @@ confiable (ADR-002 C.11/C.13).
 
 ## 3. Cumplí las dos verificaciones de seguridad de arranque
 
-`uv run python -m agents_system.demo` arranca a través de `create_app`, y se
+`python examples/demo/app.py` arranca a través de `create_app`, y se
 niega a iniciar salvo que se cumplan dos cosas. Ambas se aplican de forma
 fail-closed (cierran en caso de duda):
 
@@ -127,7 +127,7 @@ export ALLOW_INSECURE=true
 ## 4. Corrélo
 
 ```bash
-uv run python -m agents_system.demo
+python examples/demo/app.py
 ```
 
 ## 5. Llamá a la API compatible con OpenAI

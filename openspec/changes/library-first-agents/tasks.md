@@ -1128,7 +1128,7 @@ update in PR5-T2 and the `docs/platform_es/role.md`/`docs/platform_es/deployment
 rename pass in PR5-T1, per the corrected `_es` doc-twin note above). **This
 PR is breaking** — see PR5-T3.
 
-- [ ] **PR5-T1 — Rename "generic role(s)" → "predefined role(s)" (identifiers, comments, error messages, docs).**
+- [x] **PR5-T1 — Rename "generic role(s)" → "predefined role(s)" (identifiers, comments, error messages, docs).**
   RED: extend `tests/test_untrusted_input_invariant.py`/
   `tests/test_harness_loader.py` (whichever already assert on a role-load
   failure message's exact text) with cases asserting a predefined-role load
@@ -1176,7 +1176,7 @@ PR is breaking** — see PR5-T3.
   reference to the base->agent tree is unaffected".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR5-T2 — Move `demo.py` → `examples/demo/app.py`; update `demo-entrypoint.md`.**
+- [x] **PR5-T2 — Move `demo.py` → `examples/demo/app.py`; update `demo-entrypoint.md`.**
   RED: add `tests/test_demo_entrypoint.py`-scoped assertions (extending that
   existing file, confirmed present) that `agents_system.demo` no longer
   exists as an importable module (`import agents_system.demo` raises
@@ -1223,7 +1223,7 @@ PR is breaking** — see PR5-T3.
   equivalent example entrypoint exists outside the package".
   <!-- sdd-owner: implementation -->
 
-- [ ] **PR5-T3 — PR5 closing: full verification + BREAKING CHANGE marker.**
+- [x] **PR5-T3 — PR5 closing: full verification + BREAKING CHANGE marker.**
   Verify: `.venv/bin/pytest -q` (full suite), `.venv/bin/ruff check .`,
   `.venv/bin/ruff format --check .`, `.venv/bin/mypy src/`. Confirm `git diff
   --stat` against PR5's branch base; flag if it exceeds ~400 lines. **This

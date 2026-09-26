@@ -95,7 +95,7 @@ threshold_reason: >           # obligatorio junto con threshold
 name: sales_agent_smoke      # opcional — por defecto, el nombre del archivo sin extensión
 description: >               # opcional, texto libre
   Un cliente pregunta por un artículo del catálogo.
-client: deployment-id        # opcional — resolver bajo un deployment; omitir para el rol genérico
+client: deployment-id        # opcional — resolver bajo un deployment; omitir para el rol predefinido
 turns:                       # obligatorio, no vacío — mensajes del usuario, en orden
   - "Hola, ¿tenés Item Alpha en stock y cuánto sale?"
 assertions:
