@@ -232,6 +232,24 @@ def test_build_runtime_deploy_grant_ceiling_by_class_and_by_name_are_identical()
     assert by_name.deploy_grant_ceiling == expected
 
 
+def test_build_runtime_rejects_an_unregistered_permission_class_grant() -> None:
+    """Class-form grants must be registered before a runtime can be built."""
+    from agents_system.harness.factory import build_runtime
+    from agents_system.permissions import UnknownPermissionNameError, Write
+
+    class UnregisteredWriteGrant(Write):
+        pass
+
+    with pytest.raises(UnknownPermissionNameError, match="UnregisteredWriteGrant"):
+        build_runtime(
+            "sales-agent",
+            _sales_registry(),
+            [UnregisteredWriteGrant],
+            client="client-a",
+            roots=_client_a_roots(),
+        )
+
+
 def test_build_runtime_deploy_grant_ceiling_default_empty() -> None:
     """No `deploy_grant_ceiling` bleeds through when granted_permissions is
     empty — the dataclass default, not an accident of the resolution loop."""

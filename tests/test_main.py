@@ -2477,6 +2477,27 @@ async def test_registration_with_a_client_needs_an_explicit_root_config() -> Non
 
 
 @pytest.mark.asyncio
+async def test_registration_rejects_an_unregistered_permission_class_grant_at_boot() -> (
+    None
+):
+    """A class-form grant supplied to create_app fails during boot, not a turn."""
+    from agents_system.permissions import Read, UnknownPermissionNameError
+
+    class UnregisteredReadGrant(Read):
+        pass
+
+    app = create_test_app(
+        agents={"support-bot": "sales-agent"},
+        grants={"support-bot": [UnregisteredReadGrant]},  # type: ignore[dict-item]
+    )
+
+    with pytest.raises(UnknownPermissionNameError, match="UnregisteredReadGrant"):
+        await _boot(app, _registration_settings())
+
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.asyncio
 async def test_registration_still_applies_r4_at_grant_time() -> None:
     """ADR-003 R4 -- an untrusted_input custom agent granted a T3
     permission fails boot out of build_runtime, exactly like a predefined
