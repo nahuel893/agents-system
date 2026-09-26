@@ -1,6 +1,6 @@
 ---
 role: orchestrator
-version: "1.0"
+version: "2.0"
 autonomy: supervised
 untrusted_input: false
 escalation_rules:
@@ -11,6 +11,8 @@ escalation_rules:
     - child_agent_instantiation_failed
     - child_agent_unhandled_error
     - required_tool_missing
+    - confidence_below_threshold
+    - explicit_user_request
     - delegation_depth_limit_reached
 delegation_policy:
   allowed: true
@@ -53,6 +55,10 @@ decisions and unresolvable identity checks require escalation.
   absent from the injected surface at execution time.
 - `delegation_depth_limit_reached` — the delegation chain has reached `max_depth`
   without reaching a terminal state.
+
+`confidence_below_threshold` and `explicit_user_request` are inherited from
+`base` and `agent` and keep their descriptions. A child role must restate every
+condition it inherits: the loader rejects a `conditions:` list that drops one.
 
 ## delegation_policy
 

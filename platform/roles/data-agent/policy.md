@@ -1,6 +1,6 @@
 ---
 role: data-agent
-version: "1.0"
+version: "2.0"
 autonomy: full
 untrusted_input: false
 escalation_rules:
@@ -9,6 +9,8 @@ escalation_rules:
     - data_source_unreachable
     - empty_result_unexpected
     - required_tool_missing
+    - confidence_below_threshold
+    - explicit_user_request
     - query_scope_exceeds_permissions
 delegation_policy:
   allowed: false
@@ -46,6 +48,10 @@ tool is blocked by the interceptor regardless of autonomy level.
   from the injected surface at execution time.
 - `query_scope_exceeds_permissions` — the query scope exceeds the permissions
   present in the injected surface.
+
+`confidence_below_threshold` and `explicit_user_request` are inherited from
+`base` and `agent` and keep their descriptions. A child role must restate every
+condition it inherits: the loader rejects a `conditions:` list that drops one.
 
 ## delegation_policy
 
