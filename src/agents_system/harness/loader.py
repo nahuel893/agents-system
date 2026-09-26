@@ -46,10 +46,13 @@ Prompt composition (ADR-002 B.8/B.9)
 from __future__ import annotations
 
 import dataclasses
+import errno
 import math
+import os
 import pathlib
 import re
 import shutil
+import stat
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -227,14 +230,18 @@ class AgentDefinition:
     #: design.md D4 (PR3). An importer agent's own `skills/` subdirectory
     #: (`Agent.from_folder(path)`'s `path/skills/`) — always a
     #: `FolderLocator.path` derivative, never a caller-suppliable separate
-    #: value, so `_load_skills`'s containment holds the same way the
-    #: locator's own path does. `None` for a platform role or an inline-only
-    #: agent with no folder of its own.
+    #: value. `None` for a platform role or an inline-only agent with no
+    #: folder of its own.
     skills_folder: pathlib.Path | None = None
     #: design.md D4 (PR3). `{name: content}` supplied directly as Python
     #: parameters (`Agent(skill_contents=...)`). Empty for a platform role
     #: or a folder-only agent with no inline content of its own.
     inline_skills: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    #: Issue #75. The `FolderLocator.root` that `skills_folder` belongs to:
+    #: a skill file must resolve inside both, and `_load_skills` reads it
+    #: walking from this root (`_read_within_root`). `None` exactly when
+    #: `skills_folder` is.
+    importer_root: pathlib.Path | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -319,6 +326,9 @@ class RawDefinition:
     #: `InlineLocator`'s own `raw` (`Agent._to_locator()`'s `skill_contents`).
     #: Empty for a platform role or a folder-only definition.
     inline_skills: dict[str, str] = dataclasses.field(default_factory=dict)
+    #: Issue #75. Set with `skills_folder`, to the `FolderLocator.root` it
+    #: belongs to; see `AgentDefinition.importer_root`.
+    importer_root: pathlib.Path | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -398,10 +408,17 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return parsed, body
 
 
-def _read_md(path: pathlib.Path) -> tuple[dict[str, Any], str]:
-    """Read a markdown file and return (frontmatter, body)."""
+def _read_md(
+    path: pathlib.Path, *, shown: pathlib.Path | None = None
+) -> tuple[dict[str, Any], str]:
+    """Read a markdown file and return (frontmatter, body).
+
+    ``shown`` is how an error names the file: relative to its root, never
+    the host path (issue #75). Defaults to the file name.
+    """
     if not path.exists():
-        raise DefinitionError(f"Required definition file not found: {path}")
+        name = shown.as_posix() if shown is not None else path.name
+        raise DefinitionError(f"Required definition file not found: {name}")
     return _split_frontmatter(path.read_text(encoding="utf-8"))
 
 
@@ -591,18 +608,32 @@ def _validate_argv_template(
     value); every placeholder names a declared param, and every declared
     param is used by at least one placeholder.
     """
+    _check_argv_shape(raw_argv, tool_name=tool_name, source=source)
+    program, *rest = raw_argv
+    _check_argv0_literal(program, tool_name=tool_name, source=source)
+    resolved = _resolve_argv0(program, tool_name=tool_name, source=source)
+    rest_elements = _check_argv_rest(rest, params, tool_name=tool_name, source=source)
+    return (resolved, *rest_elements)
+
+
+def _check_argv_shape(argv: Any, *, tool_name: str, source: pathlib.Path | str) -> None:
+    """``argv`` is a non-empty list (as YAML parses it) or tuple (as a built
+    ``CommandToolDeclaration`` holds it) of strings."""
     if (
-        not isinstance(raw_argv, list)
-        or not raw_argv
-        or not all(isinstance(element, str) for element in raw_argv)
+        not isinstance(argv, list | tuple)
+        or not argv
+        or not all(isinstance(element, str) for element in argv)
     ):
         raise DefinitionError(
             f"Invariant violation — command_tools: {source} declares command "
-            f"tool '{tool_name}' with argv={raw_argv!r}, which must be a "
+            f"tool '{tool_name}' with argv={argv!r}, which must be a "
             f"non-empty list of strings."
         )
 
-    program, *rest = raw_argv
+
+def _check_argv0_literal(
+    program: str, *, tool_name: str, source: pathlib.Path | str
+) -> None:
     if _PLACEHOLDER_ANY.search(program):
         raise DefinitionError(
             f"Invariant violation — command_tools: {source} declares command "
@@ -610,8 +641,19 @@ def _validate_argv_template(
             f"The program path is fixed by the manifest author and may never "
             f"vary by param."
         )
-    resolved: list[str] = [_resolve_argv0(program, tool_name=tool_name, source=source)]
 
+
+def _check_argv_rest(
+    rest: Iterable[str],
+    params: Mapping[str, CommandToolParam],
+    *,
+    tool_name: str,
+    source: pathlib.Path | str,
+) -> tuple[str, ...]:
+    """Every argv element after ``argv[0]``: a literal, or a placeholder that
+    is the WHOLE element and names a declared param; every declared param
+    is used. Returns the elements unchanged."""
+    elements: list[str] = []
     used: set[str] = set()
     for element in rest:
         whole_match = _PLACEHOLDER_WHOLE.match(element)
@@ -625,7 +667,7 @@ def _validate_argv_template(
                     f"declared. Declared params: {sorted(params)}."
                 )
             used.add(name)
-            resolved.append(element)
+            elements.append(element)
             continue
 
         if _PLACEHOLDER_ANY.search(element):
@@ -638,7 +680,7 @@ def _validate_argv_template(
                 f"placeholder is how option injection sneaks in (ADR-002 "
                 f"C.12)."
             )
-        resolved.append(element)
+        elements.append(element)
 
     unused = set(params) - used
     if unused:
@@ -648,11 +690,11 @@ def _validate_argv_template(
             f"appear as a placeholder in argv. Every declared param must be "
             f"used."
         )
-    return tuple(resolved)
+    return tuple(elements)
 
 
 def _parse_command_tool_param(
-    raw: Any, *, tool_name: str, param_name: str, source: pathlib.Path
+    raw: Any, *, tool_name: str, param_name: str, source: pathlib.Path | str
 ) -> CommandToolParam:
     if not isinstance(raw, dict):
         raise DefinitionError(
@@ -771,40 +813,10 @@ def _parse_command_tools(
             entry.get("argv"), params, tool_name=name, source=source
         )
 
-        tier_raw = entry.get("tier")
-        try:
-            tier = Tier(tier_raw)
-        except ValueError:
-            raise DefinitionError(
-                f"Invariant violation — command_tools: {source} declares "
-                f"command tool '{name}' with tier={tier_raw!r}. Valid "
-                f"tiers: {[t.value for t in Tier]}."
-            ) from None
-
-        if tier not in _COMMAND_TOOL_MIN_TIER:
-            raise DefinitionError(
-                f"Invariant violation — command_tools: {source} declares "
-                f"command tool '{name}' with tier={tier.value}, but "
-                f"declarative command tools require tier=T2 exactly "
-                f"(permission-model Resolved Decision 3). A T0/T1 tool is "
-                f"never revalidated at call time (interceptor._is_sensitive) "
-                f"and would let an untrusted_input role reach an "
-                f"unrevalidated host command; a T3 tool would fail R2b's "
-                f"floor at ToolSpec construction, since a command tool's "
-                f"permission is always in the run:* family (`Run`, T2), "
-                f"with no T3-floor sibling. Use tier: T2."
-            )
-
-        permission = entry.get("permission")
-        if not isinstance(permission, str) or not permission.startswith("run:"):
-            raise DefinitionError(
-                f"Invariant violation — command_tools: {source} declares "
-                f"command tool '{name}' with permission={permission!r}, "
-                f"which must start with 'run:' — command tools are a "
-                f"distinct permission family from exec:*, so an "
-                f"untrusted_input role can safely hold one without "
-                f"tripping C.11's invariant (ADR-002 C.12)."
-            )
+        tier = _checked_command_tool_tier(entry.get("tier"), name=name, source=source)
+        permission = _checked_command_tool_permission(
+            entry.get("permission"), name=name, source=source
+        )
         _ensure_command_tool_permission_registered(permission)
 
         declarations.append(
@@ -813,6 +825,120 @@ def _parse_command_tools(
             )
         )
     return declarations
+
+
+def _checked_command_tool_tier(
+    tier_raw: Any, *, name: str, source: pathlib.Path | str
+) -> Tier:
+    try:
+        tier = Tier(tier_raw)
+    except ValueError:
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares "
+            f"command tool '{name}' with tier={tier_raw!r}. Valid "
+            f"tiers: {[t.value for t in Tier]}."
+        ) from None
+
+    if tier not in _COMMAND_TOOL_MIN_TIER:
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares "
+            f"command tool '{name}' with tier={tier.value}, but "
+            f"declarative command tools require tier=T2 exactly "
+            f"(permission-model Resolved Decision 3). A T0/T1 tool is "
+            f"never revalidated at call time (interceptor._is_sensitive) "
+            f"and would let an untrusted_input role reach an "
+            f"unrevalidated host command; a T3 tool would fail R2b's "
+            f"floor at ToolSpec construction, since a command tool's "
+            f"permission is always in the run:* family (`Run`, T2), "
+            f"with no T3-floor sibling. Use tier: T2."
+        )
+    return tier
+
+
+def _checked_command_tool_permission(
+    permission: Any, *, name: str, source: pathlib.Path | str
+) -> str:
+    if not isinstance(permission, str) or not permission.startswith("run:"):
+        raise DefinitionError(
+            f"Invariant violation — command_tools: {source} declares "
+            f"command tool '{name}' with permission={permission!r}, "
+            f"which must start with 'run:' — command tools are a "
+            f"distinct permission family from exec:*, so an "
+            f"untrusted_input role can safely hold one without "
+            f"tripping C.11's invariant (ADR-002 C.12)."
+        )
+    return permission
+
+
+def _revalidate_command_tools(definition: RawDefinition) -> None:
+    """Hold every command tool a resolved definition carries to the
+    manifest parser's rules again (issue #75): T2 only, a ``run:``
+    permission, an absolute literal ``argv[0]``, whole-element placeholders
+    that name declared params, and narrow params.
+
+    ``_parse_command_tools`` only runs on a manifest. An
+    ``InlineLocator(raw=RawDefinition(...))`` hands the loader built
+    ``CommandToolDeclaration`` objects directly, so without this nothing
+    checked them. ``resolve()`` calls it on the fully folded definition, so
+    it covers every locator kind and every hop of the chain. It changes
+    nothing: a declaration that passes is used exactly as given. ``argv[0]``
+    must already be absolute here: ``$PATH`` is only looked up while a
+    manifest is parsed, never later.
+    """
+    who = f"agent '{definition.role_name}'"
+    declarations = definition.command_tool_declarations
+    for name in definition.command_tools:
+        if name not in declarations:
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {who} names command "
+                f"tool '{name}' but declares no entry for it."
+            )
+    for key, declaration in declarations.items():
+        if not isinstance(declaration, CommandToolDeclaration):
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {who} declares command "
+                f"tool '{key}' as a {type(declaration).__name__}, not a "
+                f"CommandToolDeclaration."
+            )
+        if declaration.name != key:
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {who} files command "
+                f"tool '{declaration.name}' under the name '{key}'. The key "
+                f"must be the declaration's own name."
+            )
+        _check_argv_shape(declaration.argv, tool_name=key, source=who)
+        params = declaration.params
+        if not isinstance(params, Mapping):
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {who} declares command "
+                f"tool '{key}' with non-mapping params."
+            )
+        for param_name, param in params.items():
+            if not isinstance(param, CommandToolParam):
+                raise DefinitionError(
+                    f"Invariant violation — command_tools: {who} declares "
+                    f"command tool '{key}' param '{param_name}' as a "
+                    f"{type(param).__name__}, not a CommandToolParam."
+                )
+            _parse_command_tool_param(
+                dataclasses.asdict(param),
+                tool_name=key,
+                param_name=param_name,
+                source=who,
+            )
+        program, *rest = declaration.argv
+        _check_argv0_literal(program, tool_name=key, source=who)
+        if not pathlib.Path(program).is_absolute():
+            raise DefinitionError(
+                f"Invariant violation — command_tools: {who} declares command "
+                f"tool '{key}' with argv[0]={program!r}, which is not an "
+                f"absolute path. ADR-002 C.12 fixes argv[0] to an absolute "
+                f"path when the definition is built; nothing looks it up on "
+                f"$PATH later."
+            )
+        _check_argv_rest(rest, params, tool_name=key, source=who)
+        _checked_command_tool_tier(declaration.tier, name=key, source=who)
+        _checked_command_tool_permission(declaration.permission, name=key, source=who)
 
 
 # A role or client name is a single directory name, nothing else. Anything
@@ -1061,13 +1187,137 @@ def _resolve_within_root(
     return resolved
 
 
+#: Issue #75 — whether ``_read_within_root`` can walk directory handles
+#: (``openat`` with ``O_NOFOLLOW``). True on Linux and macOS. Elsewhere
+#: (Windows) a read falls back to the path, after the same resolve-then-check
+#: containment, with the check-to-read window documented in
+#: ``docs/platform/role.md``.
+_DIR_FD_READS = (
+    os.open in os.supports_dir_fd
+    and hasattr(os, "O_NOFOLLOW")
+    and hasattr(os, "O_DIRECTORY")
+)
+
+
+def _read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
+    """Read ``path``, a real path strictly inside ``root`` (what
+    ``_resolve_within_root`` returns), without following any symlink on the
+    way (issue #75, TOCTOU).
+
+    ``_resolve_within_root`` checks a path at one moment and the read comes
+    later: a folder swapped for a symlink in between would be followed by a
+    plain ``path.read_text()``. This opens ``root`` instead and walks
+    ``path``'s components one directory handle at a time, each opened with
+    ``O_NOFOLLOW``. A component that is a symlink by now fails the open
+    instead of being followed, so the file read is always the one under
+    ``root``. The file is opened the same way, non-blocking, and must be a
+    regular file: a FIFO cannot stall the load.
+
+    Every refusal is an ``OSError`` (a path outside ``root`` included);
+    callers turn it into their own error. Hard links and mounts are out of
+    scope: see the threat model in ``docs/platform/role.md``.
+    """
+    real_root = root.resolve()
+    if path == real_root or not path.is_relative_to(real_root):
+        raise PermissionError(errno.EACCES, "outside the importer root", path.name)
+    parts = path.relative_to(real_root).parts
+    if not _DIR_FD_READS:
+        return path.read_text(encoding="utf-8")
+
+    directory = os.O_RDONLY | os.O_DIRECTORY
+    fd = os.open(real_root, directory)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, directory | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        file_fd = os.open(
+            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd
+        )
+    finally:
+        os.close(fd)
+    with open(file_fd, encoding="utf-8") as handle:
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", parts[-1])
+        return handle.read()
+
+
+def _shown_path(root: pathlib.Path, path: pathlib.Path) -> str:
+    """``path`` relative to ``root``, for an error message (issue #75).
+
+    Loader errors can reach whoever supplied the agent folder, so they name
+    a file by where it sits in its root, never by its host path. Falls back
+    to the last segment when ``path`` is not under ``root`` at all.
+    """
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        pass
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, RuntimeError, ValueError):
+        return path.name
+
+
 def _describe_locator(locator: RoleLocator) -> str:
     """Name the agent declaring an ``extends:`` value, for error messages."""
     if isinstance(locator, FolderLocator):
-        return f"agent folder '{locator.path}'"
+        return f"agent folder '{_shown_path(locator.root, locator.path)}'"
     if isinstance(locator, InlineLocator):
         return f"inline agent '{locator.raw.role_name}'"
     return f"role '{locator}'"
+
+
+def _contained_folder(locator: FolderLocator) -> pathlib.Path:
+    """The real path of ``locator.path``, which must be an existing folder
+    strictly inside ``locator.root`` once ``..`` and symlinks are followed
+    (issue #75). ``Agent.from_folder(path)`` sets ``root=path.parent``, and
+    an ``extends:`` target already passed ``_extends_target``; a
+    ``FolderLocator`` built by hand is held to the same rule."""
+    label = _describe_locator(locator)
+    folder = _resolve_within_root(locator.root, locator.path, ".")
+    if folder is None:
+        raise DefinitionError(
+            f"Invariant violation — containment: {label} is not inside its "
+            "importer root: after following '..' and symlinks, an agent "
+            "folder must land strictly inside the root it was given."
+        )
+    if not folder.is_dir():
+        raise DefinitionError(f"{label} does not exist or is not a folder.")
+    return folder
+
+
+def _read_contained_md(
+    locator: FolderLocator, folder: pathlib.Path, filename: str, *, shown: pathlib.Path
+) -> tuple[dict[str, Any], str]:
+    """``_read_md`` for an importer folder: ``folder/filename`` must resolve
+    inside ``locator.root`` (symlinks followed first, as for ``extends:``),
+    and is then read through ``_read_within_root``. Issue #75: ``role.md``,
+    ``manifest.md`` and ``policy.md`` used to be read wherever a symlink
+    pointed."""
+    label = _describe_locator(locator)
+    target = _resolve_within_root(locator.root, folder, filename)
+    if target is None:
+        raise DefinitionError(
+            f"Invariant violation — containment: {label} has a {filename} that "
+            "resolves outside its importer root after following '..' and "
+            "symlinks. Every file an agent folder supplies must stay inside "
+            "that root."
+        )
+    try:
+        text = _read_within_root(locator.root, target)
+    except FileNotFoundError:
+        raise DefinitionError(
+            f"Required definition file not found: {(shown / filename).as_posix()}"
+        ) from None
+    except OSError as exc:
+        raise DefinitionError(
+            f"Invariant violation — containment: {label} has a {filename} that "
+            f"could not be read inside its importer root ({exc.strerror}). A "
+            "path that became a symlink after it was checked, or anything but "
+            "a regular file, is refused."
+        ) from exc
+    return _split_frontmatter(text)
 
 
 def _extends_target(
@@ -1126,7 +1376,8 @@ def _extends_target(
             return platform_name
         raise fail(
             f"'extends: {value}', which names predefined role "
-            f"'{platform_name}', but {folder} does not exist"
+            f"'{platform_name}', but the platform root has no "
+            f"roles/{platform_name}"
         )
 
     if not isinstance(current, FolderLocator):
@@ -1137,16 +1388,15 @@ def _extends_target(
     resolved = _resolve_within_root(current.root, current.path, value)
     if resolved is None:
         raise fail(
-            f"'extends: {value}', which escapes the importer root "
-            f"'{current.root}': after following '..' and symlinks it must "
-            "land strictly inside that root"
+            f"'extends: {value}', which escapes the importer root: after "
+            "following '..' and symlinks it must land strictly inside that root"
         )
     if resolved == current.path.resolve():
         raise fail(f"'extends: {value}', which is the declaring agent's own folder")
     if not resolved.is_dir():
         raise fail(
             f"'extends: {value}', which is not an existing folder inside the "
-            f"importer root '{current.root}'"
+            "importer root"
         )
     return FolderLocator(path=resolved, root=current.root)
 
@@ -1211,6 +1461,34 @@ def _validate_inline_skills(
         )
 
 
+#: Issue #75 — the only `FolderLocator.overrides` keys the loader applies,
+#: each mapped to the `RawDefinition` field it replaces: exactly the fields
+#: `Agent.from_folder` accepts (`agent.spec._AGENT_OVERRIDABLE_FIELDS`; a test
+#: pins the two equal, since `agent.spec` imports this module and not the
+#: other way round). `extends` maps to `None`: it replaces the parent
+#: locator (`_extends_override_target`), not a field. Anything else a
+#: `FolderLocator` carries — `command_tool_declarations`, `command_tools`,
+#: `deployment`, `skills_folder`, `importer_root` — is rejected, not applied.
+_FOLDER_OVERRIDE_FIELDS: Mapping[str, str | None] = {
+    "name": "role_name",
+    "version": "version",
+    "system_prompt": "system_prompt",
+    "extends": None,
+    "tools": "tools",
+    "skills": "skills",
+    "skill_contents": "inline_skills",
+    "context": "context",
+    "permissions": "permissions",
+    "autonomy": "autonomy",
+    "escalation_rules": "escalation_rules",
+    "delegation_policy": "delegation_policy",
+    "memory_policy": "memory_policy",
+    "audit_policy": "audit_policy",
+    "execution_limits": "execution_limits",
+    "untrusted_input": "untrusted_input",
+}
+
+
 def _apply_agent_folder_overrides(
     definition: RawDefinition, overrides: Mapping[str, Any]
 ) -> RawDefinition:
@@ -1220,17 +1498,20 @@ def _apply_agent_folder_overrides(
     field wins outright, and a field never passed keeps exactly what the
     folder declared.
 
-    `overrides` keys are `Agent`'s own field names (validated against
-    `agent.spec._AGENT_OVERRIDABLE_FIELDS` at `Agent.__init__` time); two are
-    renamed onto a differently-named `RawDefinition` field: `name` ->
-    `role_name` (so an overridden name is reflected consistently in both
-    places), and `skill_contents` -> `inline_skills` (design.md D4, PR3 —
-    the same carrier an `Agent(skill_contents=...)` populates via
-    `_to_locator`'s `InlineLocator` branch, so `Agent.from_folder(path,
+    Only the keys in `_FOLDER_OVERRIDE_FIELDS` are applied, and any other
+    key raises (issue #75): a `FolderLocator` can be built directly, without
+    `Agent`'s own check, and used to set any `RawDefinition` field,
+    command tool declarations included. Two keys are renamed onto a
+    differently-named field: `name` -> `role_name` (so an overridden name is
+    reflected consistently in both places), and `skill_contents` ->
+    `inline_skills` (design.md D4, PR3 — the same carrier an
+    `Agent(skill_contents=...)` populates via `_to_locator`'s
+    `InlineLocator` branch, so `Agent.from_folder(path,
     skill_contents={...})` overrides a same-named folder skill the same
     way). `extends` is not a `RawDefinition` field: it replaces the
     manifest's `extends:` as the parent locator, in `_load_role_files`
-    (`_extends_override_target`).
+    (`_extends_override_target`). `untrusted_input` is parsed like the
+    policy file's own value.
 
     `Agent(skill_contents=...)`'s own `__post_init__` rejects a key not
     listed in `skills` at construction time -- but a `skill_contents`
@@ -1247,12 +1528,19 @@ def _apply_agent_folder_overrides(
     """
     if not overrides:
         return definition
-    raw_field_names = {field.name for field in dataclasses.fields(RawDefinition)}
-    renames = {"name": "role_name", "skill_contents": "inline_skills"}
+    who = f"agent '{definition.role_name}'"
+    unknown = sorted(set(overrides) - set(_FOLDER_OVERRIDE_FIELDS))
+    if unknown:
+        raise DefinitionError(
+            f"Invariant violation — overrides: {who} is given override(s) "
+            f"{unknown}, which Agent.from_folder cannot override. Allowed: "
+            f"{sorted(_FOLDER_OVERRIDE_FIELDS)}."
+        )
+    _parse_untrusted_input(overrides, source=who)
     changes: dict[str, Any] = {}
     for key, value in overrides.items():
-        target = renames.get(key, key)
-        if target in raw_field_names:
+        target = _FOLDER_OVERRIDE_FIELDS[key]
+        if target is not None:
             changes[target] = dict(value) if target == "inline_skills" else value
     if "inline_skills" in changes:
         _validate_inline_skills(
@@ -1312,6 +1600,12 @@ def _load_role_files(
     before this change. This is the old body of ``load_generic``, with the
     two directives the frontmatter has always been allowed to carry now
     actually read.
+
+    Issue #75: a ``FolderLocator``'s own ``path`` must resolve strictly
+    inside its ``root``, and each of its three files is read inside that
+    root through ``_read_contained_md``. Errors name files relative to their
+    root (``vip-support/policy.md``, ``roles/<name>/policy.md``), never by
+    host path.
     """
     if isinstance(locator, InlineLocator):
         inline_parent = locator.parent
@@ -1320,19 +1614,28 @@ def _load_role_files(
         return locator.raw, inline_parent, False
 
     if isinstance(locator, FolderLocator):
-        folder = locator.path
+        folder = _contained_folder(locator)
         role_type = folder.name
+        shown = pathlib.Path(_shown_path(locator.root, folder))
+        importer = locator
+
+        def read(filename: str) -> tuple[dict[str, Any], str]:
+            return _read_contained_md(importer, folder, filename, shown=shown)
+
     else:
         role_type = locator
         folder = _role_folder(_require_platform_root(roots.platform_root), role_type)
+        shown = pathlib.Path("roles", role_type)
+        if not folder.is_dir():
+            raise DefinitionError(f"Role '{role_type}' has no folder at {shown}.")
 
-    if not folder.is_dir():
-        raise DefinitionError(f"Role '{role_type}' has no folder at {folder}.")
+        def read(filename: str) -> tuple[dict[str, Any], str]:
+            return _read_md(folder / filename, shown=shown / filename)
 
-    role_fm, role_body = _read_md(folder / "role.md")
-    role_body = _split_design_notes(role_body, source=folder / "role.md")
-    manifest_fm, _ = _read_md(folder / "manifest.md")
-    policy_fm, policy_body = _read_md(folder / "policy.md")
+    role_fm, role_body = read("role.md")
+    role_body = _split_design_notes(role_body, source=shown / "role.md")
+    manifest_fm, _ = read("manifest.md")
+    policy_fm, policy_body = read("policy.md")
 
     role_name: str = str(role_fm.get("name", manifest_fm.get("role", role_type)))
     version: str = str(role_fm.get("version", manifest_fm.get("version", "1.0")))
@@ -1357,7 +1660,7 @@ def _load_role_files(
     # `command_tools` by name without needing to restate argv/params/tier.
     command_tool_declarations = {
         decl.name: decl
-        for decl in _parse_command_tools(manifest_fm, source=folder / "manifest.md")
+        for decl in _parse_command_tools(manifest_fm, source=shown / "manifest.md")
     }
 
     # Issue #88 — `descriptions` (name -> prose) is populated two ways, and
@@ -1412,7 +1715,7 @@ def _load_role_files(
         # false" and "said nothing", which is exactly the distinction the
         # monotonicity invariant needs. `_parse_untrusted_input` type-checks
         # whatever was actually written on disk.
-        untrusted_input=_parse_untrusted_input(policy_fm, source=folder / "policy.md"),
+        untrusted_input=_parse_untrusted_input(policy_fm, source=shown / "policy.md"),
         # ADR-002 C.12. Dict preserves manifest declaration order.
         command_tools=list(command_tool_declarations),
         command_tool_declarations=command_tool_declarations,
@@ -1422,6 +1725,8 @@ def _load_role_files(
         # `platform_root/roles/<name>/skills/`, if one happened to exist, is
         # never treated as a skills source (design.md's own requirement).
         skills_folder=folder / "skills" if isinstance(locator, FolderLocator) else None,
+        # Issue #75. The root every skill read walks from (`_load_skills`).
+        importer_root=locator.root if isinstance(locator, FolderLocator) else None,
     )
     if isinstance(locator, FolderLocator) and locator.overrides:
         definition = _apply_agent_folder_overrides(definition, locator.overrides)
@@ -1626,6 +1931,7 @@ def _fold_parent_into_child(
         # survives.
         skills_folder=child.skills_folder,
         inline_skills=dict(child.inline_skills),
+        importer_root=child.importer_root,
     )
 
 
@@ -1643,6 +1949,17 @@ def _locator_key(locator: RoleLocator) -> str:
         return f"folder:{locator.path.resolve()}"
     if isinstance(locator, InlineLocator):
         return f"inline:{id(locator.raw)}"
+    return f"platform:{locator}"
+
+
+def _locator_label(locator: RoleLocator) -> str:
+    """``_locator_key``'s shape for error messages (issue #75): a folder is
+    named relative to its importer root, not by host path, and an inline
+    definition by its role name."""
+    if isinstance(locator, FolderLocator):
+        return f"folder:{_shown_path(locator.root, locator.path)}"
+    if isinstance(locator, InlineLocator):
+        return f"inline:{locator.raw.role_name}"
     return f"platform:{locator}"
 
 
@@ -1673,23 +1990,26 @@ def _resolve_role_chain(
     # (definition, written by the importer?) -- leaf first.
     chain: list[tuple[RawDefinition, bool]] = []
     seen: list[str] = []
+    labels: list[str] = []  # `seen`, as error messages show it
     leaf_is_abstract = False
 
     original_key = _locator_key(locator)
     current_locator: RoleLocator | None = locator
     while current_locator is not None:
         key = _locator_key(current_locator)
+        label = _locator_label(current_locator)
         if key in seen:
-            cycle = " -> ".join([*seen, key])
+            cycle = " -> ".join([*labels, label])
             raise DefinitionError(
                 f"Invariant violation — extends: role inheritance cycle: {cycle}"
             )
         seen.append(key)
+        labels.append(label)
 
         if len(seen) > _MAX_ROLE_CHAIN_DEPTH:
             raise DefinitionError(
                 f"Invariant violation — extends: role chain deeper than "
-                f"{_MAX_ROLE_CHAIN_DEPTH}: {' -> '.join(seen)}"
+                f"{_MAX_ROLE_CHAIN_DEPTH}: {' -> '.join(labels)}"
             )
 
         try:
@@ -1698,8 +2018,8 @@ def _resolve_role_chain(
             if key == original_key:
                 raise
             raise DefinitionError(
-                f"Invariant violation — extends: role '{seen[-2]}' extends "
-                f"'{key}', which could not be loaded: {exc}"
+                f"Invariant violation — extends: role '{labels[-2]}' extends "
+                f"'{label}', which could not be loaded: {exc}"
             ) from exc
 
         if key == original_key:
@@ -1818,10 +2138,12 @@ def load_override(
         )
         return None
 
-    role_fm, role_body = _read_md(folder / "role.md")
-    role_body = _split_design_notes(role_body, source=folder / "role.md")
-    manifest_fm, _ = _read_md(folder / "manifest.md")
-    policy_fm, _ = _read_md(folder / "policy.md")
+    # Errors name files relative to the deployments root (issue #75).
+    shown = pathlib.Path(client, role_type)
+    role_fm, role_body = _read_md(folder / "role.md", shown=shown / "role.md")
+    role_body = _split_design_notes(role_body, source=shown / "role.md")
+    manifest_fm, _ = _read_md(folder / "manifest.md", shown=shown / "manifest.md")
+    policy_fm, _ = _read_md(folder / "policy.md", shown=shown / "policy.md")
 
     # Use parent role_type as the role_name fallback
     role_name = str(role_fm.get("name", manifest_fm.get("role", role_type)))
@@ -1873,7 +2195,7 @@ def load_override(
         # ADR-002 C.11. `None` means the override says nothing and inherits
         # the resolved role's value — see `_validate_untrusted_input_monotonic`.
         # `_parse_untrusted_input` type-checks whatever was actually written.
-        untrusted_input=_parse_untrusted_input(policy_fm, source=folder / "policy.md"),
+        untrusted_input=_parse_untrusted_input(policy_fm, source=shown / "policy.md"),
         # ADR-002 C.12. NAMES only, same shape as `tools` above — a
         # deployment never originates a full declaration (`command_tool_
         # declarations` stays empty), it only narrows the role's set by
@@ -2596,6 +2918,7 @@ def _merge_validated(
         # `merge()` does not silently lose them.
         skills_folder=generic.skills_folder,
         inline_skills=dict(generic.inline_skills),
+        importer_root=generic.importer_root,
     )
 
 
@@ -2611,6 +2934,10 @@ def resolve(
     roots: RootConfig | None = None,
 ) -> AgentDefinition:
     """Load, merge, validate, and return a fully resolved ``AgentDefinition``.
+
+    Every command tool declaration the resolved chain carries is checked
+    again here (``_revalidate_command_tools``, issue #75), whichever locator
+    built it.
 
     Parameters
     ----------
@@ -2640,6 +2967,8 @@ def resolve(
         roots = RootConfig()
 
     generic = load_generic(locator, roots=roots)
+    # Issue #75: every locator kind, not only a parsed manifest.
+    _revalidate_command_tools(generic)
 
     if client is not None:
         if not isinstance(locator, str):
@@ -2703,4 +3032,5 @@ def resolve(
         ),
         skills_folder=generic.skills_folder,
         inline_skills=dict(generic.inline_skills),
+        importer_root=generic.importer_root,
     )

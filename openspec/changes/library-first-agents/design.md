@@ -857,10 +857,41 @@ Supplementary matrix, scoped to D1/D2/D4:
 | `extends:` value with a `..` segment, targeting a `FolderLocator`'s importer root | Applicable | `_resolve_within_root` rejects before any filesystem access (D2, case #4) | `test_extends_fail_loud.py::test_dotdot_segment_rejected` |
 | `extends:` value with an absolute path | Applicable | Same function, same rejection (case #4) | `test_extends_fail_loud.py::test_absolute_path_rejected` |
 | `extends:` value resolving syntactically inside `root`, but the target is a symlink pointing outside it | Applicable | `Path.resolve()` + `is_relative_to` check after syntactic validation (D2, case #5) | `test_extends_fail_loud.py::test_symlink_escape_rejected` |
-| Importer folder's `skills/` directory contains a symlink pointing outside the folder | Applicable | `_load_skills`'s `FolderLocator`-sourced branch (D4) reads `skills_folder / f"{name}.md"` directly — inherits the same containment property as the locator's own `path`, since `skills_folder` is always derived from an already-validated `FolderLocator.path`, never a caller-suppliable separate value | `test_skills_precedence.py::test_skill_symlink_does_not_escape_folder` |
+| Importer folder's `skills/` directory contains a symlink pointing outside the folder | Applicable | Superseded by issue #75: the skill file must resolve inside its own `skills/` folder AND the importer root (`AgentDefinition.importer_root`); PR3 bounded it by `skills/` alone, so a `skills` folder that was itself a symlink out of the root passed. Same check for the deployment source, inside the deployments root | `test_skills_precedence.py::test_skill_symlink_does_not_escape_folder` |
+| `role.md`/`manifest.md`/`policy.md` inside an accepted folder is a symlink pointing outside the importer root (issue #75) | Applicable | `_read_contained_md`: each file must resolve inside `FolderLocator.root` after `..` and symlinks, else `DefinitionError` | `test_importer_folder_containment.py::test_role_file_symlinked_outside_the_root_is_rejected` |
+| The leaf `FolderLocator.path` itself lies outside its `root` (issue #75) | Applicable | `_contained_folder` checks it with `_resolve_within_root(root, path, ".")`, the same helper as `extends:` | `test_importer_folder_containment.py::test_leaf_path_outside_its_root_is_rejected` |
+| A folder that passed the check is swapped for a symlink before it is read (TOCTOU, issue #75) | Applicable | `_read_within_root` walks from the root with `O_NOFOLLOW` directory handles; see the decision below | `test_importer_folder_containment.py::test_folder_swapped_for_a_symlink_after_the_check_is_refused` |
+| A hand-built `FolderLocator(overrides=...)` sets `command_tool_declarations`, `deployment` or another field `Agent` cannot override (issue #75) | Applicable | `_FOLDER_OVERRIDE_FIELDS` allowlist, pinned equal to `_AGENT_OVERRIDABLE_FIELDS` | `test_importer_folder_containment.py::test_override_outside_the_allowlist_is_rejected` |
+| `InlineLocator(raw=RawDefinition(...))` carries a command tool declaration that never went through the manifest parser (issue #75) | Applicable | `resolve()` runs `_revalidate_command_tools` on every definition: T2 only, `run:`, absolute `argv[0]`, whole-element placeholders, narrow params | `test_importer_folder_containment.py::test_invalid_inline_command_tool_is_rejected_by_resolve` |
 | A custom `Agent` extends an `untrusted_input: true` predefined role and tries to widen scope (e.g., declare `exec:*`) | Applicable — but already mitigated by an existing, unchanged invariant | `_validate_untrusted_input_monotonic` and `_validate_untrusted_input_exec` are agent-shape-agnostic (they operate on `RawDefinition`/resolved permissions, not on locator kind) — this is the proposal's own "for free" claim, verified here rather than assumed | `test_untrusted_input_invariant.py`'s existing suite extended with one `FolderLocator`/`InlineLocator`-sourced case each, confirming the SAME rejection fires |
 | `Agent(skill_contents={...})` — inline Python-supplied skill text | N/A — not a filesystem boundary | The importer's own process memory; no path resolution involved at all | None needed |
 | `platform_role_contract.py`'s `discover_platform_roles()` accidentally walking into an importer folder | Applicable — regression risk, not a new attack surface | `discover_platform_roles()` (`:40-52`) walks `platform_roots_dir()` only; nothing in D1-D4 changes what that function iterates — verified by direct read, not just assumed | Existing `PINNED_ROLES` count assertion stays a regression gate; no new test needed beyond keeping it green |
+
+### Design note — issue #75: TOCTOU decision and threat model
+
+**Decision: implemented, not deferred.** Every importer-folder read goes
+through `_read_within_root`: after the resolve-then-check containment
+(`_resolve_within_root`), it opens the real importer root and walks the
+checked path one directory at a time with `os.open(..., dir_fd=...)` and
+`O_NOFOLLOW`, then opens the file `O_NOFOLLOW | O_NONBLOCK` and requires a
+regular file. A component swapped for a symlink after the check fails the
+read; a FIFO cannot block it.
+
+**Why**: `os.open` supports `dir_fd`, and `O_NOFOLLOW`/`O_DIRECTORY` exist, on
+both Linux and macOS in the standard library, so the fix is small and needs
+no dependency. Documenting the window instead would leave a real gap for
+the one scenario that raises this issue's severity (agent folders from a
+less-trusted source).
+
+**Threat model**: the attacker can write anywhere inside an importer root.
+The root path and everything above it, `platform/roles/` and the deployments
+tree are the deployer's and trusted (their role files are read by path).
+Out of scope: hard links (keep untrusted roots on their own filesystem, or
+`fs.protected_hardlinks` on), mount points inside the root, and files of one
+folder changing between its three reads. Where `os.open` lacks `dir_fd`
+(Windows), reads fall back to the path after the same check; the window
+stays open there. User-facing statement: `docs/platform/role.md`,
+"Importer folders stay inside their root" (and its `platform_es` twin).
 
 ## Migration / Rollout
 
