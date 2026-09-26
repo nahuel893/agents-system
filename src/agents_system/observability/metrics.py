@@ -17,9 +17,10 @@ limit trips) before any broader OpenTelemetry rollout"):
   `tests/test_observability_metrics.py` for a runtime-confirming test rather
   than trusting the library's docs alone.
 - Labels are bounded and reviewed here, never a caller-supplied ceiling:
-  `runtime_id` (the operator-configured `"{deployment}__{role}"` id, or an
-  `AgentRuntime`'s own derived provider-model id when no explicit one was
-  given -- see `agent/graph.py::AgentRuntime`), `outcome`/`limit`/`tool`/
+  `runtime_id` (the registered runtime id: the opaque key from
+  `create_app(agents=...)` or `AGENT_REGISTRATIONS`; when no explicit one
+  was given, an `AgentRuntime`'s own derived provider-model id -- see
+  `agent/graph.py::AgentRuntime`), `outcome`/`limit`/`tool`/
   `direction` (fixed, code-defined enums). NEVER a user id, phone number,
   correlation/request id, or message text -- those are unbounded and would
   make Prometheus's cardinality blow up, besides leaking PII into a metrics

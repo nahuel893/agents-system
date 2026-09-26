@@ -433,11 +433,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     roots=roots,
                     session_provider=session_provider,
                 )
-                # #78 Phase 0 Slice 2 -- runtime_id=runtime_id gives this
-                # runtime's metrics the operator-meaningful
-                # "{deployment}__{role}" label instead of AgentRuntime's own
-                # derived provider-model-id default (see AgentRuntime's
-                # `runtime_id` parameter docstring in agent/graph.py).
+                # #78 Phase 0 Slice 2 -- runtime_id=runtime_id labels this
+                # runtime's metrics with its registered runtime id (the
+                # opaque key from create_app(agents=...) or
+                # AGENT_REGISTRATIONS) instead of AgentRuntime's own derived
+                # provider-model-id default (see AgentRuntime's `runtime_id`
+                # parameter docstring in agent/graph.py).
                 runtimes[runtime_id] = AgentRuntime(
                     runtime=equipped,
                     model=model,

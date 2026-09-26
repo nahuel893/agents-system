@@ -12,6 +12,10 @@ partitions, builds or tests a string around a `"__"` separator, or names the
 
 `AGENT_REGISTRATIONS` values are parsed by `main._parse_agent_registration`
 on `"@"`, never `"__"`, and never out of a runtime id.
+
+The same gate covers prose: no module, and neither twin of the doc that
+explains how the lifespan labels a runtime's metrics, may still describe the
+scheme as current behavior.
 """
 
 from __future__ import annotations
@@ -24,9 +28,11 @@ import pytest
 import agents_system
 
 _PACKAGE_ROOT = pathlib.Path(agents_system.__file__).resolve().parent
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SEPARATOR = "__"
 _SENTINEL = "_generic"
 _SPLITTERS = frozenset({"split", "rsplit", "partition", "rpartition"})
+_SCHEME = "{deployment}__{role}"
 
 
 def _is_separator(node: ast.AST) -> bool:
@@ -114,3 +120,48 @@ def test_no_module_parses_a_runtime_id() -> None:
         f"split it on {_SEPARATOR!r} or recognise a {_SENTINEL!r} sentinel. "
         f"Found: {offenders}"
     )
+
+
+# The docs that say which id the lifespan passes as a runtime's metrics label,
+# EN and its ES twin.
+_RUNTIME_ID_DOCS = (
+    "docs/platform/observability.md",
+    "docs/platform_es/observability.md",
+)
+
+# The only modules that may still name the removed scheme, and how often.
+# Each tells a reader what replaced it; none describes it as current behavior.
+_ALLOWED_SCHEME_MENTIONS = {
+    # The unregistered-channel error's static migration hint.
+    "main.py": 1,
+    # The AGENT_REGISTRATIONS comment, naming the encoding it replaces.
+    "config.py": 1,
+}
+
+
+def test_no_module_or_runtime_id_doc_describes_the_removed_scheme() -> None:
+    mentions = {
+        str(module.relative_to(_PACKAGE_ROOT)): count
+        for module in sorted(_PACKAGE_ROOT.rglob("*.py"))
+        if (count := module.read_text(encoding="utf-8").count(_SCHEME))
+    }
+    mentions |= {
+        doc: count
+        for doc in _RUNTIME_ID_DOCS
+        if (count := (_REPO_ROOT / doc).read_text(encoding="utf-8").count(_SCHEME))
+    }
+
+    assert mentions == _ALLOWED_SCHEME_MENTIONS, (
+        f"The {_SCHEME!r} runtime-id scheme is removed (ADR-004): a runtime "
+        "id is the opaque key from create_app(agents=...) or "
+        "AGENT_REGISTRATIONS. Only a migration hint may name the old scheme. "
+        f"Found: {mentions}"
+    )
+
+
+@pytest.mark.parametrize("doc", _RUNTIME_ID_DOCS)
+def test_runtime_id_doc_names_where_the_registered_id_comes_from(doc: str) -> None:
+    text = (_REPO_ROOT / doc).read_text(encoding="utf-8")
+
+    assert "create_app(agents=...)" in text
+    assert "AGENT_REGISTRATIONS" in text

@@ -643,9 +643,10 @@ class AgentRuntime:
         ``None`` (default) falls back to this runtime's own derived provider
         model id (``model_display_name(model)``, the same default
         ``run_turn``'s ``model_id`` pricing override already uses) — the
-        only caller that has a more meaningful id to give (the operator's
-        own ``"{deployment}__{role}"`` runtime id) is ``main.py``'s lifespan,
-        which passes it explicitly; every other existing construction site
+        only caller that has a more meaningful id to give (the registered
+        runtime id: the opaque key from ``create_app(agents=...)`` or
+        ``AGENT_REGISTRATIONS``) is ``main.py``'s lifespan, which passes it
+        explicitly; every other existing construction site
         (``evals/runner.py``, direct library use) is unaffected.
     metrics:
         #78 Phase 0 Slice 2 -- the ``Metrics`` set this runtime's turns,
