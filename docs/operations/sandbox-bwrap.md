@@ -66,6 +66,28 @@ prlimit --as=536870912 --cpu=10 -- \
 If this fails with a namespace or permission error (not a missing-binary
 error), apply one of the two AppArmor fixes above.
 
+## Timeouts and cancellation
+
+Two timers can stop a sandboxed command. `TerminalPolicy.timeout_s` is the
+sandbox's own kill timer. The interceptor's `tool_call_timeout_s`
+(`agent/graph.py`) bounds the whole tool call from outside and is normally
+the tighter of the two. A cancelled task or a shutdown stops the call the
+same way the outer timeout does.
+
+Whichever comes first, `_run_argv` kills the command's whole process group
+with `SIGKILL` and reaps it before the call returns or the cancellation
+propagates. A cancellation is always re-raised, never turned into a
+result. The command `bwrap` runs inside its PID namespace dies with it:
+killing the outer `bwrap` fires `--die-with-parent`, and the kernel kills
+everything left in the namespace. Before #105 the kill ran only in
+`_run_argv`'s own timeout handler, so when `tool_call_timeout_s` fired
+first the command kept running on the host after the agent had already
+been told it timed out.
+
+Reaping drains any output still in the pipes and is capped at 5 seconds.
+If that runs out, `operator.reap_incomplete` is logged at error level and
+the call ends anyway.
+
 ## What `sandbox_unavailable` means
 
 `_run_argv` checks both `bwrap` and `prlimit` availability on **every**

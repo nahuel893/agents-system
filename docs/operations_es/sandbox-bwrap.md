@@ -72,6 +72,30 @@ Si esto falla con un error de espacio de nombres o de permisos (no un error
 de binario faltante), aplicar una de las dos correcciones de AppArmor de
 arriba.
 
+## Timeouts y cancelación
+
+Dos temporizadores pueden detener un comando sandboxeado.
+`TerminalPolicy.timeout_s` es el temporizador de terminación propio del
+sandbox. El `tool_call_timeout_s` del interceptor (`agent/graph.py`) acota
+toda la llamada a la herramienta desde afuera y normalmente es el más
+ajustado de los dos. Una tarea cancelada o un apagado detienen la llamada
+de la misma forma que el timeout externo.
+
+Sea cual sea el primero, `_run_argv` mata todo el grupo de procesos del
+comando con `SIGKILL` y lo cosecha (reap) antes de que la llamada devuelva
+su resultado o de que la cancelación se propague. Una cancelación siempre
+se vuelve a lanzar, nunca se convierte en un resultado. El comando que
+`bwrap` ejecuta dentro de su espacio de nombres de PID muere con él: matar
+el `bwrap` externo dispara `--die-with-parent`, y el kernel mata todo lo
+que quede en el espacio de nombres. Antes de #105 la terminación solo
+corría en el manejador de timeout propio de `_run_argv`, así que cuando
+`tool_call_timeout_s` se disparaba primero el comando seguía corriendo en
+el host después de que al agente ya se le había informado el timeout.
+
+La cosecha drena la salida que todavía quede en los pipes y tiene un tope
+de 5 segundos. Si se agota, se registra `operator.reap_incomplete` con
+nivel error y la llamada termina igual.
+
 ## Qué significa `sandbox_unavailable`
 
 `_run_argv` verifica la disponibilidad de `bwrap` y de `prlimit` en
