@@ -23,7 +23,7 @@ a matter of adding workers. Measured on the development host:
 | PostgreSQL `max_connections` | 100 | `show max_connections` |
 | PostgreSQL `superuser_reserved_connections` | 3 | `show superuser_reserved_connections` |
 | `shared_buffers` | 128 MB (factory default, untuned) | `show shared_buffers` |
-| Connection pools | Configured per engine: operational 5 + 0, BI/medallion 3 + 0, SQL tool 2 + 0 | `config.py`, `models/base.py` |
+| Connection pools | Configured per engine: operational 5 + 10, BI/medallion 3 + 0, SQL tool 2 + 0 | `config.py`, `models/base.py` |
 | Engines per **server** process | **2** (operational + BI) | `main.py:122`, `main.py:193` |
 | Engines per **sync script** process | 2 (operational + medallion) | `scripts/sync_articles.py:36-37` · `sync_clients.py:28-29` |
 | `embedding_provider` default | `"local"` | `config.py` |
@@ -37,11 +37,14 @@ load once per registry, not per call"). That is the right design, and it means
 each worker process holds its own 4.3 GB copy of the model.
 
 **Database connections are per-process too.** Each engine receives explicit
-limits from `Settings`: the operational pool defaults to 5 + 0 overflow, BI and
-medallion pools to 3 + 0, and the dedicated SQL-tool pool to 2 + 0. Every pool
-also receives a 30-second checkout timeout and a 30-minute recycle interval.
-The zero-overflow defaults are deliberate: steady capacity is predictable and
-the SQL tool cannot turn a burst of model queries into extra connections.
+limits from `Settings`: the operational pool defaults to 5 + 10 overflow, BI
+and medallion pools to 3 + 0, and the dedicated SQL-tool pool to 2 + 0. Every
+pool also receives a 30-second checkout timeout and a 30-minute recycle
+interval. The operational engine retains SQLAlchemy's previous ceiling of 15
+connections so ten concurrent turns do not spend up to its 30-second checkout
+timeout waiting for a connection. The zero-overflow defaults on the dedicated
+pools keep their steady capacity predictable and prevent the SQL tool from
+turning a burst of model queries into extra connections.
 
 ### Pool sizing rule
 
@@ -56,13 +59,28 @@ short-lived sync or maintenance processes that can overlap the service. Apply
 the formula separately to each process type, then add the process types that
 can run at the same time.
 
+Within every server process, the operational pool must also satisfy:
+
+```text
+database_pool_size + database_max_overflow >= max_concurrent_turns + 2
+```
+
+Each admitted turn holds at most one operational connection for a round. The
+headroom of two reserves one connection each for the in-process `AuditSink`
+drainer and `DeferredWebhookWorker`, which share that engine. `Settings`
+validates this rule at startup, so changing a pool setting or
+`max_concurrent_turns` cannot silently create a too-small operational pool.
+
 **Worked example.** A deployment runs three server processes with operational,
 BI, and SQL-tool engines enabled, plus one concurrent sync process with
 operational and medallion engines. Its upper bound is
-`3 × ((5 + 0) + (3 + 0) + (2 + 0)) + 1 × ((5 + 0) + (3 + 0)) = 38` connections.
-With `max_connections=100` and three reserved connections, 38 is below the 97
-usable connections. Increasing a worker count, enabling another engine, or
-raising overflow requires recalculating this bound first.
+`3 × ((5 + 10) + (3 + 0) + (2 + 0)) + 1 × ((5 + 10) + (3 + 0)) = 78`
+connections. With `max_connections=100` and three reserved connections, 78 is
+below the 97 usable connections. The default operational pool also satisfies
+`5 + 10 >= 10 + 2`: it serves the Stage A ten-turn limit and reserves the two
+background-worker connections. Increasing a worker count, enabling another
+engine, raising overflow, or changing `max_concurrent_turns` requires
+recalculating the applicable bound first.
 
 ## Decision
 

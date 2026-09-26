@@ -23,7 +23,7 @@ salva agregando workers. Medido sobre la máquina de desarrollo:
 | `max_connections` de PostgreSQL | 100 | `show max_connections` |
 | `superuser_reserved_connections` | 3 | `show superuser_reserved_connections` |
 | `shared_buffers` | 128 MB (default de fábrica, sin tunear) | `show shared_buffers` |
-| Pools de conexiones | Configurados por engine: operacional 5 + 0, BI/medallion 3 + 0, herramienta SQL 2 + 0 | `config.py`, `models/base.py` |
+| Pools de conexiones | Configurados por engine: operacional 5 + 10, BI/medallion 3 + 0, herramienta SQL 2 + 0 | `config.py`, `models/base.py` |
 | Engines por proceso **servidor** | **2** (operacional + BI) | `main.py:122`, `main.py:193` |
 | Engines por proceso de **script de sync** | 2 (operacional + medallion) | `scripts/sync_articles.py:36-37` · `sync_clients.py:28-29` |
 | Default de `embedding_provider` | `"local"` | `config.py` |
@@ -38,12 +38,14 @@ cada proceso worker sostiene su propia copia de 4,3 GB del modelo.
 
 **Las conexiones a la base también son por proceso.** Cada engine recibe
 límites explícitos desde `Settings`: el pool operacional tiene por defecto 5 +
-0 de overflow, los pools de BI y medallion 3 + 0, y el pool dedicado de la
+10 de overflow, los pools de BI y medallion 3 + 0, y el pool dedicado de la
 herramienta SQL 2 + 0. Todos los pools también reciben 30 segundos de timeout
-para obtener una conexión y un intervalo de reciclado de 30 minutos. Los
-defaults sin overflow son deliberados: la capacidad estable es predecible y la
-herramienta SQL no puede convertir una ráfaga de consultas del modelo en más
-conexiones.
+para obtener una conexión y un intervalo de reciclado de 30 minutos. El engine
+operacional conserva el techo previo de SQLAlchemy de 15 conexiones para que
+diez turnos concurrentes no gasten hasta sus 30 segundos de timeout esperando
+una conexión. Los defaults sin overflow de los pools dedicados mantienen
+predecible su capacidad estable e impiden que la herramienta SQL convierta una
+ráfaga de consultas del modelo en conexiones extra.
 
 ### Regla de dimensionamiento del pool
 
@@ -58,13 +60,29 @@ incluyendo procesos de sync o mantenimiento de corta vida que pueden solaparse
 con el servicio. Aplique la fórmula por separado a cada tipo de proceso y luego
 sume los tipos que pueden ejecutarse al mismo tiempo.
 
+Dentro de cada proceso servidor, el pool operacional también debe cumplir:
+
+```text
+database_pool_size + database_max_overflow >= max_concurrent_turns + 2
+```
+
+Cada turno admitido sostiene como máximo una conexión operacional durante una
+ronda. El margen de dos reserva una conexión para el drainer de `AuditSink` y
+otra para `DeferredWebhookWorker`, los dos procesos en segundo plano que
+comparten ese engine. `Settings` valida esta regla al iniciar, así que cambiar
+un setting del pool o `max_concurrent_turns` no puede dejar silenciosamente
+chico al pool operacional.
+
 **Ejemplo resuelto.** Un despliegue ejecuta tres procesos servidor con los
 engines operacional, BI y de la herramienta SQL, más un proceso de sync
 concurrente con los engines operacional y medallion. Su límite superior es
-`3 × ((5 + 0) + (3 + 0) + (2 + 0)) + 1 × ((5 + 0) + (3 + 0)) = 38` conexiones.
-Con `max_connections=100` y tres conexiones reservadas, 38 queda por debajo de
-las 97 conexiones utilizables. Aumentar la cantidad de workers, habilitar otro
-engine o aumentar overflow exige recalcular este límite primero.
+`3 × ((5 + 10) + (3 + 0) + (2 + 0)) + 1 × ((5 + 10) + (3 + 0)) = 78`
+conexiones. Con `max_connections=100` y tres conexiones reservadas, 78 queda
+por debajo de las 97 conexiones utilizables. El pool operacional por default
+también cumple `5 + 10 >= 10 + 2`: atiende el límite de diez turnos de la Etapa
+A y reserva las dos conexiones de los workers en segundo plano. Aumentar la
+cantidad de workers, habilitar otro engine, aumentar overflow o cambiar
+`max_concurrent_turns` exige recalcular primero el límite aplicable.
 
 ## Decisión
 
