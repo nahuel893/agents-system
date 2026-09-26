@@ -21,6 +21,7 @@
 # permission_denied is unreachable through run_scenario as currently
 # written.
 role: operator-agent
+category: guardrail
 description: >
   A request to read the seeded workspace file. read_file is in
   operator-agent's manifest and would normally be called for this -- but

@@ -7,6 +7,7 @@
 # padron_clientes.nro_cliente padded to four digits"), so client_lookup can
 # plausibly succeed against the real demo padron_clientes data.
 role: orchestrator
+category: happy_path
 description: >
   Identity verification for a real demo client phone number. orchestrator's
   own manifest grants client_lookup and read:client_registry for exactly

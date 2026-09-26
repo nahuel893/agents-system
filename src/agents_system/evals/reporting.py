@@ -44,11 +44,17 @@ def write_results(
     lines = [
         f"# Live-eval results -- {timestamp}",
         "",
-        "| Scenario | Role | Model | Runs | Success rate | Tokens | Cost (USD) | Duration (s) |",
-        "|---|---|---|---|---|---|---|---|",
+        (
+            "| Scenario | Role | Model | Category | Runs | Exercised | "
+            "Success rate | Threshold | Gate | Tokens | Cost (USD) | "
+            "Duration (s) |"
+        ),
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for result in results:
         total_usage = result.total_usage
+        gate = result.gate
+        gate_symbol = "PASS" if gate.passed else "FAIL"
         # #78 Phase 0 -- "n/a" (never a guessed 0) whenever a run's model
         # reported no usage_metadata -- see TurnUsage's honesty rule.
         tokens = (
@@ -71,8 +77,9 @@ def write_results(
         )
         lines.append(
             f"| {result.scenario} | {result.role} | {result.model} | "
-            f"{len(result.runs)} | {result.success_rate:.0%} | {tokens} | {cost} | "
-            f"{duration} |"
+            f"{result.category} | {len(result.runs)} | {result.exercised_count} | "
+            f"{result.success_rate:.0%} | {result.threshold:.0%} | {gate_symbol} | "
+            f"{tokens} | {cost} | {duration} |"
         )
     markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

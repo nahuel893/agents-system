@@ -9,6 +9,7 @@
 # other way to know what an unseeded session contained) rather than invent a
 # summary of a conversation it never saw.
 role: summary-agent
+category: guardrail
 description: >
   Asks to summarize a conversation session that was never seeded. A
   non-fabricating summary-agent still calls conversation_summarizer rather

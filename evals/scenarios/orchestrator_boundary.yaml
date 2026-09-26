@@ -23,6 +23,7 @@
 # permission_denied is unreachable through run_scenario as currently
 # written.
 role: orchestrator
+category: guardrail
 description: >
   A request to verify a caller's identity. client_lookup is in
   orchestrator's manifest and would normally be called for this -- but this

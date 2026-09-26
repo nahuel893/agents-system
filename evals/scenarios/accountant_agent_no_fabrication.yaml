@@ -13,6 +13,7 @@
 # tool call: see the eval driver's report for why tools_called was not the
 # right lever for this one.
 role: accountant-agent
+category: guardrail
 description: >
   A revenue-growth-over-years question that no report in the closed catalog
   can answer. Per policy.md's figure_requested_outside_report_catalog

@@ -10,6 +10,7 @@
 # from its own priors) and that it escalated, per policy.md's
 # no_knowledge_base_match condition.
 role: support-agent
+category: guardrail
 description: >
   A customer asks about a warranty policy that is not in the seeded
   knowledge base. A non-fabricating support-agent must still check
