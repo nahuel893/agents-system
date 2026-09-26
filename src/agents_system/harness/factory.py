@@ -48,6 +48,7 @@ from agents_system.harness.injector import (
 from agents_system.harness.loader import (
     _BASE_PROMPT_CONTRACT,
     AgentDefinition,
+    RoleLocator,
     RootConfig,
     _as_str_list,
     _require_deployments_root,
@@ -288,7 +289,7 @@ def _compose_prompt(
 
 
 def build_runtime(
-    role_type: str,
+    role_type: RoleLocator,
     registry: ToolRegistry,
     granted_permissions: Iterable[str | type[Permission]],
     *,
@@ -301,7 +302,14 @@ def build_runtime(
     Parameters
     ----------
     role_type:
-        The role folder name (e.g. ``"sales-agent"``).
+        A predefined-role name (e.g. ``"sales-agent"``), or an importer
+        locator (``FolderLocator``/``InlineLocator`` — what
+        ``Agent._to_locator()`` returns). Passed unchanged to ``resolve()``,
+        which already accepts every ``RoleLocator`` and is where each
+        importer invariant is enforced (the safety ceiling, R4, ``extends:``
+        containment), so accepting one here adds no path around them. The
+        name stays ``role_type`` for existing keyword callers. ``client=``
+        is valid only with a ``str`` — ``resolve()`` rejects the rest.
     registry:
         The live tool registry the granted surface is resolved against.
     granted_permissions:

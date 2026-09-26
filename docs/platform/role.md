@@ -70,6 +70,18 @@ An agent definition is a folder under `platform/roles/` containing three files. 
 | `memory_policy` | `object` | required | Governs what the runtime may read from and write to memory. Sub-fields: `read_scope` (one of `local`, `team`, `org`), `write_scope` (one of `local`, `team`, `org`), `persist_conversation` (boolean). |
 | `audit_policy` | `object` | required | What the runtime must record in the audit trail. Sub-fields: `log_tool_calls` (boolean), `log_delegations` (boolean), `log_escalations` (boolean), `retention_days` (integer or `null` for platform default). |
 
+### Inheritance: additive for capability, subtractive for safety
+
+`extends` adds capability: a child keeps its parent's tools, permissions, and prose, and adds its own. Safety works the other way. A child may match or tighten its parent's `autonomy` and `execution_limits`, and may never loosen or raise them (`platform/roles/base/policy.md`).
+
+The loader enforces this for every definition the importer writes: an `Agent(...)`, an `Agent.from_folder(...)` (including its Python overrides), or a folder reached through another folder's `extends:`. Each of these is checked against its parent's effective values before it is folded in, at every hop of the chain (`Agent` → `Agent` → folder agent → predefined role). Breaking the rule raises `DefinitionError`, naming the agent, the field, both values, and the rule. The check lives in `resolve()`, so `build_runtime()` applies it too.
+
+- **Autonomy.** The ranking is `confirm` < `supervised` < `full`. A parent that declares nothing counts as `supervised`, the platform floor. An importer agent that declares nothing inherits its parent's level.
+- **Execution limits.** A missing or `null` limit means the platform default (`tool_call_timeout_s` 10, `total_execution_timeout_s` 60, `max_tool_calls` 20, `max_delegation_depth` 2, `max_clarification_attempts` 3). This holds on both sides. So **an importer agent cannot raise an execution limit above its parent's value, or above the platform default when the parent sets none.** It also cannot write `null` to undo a limit its parent tightened. A limit must be a number: `NaN` and infinity are rejected.
+- **No parent.** A folder agent with no `extends:` has the platform defaults as its ceiling: `supervised` and the limits above. Leaving out `extends` is not a way around the rule.
+
+Folds between two predefined roles are not checked this way, because the platform writes both files (`data-agent` and `summary-agent` run `full` under a `supervised` chain). Deployment overrides keep their own subtractive check against the resolved role (`docs/platform/deployment.md`).
+
 ### `role.md` prose body — model-facing prompt vs. design notes
 
 The frontmatter table above covers `role.md`'s YAML header. Everything after the closing `---` is the prose body, which the loader captures as the role's contribution to `system_prompt` (`AgentDefinition.system_prompt` / `RawDefinition.system_prompt`, `harness/loader.py`).
