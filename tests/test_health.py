@@ -77,6 +77,7 @@ async def test_health_all_ok(app):
             transport=ASGITransport(app=app), base_url="http://test"
         ) as ac:
             response = await ac.get("/health")
+            ready = await ac.get("/ready")
 
     assert response.status_code == 200
     body = response.json()
@@ -84,6 +85,8 @@ async def test_health_all_ok(app):
     assert body["postgres"] == "ok"
     assert body["redis"] == "ok"
     assert body["provider"] == {"status": "ok", "reason": None}
+    assert ready.status_code == 200
+    assert ready.json()["status"] == "ok"
 
 
 async def test_health_skips_provider_probe_when_no_runtime_is_configured(app):
@@ -138,15 +141,42 @@ async def test_health_and_ready_report_provider_outage_without_network(app):
     assert ready.json()["status"] == "degraded"
 
 
-async def test_provider_probe_caches_a_fake_result_without_network():
-    """The bounded probe caches by configured provider target for five seconds."""
-    request = AsyncMock()
-    probe = ProviderHealthProbe(request=request)
+async def test_provider_probe_single_flights_cold_and_expired_cache_bursts():
+    """One probe request serves every concurrent caller in each cache window."""
+    calls = 0
+
+    async def request(target: str) -> None:
+        nonlocal calls
+        assert target == "http://fake"
+        calls += 1
+        await asyncio.sleep(0)
+
+    now = 0.0
+    probe = ProviderHealthProbe(request=request, monotonic=lambda: now)
     settings = SimpleNamespace(adapter_provider="ollama", ollama_base_url="http://fake")
 
-    assert await probe.probe(settings) is True
-    assert await probe.probe(settings) is True
-    request.assert_awaited_once_with("http://fake")
+    cold_results = await asyncio.gather(*(probe.probe(settings) for _ in range(100)))
+    assert cold_results == [True] * 100
+    assert calls == 1
+
+    now = 5.1
+    expired_results = await asyncio.gather(*(probe.probe(settings) for _ in range(100)))
+    assert expired_results == [True] * 100
+    assert calls == 2
+
+
+async def test_provider_probe_applies_a_total_timeout(monkeypatch):
+    """A hanging request callable returns an unreachable result within the budget."""
+    monkeypatch.setattr("agents_system.main._PROVIDER_PROBE_TIMEOUT_S", 0.01)
+
+    async def hanging_request(target: str) -> None:
+        assert target == "http://fake"
+        await asyncio.sleep(0.1)
+
+    probe = ProviderHealthProbe(request=hanging_request)
+    settings = SimpleNamespace(adapter_provider="ollama", ollama_base_url="http://fake")
+
+    assert await probe.probe(settings) is False
 
 
 # ---------------------------------------------------------------------------

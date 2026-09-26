@@ -51,8 +51,9 @@ body's `status` is `ok` or `degraded`. It reports PostgreSQL, Redis, webhook
 outbox state, the chat provider used by configured runtimes, and audit loss.
 When no runtime is configured, the provider status is `not_configured` and no
 provider request is made. Otherwise, the probe is a credential-free `HEAD`
-request to its base URL, bounded to one second and cached for five seconds per
-configured provider target. Any HTTP response
+request to its base URL, bounded by a one-second total timeout and cached for
+five seconds per configured provider target. Concurrent cache misses share one
+in-flight request, preventing upstream probe bursts. Any HTTP response
 (including authentication or route errors) proves reachability; a transport or
 timeout failure makes `provider.status` `error` with the fixed
 `"unreachable"` reason. It never sends tokens, credentials, or a provider

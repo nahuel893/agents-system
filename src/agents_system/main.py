@@ -660,6 +660,7 @@ class ProviderHealthProbe:
         self._request = request or self._head
         self._monotonic = monotonic
         self._cached: dict[str, tuple[float, bool]] = {}
+        self._lock = asyncio.Lock()
 
     async def _head(self, target: str) -> None:
         async with httpx.AsyncClient(
@@ -677,19 +678,26 @@ class ProviderHealthProbe:
         if cached is not None and now - cached[0] < _PROVIDER_PROBE_CACHE_TTL_S:
             return cached[1]
 
-        try:
-            await self._request(target)
-        except Exception:
-            # Do not log the exception: provider error strings can include a
-            # credential-bearing URL or response details.
-            structlog.get_logger().warning(
-                "health.provider_unreachable", provider=settings.adapter_provider
-            )
-            reachable = False
-        else:
-            reachable = True
-        self._cached[cache_key] = (now, reachable)
-        return reachable
+        async with self._lock:
+            now = self._monotonic()
+            cached = self._cached.get(cache_key)
+            if cached is not None and now - cached[0] < _PROVIDER_PROBE_CACHE_TTL_S:
+                return cached[1]
+
+            try:
+                async with asyncio.timeout(_PROVIDER_PROBE_TIMEOUT_S):
+                    await self._request(target)
+            except Exception:
+                # Do not log the exception: provider error strings can include a
+                # credential-bearing URL or response details.
+                structlog.get_logger().warning(
+                    "health.provider_unreachable", provider=settings.adapter_provider
+                )
+                reachable = False
+            else:
+                reachable = True
+            self._cached[cache_key] = (now, reachable)
+            return reachable
 
 
 async def _outbox_backlog(engine: Any) -> OutboxBacklogCounts | None:

@@ -56,8 +56,10 @@ del outbox de webhook, el proveedor de chat usado por runtimes configurados y
 la pérdida de registros de auditoría. Si no hay un runtime configurado, el
 estado del proveedor es `not_configured` y no se hace ninguna petición. De lo
 contrario, la prueba del proveedor es un `HEAD` sin credenciales a su URL base,
-acotado a un segundo y cacheado cinco segundos por destino de proveedor
-configurado. Cualquier respuesta HTTP (incluyendo errores de
+acotado por un timeout total de un segundo y cacheado cinco segundos por
+destino de proveedor configurado. Los cache misses concurrentes comparten una
+única petición en vuelo, evitando ráfagas de probes al proveedor. Cualquier
+respuesta HTTP (incluyendo errores de
 autenticación o de ruta) prueba conectividad; un error de transporte o timeout
 pone `provider.status` en `error` con la razón fija `"unreachable"`. No envía
 tokens ni credenciales, y no expone mensajes de error del proveedor.
