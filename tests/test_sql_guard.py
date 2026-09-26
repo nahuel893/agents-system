@@ -1,0 +1,486 @@
+"""Offline tests for the application-layer SQL guard (#80, ADR-007).
+
+The guard is the SECOND layer of the read-only SQL tool: the database role is
+the boundary (see `tests/test_sql_query_integration.py`), and this layer must
+still hold on its own. Every test here runs without a database: the guard
+parses model-authored text with a real PostgreSQL-dialect parser, never with
+string matching, and returns the canonical rendering that is the ONLY text the
+connector ever sends to the database.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from agents_system.services.sql_guard import (
+    DEFAULT_ALLOWED_FUNCTIONS,
+    QueryPolicy,
+    QueryRejectedError,
+    guard_query,
+    parse_relation_name,
+)
+
+_POLICY = QueryPolicy(
+    allowed_relations=frozenset(
+        {("reporting", "sales_v"), ("reporting", "clients_v"), ("archive", "sales_v")}
+    ),
+)
+_SINGLE_SCHEMA_POLICY = QueryPolicy(
+    allowed_relations=frozenset({("reporting", "sales_v"), ("reporting", "clients_v")}),
+)
+
+
+def _reject_code(sql: object, policy: QueryPolicy = _SINGLE_SCHEMA_POLICY) -> str:
+    with pytest.raises(QueryRejectedError) as excinfo:
+        guard_query(sql, policy, row_limit=10)
+    return excinfo.value.code
+
+
+# ---------------------------------------------------------------------------
+# Accepted queries and the canonical rendering
+# ---------------------------------------------------------------------------
+
+
+def test_plain_select_is_accepted_and_rendered_qualified_and_quoted() -> None:
+    guarded = guard_query(
+        "select product, sum(amount) from sales_v group by product",
+        _SINGLE_SCHEMA_POLICY,
+        row_limit=10,
+    )
+
+    assert '"reporting"."sales_v"' in guarded.sql
+    assert guarded.relations == ("reporting.sales_v",)
+
+
+def test_rendering_wraps_the_query_with_a_row_limit_of_n_plus_one() -> None:
+    guarded = guard_query(
+        "SELECT product FROM reporting.sales_v ORDER BY product",
+        _SINGLE_SCHEMA_POLICY,
+        row_limit=25,
+    )
+
+    assert guarded.sql.endswith("LIMIT 26")
+    assert guarded.sql.startswith("SELECT * FROM (")
+
+
+def test_a_single_trailing_semicolon_is_accepted() -> None:
+    guarded = guard_query(
+        "SELECT 1 FROM reporting.sales_v;", _SINGLE_SCHEMA_POLICY, row_limit=10
+    )
+    assert ";" not in guarded.sql
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        (
+            "WITH m AS (SELECT date_trunc('month', sold_at) AS month, sum(amount) AS t"
+            " FROM sales_v GROUP BY 1) SELECT * FROM m ORDER BY month"
+        ),
+        "SELECT a.product FROM sales_v a JOIN clients_v c ON c.id = a.client_id",
+        "SELECT product FROM sales_v WHERE client_id IN (SELECT id FROM clients_v)",
+        "SELECT product FROM sales_v UNION SELECT name FROM clients_v",
+        (
+            "SELECT count(*) FILTER (WHERE amount > 0), avg(amount), max(sold_at)"
+            " FROM sales_v"
+        ),
+        (
+            "SELECT product, rank() OVER (ORDER BY sum(amount) DESC) FROM sales_v"
+            " GROUP BY product"
+        ),
+        (
+            "SELECT to_char(sold_at, 'YYYY-MM'), round(sum(amount)::numeric, 2)"
+            " FROM sales_v GROUP BY 1"
+        ),
+        (
+            "SELECT extract(year FROM sold_at), coalesce(nullif(product, ''), 'n/a')"
+            " FROM sales_v"
+        ),
+        (
+            "SELECT d::date FROM generate_series(current_date - 7, current_date,"
+            " interval '1 day') AS d"
+        ),
+        (
+            "SELECT lower(name), length(name), string_agg(product, ', ')"
+            " FROM clients_v JOIN sales_v ON true GROUP BY 1, 2"
+        ),
+        "SELECT * FROM sales_v s WHERE s.amount > 0 ORDER BY s.sold_at DESC LIMIT 5",
+        (
+            "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3)"
+            " SELECT * FROM r"
+        ),
+        (
+            "SELECT product FROM sales_v WHERE product ILIKE '%x%'"
+            " AND sold_at >= now() - interval '30 days'"
+        ),
+    ],
+)
+def test_typical_analytical_queries_are_accepted(sql: str) -> None:
+    guarded = guard_query(sql, _SINGLE_SCHEMA_POLICY, row_limit=10)
+    assert guarded.sql
+
+
+# ---------------------------------------------------------------------------
+# Input shape
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("sql", [None, 42, ["SELECT 1"], {"sql": "SELECT 1"}])
+def test_non_string_input_is_rejected(sql: object) -> None:
+    assert _reject_code(sql) == "invalid_input"
+
+
+@pytest.mark.parametrize("sql", ["", "   ", ";", "-- only a comment"])
+def test_empty_input_is_rejected(sql: str) -> None:
+    assert _reject_code(sql) in {"invalid_input", "not_select"}
+
+
+def test_overlong_input_is_rejected_before_parsing() -> None:
+    policy = QueryPolicy(
+        allowed_relations=_SINGLE_SCHEMA_POLICY.allowed_relations, max_sql_length=50
+    )
+    assert _reject_code("SELECT " + "1 + " * 40 + "1", policy) == "too_long"
+
+
+def test_unparseable_input_is_rejected() -> None:
+    assert _reject_code("SELECT FROM WHERE (((") == "unparseable"
+
+
+# ---------------------------------------------------------------------------
+# Single-statement enforcement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 1 FROM sales_v; SELECT 2 FROM sales_v",
+        "SELECT 1 FROM sales_v; DROP TABLE reporting.sales",
+        # A line comment ending the first statement cannot hide the second.
+        "SELECT 1 FROM sales_v -- harmless\n; DELETE FROM reporting.sales",
+    ],
+)
+def test_more_than_one_statement_is_rejected(sql: str) -> None:
+    assert _reject_code(sql) == "multiple_statements"
+
+
+def test_a_block_comment_hiding_a_statement_never_reaches_the_database() -> None:
+    guarded = guard_query(
+        "SELECT 1 FROM sales_v /* ; DROP TABLE reporting.sales */",
+        _SINGLE_SCHEMA_POLICY,
+        row_limit=10,
+    )
+
+    assert "DROP" not in guarded.sql.upper()
+    assert "/*" not in guarded.sql
+
+
+def test_a_nested_block_comment_is_read_the_way_postgres_reads_it() -> None:
+    # PostgreSQL nests block comments: everything up to the second `*/` is
+    # a comment. A parser that stopped at the first `*/` would see a
+    # subquery against a relation it never checked.
+    guarded = guard_query(
+        "SELECT 1 FROM sales_v /* a /* b */ , (SELECT x FROM secret) */",
+        _SINGLE_SCHEMA_POLICY,
+        row_limit=10,
+    )
+    assert "secret" not in guarded.sql
+
+
+# ---------------------------------------------------------------------------
+# DDL / DML / everything that is not a plain SELECT
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "INSERT INTO reporting.sales_v VALUES (1)",
+        "UPDATE reporting.sales_v SET amount = 0",
+        "DELETE FROM reporting.sales_v",
+        (
+            "MERGE INTO reporting.sales_v t USING reporting.clients_v s ON true"
+            " WHEN MATCHED THEN DELETE"
+        ),
+        "DROP TABLE reporting.sales",
+        "DROP VIEW reporting.sales_v",
+        "CREATE TABLE reporting.x (a int)",
+        "CREATE TEMP TABLE x (a int)",
+        "ALTER TABLE reporting.sales ADD COLUMN x int",
+        "TRUNCATE reporting.sales",
+        "GRANT SELECT ON reporting.sales TO PUBLIC",
+        "COPY reporting.sales TO '/tmp/out'",
+        "COPY (SELECT 1) TO PROGRAM 'id'",
+        "SET statement_timeout = 0",
+        "SET LOCAL default_transaction_read_only = off",
+        "RESET ALL",
+        "BEGIN",
+        "COMMIT",
+        "EXPLAIN ANALYZE SELECT 1",
+        "DO $$ BEGIN PERFORM 1; END $$",
+        "CALL reporting.proc()",
+        "VACUUM",
+        "LOCK TABLE reporting.sales",
+        "PREPARE p AS SELECT 1",
+        "LISTEN channel",
+        "TABLE reporting.sales_v",
+        "VALUES (1)",
+    ],
+)
+def test_statements_other_than_select_are_rejected(sql: str) -> None:
+    assert _reject_code(sql) in {"not_select", "unparseable"}
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # SELECT ... INTO creates a table.
+        "SELECT * INTO reporting.copy FROM sales_v",
+        # Locking clauses take row locks and need UPDATE rights.
+        "SELECT * FROM sales_v FOR UPDATE",
+        "SELECT * FROM sales_v FOR SHARE",
+        "SELECT * FROM sales_v FOR NO KEY UPDATE",
+    ],
+)
+def test_select_forms_that_write_or_lock_are_rejected(sql: str) -> None:
+    assert _reject_code(sql) == "forbidden_clause"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH d AS (DELETE FROM reporting.sales RETURNING *) SELECT * FROM d",
+        "WITH u AS (UPDATE reporting.sales SET amount = 0 RETURNING 1) SELECT * FROM u",
+        (
+            "WITH i AS (INSERT INTO reporting.sales VALUES (1) RETURNING 1)"
+            " SELECT * FROM i"
+        ),
+    ],
+)
+def test_data_modifying_ctes_are_rejected(sql: str) -> None:
+    assert _reject_code(sql) == "forbidden_clause"
+
+
+# ---------------------------------------------------------------------------
+# Function abuse
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT pg_sleep(60)",
+        "SELECT pg_sleep_for('1 minute')",
+        "SELECT 1 FROM sales_v WHERE pg_sleep(10) IS NOT NULL",
+        "SELECT set_config('default_transaction_read_only', 'off', false)",
+        "SELECT current_setting('data_directory')",
+        "SELECT pg_advisory_lock(1)",
+        "SELECT pg_terminate_backend(1)",
+        "SELECT pg_read_file('/etc/passwd')",
+        "SELECT lo_import('/etc/passwd')",
+        "SELECT query_to_xml('select * from secret', true, true, '')",
+        "SELECT * FROM dblink('host=x', 'select 1') AS t(a int)",
+        "SELECT * FROM pg_ls_dir('.')",
+        "SELECT nextval('reporting.seq')",
+        "SELECT txid_current()",
+    ],
+)
+def test_functions_outside_the_allowlist_are_rejected(sql: str) -> None:
+    assert _reject_code(sql) == "function_not_allowed"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # Schema-qualified calls escape the pinned search path and can reach
+        # a deployment's own functions, even when the bare name is allowed.
+        "SELECT public.count(1)",
+        "SELECT pg_catalog.pg_sleep(1)",
+        # A quoted name is not what the allowlist matched against.
+        'SELECT "pg_sleep"(1)',
+        # Operators are functions too; a qualified one can be user-defined.
+        "SELECT 1 OPERATOR(public.+) 2",
+    ],
+)
+def test_qualified_or_quoted_function_and_operator_calls_are_rejected(
+    sql: str,
+) -> None:
+    assert _reject_code(sql) == "function_not_allowed"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    ["SELECT $1", "SELECT * FROM sales_v WHERE amount > :minimum", "SELECT ?"],
+)
+def test_bind_parameters_are_rejected(sql: str) -> None:
+    assert _reject_code(sql) == "parameter_not_allowed"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT amount::public.money_type FROM sales_v",
+        "SELECT 'reporting.secret'::regclass",
+    ],
+)
+def test_casts_to_non_builtin_or_catalog_lookup_types_are_rejected(sql: str) -> None:
+    assert _reject_code(sql) == "type_not_allowed"
+
+
+def test_default_function_allowlist_holds_no_side_effecting_function() -> None:
+    dangerous = {
+        "pg_sleep",
+        "set_config",
+        "current_setting",
+        "pg_advisory_lock",
+        "query_to_xml",
+        "dblink",
+        "lo_import",
+        "pg_read_file",
+        "nextval",
+        "setval",
+    }
+    assert not dangerous & DEFAULT_ALLOWED_FUNCTIONS
+
+
+def test_a_deployment_can_extend_the_function_allowlist() -> None:
+    policy = QueryPolicy(
+        allowed_relations=_SINGLE_SCHEMA_POLICY.allowed_relations,
+        allowed_functions=DEFAULT_ALLOWED_FUNCTIONS | {"md5"},
+    )
+    assert guard_query("SELECT md5(product) FROM sales_v", policy, row_limit=5).sql
+
+
+# ---------------------------------------------------------------------------
+# Relation allowlist
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM secret",
+        "SELECT * FROM reporting.sales",
+        "SELECT * FROM public.sales_v",
+        "SELECT * FROM other.sales_v",
+        "SELECT * FROM pg_catalog.pg_user",
+        "SELECT * FROM pg_user",
+        "SELECT * FROM information_schema.tables",
+        "SELECT * FROM sales_v JOIN secret ON true",
+        "SELECT (SELECT max(x) FROM secret) FROM sales_v",
+        "SELECT * FROM sales_v WHERE EXISTS (SELECT 1 FROM reporting.secret)",
+        "SELECT ARRAY(SELECT x FROM secret)",
+        "SELECT * FROM sales_v UNION ALL SELECT * FROM secret",
+        "WITH x AS (SELECT * FROM secret) SELECT * FROM x",
+        # Cross-database references are not a PostgreSQL feature and never
+        # match an allowlist entry.
+        "SELECT * FROM otherdb.reporting.sales_v",
+    ],
+)
+def test_relations_outside_the_allowlist_are_rejected(sql: str) -> None:
+    assert _reject_code(sql) == "relation_not_allowed"
+
+
+def test_schema_qualified_allowlisted_view_is_accepted() -> None:
+    guarded = guard_query(
+        "SELECT * FROM reporting.clients_v", _SINGLE_SCHEMA_POLICY, row_limit=5
+    )
+    assert guarded.relations == ("reporting.clients_v",)
+
+
+def test_unquoted_identifiers_fold_to_lower_case_like_postgres() -> None:
+    guarded = guard_query(
+        "SELECT * FROM Reporting.SALES_V", _SINGLE_SCHEMA_POLICY, row_limit=5
+    )
+    assert guarded.relations == ("reporting.sales_v",)
+
+
+def test_quoted_lower_case_identifiers_match_the_allowlist() -> None:
+    guarded = guard_query(
+        'SELECT * FROM "reporting"."sales_v"', _SINGLE_SCHEMA_POLICY, row_limit=5
+    )
+    assert guarded.relations == ("reporting.sales_v",)
+
+
+@pytest.mark.parametrize(
+    "sql", ['SELECT * FROM "SALES_V"', 'SELECT * FROM "Reporting".sales_v']
+)
+def test_quoted_identifiers_are_case_sensitive_like_postgres(sql: str) -> None:
+    assert _reject_code(sql) == "relation_not_allowed"
+
+
+def test_an_unqualified_name_in_two_allowlisted_schemas_is_ambiguous() -> None:
+    assert _reject_code("SELECT * FROM sales_v", _POLICY) == "ambiguous_relation"
+
+
+def test_a_cte_named_like_a_relation_is_a_cte_only_inside_its_own_scope() -> None:
+    # The outer `secret` is the real relation: the CTE of the same name is
+    # visible only inside the LATERAL subquery. Treating every `secret` as
+    # the CTE would skip the allowlist check PostgreSQL itself never skips.
+    sql = (
+        "SELECT * FROM secret, LATERAL (WITH secret AS (SELECT 1 AS a)"
+        " SELECT * FROM secret) AS s"
+    )
+    assert _reject_code(sql) == "relation_not_allowed"
+
+
+def test_a_cte_is_not_mistaken_for_a_relation() -> None:
+    guarded = guard_query(
+        "WITH secret AS (SELECT * FROM sales_v) SELECT * FROM secret",
+        _SINGLE_SCHEMA_POLICY,
+        row_limit=5,
+    )
+    assert guarded.relations == ("reporting.sales_v",)
+
+
+def test_a_qualified_name_is_never_resolved_to_a_cte() -> None:
+    sql = "WITH secret AS (SELECT 1) SELECT * FROM reporting.secret"
+    assert _reject_code(sql) == "relation_not_allowed"
+
+
+# ---------------------------------------------------------------------------
+# Rejection texts are fixed and safe
+# ---------------------------------------------------------------------------
+
+
+def test_relation_rejection_names_the_queryable_views() -> None:
+    with pytest.raises(QueryRejectedError) as excinfo:
+        guard_query("SELECT * FROM secret", _SINGLE_SCHEMA_POLICY, row_limit=5)
+
+    message = excinfo.value.message
+    assert "reporting.sales_v" in message
+    assert "reporting.clients_v" in message
+
+
+def test_rejection_never_echoes_more_than_an_identifier_of_the_input() -> None:
+    long_name = "x" * 500
+    with pytest.raises(QueryRejectedError) as excinfo:
+        guard_query(f"SELECT * FROM {long_name}", _SINGLE_SCHEMA_POLICY, row_limit=5)
+
+    # PostgreSQL truncates identifiers at 63 bytes; so does the echo.
+    assert "x" * 64 not in excinfo.value.message
+
+
+# ---------------------------------------------------------------------------
+# Allowlist configuration
+# ---------------------------------------------------------------------------
+
+
+def test_parse_relation_name_requires_schema_and_view() -> None:
+    assert parse_relation_name("reporting.sales_v") == ("reporting", "sales_v")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["sales_v", "a.b.c", "Reporting.sales_v", 'reporting."x"', "reporting.", ""],
+)
+def test_parse_relation_name_rejects_anything_but_simple_lower_case_names(
+    name: str,
+) -> None:
+    with pytest.raises(ValueError):
+        parse_relation_name(name)
+
+
+def test_policy_requires_at_least_one_relation() -> None:
+    with pytest.raises(ValueError):
+        QueryPolicy(allowed_relations=frozenset())
