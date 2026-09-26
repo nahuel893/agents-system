@@ -75,28 +75,33 @@ only the role default tells whether the ROLE is read-only."""
 
 _QUERY_ROLE_FINDINGS = text(
     r"""
-    SELECT 'relation' AS finding, n.nspname AS schema_name,
-           c.relname AS object_name, c.relkind::text AS relkind,
-           pg_catalog.has_any_column_privilege(c.oid, 'SELECT') AS can_select,
-           (pg_catalog.has_any_column_privilege(c.oid, 'INSERT, UPDATE, REFERENCES')
-            OR pg_catalog.has_table_privilege(c.oid, 'DELETE, TRUNCATE, TRIGGER'))
-               AS can_write
-    FROM pg_catalog.pg_class AS c
-    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-    WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-      AND n.nspname NOT LIKE 'pg\_toast%'
-      AND n.nspname NOT LIKE 'pg\_temp\_%'
-      AND (pg_catalog.has_any_column_privilege(
-               c.oid, 'SELECT, INSERT, UPDATE, REFERENCES')
-           OR pg_catalog.has_table_privilege(c.oid, 'DELETE, TRUNCATE, TRIGGER'))
-    UNION ALL
-    SELECT 'sequence', n.nspname, c.relname, c.relkind::text, false, true
-    FROM pg_catalog.pg_class AS c
-    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-    WHERE c.relkind = 'S'
-      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-      AND pg_catalog.has_sequence_privilege(c.oid, 'USAGE, UPDATE')
+    WITH privileges AS (
+        SELECT n.nspname AS schema_name, c.relname AS object_name,
+               c.relkind::text AS relkind,
+               CASE WHEN c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                    THEN pg_catalog.has_any_column_privilege(c.oid, 'SELECT')
+                    ELSE false
+               END AS can_select,
+               CASE WHEN c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                    THEN pg_catalog.has_any_column_privilege(
+                             c.oid, 'INSERT, UPDATE, REFERENCES')
+                         OR pg_catalog.has_table_privilege(
+                             c.oid, 'DELETE, TRUNCATE, TRIGGER')
+                    WHEN c.relkind = 'S'
+                    THEN pg_catalog.has_sequence_privilege(c.oid, 'USAGE, UPDATE')
+                    ELSE false
+               END AS can_write
+        FROM pg_catalog.pg_class AS c
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND n.nspname NOT LIKE 'pg\_toast%'
+          AND n.nspname NOT LIKE 'pg\_temp\_%'
+    )
+    SELECT CASE WHEN relkind = 'S' THEN 'sequence' ELSE 'relation' END AS finding,
+           schema_name, object_name, relkind, can_select, can_write
+    FROM privileges
+    WHERE can_select OR can_write
     UNION ALL
     SELECT 'schema', n.nspname, NULL, NULL, false, true
     FROM pg_catalog.pg_namespace AS n
@@ -109,7 +114,10 @@ _QUERY_ROLE_FINDINGS = text(
 """Everything outside the system schemas this role can read or change:
 relations it can SELECT from or write to, sequences it can advance, and
 schemas it can create objects in. Privileges granted to PUBLIC count, because
-they reach this role too. Static text, no caller input (AD-2 holds here)."""
+they reach this role too. Each privilege function sits behind a CASE on
+`relkind` because WHERE clauses have no evaluation order: without it the
+planner may ask `has_sequence_privilege` about a TOAST table and fail. Static
+text, no caller input (AD-2 holds here)."""
 
 _ELEVATED_ATTRIBUTES = (
     "rolsuper",
