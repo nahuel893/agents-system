@@ -156,6 +156,19 @@ sobre `EVAL_RUNS` (3 por defecto). Ver la sección propia "Escenarios en
 vivo de la Fase 1" de `docs/platform_es/live-eval.md` para lo que
 `boot_live_harness` necesitó crecer para llegar ahí.
 
+Un hallazgo real de una corrida, documentado en vez de disimulado: el
+backend de referencia `catalog_search` reporta `classification:
+"ambiguous"` para cada resultado (nunca una coincidencia confiable,
+`similarity` siempre es `None`), y `sales-agent` correctamente, de forma
+segura, escala por `confidence_below_threshold` en vez de pedir la mayoría
+de las veces, incluso con un SKU exacto explícitamente descrito como ya
+confirmado -- se observaron 1/6 llamadas a `order_writer` en dos intentos
+reales de `EVAL_RUNS=3`. El modelo hace lo correcto dada la señal honesta
+de la herramienta; la corrección pertenece al backend de referencia, no a
+este escenario, y se rastrea en #117. El sub-escenario `order_writer` es un
+`xfail` documentado que referencia #117 (`_run_gated_xfail`) -- no bloquea
+los otros tres sub-escenarios de `sales-agent` en la misma corrida en vivo.
+
 A través de la API y el webhook de WhatsApp, no del atajo directo al
 runtime:
 
