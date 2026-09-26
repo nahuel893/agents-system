@@ -82,7 +82,14 @@ blocks a merge on a low success rate. See **Gating** below.
   audit persistence to the real `audit_event` table (live runs swap in an
   in-memory `_CapturingAuditSink`), `command_tools:` (no platform role ships
   one), and `read_file`'s T3 path (`operator_agent_happy.yaml` only exercises
-  `use_term`).
+  `use_term`). **Update (#79):** all of the above are now exercised live in
+  `tests/test_live_eval_phase1.py`, through `boot_live_harness` (#78) --
+  `command_tools:` via a test agent built with the `Agent` API
+  (`Agent.from_folder`, the same fixture role
+  `tests/fixtures/agents/command_tools/roles/cmdtool-role` already
+  validates offline), `read_file` against a real bubblewrap sandbox, and an
+  executed audit row confirmed in the real `audit_event` table for every
+  scenario.
 - **Conversation history is unbounded.** `agent/state.py:11`'s
   `Annotated[list[AnyMessage], add_messages]` reducer never trims; the Redis
   checkpointer's TTL is refreshed on every read
@@ -124,6 +131,14 @@ Without real metrics there is nothing to assert against in later phases.
   does today. Phase 1 depends on this harness existing.
 
 ## Phase 1 — The agent works, end to end
+
+**Status: done (#79).** `tests/test_live_eval_phase1.py` (`pytest -m live`)
+covers every bullet below through `boot_live_harness` (#78) -- the real
+HTTP API or the real WhatsApp webhook, never the direct-runtime shortcut --
+gated at #81's `DEFAULT_HAPPY_PATH_THRESHOLD` (80%) over `EVAL_RUNS` (3
+by default). See `docs/platform/live-eval.md`'s own "Phase 1 live
+scenarios" section for what `boot_live_harness` needed to grow to get
+there.
 
 Through the API and the WhatsApp webhook, not the direct-runtime shortcut:
 

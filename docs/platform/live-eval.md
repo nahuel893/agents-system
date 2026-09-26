@@ -508,6 +508,74 @@ trip, the fake outbound server, the `/metrics` sample reader, the audit
 query builder) live in `tests/test_live_harness.py` and need no model,
 Postgres, or Redis.
 
+## Phase 1 live scenarios (issue #79)
+
+`tests/test_live_eval_phase1.py` (`pytest -m live`) proves the platform's
+features work end to end through `boot_live_harness` -- the real HTTP API
+or the real WhatsApp webhook, never `AgentRuntime.run_turn` directly.  Every
+assertion targets what the SYSTEM did (an executed row in the real
+`audit_event` table, a tool's own recorded arguments/result, the real
+Redis checkpointer's thread state, the fake WhatsApp server's recorded
+sends) -- the model's final wording is at most a soft signal, per this
+document's Principle. Each scenario runs `EVAL_RUNS` times (default 3) and
+passes when at least `DEFAULT_HAPPY_PATH_THRESHOLD` (80%, #81) of runs
+succeed.
+
+Getting there needed four additions to `boot_live_harness` beyond #78's own
+shape, all opt-in (every #78 call keeps working with no changes):
+
+- **`role: Agent | str`, `permissions`** -- any predefined role (not just
+  `sales-agent`) or a Python-built `Agent` (`agent.spec.Agent`,
+  `Agent.from_folder(...)` included), with its own deploy-time grant.
+- **`seed_demo=True`** -- loads `demo/load_demo_company.py`'s fixture data
+  (catalog, clients, sales) so `catalog_search`/`client_lookup`/`run_report`
+  have real rows to query. Seeds into a SECOND throwaway database, never
+  *database_url* itself: `_run_migrations` makes that one the app's own
+  alembic-managed operational schema, and the demo loader's own safety
+  guard (`classify_target`) refuses to load into a database that already
+  holds objects it does not recognise -- which those alembic tables always
+  are. `registry_engine` (the reference backends' connection) is pointed at
+  whichever database `catalog_search`/`client_lookup`/`run_report` actually
+  need, mirroring production's own `DATABASE_URL`/`BI_DATABASE_URL` split.
+- **`terminal_policy`** -- forwarded to the live registry so
+  `use_term`/`read_file` bind to a real sandbox instead of #78's
+  always-refusing default.
+- **`extra_tool_specs`, `tool_wrappers`** -- register a genuinely new tool
+  (e.g. the read-only SQL tool, #80) alongside the reference backends, or
+  replace a base tool (e.g. `run_report`) with a call-recording wrapper
+  around the SAME connector. The wrapper exists because
+  `ToolCallAttempted.payload` (the audit trail) never carries a tool's
+  arguments or return value, only name/timing/outcome -- proving "the
+  reports agent asked for `order_by='units'`, and the rows came back sorted
+  by units" needs the tool's own result, which only a wrapper built AFTER
+  the base registry (bound to *this* run's throwaway database) can supply;
+  `extra_tool_specs` alone cannot pre-build one, since that database's name
+  is only known once `boot_live_harness` has already booted.  This does NOT
+  reach a `command_tools:` declaration (e.g. #79's own `check_stock` fixture
+  scenario): those are injected directly from the resolved role definition,
+  never through the `ToolRegistry` these two operate on.
+- **`bind_webhook_to_role=False`** -- most predefined roles (and a bare
+  `Agent(...)`'s inherited default) resolve `untrusted_input: false`, and
+  `create_app` refuses to boot ANY role bound to `WHATSAPP_RUNTIME_ID` that
+  does (ADR-002 C.11/C.13: the channel delivers untrusted external input).
+  `False` binds the webhook instead to a separate, minimal, always-safe
+  placeholder agent that the scenario never talks to -- only the one
+  scenario that actually calls `deliver_webhook` (conversation memory, over
+  `sales-agent`, which already declares `untrusted_input: true`) needs the
+  `True` default.
+
+The read-only SQL tool's role (`sql_readonly`, #80/ADR-007) is provisioned
+against its OWN throwaway database -- independent of any `boot_live_harness`
+database, and created/dropped by the test itself -- with
+`agents_system.evals.live_harness.provision_sql_readonly_fixture`, which
+loads `tests/fixtures/sql_query_fixture.sql` and renders the CHECKED-IN
+`scripts/provision_sql_readonly.sql` into plain SQL (substituting its psql
+variables), run over one raw asyncpg connection. Rendering the real script
+(`render_provision_sql_readonly`, unit-tested in `tests/test_live_harness.py`)
+keeps a live run provisioning the tool's role through the exact same runbook
+an operator follows by hand, rather than a parallel reimplementation that
+could drift from it.
+
 ## Running it as a role's own pipeline
 
 `agents_system.evals.runner.run_scenario(scenario, *, model, model_name,
@@ -563,3 +631,8 @@ is what keeps this documented floor case from failing its own smoke test.
   (`DATABASE_URL`, `SQL_DATABASE_URL`) and skips without it; its delete-request
   scenario asserts the data is unchanged on every run, because the database
   role enforces that regardless of the model
+- Phase 1 (#79), through the harness (API/webhook), not the direct-runtime
+  shortcut: `tests/test_live_eval_phase1.py` — needs no separate PostgreSQL
+  setup beyond a reachable admin connection (`boot_live_harness` provisions
+  its own throwaway databases and, for the SQL-tool scenario, its own
+  `sql_readonly` fixture role)
