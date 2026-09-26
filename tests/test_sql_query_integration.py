@@ -33,7 +33,7 @@ from agents_system.connectors.sql_query_connector import (
 )
 from agents_system.models.base import get_engine
 from agents_system.services.db_role import verify_query_role
-from agents_system.services.sql_guard import GuardedQuery
+from agents_system.services.sql_guard import GuardedQuery, guard_query
 from agents_system.services.sql_query import json_cell
 
 pytestmark = pytest.mark.integration
@@ -173,6 +173,58 @@ async def test_representative_queries_mean_what_the_model_wrote(
     expected = [[json_cell(cell) for cell in row] for row in raw]
     assert "error" not in result, result
     assert result["rows"] == expected[: _CONFIG.row_limit]
+
+
+#: Queries the guard ACCEPTS although their text mentions the secret table:
+#: inside a quoted identifier, a string, a nested comment, an alias and a
+#: trailing line comment. Each must stay inert once rendered.
+_INERT_MENTIONS = (
+    (
+        'SELECT 1 AS "a"" , (SELECT note FROM sql_tool_fixture.secrets) AS ""b" '
+        "FROM sales_v"
+    ),
+    "SELECT 'x'' , (SELECT note FROM sql_tool_fixture.secrets) --' FROM sales_v",
+    (
+        "SELECT 1 FROM sales_v /* a /* b */ , (SELECT note FROM "
+        "sql_tool_fixture.secrets) */"
+    ),
+    (
+        'SELECT product AS "sql_tool_fixture.secrets" FROM sales_v '
+        "-- , (SELECT note FROM sql_tool_fixture.secrets)"
+    ),
+)
+
+
+def _plan_relations(node: Any) -> set[str]:
+    found: set[str] = set()
+    if isinstance(node, dict):
+        if "Relation Name" in node:
+            found.add(f"{node.get('Schema')}.{node['Relation Name']}")
+        for value in node.values():
+            found |= _plan_relations(value)
+    elif isinstance(node, list):
+        for item in node:
+            found |= _plan_relations(item)
+    return found
+
+
+@pytest.mark.parametrize("sql", _INERT_MENTIONS)
+async def test_postgres_plans_accepted_text_against_the_allowlist_only(
+    admin_engine: AsyncEngine, sql: str
+) -> None:
+    # A differential test against PostgreSQL's own parser: ask the server,
+    # as the admin role that COULD read the secret table, which relations
+    # the guard's rendering touches. Only the allowlisted view's base table
+    # may appear - never the table the text merely mentions.
+    guarded = guard_query(sql, _CONFIG.policy(), row_limit=_CONFIG.row_limit)
+
+    async with admin_engine.connect() as conn:
+        await conn.exec_driver_sql("SET search_path = ''")
+        plan = (
+            await conn.exec_driver_sql(f"EXPLAIN (VERBOSE, FORMAT JSON) {guarded.sql}")
+        ).scalar()
+
+    assert _plan_relations(plan) == {"sql_tool_fixture.sales"}
 
 
 async def test_rows_are_capped_by_the_server_and_order_is_kept(

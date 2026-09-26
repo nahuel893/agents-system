@@ -274,8 +274,9 @@ _MESSAGES = {
     ),
     "unsupported_literal": (
         "Only plain '...' string literals are supported (double a quote to "
-        "include one). Escape strings (E'...'), Unicode-escape strings "
-        "(U&'...'), and bit or hex strings are not."
+        "include one). Escape strings (E'...'), dollar-quoted strings "
+        "($$...$$), Unicode-escape strings (U&'...'), and bit or hex strings "
+        "are not."
     ),
 }
 

@@ -213,6 +213,8 @@ def test_escape_string_rendering_cannot_smuggle_a_relation() -> None:
         "SELECT B'101' FROM sales_v",
         "SELECT X'1F' FROM sales_v",
         "SELECT N'abc' FROM sales_v",
+        "SELECT $$it's$$ FROM sales_v",
+        "SELECT $q$a$q$ FROM sales_v",
     ],
 )
 def test_only_standard_string_literals_are_accepted(sql: str) -> None:
