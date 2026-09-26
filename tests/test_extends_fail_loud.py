@@ -97,7 +97,9 @@ def test_platform_role_name_accepts_only_the_two_platform_forms(
 def test_empty_or_whitespace_value_rejected(root: pathlib.Path, value: str) -> None:
     message = _message(value, current=_vip(root), roots=RootConfig())
     assert "an empty 'extends:' value" in message
-    assert str(root / "vip-support") in message
+    # Named relative to the importer root, never by host path (#75).
+    assert "agent folder 'vip-support'" in message
+    assert str(root) not in message
 
 
 def test_non_string_value_rejected_without_repr(root: pathlib.Path) -> None:
@@ -282,7 +284,8 @@ def test_importer_cycle_still_detected(root: pathlib.Path) -> None:
         _resolve_role_chain(FolderLocator(path=root / "a", root=root), RootConfig())
     message = str(excinfo.value)
     assert "inheritance cycle" in message
-    assert f"folder:{(root / 'a').resolve()}" in message
+    assert "folder:a -> folder:b -> folder:a" in message
+    assert str(root) not in message
 
 
 def test_importer_chain_depth_still_capped(root: pathlib.Path) -> None:
@@ -396,7 +399,8 @@ def test_valueless_manifest_extends_rejected(root: pathlib.Path, written: str) -
         _resolve_folder(root, "valueless")
     message = str(excinfo.value)
     assert "'extends:' with no value" in message
-    assert str(root / "valueless") in message
+    assert "agent folder 'valueless'" in message
+    assert str(root) not in message
 
 
 def test_untrusted_input_stays_monotonic_across_importer_parents(

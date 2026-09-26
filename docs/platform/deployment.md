@@ -98,6 +98,8 @@ Skills are behavioral prompt modules that shape how the agent reasons about doma
 
 A declared skill that resolves from none of the three sources fails loud (`FactoryError`). A custom agent may combine its own two sources — e.g. ship a folder default and let an inline override (source 1) replace one skill by name. The deployment source is exclusively a predefined-role mechanism: pairing a `client` deployment override with a folder- or inline-sourced agent (any `Agent`/`Agent.from_folder` locator) raises `DefinitionError` at resolve time, since a custom agent has no deployment tree to look one up in.
 
+Both file sources are contained: a skill file must resolve, after `..` and symlinks, inside its own `skills/` folder and inside that folder's root (the importer root for source 2, the deployments root for source 3). A skill or role name with `..` in it, or a symlink leading out, is treated as not found. See `role.md`, "Importer folders stay inside their root".
+
 ---
 
 ## Permission invariant

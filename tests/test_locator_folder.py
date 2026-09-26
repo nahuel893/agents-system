@@ -110,8 +110,9 @@ def test_folder_locator_missing_policy_raises_naming_file_and_folder(
         _load_role_files(locator, RootConfig())
 
     message = str(excinfo.value)
-    assert "policy.md" in message
-    assert str(folder) in message
+    # Named relative to the importer root, never by its host path (#75).
+    assert "broken-bot/policy.md" in message
+    assert str(tmp_path) not in message
 
 
 def test_abstract_folder_agent_round_trips_is_abstract(

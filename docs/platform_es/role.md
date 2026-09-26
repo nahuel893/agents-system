@@ -97,6 +97,30 @@ Los parámetros de `Agent(...)`, y las sobreescrituras que recibe `Agent.from_fo
 
 Un valor inválido lanza `DefinitionError`, que nombra al agente, el campo y el motivo.
 
+### Las carpetas del importador no salen de su raíz
+
+Una carpeta del importador es un límite de confianza: quien escribe dentro de ella puede no ser quien opera la plataforma. Por eso el loader limita cada lectura a la raíz de importador de la carpeta (`FolderLocator.root`; `Agent.from_folder(path)` usa la carpeta padre):
+
+- **Cada archivo queda contenido.** `role.md`, `manifest.md`, `policy.md` y cada `skills/<nombre>.md` tienen que resolverse dentro de la raíz de importador después de seguir `..` y los enlaces simbólicos. Un enlace simbólico que queda dentro de la raíz se sigue. Uno que sale de ella, en cualquier nivel (el archivo, la carpeta `skills/`, la carpeta del agente o una carpeta superior), hace fallar la carga con `DefinitionError`. Un archivo de habilidad que se escapa cuenta como no encontrado, así que la carga falla con `FactoryError`.
+- **La carpeta misma queda contenida.** `FolderLocator.path` tiene que quedar estrictamente dentro de su propio `root`, la misma regla que ya sigue un destino de `extends:`. También se valida un `FolderLocator` armado a mano.
+- **Las sobreescrituras son una lista permitida.** Un `FolderLocator` aplica solo las sobreescrituras que acepta `Agent.from_folder` (`name`, `extends`, `tools`, `permissions`, `skills`, `skill_contents`, `context`, `autonomy`, los campos de política, `execution_limits`, `untrusted_input`, `system_prompt`, `version`). Cualquier otra clave, como `command_tool_declarations`, `command_tools` o `deployment`, lanza `DefinitionError`. Una sobreescritura de `untrusted_input` se interpreta igual que la de `policy.md`.
+- **Las herramientas de comando se revalidan en `resolve()`.** Cada declaración de herramienta de comando se vuelve a validar al resolver la definición, sin importar qué locator la construyó: solo tier `T2`, un permiso `run:`, un `argv[0]` literal y absoluto, marcadores que ocupan un elemento completo de argv y nombran un parámetro declarado, y parámetros acotados. `InlineLocator(raw=RawDefinition(...))` le entrega al loader declaraciones ya construidas que nunca pasaron por el parser del manifiesto, así que es acá donde se validan.
+- **Las habilidades de despliegue también quedan contenidas.** `deployments/{cliente}/{rol}/skills/{nombre}.md` tiene que resolverse dentro de la raíz de despliegues y de esa carpeta `skills/`, así que un nombre de habilidad o de rol con `..` no puede leer fuera de ella.
+- **Los errores no muestran rutas del host.** Un error del loader nombra un archivo relativo a su raíz (`vip-support/policy.md`, `roles/<nombre>/policy.md`, `<cliente>/<rol>/policy.md`), o nombra al agente. La única excepción es un `platform_root` o `deployments_root` inexistente: ese error imprime la ruta que se buscó, porque la configuró el operador y la necesita para corregirla.
+
+#### Leer después de validar (TOCTOU)
+
+Validar y después leer deja una ventana: una carpeta que pasó la validación puede reemplazarse por un enlace simbólico antes de leerse. El loader cierra esa ventana en Linux y macOS con lecturas relativas a descriptores de directorio. Después de la validación de contención, abre la raíz de importador y recorre la ruta validada una carpeta a la vez, abriendo cada una relativa a la anterior con `O_NOFOLLOW` (`os.open` con `dir_fd`). El archivo se abre de la misma forma, sin bloqueo, y tiene que ser un archivo regular. Un componente de la ruta que se volvió enlace simbólico después de la validación hace fallar la lectura en vez de seguirse, y una tubería con nombre no puede bloquear la carga. Una carpeta o una tubería con nombre donde va un archivo hace fallar la carga con su descriptor cerrado, así que recargar una carpeta hostil no puede agotar los descriptores de archivo del proceso.
+
+Se eligió esto en lugar de documentar la ventana porque solo usa la biblioteca estándar en los dos sistemas donde corre la plataforma, y elimina el hueco en vez de describirlo.
+
+Modelo de amenazas:
+
+- **No confiable:** cualquiera que pueda escribir dentro de una raíz de importador, por ejemplo una carpeta de agente subida o por tenant.
+- **Confiable:** la ruta de la raíz y todo lo que está por encima, el árbol de roles de plataforma (`platform/roles/`) y el árbol de despliegues. Son del operador, así que sus archivos de rol se leen por ruta.
+- **Fuera de alcance:** los enlaces duros (un enlace duro dentro de la raíz hacia un archivo en otro lugar del mismo sistema de archivos es un archivo regular dentro de la raíz, así que conviene poner las raíces de importador no confiables en su propio sistema de archivos, o mantener activo `fs.protected_hardlinks` en Linux), los puntos de montaje dentro de la raíz, y una carpeta cuyos archivos cambian entre las tres lecturas (cada lectura queda contenida, pero `role.md` y `policy.md` pueden venir de momentos distintos).
+- **Otras plataformas:** donde `os.open` no admite `dir_fd` (Windows), la lectura vuelve a una lectura por ruta después de la misma validación, y ahí la ventana sigue abierta.
+
 ### Cuerpo de prosa de `role.md` — prompt orientado al modelo vs. notas de diseño
 
 La tabla de frontmatter de arriba cubre el encabezado YAML de `role.md`. Todo lo que sigue después del `---` de cierre es el cuerpo de prosa, que el loader captura como el aporte del rol a `system_prompt` (`AgentDefinition.system_prompt` / `RawDefinition.system_prompt`, `harness/loader.py`).

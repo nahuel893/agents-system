@@ -103,14 +103,16 @@ def test_missing_importer_folder_skill_file_raises_naming_skill_and_path(
     )
     roots = _roots(tmp_path)
     definition = resolve(FolderLocator(path=folder, root=folder.parent), roots=roots)
-    expected_path = folder / "skills" / "missing-skill.md"
 
     with pytest.raises(FactoryError) as excinfo:
         _load_skills(definition, None, roots)
 
     message = str(excinfo.value)
     assert "missing-skill" in message
-    assert str(expected_path) in message
+    # The expected path, relative to the importer root rather than the host
+    # path (#75).
+    assert "support-bot/skills/missing-skill.md" in message
+    assert str(tmp_path) not in message
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ design.md D6); importing ``Agent`` pulls in only this module and
 from __future__ import annotations
 
 import dataclasses
+import os
 import pathlib
 from collections.abc import Mapping
 from typing import Any, NoReturn, Self
@@ -343,9 +344,13 @@ class Agent:
                 # gets the parent's locator and uses it in place of the
                 # manifest's own `extends:` (see `_load_role_files`).
                 overrides["extends"] = overrides["extends"]._to_locator()
+            # The importer root is the folder's parent (issue #75 checks the
+            # folder against it). Taken from the lexically absolute path:
+            # `Path(".").parent` is `Path(".")`, which would make "." its
+            # own root.
             return FolderLocator(
                 path=self._folder,
-                root=self._folder.parent,
+                root=pathlib.Path(os.path.abspath(self._folder)).parent,
                 overrides=overrides,
             )
         raw = RawDefinition(

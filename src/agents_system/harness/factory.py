@@ -56,7 +56,10 @@ from agents_system.harness.loader import (
     RoleLocator,
     RootConfig,
     _as_str_list,
+    _read_within_root,
     _require_deployments_root,
+    _resolve_within_root,
+    _shown_path,
     _strip_base_contract,
     resolve,
 )
@@ -127,26 +130,30 @@ class EquippedRuntime:
     """
 
 
-def _resolved_skill_path(skills_folder: pathlib.Path, name: str) -> pathlib.Path | None:
-    """The real, on-disk path of ``skills_folder/{name}.md``, or ``None`` if
-    following symlinks/``..`` would walk it outside ``skills_folder`` itself.
+def _read_skill(root: pathlib.Path, skills_dir: pathlib.Path, name: str) -> str | None:
+    """The content of ``skills_dir/{name}.md``, or ``None`` when it is
+    missing or would be read from outside ``skills_dir`` or ``root``.
 
-    ``skills_folder`` is always a ``FolderLocator.path``-derived value
-    (loader.py D4), never a caller-suppliable separate one — but nothing
-    upstream checks that ITS OWN ``skills/`` directory holds no symlink
-    escaping it, so this mirrors ``harness.loader._resolve_within_root``'s
-    resolve-then-check pattern (design.md's Threat Matrix) rather than
-    assuming that containment is inherited for free. Never raises: every
-    escape is reported as "not found here", exactly like a missing file.
+    One check for both skill sources (issue #75): an importer's own
+    ``skills/`` inside its importer root, and a deployment's
+    ``{client}/{role}/skills/`` inside the deployments root. The path must
+    resolve, after ``..`` and symlinks, inside ``root``
+    (``harness.loader._resolve_within_root``) and inside ``skills_dir``
+    itself, and is read walking from ``root`` without following symlinks
+    (``_read_within_root``). A ``skills`` directory that is itself a symlink
+    out of the root, a skill name with ``..`` in it, and a role name that
+    walks out of the deployments root are all refused. Never raises for an
+    escape: it is reported as "not found here", like a missing file.
     """
+    path = _resolve_within_root(root, skills_dir, f"{name}.md")
+    if path is None:
+        return None
     try:
-        real_root = skills_folder.resolve()
-        resolved = (skills_folder / f"{name}.md").resolve()
-    except (OSError, RuntimeError, ValueError):
+        if not path.is_relative_to(skills_dir.resolve()):
+            return None
+        return _read_within_root(root, path).strip()
+    except (OSError, RuntimeError):
         return None
-    if not resolved.is_relative_to(real_root):
-        return None
-    return resolved
 
 
 def _load_skills(
@@ -179,19 +186,23 @@ def _load_skills(
     # eagerly, whenever a client is given — exactly like before this PR —
     # so a broken deployments_root fails loud even when every declared skill
     # would actually have resolved from `inline_skills`/`skills_folder`.
+    deployments_root: pathlib.Path | None = None
     deployment_skills_dir: pathlib.Path | None = None
     if client is not None:
+        deployments_root = _require_deployments_root(roots.deployments_root)
         deployment_skills_dir = (
-            _require_deployments_root(roots.deployments_root)
-            / client
-            / definition.role_name
-            / "skills"
+            deployments_root / client / definition.role_name / "skills"
         )
+
+    # The importer root an importer's own skills/ must stay inside. An
+    # `AgentDefinition` built by hand may carry `skills_folder` alone: its
+    # skills are then bounded by that folder.
+    folder_root = definition.importer_root or definition.skills_folder
 
     loaded: list[LoadedSkill] = []
     for name in definition.skills:
         folder_path = (
-            _resolved_skill_path(definition.skills_folder, name)
+            definition.skills_folder / f"{name}.md"
             if definition.skills_folder is not None
             else None
         )
@@ -201,32 +212,24 @@ def _load_skills(
             else None
         )
 
-        content: str | None
-        if name in definition.inline_skills:
-            content = definition.inline_skills[name]
-        elif folder_path is not None and folder_path.exists():
-            content = folder_path.read_text(encoding="utf-8").strip()
-        elif deployment_path is not None and deployment_path.exists():
-            content = deployment_path.read_text(encoding="utf-8").strip()
-        else:
-            content = None
+        content = definition.inline_skills.get(name)
+        if content is None and folder_root is not None and definition.skills_folder:
+            content = _read_skill(folder_root, definition.skills_folder, name)
+        if content is None and deployments_root is not None and deployment_skills_dir:
+            content = _read_skill(deployments_root, deployment_skills_dir, name)
 
         if content is None:
-            expected_folder_path = (
-                definition.skills_folder / f"{name}.md"
-                if definition.skills_folder is not None
-                else None
-            )
+            # Named relative to their roots, never by host path (issue #75).
             checked = [
                 "its inline content",
-                f"its own folder ({expected_folder_path})"
-                if expected_folder_path is not None
+                f"its own folder ({_shown_path(folder_root, folder_path)})"
+                if folder_root is not None and folder_path is not None
                 else "its own folder (none — not an importer-folder agent)",
-                f"its deployment ({deployment_path})"
-                if deployment_path is not None
+                f"its deployment ({_shown_path(deployments_root, deployment_path)})"
+                if deployments_root is not None and deployment_path is not None
                 else "its deployment (none — no client deployment was given)",
             ]
-            failure_path = expected_folder_path or deployment_path
+            failure_path = folder_path or deployment_path
             logger.error(
                 "factory.skill_missing",
                 skill=name,

@@ -98,6 +98,8 @@ Las habilidades son módulos de prompts de comportamiento que definen cómo razo
 
 Una habilidad declarada que no se resuelve en ninguna de las tres fuentes falla de forma explícita (`FactoryError`). Un agente propio puede combinar sus dos fuentes propias — por ejemplo, traer un contenido por defecto en su carpeta y dejar que un contenido inline (fuente 1) reemplace una habilidad puntual por nombre. La fuente de despliegue es exclusivamente un mecanismo de rol predefinido: combinar una sobreescritura de despliegue (`client`) con un agente propio de carpeta o inline (cualquier locator `Agent`/`Agent.from_folder`) lanza `DefinitionError` al resolver, ya que un agente propio no tiene un árbol de despliegue donde buscarla.
 
+Las dos fuentes de archivo quedan contenidas: un archivo de habilidad tiene que resolverse, después de `..` y los enlaces simbólicos, dentro de su propia carpeta `skills/` y dentro de la raíz de esa carpeta (la raíz de importador para la fuente 2, la raíz de despliegues para la fuente 3). Un nombre de habilidad o de rol con `..`, o un enlace simbólico que sale, se trata como no encontrado. Ver `role.md`, "Las carpetas del importador no salen de su raíz".
+
 ---
 
 ## Directivas de mezcla en YAML (YAML Merge Directives)
