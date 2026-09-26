@@ -215,7 +215,7 @@ pr4a_i:
 pr4a_ii:
   status: implemented
   branch: feat/adr-004-4a-ii-registration-wiring
-  pr_url: pending
+  pr_url: https://github.com/nahuel893/agents-system/pull/95
   files_changed:
     - src/agents_system/main.py
     - tests/test_main.py
@@ -237,7 +237,7 @@ pr4a_ii:
     section names (22 registration tests in test_main.py, 7 follow-up tests
     in test_create_app_agents_param.py); docs ~70 across three EN/ES pairs.
     Nothing was trimmed; recommend size:exception.
-  ci: pending
+  ci: 12/12 checks passed (run 36232716093)
   deviations:
     - Without agents=, lifespan still boots from the {deployment}__{role}
       env ids, mapped onto the same loop through openai_adapter's
