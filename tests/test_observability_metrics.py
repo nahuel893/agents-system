@@ -78,6 +78,9 @@ def test_turn_metrics_label_schema_is_bounded() -> None:
     assert metrics.limit_trips_total._labelnames == ("limit",)
     assert metrics.tokens_total._labelnames == ("runtime_id", "direction")
     assert metrics.cost_usd_total._labelnames == ("runtime_id",)
+    assert metrics.audit_events_dropped._labelnames == ()
+    families = {family.name for family in registry.collect()}
+    assert "agent_audit_events_dropped" in families
 
 
 def test_no_unbounded_label_ever_reaches_the_exported_text() -> None:

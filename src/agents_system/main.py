@@ -6,15 +6,23 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import secrets
+import time
 import uuid
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Annotated, Any, Literal
 
 import httpx
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import SecretStr
@@ -35,7 +43,7 @@ from agents_system.integration import openai_router, webhook_router
 from agents_system.integration.whatsapp_client import WhatsAppClient
 from agents_system.models.base import get_bi_engine, get_engine, get_session_factory
 from agents_system.observability import RequestIdMiddleware, setup_logging
-from agents_system.observability.metrics import DEFAULT_REGISTRY
+from agents_system.observability.metrics import DEFAULT_METRICS, DEFAULT_REGISTRY
 from agents_system.services.admission import TurnAdmissionLimiter
 from agents_system.services.db_role import role_is_read_only
 from agents_system.services.outbox import (
@@ -618,6 +626,80 @@ def _build_chat_model(provider: str) -> Any:
     )
 
 
+_PROVIDER_PROBE_TIMEOUT_S = 1.0
+_PROVIDER_PROBE_CACHE_TTL_S = 5.0
+
+
+def _provider_probe_target(settings: Settings) -> str:
+    """Return the credential-free base URL used for a provider liveness probe.
+
+    A HEAD against the provider base URL cannot generate tokens. Any HTTP
+    response, including an authentication or route error, proves the provider
+    is reachable; transport and timeout failures do not. The configured
+    OpenAI-compatible and Ollama base URLs are used verbatim (minus a trailing
+    slash), while hosted providers have fixed public API origins.
+    """
+    if settings.adapter_provider == "ollama":
+        return (settings.ollama_base_url or "http://localhost:11434").rstrip("/")
+    if settings.adapter_provider == "openai_compatible":
+        return settings.openai_compatible_base_url.rstrip("/")
+    if settings.adapter_provider == "groq":
+        return "https://api.groq.com"
+    return "https://api.anthropic.com"
+
+
+class ProviderHealthProbe:
+    """Bounded, cached reachability probe that never sends provider credentials."""
+
+    def __init__(
+        self,
+        *,
+        request: Callable[[str], Awaitable[None]] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._request = request or self._head
+        self._monotonic = monotonic
+        self._cached: dict[str, tuple[float, bool]] = {}
+        self._lock = asyncio.Lock()
+
+    async def _head(self, target: str) -> None:
+        async with httpx.AsyncClient(
+            timeout=_PROVIDER_PROBE_TIMEOUT_S,
+            follow_redirects=False,
+        ) as client:
+            await client.head(target)
+
+    async def probe(self, settings: Settings) -> bool:
+        """Return reachability, using a short per-provider-target cache."""
+        target = _provider_probe_target(settings)
+        cache_key = f"{settings.adapter_provider}:{target}"
+        now = self._monotonic()
+        cached = self._cached.get(cache_key)
+        if cached is not None and now - cached[0] < _PROVIDER_PROBE_CACHE_TTL_S:
+            return cached[1]
+
+        async with self._lock:
+            now = self._monotonic()
+            cached = self._cached.get(cache_key)
+            if cached is not None and now - cached[0] < _PROVIDER_PROBE_CACHE_TTL_S:
+                return cached[1]
+
+            try:
+                async with asyncio.timeout(_PROVIDER_PROBE_TIMEOUT_S):
+                    await self._request(target)
+            except Exception:
+                # Do not log the exception: provider error strings can include a
+                # credential-bearing URL or response details.
+                structlog.get_logger().warning(
+                    "health.provider_unreachable", provider=settings.adapter_provider
+                )
+                reachable = False
+            else:
+                reachable = True
+            self._cached[cache_key] = (now, reachable)
+            return reachable
+
+
 async def _outbox_backlog(engine: Any) -> OutboxBacklogCounts | None:
     """Best-effort outbox backlog counts for GET /health (#141).
 
@@ -998,6 +1080,7 @@ def create_app(
     application.state.participant_directory = participant_directory
     application.state.conversation_recorder = conversation_recorder
     application.state.roots = roots
+    application.state.provider_probe = ProviderHealthProbe()
 
     application.add_middleware(RequestIdMiddleware)
     application.include_router(webhook_router)
@@ -1005,16 +1088,23 @@ def create_app(
 
     logger = structlog.get_logger()
 
-    @application.get("/health")
-    async def health(
+    async def health_report(
         request: Request,
-        settings: Settings = Depends(get_settings),
+        settings: Settings,
     ) -> dict[str, Any]:
         engine = request.app.state.engine
         redis_client = get_redis_client(settings.redis_url)
 
         postgres_status: Literal["ok", "error"] = "ok"
         redis_status: Literal["ok", "error"] = "ok"
+
+        # A deployment without a runtime has no model dependency. Avoid a
+        # meaningless network probe in that case (including offline tests that
+        # deliberately build the app without its lifespan).
+        runtimes = getattr(request.app.state, "runtimes", {})
+        provider_reachable: bool | None = (
+            await request.app.state.provider_probe.probe(settings) if runtimes else None
+        )
 
         # Probe PostgreSQL
         try:
@@ -1076,15 +1166,30 @@ def create_app(
             "ok"
             if postgres_status == "ok"
             and redis_status == "ok"
+            and provider_reachable is not False
             and not backlog_undrained
             else "degraded"
         )
+
+        audit_sink = getattr(request.app.state, "audit_sink", None)
+        audit_dropped_count = getattr(audit_sink, "dropped_count", 0)
 
         return {
             "status": overall,
             "environment": settings.environment,
             "postgres": postgres_status,
             "redis": redis_status,
+            "provider": {
+                "status": (
+                    "not_configured"
+                    if provider_reachable is None
+                    else "ok"
+                    if provider_reachable
+                    else "error"
+                ),
+                "reason": None if provider_reachable is not False else "unreachable",
+            },
+            "audit": {"dropped_count": audit_dropped_count},
             "webhook_worker": {
                 "running": worker_running,
                 "outbox_pending": outbox_pending,
@@ -1093,14 +1198,37 @@ def create_app(
             },
         }
 
+    @application.get("/health")
+    async def health(
+        request: Request,
+        settings: Settings = Depends(get_settings),
+    ) -> dict[str, Any]:
+        """Liveness endpoint: always returns HTTP 200 with component status."""
+        return await health_report(request, settings)
+
+    @application.get("/ready")
+    async def ready(
+        request: Request,
+        settings: Settings = Depends(get_settings),
+    ) -> JSONResponse:
+        """Readiness endpoint: returns 503 when a required dependency is degraded."""
+        report = await health_report(request, settings)
+        return JSONResponse(
+            content=report, status_code=200 if report["status"] == "ok" else 503
+        )
+
     @application.get("/metrics", dependencies=[Depends(verify_metrics_access)])
-    async def metrics() -> Response:
+    async def metrics(request: Request) -> Response:
         """Prometheus text exposition of the process-wide metrics registry
         (#78 Phase 0 Slice 2). Access is gated by `verify_metrics_access`
         above -- absent (404) unless `metrics_enabled` is set, then bearer-
         protected exactly like `integration/openai_adapter.py`'s
         `verify_bearer` whenever `metrics_api_key` is configured.
         """
+        audit_sink = getattr(request.app.state, "audit_sink", None)
+        DEFAULT_METRICS.audit_events_dropped.set(
+            getattr(audit_sink, "dropped_count", 0)
+        )
         return Response(
             content=generate_latest(DEFAULT_REGISTRY),
             media_type=CONTENT_TYPE_LATEST,

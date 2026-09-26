@@ -48,6 +48,32 @@ curl -H "Authorization: Bearer $METRICS_API_KEY" http://localhost:8000/metrics
   abierto del adapter. Un boot bajo esta combinación además loguea una
   advertencia `metrics.open_mode`.
 
+## Salud y disponibilidad
+
+`GET /health` es un endpoint de **liveness**: siempre devuelve HTTP 200 y el
+`status` del cuerpo es `ok` o `degraded`. Informa PostgreSQL, Redis, el estado
+del outbox de webhook, el proveedor de chat usado por runtimes configurados y
+la pérdida de registros de auditoría. Si no hay un runtime configurado, el
+estado del proveedor es `not_configured` y no se hace ninguna petición. De lo
+contrario, la prueba del proveedor es un `HEAD` sin credenciales a su URL base,
+acotado por un timeout total de un segundo y cacheado cinco segundos por
+destino de proveedor configurado. Los cache misses concurrentes comparten una
+única petición en vuelo, evitando ráfagas de probes al proveedor. Cualquier
+respuesta HTTP (incluyendo errores de
+autenticación o de ruta) prueba conectividad; un error de transporte o timeout
+pone `provider.status` en `error` con la razón fija `"unreachable"`. No envía
+tokens ni credenciales, y no expone mensajes de error del proveedor.
+
+`GET /ready` devuelve el mismo cuerpo, pero es el endpoint de
+**readiness**: sólo responde 200 cuando el status del cuerpo es `ok`; de lo
+contrario devuelve 503. Configurá el liveness del orquestador con `/health` y
+la compuerta de readiness/tráfico con `/ready`.
+
+El campo `audit.dropped_count` de salud es el total local al proceso de eventos
+de auditoría que el sink asíncrono no pudo persistir. No existe un contador de
+pérdida silenciosa del outbox: su trabajo es durable y las fallas terminales
+siguen visibles como estado de backlog/worker en vez de descartarse.
+
 ## Qué se mide
 
 Se registra en los puntos de choque ya existentes del loop del agente
@@ -65,6 +91,7 @@ objetos de métricas viven en `src/agents_system/observability/metrics.py`.
 | `agent_tool_calls_total` | Counter | `tool`, `outcome` | Cada intento de llamada a herramienta: `outcome` es `ok`, `denied`, `blocked`, `timeout`, o `error`. |
 | `agent_tool_call_duration_seconds` | Histogram | `tool`, `outcome` | Igual que arriba. |
 | `agent_limit_trips_total` | Counter | `limit` | Un límite de ejecución se dispara -- hoy sólo `"max_tool_calls"` (el nodo terminal `_limit_reached`; los "limit trips" de ADR-005 sección 6). |
+| `agent_audit_events_dropped` | Gauge | ninguno | `AuditSink.dropped_count` actual y local al proceso, muestreado al servir `GET /metrics`. |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total`, y el resto del `ProcessCollector` por defecto de `prometheus_client` | Gauge/Counter | ninguno | Siempre, para el proceso corriendo -- confirmado presente en Linux por `tests/test_observability_metrics.py`, no meramente asumido de la documentación de la librería. |
 
 **Outcomes de turno**: `ok` también cubre un turno que terminó
