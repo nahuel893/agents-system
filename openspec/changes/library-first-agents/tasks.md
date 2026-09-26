@@ -620,6 +620,32 @@ Testing Strategy table: ~330-370).
   merging oversized.
   <!-- sdd-owner: implementation -->
 
+- [x] **PR2 review fixes (PR #85).**
+  1. Safety ceiling for importer agents (HIGH). `extends:` chains became
+     importer-authored in this PR, but `_fold_parent_into_child` lets a
+     child set `autonomy`/`execution_limits` in either direction, so
+     `Agent(extends="platform/roles/sales-agent", autonomy="full")` reached a
+     live `build_runtime`. `_resolve_role_chain` now checks every
+     importer-authored definition (`FolderLocator`/`InlineLocator`) against
+     its parent's effective values before folding it, at every hop, reusing
+     `_validate_autonomy`/`_validate_execution_limits`
+     (`_validate_importer_ceiling`). A parentless importer root is held to
+     the platform defaults. A null limit counts as the platform default on
+     both sides, and a non-number or `NaN` limit is a `DefinitionError`
+     (this also applies to deployment overrides, which share the
+     validator). Folds between two platform roles are unchanged.
+     `build_runtime` is annotated `role_type: RoleLocator`, which is what it
+     already passed to `resolve()`.
+  2. Deep immutability (MEDIUM). `Agent.__post_init__` freezes every field
+     (`MappingProxyType`, tuples, nested values too), and `_to_locator()`
+     hands the loader fresh plain lists/dicts, so mutating a container the
+     caller passed in changes nothing, including through `extends=`.
+  Tests: `tests/test_agent_safety_ceiling.py`,
+  `tests/test_agent_deep_immutability.py`, plus additions to
+  `tests/test_role_inheritance.py` and `tests/test_agent_extends_agent.py`.
+  Docs: `docs/platform/role.md`, `docs/platform/deployment.md` and their
+  `_es` twins.
+
 ---
 
 ## PR3 — Skills for importer agents
