@@ -29,6 +29,8 @@ _SAFE_FACTS: dict[str, Any] = {
     "rolcreatedb": False,
     "rolreplication": False,
     "rolbypassrls": False,
+    "member_of": [],
+    "can_create_schemas": False,
 }
 
 
@@ -151,6 +153,59 @@ def test_create_on_a_schema_is_a_problem() -> None:
 
     assert not check.safe
     assert any("public" in p for p in check.problems)
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [
+        ["pg_execute_server_program", "pg_read_server_files"],
+        ["pg_signal_backend"],
+        ["reporting_owner"],
+    ],
+)
+def test_membership_in_any_other_role_is_a_problem(roles: list[str]) -> None:
+    # A predefined role grants server-side capabilities (running programs,
+    # reading files, signalling backends) that neither a READ ONLY
+    # transaction nor relation privileges contain; any other role brings
+    # its own privileges. The provisioning script strips memberships, and
+    # this check notices when one comes back.
+    check = evaluate_query_role(_facts(member_of=roles), _SAFE_FINDINGS, _ALLOWED)
+
+    assert not check.safe
+    assert any(all(role in p for role in roles) for p in check.problems)
+
+
+def test_create_on_the_database_is_a_problem() -> None:
+    check = evaluate_query_role(
+        _facts(can_create_schemas=True), _SAFE_FINDINGS, _ALLOWED
+    )
+
+    assert not check.safe
+    assert any("create schemas" in p for p in check.problems)
+
+
+def test_an_executable_security_definer_function_is_a_problem() -> None:
+    # It runs with its owner's privileges, so it can read what this role
+    # cannot - a qualified call to it is how the database layer alone would
+    # be bypassed.
+    findings = [
+        *_SAFE_FINDINGS,
+        {
+            "finding": "function",
+            "schema_name": "reporting",
+            "object_name": "lower",
+            "relkind": None,
+            "can_select": False,
+            "can_write": False,
+        },
+    ]
+
+    check = evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED)
+
+    assert not check.safe
+    assert any(
+        "SECURITY DEFINER" in p and "reporting.lower" in p for p in check.problems
+    )
 
 
 def test_an_allowlisted_view_the_role_cannot_read_is_only_a_warning() -> None:

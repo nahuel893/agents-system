@@ -16,10 +16,14 @@
 --
 -- The tool re-checks all of this on every call (services/db_role.py,
 -- check_query_role) and refuses to run while the role can write anything or
--- read anything beyond its allowlist. Privileges granted to PUBLIC reach this
--- role too; on PostgreSQL 14 and older run
--- `REVOKE CREATE ON SCHEMA public FROM PUBLIC` (the default since 15), or the
--- check will refuse.
+-- read anything beyond its allowlist, while it belongs to any other role, or
+-- while it can call a SECURITY DEFINER function outside the system schemas.
+-- Privileges granted to PUBLIC reach this role too; on PostgreSQL 14 and
+-- older run `REVOKE CREATE ON SCHEMA public FROM PUBLIC` (the default since
+-- 15), and for a SECURITY DEFINER function in a schema this role can use
+-- (functions are executable by PUBLIC by default) run
+-- `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC` and grant it to the roles that
+-- need it, or the check will refuse.
 --
 -- Usage - run as a superuser or the owner of the listed views. The password
 -- and the view list come from the caller, never from this file. Pass both
@@ -62,6 +66,9 @@ ALTER ROLE sql_readonly SET lock_timeout = '1s';
 ALTER ROLE sql_readonly SET idle_in_transaction_session_timeout = '30s';
 
 GRANT CONNECT ON DATABASE :"DBNAME" TO sql_readonly;
+-- CREATE on the database would let the role create schemas; the per-call
+-- check refuses to run while it holds it.
+REVOKE CREATE ON DATABASE :"DBNAME" FROM sql_readonly;
 
 -- 3. No inherited privileges: drop membership in any other role.
 DO $$

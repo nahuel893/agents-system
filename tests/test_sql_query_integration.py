@@ -16,6 +16,7 @@ and asserts PostgreSQL refuses every one of them.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import AsyncIterator
@@ -366,6 +367,21 @@ async def test_the_connector_path_refuses_writes_with_the_guard_bypassed(
 # ---------------------------------------------------------------------------
 
 
+_ON_THIS_DATABASE = (
+    "DO $do$ BEGIN EXECUTE format('{statement} sql_readonly', "
+    "current_database()); END $do$"
+)
+
+#: A deployment-owned function that runs as its owner and reads a table the
+#: tool's role cannot. Named like an allowlisted built-in on purpose.
+_CREATE_SECURITY_DEFINER = (
+    "CREATE FUNCTION sql_tool_fixture.lower(x text) RETURNS SETOF text "
+    "LANGUAGE sql SECURITY DEFINER "
+    "AS $fn$ SELECT note FROM sql_tool_fixture.secrets $fn$"
+)
+_DROP_SECURITY_DEFINER = "DROP FUNCTION sql_tool_fixture.lower(text)"
+
+
 @pytest.mark.parametrize(
     "grant,revoke",
     [
@@ -381,6 +397,22 @@ async def test_the_connector_path_refuses_writes_with_the_guard_bypassed(
             "ALTER ROLE sql_readonly SET default_transaction_read_only = off",
             "ALTER ROLE sql_readonly SET default_transaction_read_only = on",
         ),
+        # Predefined roles grant server-side capabilities - running programs
+        # and reading files on the database host - that no READ ONLY
+        # transaction or relation privilege contains.
+        (
+            "GRANT pg_read_server_files, pg_execute_server_program TO sql_readonly",
+            "REVOKE pg_read_server_files, pg_execute_server_program FROM sql_readonly",
+        ),
+        (
+            "GRANT pg_signal_backend, pg_read_all_stats TO sql_readonly",
+            "REVOKE pg_signal_backend, pg_read_all_stats FROM sql_readonly",
+        ),
+        (
+            _ON_THIS_DATABASE.format(statement="GRANT CREATE ON DATABASE %I TO"),
+            _ON_THIS_DATABASE.format(statement="REVOKE CREATE ON DATABASE %I FROM"),
+        ),
+        (_CREATE_SECURITY_DEFINER, _DROP_SECURITY_DEFINER),
     ],
 )
 async def test_an_unsafe_role_is_detected_and_the_tool_refuses(
@@ -400,3 +432,32 @@ async def test_an_unsafe_role_is_detected_and_the_tool_refuses(
         await sql_engine.dispose()
 
     assert await verify_query_role(sql_engine, _ALLOWED) is True
+
+
+async def test_a_qualified_security_definer_call_is_refused_at_both_layers(
+    sql_engine: AsyncEngine,
+    admin_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `SELECT * FROM schema.fn(...)` names a deployment-owned function, not
+    # the built-in the empty search_path would resolve. The guard refuses the
+    # qualified call; with the guard bypassed, the role check refuses to run
+    # anything while the role can execute a SECURITY DEFINER function.
+    sql = "SELECT * FROM sql_tool_fixture.lower('x')"
+    await _admin(admin_engine, _CREATE_SECURITY_DEFINER)
+    try:
+        guarded = build_sql_query_connector(sql_engine, _CONFIG)
+        refused = await guarded({"sql": sql})
+
+        def no_guard(sql: object, policy: object, *, row_limit: int) -> GuardedQuery:
+            return GuardedQuery(sql=str(sql), relations=())
+
+        monkeypatch.setattr(sql_query_connector, "guard_query", no_guard)
+        unguarded = await build_sql_query_connector(sql_engine, _CONFIG)({"sql": sql})
+    finally:
+        await _admin(admin_engine, _DROP_SECURITY_DEFINER)
+
+    assert refused["error_kind"] == "query_rejected"
+    assert refused["reason"] == "function_not_allowed"
+    assert unguarded["error_kind"] == "role_not_read_only"
+    assert "never readable" not in json.dumps(unguarded)

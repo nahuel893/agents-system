@@ -64,14 +64,24 @@ _QUERY_ROLE_FACTS = text(
     SELECT pg_catalog.current_setting('default_transaction_read_only')
                AS default_read_only,
            r.rolsuper, r.rolcreaterole, r.rolcreatedb, r.rolreplication,
-           r.rolbypassrls
+           r.rolbypassrls,
+           ARRAY(SELECT g.rolname::text
+                 FROM pg_catalog.pg_auth_members AS m
+                 JOIN pg_catalog.pg_roles AS g ON g.oid = m.roleid
+                 WHERE m.member = r.oid
+                 ORDER BY 1) AS member_of,
+           pg_catalog.has_database_privilege(
+               pg_catalog.current_database(), 'CREATE') AS can_create_schemas
     FROM pg_catalog.pg_roles AS r
     WHERE r.rolname = current_user
     """
 )
 """Role-level facts. `default_transaction_read_only` is read here, not
 `transaction_read_only`: the connector sets its own transaction READ ONLY, so
-only the role default tells whether the ROLE is read-only."""
+only the role default tells whether the ROLE is read-only. `member_of` lists
+the roles this one belongs to directly: a predefined role such as
+`pg_execute_server_program` grants capabilities that neither a READ ONLY
+transaction nor relation privileges contain, so any membership is unsafe."""
 
 _QUERY_ROLE_FINDINGS = text(
     r"""
@@ -109,12 +119,23 @@ _QUERY_ROLE_FINDINGS = text(
       AND n.nspname NOT LIKE 'pg\_toast%'
       AND n.nspname NOT LIKE 'pg\_temp\_%'
       AND pg_catalog.has_schema_privilege(n.oid, 'CREATE')
+    UNION ALL
+    SELECT 'function', n.nspname, p.proname, NULL, false, false
+    FROM pg_catalog.pg_proc AS p
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE p.prosecdef
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg\_toast%'
+      AND n.nspname NOT LIKE 'pg\_temp\_%'
+      AND pg_catalog.has_schema_privilege(n.oid, 'USAGE')
+      AND pg_catalog.has_function_privilege(p.oid, 'EXECUTE')
     """
 )
 """Everything outside the system schemas this role can read or change:
-relations it can SELECT from or write to, sequences it can advance, and
-schemas it can create objects in. Privileges granted to PUBLIC count, because
-they reach this role too. Each privilege function sits behind a CASE on
+relations it can SELECT from or write to, sequences it can advance, schemas
+it can create objects in, and SECURITY DEFINER functions it can call (they
+run with their owner's privileges, so they reach what this role cannot).
+Privileges granted to PUBLIC count, because they reach this role too. Each privilege function sits behind a CASE on
 `relkind` because WHERE clauses have no evaluation order: without it the
 planner may ask `has_sequence_privilege` about a TOAST table and fail. Static
 text, no caller input (AD-2 holds here)."""
@@ -155,9 +176,11 @@ def evaluate_query_role(
     """Decide whether the role behind *facts*/*findings* is safe for the tool.
 
     Safe means all of: the role's own default makes every transaction
-    read-only; it has no elevated attribute; it can write no relation,
-    sequence or schema; it can SELECT from no relation outside *allowed*; and
-    every allowlisted relation it can read is a view or materialized view.
+    read-only; it has no elevated attribute and belongs to no other role; it
+    can create no schema and write no relation, sequence or schema; it can
+    execute no SECURITY DEFINER function outside the system schemas; it can
+    SELECT from no relation outside *allowed*; and every allowlisted
+    relation it can read is a view or materialized view.
     """
     if facts is None:
         return QueryRoleCheck(problems=("the current role was not found",), warnings=())
@@ -169,6 +192,11 @@ def evaluate_query_role(
     elevated = [name for name in _ELEVATED_ATTRIBUTES if facts.get(name)]
     if elevated:
         problems.append(f"role has elevated attributes: {', '.join(elevated)}")
+    member_of = [str(role) for role in facts.get("member_of") or ()]
+    if member_of:
+        problems.append(f"role is a member of other roles: {', '.join(member_of)}")
+    if facts.get("can_create_schemas"):
+        problems.append("role can create schemas in this database")
 
     readable: set[tuple[str, str]] = set()
     for finding in findings:
@@ -178,6 +206,9 @@ def evaluate_query_role(
         shown = schema if name is None else f"{schema}.{name}"
         if kind == "schema":
             problems.append(f"role can create objects in schema {shown}")
+            continue
+        if kind == "function":
+            problems.append(f"role can execute SECURITY DEFINER function {shown}")
             continue
         if finding.get("can_write"):
             problems.append(f"role can write {kind} {shown}")
