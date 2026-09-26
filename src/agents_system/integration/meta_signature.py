@@ -11,6 +11,20 @@ from starlette.datastructures import Headers
 _HEADER_NAME = "x-hub-signature-256"
 
 
+def sign_payload(body: bytes, secret: str) -> str:
+    """Compute the `X-Hub-Signature-256` header value Meta would send for
+    *body* under *secret*.
+
+    The counterpart to :func:`verify_signature` (#78 Phase 0 Slice 3): the
+    live harness uses this to deliver a webhook payload to itself with a
+    genuinely valid signature, through the exact same HMAC-SHA256 scheme
+    `verify_signature` checks -- never a second, hand-rolled implementation
+    that could silently drift from it.
+    """
+    digest = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
+
+
 def verify_signature(body: bytes, headers: Headers, secret: str) -> None:
     """Validate X-Hub-Signature-256 header against HMAC-SHA256 of body.
 

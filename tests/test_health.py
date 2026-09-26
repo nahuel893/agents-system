@@ -627,3 +627,16 @@ async def test_middleware_adds_request_id(app):
         assert len(line["request_id"]) == 8, (
             f"Expected 8-char request_id, got: {line['request_id']!r}"
         )
+
+
+async def test_middleware_echoes_request_id_as_response_header(client):
+    """#78 Phase 0 Slice 3 -- the live harness correlates an API turn's audit
+    rows to the request that produced it via this header. `verify_webhook`
+    needs no app.state (no engine/redis mocking), so this hits it directly;
+    the header must be set on an error response too (BaseHTTPMiddleware's
+    call_next still returns a Response for a raised HTTPException)."""
+    response = await client.get("/webhook")
+
+    assert response.status_code == 400
+    assert "x-request-id" in response.headers
+    assert len(response.headers["x-request-id"]) == 8
