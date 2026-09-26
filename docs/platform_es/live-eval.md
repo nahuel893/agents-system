@@ -199,7 +199,8 @@ uno desconocido en lugar de lanzar una excepción).
 **Configurar precios**: `Settings.model_prices` (variable de entorno
 `MODEL_PRICES`) es un objeto JSON con clave el ID DEL MODELO DEL PROVEEDOR
 (p. ej. `"gpt-4o"`, `"deepseek/deepseek-v4-flash"`) -- nunca un id de ruteo
-elegido por el caller como el `"{deployment}__{role}"` del adapter --, y
+elegido por el caller como un id de runtime registrado (el `model` que recibe
+el adapter) --, y
 valor el precio en USD por millón de tokens de entrada/salida:
 
 ```bash

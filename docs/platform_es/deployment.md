@@ -279,7 +279,37 @@ app = create_app(
 - **`grants`** es el grant explícito de despliegue, una lista por id registrado. Nada se otorga automáticamente: un id sin entrada hace fallar el arranque, y también un string suelto en lugar de una lista. Sin `grants=`, la fuente es `DEPLOY_GRANTS`, con las mismas claves. Ver `docs/architecture_es/permission-model.md`.
 - **Los canales buscan ids.** `WHATSAPP_RUNTIME_ID` y cada id de `ADAPTER_RUNTIMES` tienen que ser ids registrados, o el arranque falla nombrándolos. `/v1/models` lista solo los ids de `ADAPTER_RUNTIMES`, nunca todos los registrados.
 
-Sin `agents=`, `create_app` mantiene el arranque desde Settings: `ADAPTER_RUNTIMES`/`WHATSAPP_RUNTIME_ID` llevan ids `{deployment}__{role}` (`_generic__{role}` sin despliegue).
+### Sin `agents=`: `AGENT_REGISTRATIONS`
+
+Sin `agents=`, `create_app` registra en su lugar las entradas de la variable de entorno `AGENT_REGISTRATIONS`, y las construye con las mismas reglas. Mapea cada id de runtime a un rol predefinido, como `"{role}"` o `"{role}@{client}"`:
+
+```bash
+AGENT_REGISTRATIONS='{"acme-sales": "sales-agent@acme", "support": "sales-agent"}'
+ADAPTER_RUNTIMES='["acme-sales", "support"]'
+DEPLOY_GRANTS='{"acme-sales": ["read:catalog", "write:orders"], "support": ["read:catalog"]}'
+```
+
+- **Un valor es estricto.** Como mucho un `@`; el rol y el cliente cumplen cada uno la regla de ids de arriba. Un id o un valor malformado hace fallar el arranque, nombrándolo junto con `AGENT_REGISTRATIONS`. `__` no significa nada en ningún lado: es parte del nombre.
+- **`"{role}@{client}"`** es la entrada de `clients` de ese id, así que necesita un `RootConfig(deployments_root=...)` explícito. `"{role}"` solo significa sin sobreescritura de despliegue.
+- **Solo roles predefinidos.** Una variable de entorno no puede llevar un `Agent`; un agente propio se registra con `agents=`.
+- **`agents=` gana.** Cuando `create_app` recibe `agents=`, `AGENT_REGISTRATIONS` se ignora, nunca se mezcla.
+
+### Migrar desde los ids de runtime viejos
+
+Antes de ADR-004, el arranque desde Settings leía el rol y el despliegue del propio id de runtime: `acme__sales-agent`, o `_generic__sales-agent` sin despliegue. Ese esquema ya no existe. Un id de runtime es solo una clave, y un despliegue que sigue configurado a la vieja usanza falla al arrancar, nombrando el id no registrado y señalando `AGENT_REGISTRATIONS`. Para migrar:
+
+1. **Elegí un id para cada runtime.** Conservar el string viejo sirve solo si es un id válido: `acme__sales-agent` lo es (ahora es solo un nombre), `_generic__sales-agent` no (un id no puede empezar con `_`).
+2. **Registralo** en `AGENT_REGISTRATIONS`: lo que era `acme__sales-agent` pasa a `"sales-agent@acme"`, lo que era `_generic__sales-agent` pasa a `"sales-agent"`.
+3. **Renombrá el id en todos lados donde se usa**: `ADAPTER_RUNTIMES`, `WHATSAPP_RUNTIME_ID`, y cada clave de `DEPLOY_GRANTS`. Una clave vieja de `DEPLOY_GRANTS` nunca se asocia a un id renombrado: el runtime falla al arrancar por no tener grant.
+4. **Actualizá los clientes compatibles con OpenAI** (por ejemplo Open WebUI): mandan el id como `model`, y `/v1/models` ahora lista los ids nuevos.
+
+| Antes | Después |
+|---|---|
+| `ADAPTER_RUNTIMES='["_generic__sales-agent"]'` | `AGENT_REGISTRATIONS='{"sales": "sales-agent"}'` y `ADAPTER_RUNTIMES='["sales"]'` |
+| `WHATSAPP_RUNTIME_ID=acme__sales-agent` | `AGENT_REGISTRATIONS='{"acme-sales": "sales-agent@acme"}'` y `WHATSAPP_RUNTIME_ID=acme-sales` |
+| `DEPLOY_GRANTS='{"acme__sales-agent": [...]}'` | `DEPLOY_GRANTS='{"acme-sales": [...]}'` |
+
+`MODEL_PRICES` no necesita cambios: su clave es el id de modelo del proveedor, nunca un id de runtime. `agents_system.integration.openai_adapter.to_model_id` y `parse_model_id` se borran junto con el esquema, sin reemplazo: el código que los importa falla al importar. Registrá con `create_app(agents=...)` o con `AGENT_REGISTRATIONS`.
 
 ---
 

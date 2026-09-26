@@ -32,7 +32,6 @@ from agents_system.harness.loader import (
 )
 from agents_system.harness.registry import RegistryFactory
 from agents_system.integration import openai_router, webhook_router
-from agents_system.integration.openai_adapter import parse_model_id
 from agents_system.integration.whatsapp_client import WhatsAppClient
 from agents_system.models.base import get_engine, get_session_factory
 from agents_system.observability import RequestIdMiddleware, setup_logging
@@ -490,10 +489,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         elif settings.whatsapp_token and settings.whatsapp_phone_number_id:
             # #141 review follow-up -- WhatsApp is otherwise fully
             # configured to receive AND reply (both outbound credentials
-            # set), yet `whatsapp_runtime_id` is empty or, on the
-            # Settings-driven path, malformed (missing the
-            # `{deployment}__{role}` separator -- `_settings_registrations`
-            # skips it). `POST /webhook` is mounted
+            # set), yet `whatsapp_runtime_id` is empty. `POST /webhook` is
+            # mounted
             # UNCONDITIONALLY (`include_router(webhook_router)` below) and
             # durably accepts every signed inbound message regardless of
             # this value, so the old behaviour -- warn and boot anyway --
@@ -503,23 +500,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # is a boot-time misconfiguration, not a runtime condition to
             # expose via backlog metrics.
             #
-            # A well-formed, truthy `whatsapp_runtime_id` cannot reach this
-            # branch while itself being the reason `webhook_runtime` is
-            # `None`: `_boot_plan` either registers it or, for
-            # `create_app(agents=...)`, refuses it as unmatched; every
-            # registration reaches the runtime loop above, which either
-            # raises before this code runs
+            # A truthy `whatsapp_runtime_id` cannot reach this branch while
+            # itself being the reason `webhook_runtime` is `None`:
+            # `_boot_plan` refuses it unless a registration (from
+            # `create_app(agents=...)` or AGENT_REGISTRATIONS) matches it;
+            # every registration reaches the runtime loop above, which
+            # either raises before this code runs
             # (an unsafe `untrusted_input` role, an execution timeout too
             # close to the outbox lease, a missing grant) or lands in
             # `runtimes[runtime_id]` -- there is no silent "resolved but not
-            # cached" path for a well-formed id. If that stops being true,
-            # a well-formed-but-unresolved id must first be covered by a
+            # cached" path for a registered id. If that stops being true,
+            # a registered-but-unresolved id must first be covered by a
             # test before this message claims it again.
             raise DefinitionError(
                 "WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID are configured "
                 f"but whatsapp_runtime_id={settings.whatsapp_runtime_id!r} "
-                "resolves to no runtime (unset or missing the required "
-                "'{deployment}__{role}' separator). "
+                "resolves to no runtime (unset). "
                 "POST /webhook would durably accept signed WhatsApp messages "
                 "that the deferred worker would never process. Set "
                 "WHATSAPP_RUNTIME_ID to a valid runtime id, or unset "
@@ -716,6 +712,41 @@ def _validate_client(runtime_id: str, client: object) -> str:
     return client
 
 
+def _parse_agent_registration(value: str) -> tuple[str, str | None]:
+    """Read one ``AGENT_REGISTRATIONS`` value: ``"{role}"`` or
+    ``"{role}@{client}"`` -> ``(role, client or None)`` (design.md D5/D6).
+
+    ``main.py``'s own env-boot convention, not a public string format: a
+    library caller registers ``Agent``/``str`` objects through
+    ``create_app(agents=...)`` instead. Strict -- at most one ``@``, and
+    both the role and the client must match ``loader._SAFE_SEGMENT``;
+    anything else fails boot naming the value, cut to
+    ``_MAX_RUNTIME_ID_LENGTH`` characters. Nothing else in the value has a
+    meaning: ``__`` in particular is part of the role name, never a
+    separator.
+    """
+    if not isinstance(value, str):
+        raise DefinitionError(
+            f"Invalid agent registration of type {type(value).__name__}: "
+            'expected "{role}" or "{role}@{client}".'
+        )
+    role, separator, client = value.partition("@")
+    if not _SAFE_SEGMENT.fullmatch(role) or (
+        separator and not _SAFE_SEGMENT.fullmatch(client)
+    ):
+        shown = (
+            f"{value!r}"
+            if len(value) <= _MAX_RUNTIME_ID_LENGTH
+            else f"{value[:_MAX_RUNTIME_ID_LENGTH]!r}... ({len(value)} characters)"
+        )
+        raise DefinitionError(
+            f"Invalid agent registration {shown}. Expected "
+            '"{role}" or "{role}@{client}", where the role and the client '
+            f"each match {_SAFE_SEGMENT.pattern} and '@' appears at most once."
+        )
+    return role, (client if separator else None)
+
+
 @dataclasses.dataclass(frozen=True)
 class _Registration:
     """One runtime the lifespan builds (design.md D5): what to resolve, and
@@ -737,13 +768,13 @@ class _BootPlan:
     """``create_app(grants=...)``, or ``DEPLOY_GRANTS`` when it got none."""
 
 
-def _explicit_registrations(
+def _build_registrations(
     agents: Mapping[str, Agent | str],
     clients: Mapping[str, str] | None,
 ) -> dict[str, _Registration]:
-    """``create_app(agents=...)``: each id is opaque and validated, never
-    parsed. A ``str`` is a predefined-role name; an ``Agent`` is its own
-    locator."""
+    """``create_app(agents=...)``, or ``AGENT_REGISTRATIONS`` read into the
+    same shape: each id is opaque and validated, never parsed. A ``str`` is
+    a predefined-role name; an ``Agent`` is its own locator."""
     clients = clients or {}
     # A client names a subtractive deployment override: one keyed by a
     # typo'd id would silently serve that agent WITHOUT its narrowing.
@@ -784,26 +815,32 @@ def _explicit_registrations(
     return registrations
 
 
-def _settings_registrations(runtime_ids: Sequence[str]) -> dict[str, _Registration]:
+def _settings_agents(
+    agent_registrations: Mapping[str, str],
+) -> tuple[dict[str, Agent | str], dict[str, str]]:
     """The Settings-driven fallback, used when ``create_app`` got no
-    ``agents``: the ``{deployment}__{role}`` ids in ``ADAPTER_RUNTIMES``/
-    ``WHATSAPP_RUNTIME_ID``, read by the adapter's ``parse_model_id`` -- the
-    one parser left for them, until ADR-004 PR4b replaces this source with
-    ``AGENT_REGISTRATIONS``. A malformed id is logged and skipped, as before.
-    """
-    registrations: dict[str, _Registration] = {}
-    for model_id in runtime_ids:
+    ``agents``: ``AGENT_REGISTRATIONS`` read into the ``agents``/``clients``
+    shape ``create_app`` takes, so both paths build through one loop
+    (design.md D5). A malformed id or value fails boot, naming it."""
+    agents: dict[str, Agent | str] = {}
+    clients: dict[str, str] = {}
+    for runtime_id, value in agent_registrations.items():
         try:
-            client, role = parse_model_id(model_id)
-        except ValueError:
-            structlog.get_logger().error(
-                "adapter.invalid_runtime_id",
-                model_id=model_id,
-                reason="Expected '{deployment}__{role}' format",
-            )
-            continue
-        registrations[model_id] = _Registration(role, client, f"role {role!r}")
-    return registrations
+            _validate_runtime_id(runtime_id)
+        except DefinitionError as exc:
+            raise DefinitionError(
+                f"AGENT_REGISTRATIONS: {exc} Refusing to boot."
+            ) from exc
+        try:
+            role, client = _parse_agent_registration(value)
+        except DefinitionError as exc:
+            raise DefinitionError(
+                f"AGENT_REGISTRATIONS[{runtime_id!r}]: {exc} Refusing to boot."
+            ) from exc
+        agents[runtime_id] = role
+        if client is not None:
+            clients[runtime_id] = client
+    return agents, clients
 
 
 def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
@@ -812,13 +849,6 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
     agents: Mapping[str, Agent | str] | None = getattr(app.state, "agents", None)
     grants: Mapping[str, Any] | None = getattr(app.state, "grants", None)
     clients: Mapping[str, str] | None = getattr(app.state, "clients", None)
-
-    # Every channel's runtime, not just the OpenAI adapter's: gating the
-    # cache on `adapter_runtimes` alone once left inbound WhatsApp with
-    # nothing to serve.
-    channel_ids = list(settings.adapter_runtimes)
-    if settings.whatsapp_runtime_id and settings.whatsapp_runtime_id not in channel_ids:
-        channel_ids.append(settings.whatsapp_runtime_id)
 
     for runtime_id, granted in (grants or {}).items():
         # A str (or bytes) satisfies Sequence[str] but would be granted one
@@ -837,32 +867,39 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
                 "deployment client of a registered predefined role, so it "
                 "needs agents to register one. Refusing to boot."
             )
-        registrations = _settings_registrations(channel_ids)
-    else:
-        registrations = _explicit_registrations(agents, clients)
-        # A channel id is looked up in the registration as an opaque key,
-        # never parsed. One that matches nothing fails boot: an unmatched
-        # WHATSAPP_RUNTIME_ID would accept messages no runtime answers, and
-        # an unmatched ADAPTER_RUNTIMES id would leave /v1/models listing
-        # less than the operator named.
-        whatsapp_ids = (
-            [settings.whatsapp_runtime_id] if settings.whatsapp_runtime_id else []
+        agents, clients = _settings_agents(settings.agent_registrations)
+        source = "AGENT_REGISTRATIONS"
+        # Static, never derived from the id: nothing parses it.
+        hint = (
+            " A runtime id is no longer read as '{deployment}__{role}': map "
+            'it in AGENT_REGISTRATIONS to "{role}" or "{role}@{client}".'
         )
-        for channel, ids in (
-            ("WHATSAPP_RUNTIME_ID", whatsapp_ids),
-            ("ADAPTER_RUNTIMES", settings.adapter_runtimes),
-        ):
-            unmatched = [
-                repr(runtime_id)
-                for runtime_id in ids
-                if runtime_id not in registrations
-            ]
-            if unmatched:
-                raise DefinitionError(
-                    f"{channel} names runtime id(s) {', '.join(unmatched)} "
-                    "that create_app(agents=...) does not register "
-                    f"(registered: {sorted(registrations)}). Refusing to boot."
-                )
+    else:
+        source = "create_app(agents=...)"
+        hint = ""
+    registrations = _build_registrations(agents, clients)
+
+    # A channel id is looked up in the registration as an opaque key, never
+    # parsed. One that matches nothing fails boot: an unmatched
+    # WHATSAPP_RUNTIME_ID would accept messages no runtime answers, and an
+    # unmatched ADAPTER_RUNTIMES id would leave /v1/models listing less than
+    # the operator named.
+    whatsapp_ids = (
+        [settings.whatsapp_runtime_id] if settings.whatsapp_runtime_id else []
+    )
+    for channel, ids in (
+        ("WHATSAPP_RUNTIME_ID", whatsapp_ids),
+        ("ADAPTER_RUNTIMES", settings.adapter_runtimes),
+    ):
+        unmatched = [
+            repr(runtime_id) for runtime_id in ids if runtime_id not in registrations
+        ]
+        if unmatched:
+            raise DefinitionError(
+                f"{channel} names runtime id(s) {', '.join(unmatched)} that "
+                f"{source} does not register (registered: "
+                f"{sorted(registrations)}).{hint} Refusing to boot."
+            )
 
     return _BootPlan(
         registrations=registrations,
@@ -913,8 +950,11 @@ def create_app(
         or equip fails the whole boot. ``WHATSAPP_RUNTIME_ID`` and each
         ``ADAPTER_RUNTIMES`` id must be a key here, or boot fails naming it;
         ``/v1/models`` lists only the ``ADAPTER_RUNTIMES`` ids. ``None`` (the
-        default) keeps the ``Settings``-driven boot path, so a caller that
-        never passes it (e.g. ``demo.py``'s ``build_app``) is unaffected.
+        default) registers the ``AGENT_REGISTRATIONS`` entries instead
+        (``{id: "role" | "role@client"}``, each a predefined role), through
+        the same rules; a caller that never passes ``agents`` (e.g.
+        ``demo.py``'s ``build_app``) needs no change. When ``agents`` is
+        given, ``AGENT_REGISTRATIONS`` is ignored, never merged.
     grants:
         Runtime id -> granted permission wire names (a list, never a bare
         string), keyed by the same ids as ``agents``. Nothing is granted
@@ -934,9 +974,9 @@ def create_app(
         Records completed turns. Absent means none are recorded.
     roots:
         Consumer-owned path configuration for platform and deployment roles.
-        A client override (``clients[id]``, or a legacy
-        ``<client>__<role>`` id) requires an explicit RootConfig specifying
-        deployments_root.
+        A client override (``clients[id]``, or an ``AGENT_REGISTRATIONS``
+        value ``"{role}@{client}"``) requires an explicit RootConfig
+        specifying deployments_root.
     title:
         OpenAPI title.
     """
