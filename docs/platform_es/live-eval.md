@@ -188,13 +188,17 @@ adivinado. Si incluso una llamada al modelo de un turno no reportó
 incluso un turno/corrida de una suma es `None` (incluyendo una corrida que
 falló antes de completar un turno), la suma también lo es --
 `ScenarioResult.total_usage` es desconocido apenas UNA de sus corridas lo
-es, nunca una suma parcial sólo sobre las corridas que tuvieron éxito.
-`cost_usd` además es `None` cuando no hay un precio configurado para ese
-model id, o cuando los conteos de tokens reportados de un turno caen fuera
-de un rango plausible (negativos, o por encima de ~100M -- el
-`usage_metadata` de un backend `openai_compatible` es entrada no confiable
-sin un techo de tamaño upstream; un conteo implausible se trata igual que
-uno desconocido en lugar de lanzar una excepción).
+es, nunca una suma parcial sólo sobre las corridas que tuvieron éxito. La
+misma regla aplica un nivel más abajo, en cada llamada individual al
+modelo: los totales de tokens de un turno son `None` si incluso una de sus
+llamadas reportó un conteo de tokens negativo, o un conteo en o por encima
+de ~100M (el `usage_metadata` de un backend `openai_compatible` es entrada
+no confiable sin un techo de tamaño upstream) -- verificado por llamada,
+antes de sumar, de modo que una llamada implausiblemente enorme y otra
+negativa que la compense en el mismo turno no puedan compensarse hasta un
+total pequeño y de apariencia plausible. `cost_usd` además es `None` cuando
+no hay un precio configurado para ese model id; un conteo implausible se
+trata igual que uno desconocido en lugar de lanzar una excepción.
 
 **Configurar precios**: `Settings.model_prices` (variable de entorno
 `MODEL_PRICES`) es un objeto JSON con clave el ID DEL MODELO DEL PROVEEDOR
