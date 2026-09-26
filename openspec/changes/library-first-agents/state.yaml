@@ -17,7 +17,6 @@ tasks_progress:
     - PR1b-T1
     - PR1b-T2
     - PR1b-T3
-  pending:
     - PR2-T1
     - PR2-T2
     - PR2-T3
@@ -29,6 +28,7 @@ tasks_progress:
     - PR3-T4
     - PR4a-i-T1
     - PR4a-i-T2
+  pending:
     - PR4a-ii-T1
     - PR4a-ii-T2
     - PR4a-ii-T3
@@ -46,7 +46,7 @@ tasks_progress:
     - PR7-T1
     - PR7-T2
     - PR7-T3
-last_updated: 2026-09-25T00:00:00Z
+last_updated: 2026-09-26T00:00:00Z
 pr1a:
   status: implemented
   branch: feat/library-first-1a-locator
@@ -120,3 +120,95 @@ pr1b:
       it needs fd-based openat/O_NOFOLLOW reads).
     - FolderLocator.path is not validated to lie inside FolderLocator.root
       for the leaf (PR2 sets root=path.parent).
+pr2:
+  status: implemented
+  branch: feat/adr-004-2-agent-api
+  pr_url: https://github.com/nahuel893/agents-system/pull/85
+  files_changed:
+    - src/agents_system/__init__.py
+    - src/agents_system/agent/spec.py
+    - src/agents_system/harness/factory.py
+    - src/agents_system/harness/loader.py
+    - tests/test_agent_deep_immutability.py
+    - tests/test_agent_extends_agent.py
+    - tests/test_agent_extends_predefined_role.py
+    - tests/test_agent_folder_plus_overrides.py
+    - tests/test_agent_from_folder.py
+    - tests/test_agent_from_params.py
+    - tests/test_agent_safety_ceiling.py
+    - tests/test_public_api.py
+    - tests/test_role_inheritance.py
+    - docs/platform/deployment.md
+    - docs/platform/role.md
+    - docs/platform_es/deployment.md
+    - docs/platform_es/role.md
+    - openspec/changes/library-first-agents/tasks.md
+  diff_lines_authored: 1830
+  diff_budget_note: >-
+    Far above the ~350 estimate and the 400-line default budget. Most of it
+    is tests (tests/test_agent_safety_ceiling.py alone is 417 lines), and
+    two review rounds added the importer safety ceiling, deep immutability
+    and the from_folder extends= fix on top of the planned slice.
+  review_fixes:
+    - HIGH - importer-authored definitions could loosen autonomy and
+      execution_limits through extends; _resolve_role_chain now holds each
+      one to its parent's effective values, and a parentless importer root
+      to the platform defaults (_validate_importer_ceiling, since renamed
+      _apply_importer_ceiling by issue 93).
+    - MEDIUM - Agent was only shallowly frozen; __post_init__ now deep-copies
+      every container into an immutable one and _to_locator hands the
+      loader fresh plain copies.
+    - HIGH - Agent.from_folder(path, extends=...) was accepted and dropped;
+      _load_role_files now uses it as the parent (_extends_override_target).
+  ci: 12/12 checks passed
+  follow_ups:
+    - Issue 93 - Agent parameters skipped the YAML type checks, the importer
+      ceiling missed audit_policy and escalation conditions, limits accepted
+      negative values, and Agent could not be pickled or deep-copied.
+pr3:
+  status: implemented
+  branch: feat/adr-004-3-agent-skills
+  pr_url: https://github.com/nahuel893/agents-system/pull/91
+  files_changed:
+    - src/agents_system/agent/spec.py
+    - src/agents_system/harness/factory.py
+    - src/agents_system/harness/loader.py
+    - tests/test_agent_definition_skills_fields.py
+    - tests/test_agent_folder_plus_overrides.py
+    - tests/test_skills_precedence.py
+    - docs/platform/deployment.md
+    - docs/platform/role.md
+    - docs/platform_es/deployment.md
+    - docs/platform_es/role.md
+    - openspec/changes/library-first-agents/tasks.md
+  diff_lines_authored: 765
+  diff_budget_note: >-
+    Above the ~265 estimate and the 400-line default budget; the two new
+    test files carry most of it. The implementation diff (loader.py,
+    factory.py, spec.py) is about 185 lines.
+  review_fixes:
+    - HIGH - Agent.from_folder(path, skill_contents=...) silently dropped a
+      key not listed in skills; _apply_agent_folder_overrides now checks it
+      against the resulting skills.
+    - MEDIUM - the same gap let an unlisted key win over a same-named skill
+      a parent introduced through extends; fixed by the same check, which
+      runs before the fold.
+    - MEDIUM - the docs said deployment skills combine with a folder or
+      inline agent, which resolve() forbids; corrected in EN and ES.
+  ci: 12/12 checks passed
+  follow_ups:
+    - The deployment skills path has no resolve()-based containment check,
+      unlike the importer folder path.
+    - Issue 93 - docs/platform/role.md stated the skills precedence
+      backwards (the code is inline > own folder > deployment).
+pr4a_i:
+  status: implemented
+  branch: feat/adr-004-4a-i-create-app-params
+  pr_url: https://github.com/nahuel893/agents-system/pull/92
+  files_changed:
+    - src/agents_system/main.py
+    - tests/test_create_app_agents_param.py
+    - openspec/changes/library-first-agents/tasks.md
+  diff_lines_authored: 185
+  review_fixes: []
+  ci: 12/12 checks passed

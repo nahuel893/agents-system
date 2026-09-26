@@ -46,6 +46,7 @@ Prompt composition (ADR-002 B.8/B.9)
 from __future__ import annotations
 
 import dataclasses
+import math
 import pathlib
 import re
 import shutil
@@ -405,10 +406,14 @@ def _read_md(path: pathlib.Path) -> tuple[dict[str, Any], str]:
 
 
 def _as_str_list(value: Any) -> list[str]:
-    """Coerce a YAML value to a list of strings."""
+    """Coerce a YAML value to a list of strings: a scalar is a one-item list.
+
+    Also used for `Agent(...)`'s list parameters (`agent/spec.py`), which is
+    why a tuple counts as a list: YAML never produces one, but Python does.
+    """
     if value is None:
         return []
-    if isinstance(value, list):
+    if isinstance(value, list | tuple):
         return [str(v) for v in value]
     if isinstance(value, str):
         return [value]
@@ -1147,7 +1152,7 @@ def _extends_target(
 
 
 def _parse_untrusted_input(
-    policy_fm: dict[str, Any], *, source: pathlib.Path
+    policy_fm: Mapping[str, Any], *, source: pathlib.Path | str
 ) -> bool | None:
     """Read `untrusted_input` from parsed policy.md frontmatter (ADR-002 C.11).
 
@@ -1159,6 +1164,10 @@ def _parse_untrusted_input(
     from the key being absent, which is exactly the ambiguity a security-
     relevant flag must not have written on disk. Each of those raises
     loudly, naming the offending file, instead of silently coercing.
+
+    `Agent(...)` runs its `untrusted_input` parameter, and every
+    `Agent.from_folder(...)` override, through this same function (issue
+    #93); `source` then names the agent instead of a file.
     """
     if "untrusted_input" not in policy_fm:
         return None
@@ -1167,17 +1176,39 @@ def _parse_untrusted_input(
         raise DefinitionError(
             f"Invariant violation — untrusted_input: {source} declares "
             f"'untrusted_input: null', which is ambiguous with the key "
-            f"being absent entirely. Omit the line to inherit, or declare "
-            f"an explicit 'true'/'false'."
+            f"being absent entirely. Omit it to inherit, or declare "
+            f"an explicit true/false."
         )
     if not isinstance(value, bool):
         raise DefinitionError(
             f"Invariant violation — untrusted_input: {source} declares "
             f"untrusted_input={value!r} ({type(value).__name__}), which is "
-            f"not a boolean. Only a real YAML bool ('true'/'false') is "
-            f"accepted — not a string, an int, or null."
+            f"not a boolean. Only a real bool (YAML true/false, Python "
+            f"True/False) is accepted — not a string, an int, or null."
         )
     return value
+
+
+def _validate_inline_skills(
+    agent: str, skills: Iterable[str], inline_skills: Mapping[str, Any]
+) -> None:
+    """Every ``skill_contents`` key must also be listed in ``skills``.
+
+    ``_load_skills`` only looks up the skills a definition declares, so the
+    content of an unlisted name would never be used, with no error anywhere.
+    Shared by ``Agent.__post_init__`` (the inline form, and a
+    ``from_folder`` call that also overrides ``skills``) and
+    ``_apply_agent_folder_overrides`` (a ``from_folder`` call that keeps the
+    folder's own ``skills``, known only once the folder is read).
+    """
+    unlisted = set(inline_skills) - set(skills)
+    if unlisted:
+        raise DefinitionError(
+            f"Invariant violation — skill_contents: agent '{agent}': "
+            f"skill_contents names a skill not listed in `skills`: "
+            f"{sorted(unlisted)}. Declare it in `skills` too, or its content "
+            f"is never used."
+        )
 
 
 def _apply_agent_folder_overrides(
@@ -1224,13 +1255,11 @@ def _apply_agent_folder_overrides(
         if target in raw_field_names:
             changes[target] = dict(value) if target == "inline_skills" else value
     if "inline_skills" in changes:
-        resulting_skills = set(changes.get("skills", definition.skills))
-        unlisted = changes["inline_skills"].keys() - resulting_skills
-        if unlisted:
-            raise DefinitionError(
-                "Agent: skill_contents names a skill not listed in `skills`: "
-                f"{sorted(unlisted)}"
-            )
+        _validate_inline_skills(
+            changes.get("role_name", definition.role_name),
+            changes.get("skills", definition.skills),
+            changes["inline_skills"],
+        )
     return dataclasses.replace(definition, **changes) if changes else definition
 
 
@@ -1436,7 +1465,7 @@ def _fold_parent_into_child(
     roles. A child written by the importer -- an ``Agent(...)``, an
     ``Agent.from_folder(...)``, any ``FolderLocator``/``InlineLocator`` --
     crosses the same kind of trust boundary a deployment does, so
-    ``_resolve_role_chain`` checks it with ``_validate_importer_ceiling``
+    ``_resolve_role_chain`` checks it with ``_apply_importer_ceiling``
     before this fold runs. Nothing here changes for a platform-role child.
 
     ``untrusted_input`` (ADR-002 C.11) is the one field where that "no trust
@@ -1634,9 +1663,10 @@ def _resolve_role_chain(
     load is reported with its underlying reason, never as merely missing.
 
     Every importer-authored definition in the chain is held to its parent's
-    effective ``autonomy``/``execution_limits`` before it is folded -- and
-    an importer-authored root, which has no parent, to the platform
-    defaults. See ``_validate_importer_ceiling``. Only the importer end of a
+    effective ``autonomy``/``execution_limits``/audit redaction, and has its
+    escalation conditions added to its parent's, before it is folded -- and
+    an importer-authored root, which has no parent, is held to the platform
+    defaults. See ``_apply_importer_ceiling``. Only the importer end of a
     chain can be importer-authored: a platform role never ``extends:`` an
     importer folder, so platform-to-platform folds are never checked here.
     """
@@ -1681,10 +1711,10 @@ def _resolve_role_chain(
     # chain is leaf-first; fold root-first so a child composes onto its parent.
     resolved, root_is_importer_authored = chain[-1]
     if root_is_importer_authored:
-        _validate_importer_ceiling(None, resolved)
+        resolved = _apply_importer_ceiling(None, resolved)
     for child, child_is_importer_authored in reversed(chain[:-1]):
         if child_is_importer_authored:
-            _validate_importer_ceiling(resolved, child)
+            child = _apply_importer_ceiling(resolved, child)
         resolved = _fold_parent_into_child(resolved, child)
 
     return resolved, leaf_is_abstract
@@ -2033,12 +2063,12 @@ def _validate_permissions(
 _DEPLOYMENT_RULE = "Deployments may only restrict, not elevate."
 
 #: `platform/roles/base/policy.md`'s rule, as it applies to a definition the
-#: importer wrote (see `_validate_importer_ceiling`).
+#: importer wrote (see `_apply_importer_ceiling`).
 _IMPORTER_RULE = (
     "An importer agent is additive for capability but subtractive for "
-    "safety: it may match or tighten its parent's autonomy and "
-    "execution_limits, never loosen or raise them (a null limit means the "
-    "platform default)."
+    "safety: it may match or tighten its parent's autonomy, "
+    "execution_limits and audit redaction, never loosen or raise them (a "
+    "null limit means the platform default)."
 )
 
 
@@ -2055,7 +2085,7 @@ def _validate_autonomy(
     The one autonomy ceiling check, shared by both trust boundaries: a
     deployment override against its resolved role (``_merge_validated``)
     and an importer-authored agent against its parent
-    (``_validate_importer_ceiling``). ``who``/``against``/``rule`` only
+    (``_apply_importer_ceiling``). ``who``/``against``/``rule`` only
     phrase the error; the defaults are the deployment wording.
     """
     if not level:
@@ -2182,7 +2212,7 @@ def _validate_execution_limits(
     value, and the baseline.
 
     Shared by the deployment boundary (``_merge_validated``) and the importer
-    boundary (``_validate_importer_ceiling``); ``who``/``against``/``rule``
+    boundary (``_apply_importer_ceiling``); ``who``/``against``/``rule``
     only phrase the error, defaulting to the deployment wording.
     """
     for key, override_value in override_limits.items():
@@ -2210,7 +2240,9 @@ def _validate_execution_limits(
         value = override_value
         if value is None:
             value = _PLATFORM_DEFAULT_LIMITS.get(key)
-        if not isinstance(value, int | float):
+        # `bool` is an `int` subclass, so without the explicit check `True`
+        # passed as a limit of 1.
+        if isinstance(value, bool) or not isinstance(value, int | float):
             described = (
                 "null, with no platform default to fall back to,"
                 if override_value is None
@@ -2219,6 +2251,15 @@ def _validate_execution_limits(
             raise DefinitionError(
                 f"Invariant violation — execution_limits: {who} sets {key} to "
                 f"{described} which is not a number.  {rule}"
+            )
+        # Issue #93: `-inf` and negative values compared as "tighter" and
+        # were accepted. A limit is a finite count or number of seconds;
+        # 0 is still a valid (if drastic) tightening.
+        if not math.isfinite(value) or value < 0:
+            raise DefinitionError(
+                f"Invariant violation — execution_limits: {who} sets "
+                f"{key}={override_value}, which is not a finite, non-negative "
+                f"number.  {rule}"
             )
         # `not <=` rather than `>`: NaN compares false both ways, so `>`
         # accepted it, and a NaN limit bounds nothing.
@@ -2235,12 +2276,58 @@ def _validate_execution_limits(
             )
 
 
-def _validate_importer_ceiling(
-    parent: RawDefinition | None, child: RawDefinition
+def _validate_audit_redaction(
+    ceiling: Mapping[str, Any],
+    audit_policy: Mapping[str, Any],
+    *,
+    who: str,
+    against: str,
 ) -> None:
+    """An importer agent may not loosen what the ``Redactor`` strips from
+    audit payloads (issue #93).
+
+    Two ``audit_policy`` keys decide that (``audit/redactor.py``):
+
+    - ``capture_tool_input``: any TRUTHY value keeps free-text bodies
+      (``message``/``body``/``text``) verbatim. Compared by truthiness,
+      because that is how the ``Redactor`` reads it -- ``"no"`` switches
+      redaction off exactly like ``true``.
+    - ``redact_keys``: extra keys to always redact. The child's list, when it
+      declares one, replaces the parent's in the fold, so it must keep every
+      key the parent redacts. It must be a list of strings: the ``Redactor``
+      runs ``set(redact_keys)``, so a bare string would redact its
+      characters, not the key it names.
+    """
+    if audit_policy.get("capture_tool_input") and not ceiling.get("capture_tool_input"):
+        raise DefinitionError(
+            f"Invariant violation — audit_policy: {who} sets "
+            f"capture_tool_input={audit_policy['capture_tool_input']!r}, which "
+            f"switches off redaction of free-text bodies that the {against} "
+            f"audit_policy keeps on.  {_IMPORTER_RULE}"
+        )
+    if "redact_keys" not in audit_policy:
+        return
+    keys = audit_policy["redact_keys"]
+    if not isinstance(keys, list | tuple) or not all(isinstance(k, str) for k in keys):
+        raise DefinitionError(
+            f"Invariant violation — audit_policy: {who} sets redact_keys={keys!r}, "
+            f"which is not a list of strings.  {_IMPORTER_RULE}"
+        )
+    dropped = set(_as_str_list(ceiling.get("redact_keys"))) - set(keys)
+    if dropped:
+        raise DefinitionError(
+            f"Invariant violation — audit_policy: {who} sets redact_keys={keys!r}, "
+            f"which drops {sorted(dropped)} from the {against} redact_keys.  "
+            f"{_IMPORTER_RULE}"
+        )
+
+
+def _apply_importer_ceiling(
+    parent: RawDefinition | None, child: RawDefinition
+) -> RawDefinition:
     """Hold an importer-authored ``child`` to ``parent``'s effective safety
     settings: additive for capability, subtractive for safety
-    (``platform/roles/base/policy.md``).
+    (``platform/roles/base/policy.md``). Returns ``child``, ready to fold.
 
     ``_fold_parent_into_child`` lets a platform role loosen ``autonomy`` or
     ``execution_limits`` because the same author writes both files. An
@@ -2250,7 +2337,14 @@ def _validate_importer_ceiling(
     reuses the deployment validators, measured against the parent's
     EFFECTIVE values: an undeclared autonomy is the platform floor, and a
     missing or null limit is the platform default -- exactly what the
-    runtime would enforce for the parent.
+    runtime would enforce for the parent. The same holds for audit redaction
+    (``_validate_audit_redaction``).
+
+    Escalation conditions are the one field made additive rather than
+    checked (issue #93): a platform child restates its parent's whole
+    ``conditions`` list, but an importer child's list is ADDED to its
+    parent's here, so ``conditions: []`` cannot switch off escalation the
+    parent requires. The returned ``child`` carries the union.
 
     ``parent`` is ``None`` for an importer-authored chain root. Having no
     parent does not mean having no ceiling: the platform defaults are what
@@ -2264,13 +2358,18 @@ def _validate_importer_ceiling(
         source = "platform default"
         ceiling_autonomy = _DEFAULT_AUTONOMY
         ceiling_limits: Mapping[str, Any] = {}
+        ceiling_audit: Mapping[str, Any] = {}
     else:
         source = f"parent '{parent.role_name}' effective"
         ceiling_autonomy = parent.autonomy or _DEFAULT_AUTONOMY
         ceiling_limits = (
             parent.execution_limits if isinstance(parent.execution_limits, dict) else {}
         )
+        ceiling_audit = parent.audit_policy
 
+    _validate_audit_redaction(
+        ceiling_audit, child.audit_policy, who=who, against=source
+    )
     _validate_autonomy(
         ceiling_autonomy,
         child.autonomy,
@@ -2289,6 +2388,18 @@ def _validate_importer_ceiling(
             against=source,
             rule=_IMPORTER_RULE,
         )
+
+    rules = child.escalation_rules
+    if parent is None or not isinstance(rules, dict) or "conditions" not in rules:
+        # An undeclared `conditions` already keeps the parent's in the fold.
+        return child
+    conditions = _union_preserving_order(
+        _as_str_list(parent.escalation_rules.get("conditions")),
+        _as_str_list(rules["conditions"]),
+    )
+    return dataclasses.replace(
+        child, escalation_rules={**rules, "conditions": conditions}
+    )
 
 
 # ---------------------------------------------------------------------------
