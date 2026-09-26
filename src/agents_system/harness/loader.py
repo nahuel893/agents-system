@@ -448,7 +448,10 @@ _ESCALATION_DESCRIPTION_RE = re.compile(
 
 
 def _parse_escalation_descriptions(
-    body: str, *, known_conditions: Iterable[str]
+    body: str,
+    *,
+    known_conditions: Iterable[str],
+    source: pathlib.Path | str | None = None,
 ) -> dict[str, str]:
     """Parse `- `name` — description` bullets out of a policy.md prose body.
 
@@ -480,6 +483,15 @@ def _parse_escalation_descriptions(
     future maintainer the bullet convention itself -- is prose about the
     format, not a real description, and must never be captured or compete
     with the real bullet outside the fence.
+
+    An odd number of fence markers -- one opened and never closed anywhere
+    in the body -- is an authoring mistake, not "everything after it is
+    inside the fence": left unchecked, it would silently discard every real
+    (non-fenced) bullet that follows, with no error, warning, or log,
+    reintroducing the exact "bare condition name only" failure mode issue
+    #88 was opened to fix (PR #99 review follow-up). It raises
+    ``DefinitionError`` naming *source* (the ``policy.md`` this body came
+    from) instead.
 
     Two real (non-fenced) bullets for the same condition name in one file
     is an authoring mistake, not a "last one wins": it raises
@@ -534,6 +546,15 @@ def _parse_escalation_descriptions(
         # Blank line, heading, unindented prose, or a new bullet: whatever
         # bullet was being continued is done.
         current = None
+
+    if in_fence:
+        where = f" in {source}" if source is not None else ""
+        raise DefinitionError(
+            f"Invariant violation — escalation_rules: an unterminated fence "
+            f"(an opened ``` with no matching close){where} would silently "
+            f"discard every description bullet after it. Close the fence, "
+            f"or remove the stray ``` marker."
+        )
 
     return descriptions
 
@@ -1711,7 +1732,9 @@ def _load_role_files(
     # is the more deliberate of the two.
     escalation_rules = dict(policy_fm.get("escalation_rules") or {})
     parsed_descriptions = _parse_escalation_descriptions(
-        policy_body, known_conditions=_as_str_list(escalation_rules.get("conditions"))
+        policy_body,
+        known_conditions=_as_str_list(escalation_rules.get("conditions")),
+        source=shown / "policy.md",
     )
     declared_descriptions = escalation_rules.get("descriptions")
     if parsed_descriptions or isinstance(declared_descriptions, dict):

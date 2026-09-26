@@ -342,6 +342,20 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     descriptions: Mapping[str, Any] = (
         raw_descriptions if isinstance(raw_descriptions, Mapping) else {}
     )
+    # PR #99 review follow-up: `conditions` above is normalized through
+    # `_normalize_condition_name` before it becomes the lookup key into
+    # `descriptions` -- but `descriptions` itself (a role/deployment
+    # frontmatter `escalation_rules.descriptions:`, or an importer's raw
+    # `InlineLocator`/`FolderLocator` dict) is keyed by the condition's
+    # UNNORMALIZED raw name. Without normalizing this mapping's own keys the
+    # same way, a condition whose declared name needs whitespace collapsing
+    # silently loses its description and falls back to the bare-name
+    # render -- exactly the failure mode issue #88 exists to eliminate.
+    # This restores the exact-string-lookup invariant: both sides of the
+    # comparison go through the identical whitespace-collapsing rule.
+    normalized_descriptions = {
+        " ".join(str(key).split()): value for key, value in descriptions.items()
+    }
 
     if not escalate_to and not conditions:
         return ""
@@ -368,7 +382,9 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
             # newline can never fragment one bullet into several
             # bullet/heading-shaped lines, regardless of which source
             # supplied it.
-            description = " ".join(str(descriptions.get(condition) or "").split())
+            description = " ".join(
+                str(normalized_descriptions.get(condition) or "").split()
+            )
             if description:
                 lines.append(f"- {condition} — {description}")
             else:

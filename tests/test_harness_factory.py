@@ -911,6 +911,33 @@ def test_compose_prompt_collapses_internal_whitespace_in_condition_names() -> No
     assert bullet_lines == ["- two spaces condition"]
 
 
+def test_compose_prompt_matches_description_when_condition_name_needs_normalizing() -> (
+    None
+):
+    """PR #99 review follow-up: `_normalize_condition_name` collapses a
+    condition NAME's internal whitespace before it becomes the lookup key
+    into `descriptions` -- but `descriptions` itself (a role's frontmatter
+    `escalation_rules.descriptions:`, or an importer's raw dict) is keyed by
+    the condition's UNNORMALIZED raw name. A condition whose declared name
+    needs whitespace collapsing must still find its description -- silently
+    falling back to the bare name is exactly the failure mode issue #88 was
+    opened to eliminate."""
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition(
+        {
+            "escalate_to": "human",
+            "conditions": ["two  spaces  condition"],
+            "descriptions": {"two  spaces  condition": "the real description text."},
+        }
+    )
+
+    prompt = _compose_prompt(definition, ())
+
+    bullet_lines = [line for line in prompt.splitlines() if line.startswith("- ")]
+    assert bullet_lines == ["- two spaces condition — the real description text."]
+
+
 def test_compose_prompt_rejects_condition_name_containing_a_newline() -> None:
     """Unlike a description (whose embedded newline is silently collapsed
     away as harmless prose), a condition NAME is a structural identifier --

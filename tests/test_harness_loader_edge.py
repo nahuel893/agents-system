@@ -292,6 +292,28 @@ def test_parse_escalation_descriptions_ignores_fence_with_language_tag() -> None
     assert out == {"real_condition": "the real description."}
 
 
+def test_parse_escalation_descriptions_raises_on_unterminated_fence() -> None:
+    """PR #99 review follow-up: an odd number of ``` fence markers anywhere
+    in the body must fail loud instead of silently discarding every real
+    bullet that follows the unclosed fence -- the exact 'bare condition name
+    only' failure mode issue #88 was opened to eliminate, with no error,
+    warning, or log to say why."""
+    from agents_system.harness.loader import _parse_escalation_descriptions
+
+    body = (
+        "- `condition_a` — first description.\n"
+        "\n"
+        "```\n"
+        "\n"
+        "- `condition_b` — second description, never reached.\n"
+    )
+
+    with pytest.raises(DefinitionError, match="fence"):
+        _parse_escalation_descriptions(
+            body, known_conditions=["condition_a", "condition_b"]
+        )
+
+
 def test_parse_escalation_descriptions_raises_on_duplicate_bullet_for_same_condition() -> (
     None
 ):
