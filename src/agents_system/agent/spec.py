@@ -145,6 +145,11 @@ class Agent:
         caller wanting additive tools writes ``tools=[*folder_tools,
         "extra"]`` explicitly, so the direction of the merge is never a
         hidden per-field guess.
+
+        ``extends=`` replaces the manifest's ``extends:`` the same way: a
+        string is placed like the manifest value (relative to ``path``), and
+        another ``Agent`` is used as the parent directly. The agent is then
+        held to that parent's safety ceiling and ``untrusted_input``.
         """
         folder_path = pathlib.Path(path)
         return cls(
@@ -158,10 +163,16 @@ class Agent:
         # (`_thaw`): the loader's shapes, and nothing it can mutate back into
         # this frozen `Agent`.
         if self._folder is not None:
+            overrides = _thaw(self._folder_overrides)
+            if isinstance(overrides.get("extends"), Agent):
+                # Same eager rule as the inline branch below: the loader
+                # gets the parent's locator and uses it in place of the
+                # manifest's own `extends:` (see `_load_role_files`).
+                overrides["extends"] = overrides["extends"]._to_locator()
             return FolderLocator(
                 path=self._folder,
                 root=self._folder.parent,
-                overrides=_thaw(self._folder_overrides),
+                overrides=overrides,
             )
         raw = RawDefinition(
             role_name=self.name,

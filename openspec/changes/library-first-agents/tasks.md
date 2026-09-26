@@ -645,6 +645,16 @@ Testing Strategy table: ~330-370).
   `tests/test_role_inheritance.py` and `tests/test_agent_extends_agent.py`.
   Docs: `docs/platform/role.md`, `docs/platform/deployment.md` and their
   `_es` twins.
+  3. `from_folder(extends=...)` was dropped (HIGH, second review). `extends`
+     is an overridable `Agent` field, but `_apply_agent_folder_overrides`
+     skipped it (no `RawDefinition` field), so the agent resolved under the
+     folder's own parent, or none, and lost the requested parent's
+     `untrusted_input: true` and limits. `_load_role_files` now uses the
+     override as the parent (`_extends_override_target`): a string placed by
+     `_extends_target` relative to the folder, or the parent `Agent`'s
+     locator from `Agent._to_locator()`. Tests:
+     `tests/test_agent_folder_plus_overrides.py`. Docs: `docs/platform/role.md`
+     and its `_es` twin.
 
 ---
 

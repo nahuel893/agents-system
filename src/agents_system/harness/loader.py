@@ -311,7 +311,9 @@ class FolderLocator:
     may reference a sibling/descendant folder under `root`, never outside
     it. `overrides` carries `Agent.from_folder(path, **overrides)`'s Python
     params, applied (field-replace, not merge — see design.md D3) after the
-    folder is read.
+    folder is read. Its `extends` value, when present, replaces the
+    manifest's `extends:`: a string placed like one, or the parent `Agent`'s
+    own locator.
     """
 
     path: pathlib.Path
@@ -974,7 +976,11 @@ def _describe_locator(locator: RoleLocator) -> str:
 
 
 def _extends_target(
-    raw: Any, *, current: RoleLocator, roots: RootConfig
+    raw: Any,
+    *,
+    current: RoleLocator,
+    roots: RootConfig,
+    declared_by: str | None = None,
 ) -> RoleLocator:
     """Place an ``extends:`` value declared by ``current`` in exactly one
     locator space, or raise ``DefinitionError`` (design.md D2).
@@ -992,11 +998,16 @@ def _extends_target(
     what let ``some/importer/path/agent`` silently extend ``agent``. Spec:
     agent-definition-locator, "`extends:` fails loudly when unplaceable in
     either locator space".
+
+    ``declared_by`` names where the value came from in error messages when
+    it was not ``current``'s own ``extends:`` (an ``Agent.from_folder``
+    override); it changes nothing else.
     """
+    source = declared_by or _describe_locator(current)
 
     def fail(detail: str) -> DefinitionError:
         return DefinitionError(
-            f"Invariant violation — extends: {_describe_locator(current)} "
+            f"Invariant violation — extends: {source} "
             f"declares {detail}. {_EXTENDS_RULE}"
         )
 
@@ -1091,11 +1102,11 @@ def _apply_agent_folder_overrides(
     `overrides` keys are `Agent`'s own field names (validated against
     `agent.spec._AGENT_OVERRIDABLE_FIELDS` at `Agent.__init__` time); `name`
     is the one renamed key (`Agent.name` -> `RawDefinition.role_name`, so an
-    overridden name is reflected consistently in both places). A key with no
-    `RawDefinition` counterpart (`extends` — resolved into a locator, never
-    stored on `RawDefinition`; `skill_contents` — not yet threaded into
-    `RawDefinition` in this PR, see design.md's own Testing Strategy note)
-    has nothing to replace here and is left unapplied.
+    overridden name is reflected consistently in both places). `extends` is
+    not a `RawDefinition` field: it replaces the manifest's `extends:` as
+    the parent locator, in `_load_role_files` (`_extends_override_target`).
+    `skill_contents` is not threaded into `RawDefinition` in this PR (see
+    design.md's own Testing Strategy note), so it is left unapplied here.
     """
     if not overrides:
         return definition
@@ -1106,6 +1117,36 @@ def _apply_agent_folder_overrides(
         if target in raw_field_names:
             changes[target] = value
     return dataclasses.replace(definition, **changes) if changes else definition
+
+
+def _extends_override_target(locator: FolderLocator, roots: RootConfig) -> RoleLocator:
+    """The parent an ``Agent.from_folder(path, extends=...)`` override asks
+    for, used in place of the folder manifest's own ``extends:`` (design.md
+    D3: an explicit parameter replaces the folder's value).
+
+    An ``Agent`` value arrives already turned into its locator by
+    ``Agent._to_locator()`` and is used as is. Anything else is placed by
+    ``_extends_target`` exactly like a manifest value, relative to this
+    folder, so it fails loud on the same inputs (``None``, empty, absolute,
+    escaping the importer root, the folder itself).
+
+    This override used to be accepted and then dropped, which resolved the
+    agent under the folder's own parent, or none: it lost the requested
+    parent's ``untrusted_input: true`` (the R4 T3 barrier) and its tighter
+    execution limits. The chain walk now holds the folder to that parent's
+    ceiling like any importer-authored child.
+    """
+    value = locator.overrides["extends"]
+    if isinstance(value, FolderLocator | InlineLocator):
+        return value
+    return _extends_target(
+        value,
+        current=locator,
+        roots=roots,
+        declared_by=(
+            f"the Agent.from_folder extends= override for {_describe_locator(locator)}"
+        ),
+    )
 
 
 def _load_role_files(
@@ -1156,11 +1197,14 @@ def _load_role_files(
     # `null`) is not the same thing: it reaches `_extends_target` and fails,
     # rather than silently dropping the inheritance its author meant to
     # declare. No shipped manifest writes one; a root role omits the key.
-    parent = (
-        _extends_target(manifest_fm["extends"], current=locator, roots=roots)
-        if "extends" in manifest_fm
-        else None
-    )
+    # An `Agent.from_folder(path, extends=...)` override replaces the key.
+    parent: RoleLocator | None
+    if isinstance(locator, FolderLocator) and "extends" in locator.overrides:
+        parent = _extends_override_target(locator, roots)
+    elif "extends" in manifest_fm:
+        parent = _extends_target(manifest_fm["extends"], current=locator, roots=roots)
+    else:
+        parent = None
     is_abstract = bool(manifest_fm.get("abstract", False))
 
     # ADR-002 C.12. Only a platform role's own manifest.md ORIGINATES command
