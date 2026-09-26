@@ -335,6 +335,38 @@ def test_design_notes_inside_fenced_code_block_is_not_treated_as_heading(
     )
 
 
+def test_accountant_agent_role_prose_ties_report_catalog_gap_to_escalation() -> None:
+    """Issue #82: `accountant_agent_no_fabrication` called `escalation_notifier`
+    in only some live runs against a real model, even though #36 already
+    renders `figure_requested_outside_report_catalog` into the composed
+    prompt's auto-generated `## escalation rules` block
+    (`harness/factory.py:_render_escalation_block`).
+
+    The block renders only the condition's bare snake_case NAME -- it has no
+    per-role knowledge of what the condition means or what to do about it.
+    `support-agent/role.md`'s own prose spells its analogous condition out in
+    concrete terms ("If the knowledge base has no answer, say so and
+    escalate."), and its `support_agent_no_fabrication` scenario passes
+    100% live; `accountant-agent/role.md` said nothing about escalating at
+    all, leaving the model to infer -- inconsistently -- whether explaining
+    the gap to the user was enough or whether it had to call the tool.
+
+    This checks the role's OWN authored file directly (not the composed,
+    inherited `system_prompt`, which already contains the word "escalate"
+    from the shared `agent` parent's unrelated prose) so the assertion is
+    about accountant-agent's own prose, not an inherited false positive.
+    """
+    from agents_system.harness.loader import _read_md
+
+    _, body = _read_md(_REAL_PLATFORM_ROOT / "roles" / "accountant-agent" / "role.md")
+
+    assert "escalat" in body.lower(), (
+        "accountant-agent/role.md never ties the 'no report fits' situation "
+        "to escalating -- the model has nothing concrete to act on beyond "
+        "the auto-rendered condition name"
+    )
+
+
 def test_indented_design_notes_like_line_is_not_treated_as_heading(
     tmp_path: pathlib.Path,
 ) -> None:
