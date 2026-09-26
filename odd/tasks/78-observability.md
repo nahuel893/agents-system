@@ -310,8 +310,10 @@ global CLAUDE.md). Runner: `pytest -q` from the worktree root with
   GREEN. Full-suite result: `ruff check .` all checks passed; `ruff format
   --check .` 383 files already formatted; `mypy src/` success, 71 source
   files; `pytest -q` 1562 passed, 101 deselected, 17 xfailed.
-- [ ] **S2.7 — commit + PR.** Work-unit commit and PR recorded below once
-  pushed.
+- [x] **S2.7 — commit + PR.** Work-unit commit: `24157a1`
+  ("feat(observability): /metrics with process, turn and tool metrics
+  (#78 2/3)"). PR: https://github.com/nahuel893/agents-system/pull/96,
+  `Refs #78` (not `Closes` — Slice 3 remains). Not merged; CI pending.
 
 ## Slice 3 — real-app live harness (pending)
 Not started. A harness that boots the actual application (HTTP API, WhatsApp
