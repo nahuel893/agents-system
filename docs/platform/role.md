@@ -97,6 +97,30 @@ An `Agent` is immutable all the way down. It copies every list and dict it recei
 
 A bad value raises `DefinitionError`, naming the agent, the field and the reason.
 
+### Importer folders stay inside their root
+
+An importer folder is a trust boundary: whoever writes inside it may not be whoever runs the platform. So the loader holds every read from it to the folder's importer root (`FolderLocator.root`; `Agent.from_folder(path)` uses the folder's parent):
+
+- **Every file is contained.** `role.md`, `manifest.md`, `policy.md` and each `skills/<name>.md` must resolve inside the importer root after following `..` and symlinks. A symlink that stays inside the root is followed. One that leads out of it, at any level (the file, the `skills/` folder, the agent folder, or a folder above it), fails the load with `DefinitionError`. A skill file that escapes counts as not found, so the load fails with `FactoryError`.
+- **The folder itself is contained.** `FolderLocator.path` must land strictly inside its own `root`, the same rule an `extends:` target already follows. A `FolderLocator` built by hand is checked too.
+- **Overrides are an allowlist.** A `FolderLocator` applies only the overrides `Agent.from_folder` accepts (`name`, `extends`, `tools`, `permissions`, `skills`, `skill_contents`, `context`, `autonomy`, the policy fields, `execution_limits`, `untrusted_input`, `system_prompt`, `version`). Any other key, such as `command_tool_declarations`, `command_tools` or `deployment`, raises `DefinitionError`. An `untrusted_input` override is parsed like the one in `policy.md`.
+- **Command tools are re-checked in `resolve()`.** Every command tool declaration is checked again when the definition is resolved, whichever locator built it: tier `T2` only, a `run:` permission, an absolute literal `argv[0]`, placeholders that fill a whole argv element and name a declared param, and narrow params. `InlineLocator(raw=RawDefinition(...))` hands the loader built declarations that never went through the manifest parser, so this is where they are checked.
+- **Deployment skills are contained too.** `deployments/{client}/{role}/skills/{name}.md` must resolve inside both the deployments root and that `skills/` folder, so a skill name or role name with `..` in it cannot read outside it.
+- **Errors do not show host paths.** A loader error names a file relative to its root (`vip-support/policy.md`, `roles/<name>/policy.md`, `<client>/<role>/policy.md`), or names the agent. The one exception is a missing `platform_root` or `deployments_root`: that error prints the path that was searched, because the operator configured it and needs it to fix the setting.
+
+#### Reading after checking (TOCTOU)
+
+A check followed by a read leaves a window: a folder that passed the check can be swapped for a symlink before it is read. The loader closes that window on Linux and macOS with directory-handle reads. After the containment check, it opens the importer root and walks the checked path one folder at a time, opening each one relative to the previous one with `O_NOFOLLOW` (`os.open` with `dir_fd`). The file is opened the same way, non-blocking, and must be a regular file. A path component that became a symlink after the check fails the read instead of being followed, and a named pipe cannot block the load. A directory or named pipe where a file belongs fails the load with its handle closed, so reloading a hostile folder cannot exhaust the process's file descriptors.
+
+This was chosen over documenting the window because it takes only the standard library on both systems the platform runs on, and it removes the gap instead of describing it.
+
+Threat model:
+
+- **Untrusted:** anyone who can write inside an importer root, for example an uploaded or per-tenant agent folder.
+- **Trusted:** the root path itself and everything above it, the platform role tree (`platform/roles/`) and the deployments tree. Those are the deployer's, so their role files are read by path.
+- **Out of scope:** hard links (a hard link inside the root to a file elsewhere on the same filesystem is a regular file inside the root, so keep untrusted importer roots on their own filesystem, or keep Linux's `fs.protected_hardlinks` on), mount points inside the root, and a folder whose files change between the three reads (each read is contained, but `role.md` and `policy.md` can come from different moments).
+- **Other platforms:** where `os.open` has no `dir_fd` support (Windows), the read falls back to a plain path read after the same check, and the window stays open there.
+
 ### `role.md` prose body — model-facing prompt vs. design notes
 
 The frontmatter table above covers `role.md`'s YAML header. Everything after the closing `---` is the prose body, which the loader captures as the role's contribution to `system_prompt` (`AgentDefinition.system_prompt` / `RawDefinition.system_prompt`, `harness/loader.py`).
