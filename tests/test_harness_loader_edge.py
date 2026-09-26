@@ -138,8 +138,10 @@ def test_list_override_replaces() -> None:
     assert _resolve_list_directive(["a"], {"override": ["x", "y"]}) == ["x", "y"]
 
 
-def test_list_unknown_dict_falls_back_to_parent() -> None:
-    assert _resolve_list_directive(["a"], {"foo": 1}) == ["a"]
+def test_list_unknown_dict_raises() -> None:
+    """Issue #106: it used to resolve to the parent's full set."""
+    with pytest.raises(DefinitionError, match="not a recognised directive"):
+        _resolve_list_directive(["a"], {"foo": 1})
 
 
 # ---------------------------------------------------------------------------
@@ -171,8 +173,16 @@ def test_mapping_inherit_removes_conditions() -> None:
     assert out["conditions"] == ["y"]
 
 
-def test_mapping_non_dict_falls_back() -> None:
-    assert _resolve_mapping_directive({"a": 1}, 42) == {"a": 1}
+def test_mapping_non_dict_raises() -> None:
+    """Issue #106: an unrecognised shape fails closed, it is not ignored."""
+    with pytest.raises(DefinitionError, match="not a recognised directive"):
+        _resolve_mapping_directive({"a": 1}, 42)
+
+
+def test_mapping_empty_dict_inherits() -> None:
+    """Issue #106: a deployment that leaves a policy field out loads it as
+    `{}`, which used to replace the role's whole mapping with nothing."""
+    assert _resolve_mapping_directive({"a": 1}, {}) == {"a": 1}
 
 
 def test_mapping_inherit_overlay_merges_descriptions_instead_of_replacing() -> None:
@@ -463,10 +473,11 @@ def test_merge_exec_limits_new_key_allowed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_permissions — non-list, non-"inherit" value falls back to parent
+# _resolve_permissions — an unexpected value raises (issue #106)
 # ---------------------------------------------------------------------------
-def test_resolve_permissions_unexpected_value_falls_back() -> None:
-    assert _resolve_permissions(["a", "b"], 42) == ["a", "b"]  # type: ignore[arg-type]
+def test_resolve_permissions_unexpected_value_raises() -> None:
+    with pytest.raises(DefinitionError, match="not a recognised directive"):
+        _resolve_permissions(["a", "b"], 42)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

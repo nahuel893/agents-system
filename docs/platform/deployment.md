@@ -79,14 +79,25 @@ The deployment `manifest.md` cannot:
 
 The deployment `policy.md` can:
 - Restrict autonomy level (e.g., `supervised` → `confirm`)
-- Add stricter escalation rules
+- Add stricter escalation rules: `escalation_rules: {inherit: true, add: [...]}` adds conditions, and its `descriptions` describe the ones it adds
+- Tighten audit redaction (add `redact_keys`)
 - Reduce execution limits (shorter timeouts, fewer tool calls)
 - Define client-specific human-in-the-loop thresholds
 
 The deployment `policy.md` cannot:
 - Elevate autonomy level beyond the predefined role's ceiling
-- Remove escalation rules defined in the predefined policy
+- Remove an escalation condition defined in the predefined policy. A plain `escalation_rules` mapping replaces the role's, so it must restate every condition; a `remove:` directive may not name an inherited one
+- Reword an inherited condition's description, or change or blank the role's `escalate_to`
+- Loosen audit redaction: set `audit_policy.capture_tool_input` to a true value the role does not have, or leave out a key the role's `redact_keys` lists. A plain `audit_policy` mapping replaces the role's, so it must keep them
 - Increase execution limits beyond platform defaults. A `null` value counts as the platform default and is checked like any other value; a value that is not a finite, non-negative number (`NaN`, infinity, a negative value, a boolean) raises `DefinitionError`
+
+Breaking any of these raises `DefinitionError`, naming the deployment, the field and the reason, and the runtime is not built. A policy field the deployment leaves out, or leaves empty, keeps the role's value.
+
+### Merge directives
+
+`permissions` takes a list (the subset the deployment keeps), `inherit`, `{inherit: true, add: [...], remove: [...]}` or `{override: [...]}`. A policy mapping (`escalation_rules`, `delegation_policy`, `memory_policy`, `audit_policy`) is either a plain mapping, which replaces the role's, or `{inherit: true, ...}`, which keeps the role's keys and overlays its own. Only `escalation_rules` takes `add`/`remove`, which edit its `conditions`.
+
+A directive the loader does not recognise raises `DefinitionError`: `{remove: [...]}` without `inherit: true`, a mistyped key, `inherit: 'yes'`, `inherit` mixed with `override`, or `add`/`remove` on a policy mapping other than `escalation_rules`. Such a directive used to resolve to the role's full set, so a permission the deployment meant to remove was kept. The same rule applies to predefined roles and custom agents (`docs/platform/role.md`).
 
 ### `skills/`
 
@@ -123,6 +134,8 @@ function build_runtime(client, role_type, user_identity):
     definition = merge(generic, override)
     assert definition.permissions ⊆ generic.permissions  # invariant
     assert definition.autonomy_level ≤ generic.autonomy_level  # invariant
+    assert generic.escalation_conditions ⊆ definition.escalation_conditions  # invariant
+    assert definition.audit_redaction ⊇ generic.audit_redaction  # invariant
 
   return AgentFactory.build(definition, user_identity)
 ```

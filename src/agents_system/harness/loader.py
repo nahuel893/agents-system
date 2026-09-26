@@ -1863,14 +1863,21 @@ def _fold_parent_into_child(
         else parent.untrusted_input
     )
 
+    who = f"role '{child.role_name}'"
+    against = f"parent '{parent.role_name}'"
     parent_perms = (
         list(parent.permissions) if isinstance(parent.permissions, list) else []
     )
-    if isinstance(child.permissions, list):
+    child_perms = child.permissions
+    if isinstance(child_perms, str) and child_perms != "inherit":
+        # A bare string is a one-item list, as `_as_str_list` reads `tools:`.
+        # It used to resolve to the parent's set, dropping the grant.
+        child_perms = [child_perms]
+    if isinstance(child_perms, list | tuple):
         # A plain list ADDS here, unlike at the deployment edge where it
         # replaces: role-to-role composition is additive for capability.
         resolved_perms: list[str] = _union_preserving_order(
-            parent_perms, child.permissions
+            parent_perms, list(child_perms)
         )
     else:
         # Everything else — "inherit", {inherit: true, add/remove: [...]},
@@ -1884,7 +1891,12 @@ def _fold_parent_into_child(
         # sensitive tool calls, so that failed in the granting direction
         # twice over. The fix that closed this at the deployment edge left it
         # live one layer up.
-        resolved_perms = _resolve_list_directive(parent_perms, child.permissions)
+        #
+        # An unrecognised directive raises (issue #106) instead of keeping
+        # the parent's full set.
+        resolved_perms = _resolve_list_directive(
+            parent_perms, child_perms, who=who, field="permissions"
+        )
 
     parent_limits = (
         dict(parent.execution_limits)
@@ -1910,35 +1922,44 @@ def _fold_parent_into_child(
         merged.update(b)
         return merged
 
-    def _merge_escalation_rules(
-        parent_rules: dict[str, Any], child_rules: dict[str, Any]
-    ) -> dict[str, Any]:
-        """`_merge_mapping`, plus one exception (issue #88): `descriptions`
-        accumulates DEEPLY (parent ∪ child, child wins per-name) instead of
-        one side replacing the other wholesale.
+    def _fold_policy(field: str) -> dict[str, Any]:
+        """The child's policy mapping, key by key over the parent's: what
+        ``{inherit: true, ...}`` means at the deployment edge, where a plain
+        mapping replaces instead. So one resolver serves both, and a child's
+        own ``{inherit: true, add: [...]}`` is resolved rather than stored as
+        literal ``inherit``/``add`` keys (issue #106).
 
-        Every other key here keeps the existing shallow rule -- a child
-        `conditions:` list fully replaces the parent's, which is why every
-        role's own frontmatter restates its whole inherited condition list
-        (see `agent/policy.md`'s own docstring). `descriptions` is different
-        on purpose: it is prose, written once at the role that introduces a
-        condition, and every descendant should inherit it without repeating
-        it -- the same shape `command_tool_declarations` already gets one
-        field up in this same function.
+        A child ``conditions:`` list still replaces the parent's, which is
+        why a predefined role restates its whole inherited list (see
+        ``agent/policy.md``). ``descriptions`` accumulates instead (issue
+        #88): it is prose, written once at the role that introduces a
+        condition, and every descendant inherits it without repeating it.
         """
-        merged = _merge_mapping(parent_rules, child_rules)
-        parent_descriptions = parent_rules.get("descriptions")
-        child_descriptions = child_rules.get("descriptions")
-        if isinstance(parent_descriptions, dict) or isinstance(
-            child_descriptions, dict
-        ):
-            merged["descriptions"] = {
-                **(
-                    parent_descriptions if isinstance(parent_descriptions, dict) else {}
-                ),
-                **(child_descriptions if isinstance(child_descriptions, dict) else {}),
-            }
-        return merged
+        child_value = getattr(child, field)
+        _check_mapping_directive(child_value, who=who, field=field)
+        if isinstance(child_value, Mapping):
+            child_value = {**child_value, "inherit": True}
+        return _resolve_mapping_directive(
+            getattr(parent, field), child_value, who=who, field=field
+        )
+
+    resolved_escalation = _fold_policy("escalation_rules")
+    resolved_audit = _fold_policy("audit_policy")
+    # Issue #106: the one safety rule that holds on EVERY fold, a predefined
+    # child role's included -- unlike autonomy and limits, which the same
+    # author may set either way. An importer child's `conditions` were
+    # already added to its parent's (`_apply_importer_ceiling`), so only a
+    # `remove:` directive can still drop one there.
+    _validate_escalation_kept(
+        parent.escalation_rules,
+        resolved_escalation,
+        who=who,
+        against=against,
+        rule=_FOLD_RULE,
+    )
+    _validate_audit_redaction(
+        parent.audit_policy, resolved_audit, who=who, against=against, rule=_FOLD_RULE
+    )
 
     # ADR-002 C.12. Additive, like `tools`/`permissions` above -- but unlike
     # those plain string lists, a NAME collision between two platform roles
@@ -1968,14 +1989,10 @@ def _fold_parent_into_child(
         context=_merge_mapping(parent.context, child.context),
         permissions=resolved_perms,
         autonomy=resolved_autonomy,
-        escalation_rules=_merge_escalation_rules(
-            parent.escalation_rules, child.escalation_rules
-        ),
-        delegation_policy=_merge_mapping(
-            parent.delegation_policy, child.delegation_policy
-        ),
-        memory_policy=_merge_mapping(parent.memory_policy, child.memory_policy),
-        audit_policy=_merge_mapping(parent.audit_policy, child.audit_policy),
+        escalation_rules=resolved_escalation,
+        delegation_policy=_fold_policy("delegation_policy"),
+        memory_policy=_fold_policy("memory_policy"),
+        audit_policy=resolved_audit,
         execution_limits=resolved_limits,
         untrusted_input=resolved_untrusted_input,
         command_tools=_union_preserving_order(
@@ -1994,6 +2011,38 @@ def _fold_parent_into_child(
         inline_skills=dict(child.inline_skills),
         importer_root=child.importer_root,
     )
+
+
+#: The policy mappings that take ``{inherit: true, ...}`` directives.
+_POLICY_FIELDS = (
+    "escalation_rules",
+    "delegation_policy",
+    "memory_policy",
+    "audit_policy",
+)
+
+
+def _resolve_chain_root(root: RawDefinition) -> RawDefinition:
+    """``root``'s own directives, resolved against an empty parent (issue
+    #106).
+
+    A chain root has nothing to fold onto, so its directives were never
+    resolved or checked: ``resolve`` reads any ``permissions`` that is not a
+    list as none at all (``{override: [read:catalog]}`` granted nothing), an
+    unrecognised directive passed silently, and ``{inherit: true, add:
+    [...]}`` in a policy mapping stayed as literal keys.
+    """
+    who = f"role '{root.role_name}'"
+    changes: dict[str, Any] = {
+        field: _resolve_mapping_directive(
+            {}, getattr(root, field), who=who, field=field
+        )
+        for field in _POLICY_FIELDS
+    }
+    changes["permissions"] = _resolve_list_directive(
+        [], root.permissions, who=who, field="permissions"
+    )
+    return dataclasses.replace(root, **changes)
 
 
 def _locator_key(locator: RoleLocator) -> str:
@@ -2091,6 +2140,7 @@ def _resolve_role_chain(
 
     # chain is leaf-first; fold root-first so a child composes onto its parent.
     resolved, root_is_importer_authored = chain[-1]
+    resolved = _resolve_chain_root(resolved)
     if root_is_importer_authored:
         resolved = _apply_importer_ceiling(None, resolved)
     for child, child_is_importer_authored in reversed(chain[:-1]):
@@ -2273,6 +2323,8 @@ def load_override(
 def _resolve_permissions(
     parent_perms: list[str],
     override_perms: list[str] | str,
+    *,
+    who: str = "a definition",
 ) -> list[str]:
     """Resolve permissions, honouring every list directive the module documents.
 
@@ -2288,12 +2340,52 @@ def _resolve_permissions(
     the other list fields already routed through the shared resolver; only
     permissions -- the field where being wrong costs the most -- did not.
     """
-    return _resolve_list_directive(list(parent_perms), override_perms)
+    return _resolve_list_directive(
+        list(parent_perms), override_perms, who=who, field="permissions"
+    )
+
+
+#: The keys an ``{inherit: true, ...}`` directive may carry on a list field,
+#: and on ``escalation_rules``, where ``add``/``remove`` edit ``conditions``.
+_INHERIT_DIRECTIVE_KEYS = frozenset({"inherit", "add", "remove"})
+#: Every key that makes a mapping a directive rather than plain data.
+_DIRECTIVE_KEYS = _INHERIT_DIRECTIVE_KEYS | {"override"}
+
+
+def _check_list_directive(value: Any, *, who: str, field: str) -> None:
+    """Raise unless ``value`` is a shape `_resolve_list_directive` honours
+    (issue #106): absent, ``"inherit"``, a list (a bare string is a one-item
+    list, as ``_as_str_list`` reads it), ``{inherit: true, add: [...],
+    remove: [...]}`` or ``{override: [...]}``.
+
+    Any other mapping -- ``{remove: [...]}`` without ``inherit: true``, a
+    typo'd key, ``inherit`` mixed with ``override`` -- used to resolve to the
+    parent's FULL set, which keeps exactly what the author meant to remove.
+    Shared by every path: ``Agent(permissions=...)`` at construction, a
+    folder or predefined-role manifest in the fold, and a deployment in
+    ``_merge_validated``.
+    """
+    if value is None or isinstance(value, str | list | tuple):
+        return
+    if isinstance(value, Mapping):
+        keys = set(value)
+        if value.get("inherit") is True and keys <= _INHERIT_DIRECTIVE_KEYS:
+            return
+        if keys == {"override"}:
+            return
+    raise DefinitionError(
+        f"Invariant violation — {field}: {who} declares {field}={value!r}, "
+        f"which is not a recognised directive. Use a list, 'inherit', "
+        f"{{inherit: true, add: [...], remove: [...]}} or {{override: [...]}}."
+    )
 
 
 def _resolve_list_directive(
     parent_list: list[str],
     override_value: Any,
+    *,
+    who: str = "a definition",
+    field: str = "permissions",
 ) -> list[str]:
     """Resolve a list-type field that may carry merge directives.
 
@@ -2303,93 +2395,137 @@ def _resolve_list_directive(
     - ``{inherit: true, remove: [...]}`` → parent minus removals
     - ``{override: <value>}``            → replace entirely
     - plain list                         → use override list as-is
+    - any other string                   → a one-item list, as ``_as_str_list``
     - None / absent                      → return parent list
+
+    Anything else raises ``DefinitionError`` naming ``who`` and ``field``
+    (``_check_list_directive``, issue #106). It used to resolve to the
+    parent's full set.
     """
-    if override_value is None:
+    _check_list_directive(override_value, who=who, field=field)
+
+    if override_value is None or override_value == "inherit":
         return list(parent_list)
 
-    if override_value == "inherit":
-        return list(parent_list)
+    if isinstance(override_value, str):
+        return [override_value]
 
-    if isinstance(override_value, list):
+    if isinstance(override_value, list | tuple):
         return list(override_value)
 
-    if isinstance(override_value, dict):
-        if override_value.get("inherit") is True:
-            result = list(parent_list)
-            additions = _as_str_list(override_value.get("add"))
-            removals = set(_as_str_list(override_value.get("remove")))
-            # add deduped
-            seen = set(result)
-            for item in additions:
-                if item not in seen:
-                    result.append(item)
-                    seen.add(item)
-            # remove
-            result = [r for r in result if r not in removals]
-            return result
-        if "override" in override_value:
-            return _as_str_list(override_value["override"])
+    if "override" in override_value:
+        return _as_str_list(override_value["override"])
 
-    return list(parent_list)
+    # {inherit: true, add: [...], remove: [...]}
+    result = list(parent_list)
+    additions = _as_str_list(override_value.get("add"))
+    removals = set(_as_str_list(override_value.get("remove")))
+    # add deduped
+    seen = set(result)
+    for item in additions:
+        if item not in seen:
+            result.append(item)
+            seen.add(item)
+    # remove
+    return [r for r in result if r not in removals]
+
+
+def _check_mapping_directive(value: Any, *, who: str, field: str) -> None:
+    """Raise unless ``value`` is a shape `_resolve_mapping_directive`
+    honours (issue #106): absent, ``"inherit"``, a plain mapping, or
+    ``{inherit: true, ...}``. On ``escalation_rules`` the directive may also
+    carry ``add``/``remove``, which edit ``conditions``.
+
+    A mapping with a directive key it cannot honour -- ``add`` without
+    ``inherit: true``, ``inherit: 'yes'``, ``override`` -- is an authoring
+    mistake: it used to replace the whole mapping, or be merged key by key
+    into the policy as literal keys. Shared by ``Agent(...)`` at
+    construction, the fold, and ``_merge_validated``.
+    """
+    if value is None or value == "inherit":
+        return
+    if isinstance(value, Mapping):
+        directive_keys = set(value) & _DIRECTIVE_KEYS
+        if not directive_keys:
+            return
+        allowed = (
+            _INHERIT_DIRECTIVE_KEYS if field == "escalation_rules" else {"inherit"}
+        )
+        if value.get("inherit") is True and directive_keys <= allowed:
+            return
+    conditions = (
+        ", with add: [...]/remove: [...] editing conditions"
+        if field == "escalation_rules"
+        else ""
+    )
+    raise DefinitionError(
+        f"Invariant violation — {field}: {who} declares {field}={value!r}, "
+        f"which is not a recognised directive. Use a mapping, or "
+        f"{{inherit: true, ...}} to keep the parent's keys{conditions}."
+    )
 
 
 def _resolve_mapping_directive(
-    parent_mapping: dict[str, Any],
+    parent_mapping: Mapping[str, Any],
     override_value: Any,
+    *,
+    who: str = "a definition",
+    field: str = "escalation_rules",
 ) -> dict[str, Any]:
     """Resolve a mapping-type field that may carry ``inherit: true`` directive.
 
     If ``inherit: true`` is in the override dict, merge parent values as the
     base and overlay the override's non-directive keys on top.  Without
     ``inherit: true`` the override dict replaces the parent completely.
+
+    An empty mapping keeps the parent's (issue #106): a deployment that
+    leaves a policy field out loads it as ``{}``, and replacing the role's
+    mapping with it silently dropped every escalation condition and audit
+    setting the role had. An unrecognised shape raises
+    (``_check_mapping_directive``).
     """
-    if override_value is None:
+    _check_mapping_directive(override_value, who=who, field=field)
+
+    if not isinstance(override_value, Mapping) or not override_value:
+        # Absent, "inherit", or an empty mapping: nothing to change.
         return dict(parent_mapping)
 
-    if override_value == "inherit":
-        return dict(parent_mapping)
-
-    if isinstance(override_value, dict):
-        if override_value.get("inherit") is True:
-            # Start from parent, then apply the override's extra directives
-            result = dict(parent_mapping)
-            for k, v in override_value.items():
-                if k in ("inherit",):
-                    continue
-                if k == "add":
-                    # handled separately for list sub-fields
-                    parent_conditions = _as_str_list(result.get("conditions"))
-                    result["conditions"] = _resolve_list_directive(
-                        parent_conditions, {"inherit": True, "add": v}
-                    )
-                elif k == "remove":
-                    parent_conditions = _as_str_list(result.get("conditions"))
-                    result["conditions"] = _resolve_list_directive(
-                        parent_conditions, {"inherit": True, "remove": v}
-                    )
-                elif k == "descriptions" and isinstance(v, dict):
-                    # Issue #88 — same reasoning as `descriptions`' role-chain
-                    # merge (`_fold_parent_into_child`): a deployment that
-                    # supplies its own descriptions for the conditions it
-                    # `add`s should not silently erase the generic role's
-                    # inherited ones by replacing the whole mapping.
-                    existing_descriptions = result.get("descriptions")
-                    result["descriptions"] = {
-                        **(
-                            existing_descriptions
-                            if isinstance(existing_descriptions, dict)
-                            else {}
-                        ),
-                        **v,
-                    }
-                else:
-                    result[k] = v
-            return result
+    if override_value.get("inherit") is not True:
         # plain override dict — no inherit directive
         return dict(override_value)
 
-    return dict(parent_mapping)
+    # Start from parent, then apply the override's extra directives
+    result = dict(parent_mapping)
+    for k, v in override_value.items():
+        if k in ("inherit",):
+            continue
+        if k in ("add", "remove"):
+            # Only on escalation_rules (`_check_mapping_directive`): they
+            # edit its `conditions` list.
+            result["conditions"] = _resolve_list_directive(
+                _as_str_list(result.get("conditions")),
+                {"inherit": True, k: v},
+                who=who,
+                field=f"{field}.{k}",
+            )
+        elif k == "descriptions" and isinstance(v, dict):
+            # Issue #88 — same reasoning as `descriptions`' role-chain
+            # merge (`_fold_parent_into_child`): a deployment that
+            # supplies its own descriptions for the conditions it
+            # `add`s should not silently erase the generic role's
+            # inherited ones by replacing the whole mapping.
+            existing_descriptions = result.get("descriptions")
+            result["descriptions"] = {
+                **(
+                    existing_descriptions
+                    if isinstance(existing_descriptions, dict)
+                    else {}
+                ),
+                **v,
+            }
+        else:
+            result[k] = v
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2450,8 +2586,16 @@ _DEPLOYMENT_RULE = "Deployments may only restrict, not elevate."
 _IMPORTER_RULE = (
     "An importer agent is additive for capability but subtractive for "
     "safety: it may match or tighten its parent's autonomy, "
-    "execution_limits and audit redaction, never loosen or raise them (a "
-    "null limit means the platform default)."
+    "execution_limits, audit redaction and escalation rules, never loosen, "
+    "raise or remove them (a null limit means the platform default)."
+)
+
+#: The part of that rule a predefined child role is held to as well (issue
+#: #106). The same author writes both files, so it may still choose its own
+#: autonomy and limits (`_fold_parent_into_child`).
+_FOLD_RULE = (
+    "A child role may never drop an escalation condition it inherits or "
+    "loosen its parent's audit redaction."
 )
 
 
@@ -2579,6 +2723,16 @@ def _validate_untrusted_input_exec(
             raise UntrustedInputGrantError(name, cls, role_name)
 
 
+def _shown_limit(value: Any) -> str:
+    """``str(value)`` for an error message. Python refuses to print an int
+    of more than 4300 digits (``ValueError``), and that must not escape in
+    place of the ``DefinitionError`` it was meant to phrase."""
+    try:
+        return str(value)
+    except ValueError:
+        return f"<an integer of {value.bit_length()} bits>"
+
+
 def _validate_execution_limits(
     baseline: Mapping[str, Any],
     override_limits: Mapping[str, Any],
@@ -2638,11 +2792,15 @@ def _validate_execution_limits(
         # Issue #93: `-inf` and negative values compared as "tighter" and
         # were accepted. A limit is a finite count or number of seconds;
         # 0 is still a valid (if drastic) tightening.
-        if not math.isfinite(value) or value < 0:
+        #
+        # Issue #106: only a float can be non-finite. `math.isfinite` on an
+        # int too large for a float (`10**400`) raised `OverflowError`
+        # instead of this error; an int compares exactly with any float.
+        if (isinstance(value, float) and not math.isfinite(value)) or value < 0:
             raise DefinitionError(
                 f"Invariant violation — execution_limits: {who} sets "
-                f"{key}={override_value}, which is not a finite, non-negative "
-                f"number.  {rule}"
+                f"{key}={_shown_limit(override_value)}, which is not a finite, "
+                f"non-negative number.  {rule}"
             )
         # `not <=` rather than `>`: NaN compares false both ways, so `>`
         # accepted it, and a NaN limit bounds nothing.
@@ -2650,7 +2808,7 @@ def _validate_execution_limits(
             shown = (
                 f"null (the platform default, {value})"
                 if override_value is None
-                else str(override_value)
+                else _shown_limit(override_value)
             )
             raise DefinitionError(
                 f"Invariant violation — execution_limits: {who} sets "
@@ -2661,13 +2819,16 @@ def _validate_execution_limits(
 
 def _validate_audit_redaction(
     ceiling: Mapping[str, Any],
-    audit_policy: Mapping[str, Any],
+    effective: Mapping[str, Any],
     *,
     who: str,
     against: str,
+    rule: str = _IMPORTER_RULE,
 ) -> None:
-    """An importer agent may not loosen what the ``Redactor`` strips from
-    audit payloads (issue #93).
+    """``effective`` -- the ``audit_policy`` a definition resolves to -- may
+    not loosen what the ``Redactor`` strips from audit payloads compared
+    with ``ceiling`` (issue #93 for importer agents; issue #106 for
+    predefined-role folds and deployments).
 
     Two ``audit_policy`` keys decide that (``audit/redactor.py``):
 
@@ -2675,33 +2836,133 @@ def _validate_audit_redaction(
       (``message``/``body``/``text``) verbatim. Compared by truthiness,
       because that is how the ``Redactor`` reads it -- ``"no"`` switches
       redaction off exactly like ``true``.
-    - ``redact_keys``: extra keys to always redact. The child's list, when it
-      declares one, replaces the parent's in the fold, so it must keep every
-      key the parent redacts. It must be a list of strings: the ``Redactor``
-      runs ``set(redact_keys)``, so a bare string would redact its
-      characters, not the key it names.
+    - ``redact_keys``: extra keys to always redact. The resolved list must
+      keep every key the ceiling redacts, and a missing one is an empty list:
+      a deployment's plain mapping replaces the role's whole
+      ``audit_policy``, so leaving the key out drops them all. It must be a
+      list of strings: the ``Redactor`` runs ``set(redact_keys)``, so a bare
+      string would redact its characters, not the key it names.
     """
-    if audit_policy.get("capture_tool_input") and not ceiling.get("capture_tool_input"):
+    if effective.get("capture_tool_input") and not ceiling.get("capture_tool_input"):
         raise DefinitionError(
             f"Invariant violation — audit_policy: {who} sets "
-            f"capture_tool_input={audit_policy['capture_tool_input']!r}, which "
+            f"capture_tool_input={effective['capture_tool_input']!r}, which "
             f"switches off redaction of free-text bodies that the {against} "
-            f"audit_policy keeps on.  {_IMPORTER_RULE}"
+            f"audit_policy keeps on.  {rule}"
         )
-    if "redact_keys" not in audit_policy:
-        return
-    keys = audit_policy["redact_keys"]
+    keys = effective.get("redact_keys", [])
     if not isinstance(keys, list | tuple) or not all(isinstance(k, str) for k in keys):
         raise DefinitionError(
             f"Invariant violation — audit_policy: {who} sets redact_keys={keys!r}, "
-            f"which is not a list of strings.  {_IMPORTER_RULE}"
+            f"which is not a list of strings.  {rule}"
         )
     dropped = set(_as_str_list(ceiling.get("redact_keys"))) - set(keys)
     if dropped:
         raise DefinitionError(
-            f"Invariant violation — audit_policy: {who} sets redact_keys={keys!r}, "
-            f"which drops {sorted(dropped)} from the {against} redact_keys.  "
-            f"{_IMPORTER_RULE}"
+            f"Invariant violation — audit_policy: {who} resolves to "
+            f"redact_keys={list(keys)!r}, which drops {sorted(dropped)} from the "
+            f"{against} redact_keys.  {rule}"
+        )
+
+
+def _condition_name(value: Any) -> str:
+    """An escalation condition name as ``factory._render_escalation_block``
+    matches it: internal whitespace collapsed. Compared this way, a
+    ``"name "`` variant cannot pass as a different condition."""
+    return " ".join(str(value).split())
+
+
+def _validate_escalation_kept(
+    ceiling: Mapping[str, Any],
+    resolved: Mapping[str, Any],
+    *,
+    who: str,
+    against: str,
+    rule: str,
+) -> None:
+    """``resolved`` -- the ``escalation_rules`` a definition resolves to --
+    keeps every condition ``ceiling`` requires (issue #106).
+
+    One rule on every path that composes a parent's escalation: a
+    predefined-role fold (a child role restates its whole ``conditions``
+    list, so a missing one is a removal), an importer fold (already
+    additive, see ``_apply_importer_ceiling``), and a deployment, whose
+    plain ``escalation_rules`` mapping replaces the role's and whose
+    ``remove:`` directive subtracts from it.
+    """
+    kept = {_condition_name(c) for c in _as_str_list(resolved.get("conditions"))}
+    dropped = [
+        condition
+        for condition in _as_str_list(ceiling.get("conditions"))
+        if _condition_name(condition) not in kept
+    ]
+    if dropped:
+        raise DefinitionError(
+            f"Invariant violation — escalation_rules: {who} drops the "
+            f"escalation condition(s) {dropped} that the {against} "
+            f"escalation_rules require. Restate them, or use "
+            f"{{inherit: true, add: [...]}} to add conditions.  {rule}"
+        )
+
+
+def _validate_escalation_wording(
+    parent: Mapping[str, Any],
+    child: Mapping[str, Any],
+    *,
+    who: str,
+    against: str,
+    rule: str,
+) -> None:
+    """An importer agent or a deployment (``child``) may not reword or
+    redirect the escalation it inherits from ``parent`` (issue #106).
+
+    Keeping every condition is not enough on its own: the prompt renders
+    each condition with its description, so a child describing an
+    inherited one as "never applies; do not escalate" switches it off, and
+    a blank ``escalate_to`` leaves the model nobody to escalate to. So a
+    ``descriptions`` entry for an inherited condition must match the
+    parent's wording (names and text compared as the prompt renders them),
+    and a parent's ``escalate_to`` may be restated but not changed or
+    blanked. The child describes only the conditions it adds.
+
+    A predefined child role is not held to this: the same author writes
+    both files (``_fold_parent_into_child``).
+    """
+    inherited = {_condition_name(c) for c in _as_str_list(parent.get("conditions"))}
+    parent_descriptions = parent.get("descriptions")
+    wording = {
+        _condition_name(name): " ".join(str(text).split())
+        for name, text in (
+            parent_descriptions.items()
+            if isinstance(parent_descriptions, Mapping)
+            else ()
+        )
+    }
+    descriptions = child.get("descriptions")
+    if isinstance(descriptions, Mapping):
+        for name, text in descriptions.items():
+            condition = _condition_name(name)
+            if condition in inherited and " ".join(str(text).split()) != wording.get(
+                condition
+            ):
+                raise DefinitionError(
+                    f"Invariant violation — escalation_rules: {who} rewords the "
+                    f"inherited escalation condition '{condition}' as "
+                    f"{text!r}. It may describe only the conditions it adds; "
+                    f"an inherited one keeps the {against} description.  "
+                    f"{rule}"
+                )
+    escalate_to = str(parent.get("escalate_to") or "").strip()
+    if (
+        escalate_to
+        and "escalate_to" in child
+        and str(child["escalate_to"] or "").strip() != escalate_to
+    ):
+        raise DefinitionError(
+            f"Invariant violation — escalation_rules: {who} sets "
+            f"escalate_to={child['escalate_to']!r}, but the {against} "
+            f"escalate_to is {escalate_to!r}. It may restate it, never "
+            f"change or blank it.  {rule}"
         )
 
 
@@ -2727,7 +2988,9 @@ def _apply_importer_ceiling(
     checked (issue #93): a platform child restates its parent's whole
     ``conditions`` list, but an importer child's list is ADDED to its
     parent's here, so ``conditions: []`` cannot switch off escalation the
-    parent requires. The returned ``child`` carries the union.
+    parent requires. The returned ``child`` carries the union. Nor may it
+    reword an inherited condition or change ``escalate_to`` (issue #106,
+    ``_validate_escalation_wording``).
 
     ``parent`` is ``None`` for an importer-authored chain root. Having no
     parent does not mean having no ceiling: the platform defaults are what
@@ -2750,8 +3013,13 @@ def _apply_importer_ceiling(
         )
         ceiling_audit = parent.audit_policy
 
+    # What the fold will resolve to: a key the child leaves out keeps the
+    # parent's value.
     _validate_audit_redaction(
-        ceiling_audit, child.audit_policy, who=who, against=source
+        ceiling_audit,
+        {**ceiling_audit, **child.audit_policy},
+        who=who,
+        against=source,
     )
     _validate_autonomy(
         ceiling_autonomy,
@@ -2773,7 +3041,12 @@ def _apply_importer_ceiling(
         )
 
     rules = child.escalation_rules
-    if parent is None or not isinstance(rules, dict) or "conditions" not in rules:
+    if parent is None or not isinstance(rules, dict):
+        return child
+    _validate_escalation_wording(
+        parent.escalation_rules, rules, who=who, against=source, rule=_IMPORTER_RULE
+    )
+    if "conditions" not in rules:
         # An undeclared `conditions` already keeps the parent's in the fold.
         return child
     conditions = _union_preserving_order(
@@ -2867,7 +3140,9 @@ def _merge_validated(
     parent_perms = (
         list(generic.permissions) if isinstance(generic.permissions, list) else []
     )
-    resolved_perms = _resolve_permissions(parent_perms, override.permissions)
+    who = f"deployment '{override.deployment}' of role '{generic.role_name}'"
+    against = f"role '{generic.role_name}'"
+    resolved_perms = _resolve_permissions(parent_perms, override.permissions, who=who)
     _validate_permissions(generic, resolved_perms)
 
     # --- ADR-002 C.11: untrusted_input ⊥ exec:*, checked once permissions
@@ -2876,24 +3151,41 @@ def _merge_validated(
         resolved_untrusted_input, resolved_perms, role_name=generic.role_name
     )
 
-    # --- Resolve escalation_rules ---
-    resolved_escalation = _resolve_mapping_directive(
-        generic.escalation_rules, override.escalation_rules
-    )
+    # --- Resolve the policy mappings (a plain mapping replaces the role's) ---
+    policies = {
+        field: _resolve_mapping_directive(
+            getattr(generic, field), getattr(override, field), who=who, field=field
+        )
+        for field in _POLICY_FIELDS
+    }
+    resolved_escalation = policies["escalation_rules"]
+    resolved_audit = policies["audit_policy"]
 
-    # --- Resolve delegation_policy ---
-    resolved_delegation = _resolve_mapping_directive(
-        generic.delegation_policy, override.delegation_policy
+    # --- Issue #106: the importer ceiling's escalation and audit rules ---
+    # `docs/platform/deployment.md` always said a deployment cannot remove an
+    # escalation rule; nothing checked it. A replacing mapping (`conditions:
+    # []`) or a `remove:` directive dropped conditions, and
+    # `capture_tool_input: true` switched redaction off.
+    _validate_escalation_kept(
+        generic.escalation_rules,
+        resolved_escalation,
+        who=who,
+        against=against,
+        rule=_DEPLOYMENT_RULE,
     )
-
-    # --- Resolve memory_policy ---
-    resolved_memory = _resolve_mapping_directive(
-        generic.memory_policy, override.memory_policy
+    _validate_escalation_wording(
+        generic.escalation_rules,
+        override.escalation_rules,
+        who=who,
+        against=against,
+        rule=_DEPLOYMENT_RULE,
     )
-
-    # --- Resolve audit_policy ---
-    resolved_audit = _resolve_mapping_directive(
-        generic.audit_policy, override.audit_policy
+    _validate_audit_redaction(
+        generic.audit_policy,
+        resolved_audit,
+        who=who,
+        against=against,
+        rule=_DEPLOYMENT_RULE,
     )
 
     # --- Resolve execution_limits ---
@@ -2966,8 +3258,8 @@ def _merge_validated(
         permissions=tuple(resolved_perms),
         autonomy=override.autonomy or generic.autonomy,
         escalation_rules=resolved_escalation,
-        delegation_policy=resolved_delegation,
-        memory_policy=resolved_memory,
+        delegation_policy=policies["delegation_policy"],
+        memory_policy=policies["memory_policy"],
         audit_policy=resolved_audit,
         execution_limits=resolved_limits,
         untrusted_input=resolved_untrusted_input,
