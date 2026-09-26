@@ -7,6 +7,9 @@ Issue: #11 — Pool sizing from settings, both engines
 - [x] Add validated, per-engine pool settings and red tests for invalid values.
 - [x] Wire operational, BI, medallion, and SQL-tool engine factories to configured pool options with red tests.
 - [x] Document the capacity rule in English and Spanish, verify, commit, and open the PR.
+- [x] Add red tests for the restored operational ceiling and the turn-plus-worker capacity invariant.
+- [x] Restore the default overflow, validate the capacity rule at settings startup, and correct the engine type annotation and admission comment.
+- [ ] Update the ADR-001 worked examples in English and Spanish, then verify, rebase, push, update the PR body, and watch checks.
 
 ## Evidence
 

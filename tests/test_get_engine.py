@@ -40,6 +40,7 @@ def test_operational_engine_uses_its_configured_pool_limits() -> None:
         _env_file=None,
         database_pool_size=7,
         database_max_overflow=1,
+        max_concurrent_turns=1,
         database_pool_timeout_s=19,
         database_pool_recycle_s=601,
     )

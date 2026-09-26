@@ -35,13 +35,15 @@ from contextlib import asynccontextmanager
 # never one per tool call, since agent/graph.py::_execute_tools runs its
 # tool_calls sequentially over one shared AsyncSession per round, not one
 # session per call -- so 10 concurrent turns implies at most 10 held
-# connections from this path at once, well under a single engine's default
-# pool ceiling of 15 (pool_size=5 + max_overflow=10,
-# `models/base.py::get_engine`). That bounds how MANY connections are held
-# at once, not how LONG any one of them is held: a round with several slow
-# sequential tool calls holds its one connection for the round's full
-# cumulative latency. #45 owns tuning the pool itself; this default is
-# chosen to already fit it, not to anticipate it.
+# connections from this path at once. The operational engine's default
+# ceiling is 15 (pool_size=5 + max_overflow=10,
+# `models/base.py::get_engine`), which leaves five connections above the ten
+# admitted turns. Settings requires at least two of those for the in-process
+# AuditSink drainer and DeferredWebhookWorker, which also share this engine.
+# That bounds how MANY connections are held at once, not how LONG any one of
+# them is held: a round with several slow sequential tool calls holds its one
+# connection for the round's full cumulative latency. #45 owns tuning the
+# pool itself; this default is chosen to already fit it, not to anticipate it.
 DEFAULT_MAX_CONCURRENT_TURNS = 10
 
 

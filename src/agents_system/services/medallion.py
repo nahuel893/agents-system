@@ -15,9 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from agents_system.config import Settings
 
 
-def get_medallion_engine(
-    url: str, settings: MedallionSettings | None = None
-) -> AsyncEngine:
+def get_medallion_engine(url: str, settings: Settings | None = None) -> AsyncEngine:
     """Create the medallion engine using its configured pool limits.
 
     Use ``execution_options(readonly=True)`` at the session/connection level
