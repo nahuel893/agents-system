@@ -230,6 +230,25 @@ async def test_the_guard_runs_off_the_event_loop(
     assert threads[0] != threading.get_ident()
 
 
+async def test_the_guard_runs_on_the_tool_s_own_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Not the loop's default executor: that one also serves getaddrinfo and
+    # every other to_thread call, and a slow guard must never starve it.
+    real_guard = sql_query_connector.guard_query
+    names: list[str] = []
+
+    def recording_guard(*args: Any, **kwargs: Any) -> Any:
+        names.append(threading.current_thread().name)
+        return real_guard(*args, **kwargs)
+
+    monkeypatch.setattr(sql_query_connector, "guard_query", recording_guard)
+
+    await _run(_Engine(rows=[("a", 1)]), "SELECT product FROM sales_v")
+
+    assert names and names[0].startswith("sql-query-guard")
+
+
 async def test_the_session_argument_is_never_used() -> None:
     class _Exploding:
         def __getattr__(self, name: str) -> Any:

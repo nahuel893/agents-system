@@ -20,10 +20,21 @@ the role were misconfigured:
   read from the canonical rendering itself (the name PostgreSQL receives);
   qualified calls (in FROM too), custom operators, bind parameters, casts to
   non-built-in types and string literals other than plain '...' are refused.
-- The guard's own cost is bounded: the text is capped at `max_sql_length`
-  characters and the parsed tree at `max_nodes` nodes, and every check is a
-  linear pass (function names are checked during the one render of the
-  statement, never by rendering each node on its own).
+- The guard's own cost is bounded BEFORE the parser runs, because sqlglot's
+  parser is not linear: it backtracks when a data-type keyword (`ARRAY`,
+  `numeric`, `int`, `struct`, ...) opens a bracket, and every such level
+  doubles the work (nested `ARRAY[...]` took 33 s at 141 characters). The
+  text is capped at `max_sql_length` characters, then tokenized (a linear
+  scan) and refused unless it has at most `max_tokens` tokens, at most
+  `max_depth` levels of bracket/CASE nesting and at most `MAX_TYPE_NESTING`
+  levels opened by a type keyword. The parser then runs with a budget on the
+  nodes it builds, abandoned attempts included, and the parsed tree must
+  stay within `max_nodes` nodes and `4 * max_depth` levels (long AND/OR and
+  same-operator chains, which sqlglot handles iteratively, count as one), so
+  nothing downstream recurses deeper than Python allows. Every later check
+  is a linear pass (function names are checked during the one render of the
+  statement, never by rendering each node on its own). Any failure inside
+  the guard is a rejection with a fixed text, never an exception.
 - What reaches the database is NOT the model's text but the canonical
   rendering of the validated tree: every identifier quoted exactly as it was
   resolved, every relation schema-qualified, comments dropped, and the whole
@@ -45,26 +56,58 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-import sqlglot
-from sqlglot import exp
+from sqlglot import Token, TokenType, exp
+from sqlglot.dialects.dialect import Dialect
+from sqlglot.errors import ParseError
 from sqlglot.generators.postgres import PostgresGenerator
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
 _DIALECT = "postgres"
+_POSTGRES = Dialect.get_or_raise(_DIALECT)
 _PG_IDENTIFIER_MAX = 63
 _SIMPLE_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
 _CALL_NAME = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _RESULT_ALIAS = "sql_query_result"
 
 DEFAULT_MAX_SQL_LENGTH = 10_000
-"""Longest query text the guard parses. A real analytical question fits in a
-fraction of this; anything longer is refused before the parser sees it."""
+"""Longest query text the guard tokenizes. A real analytical question fits in
+a fraction of this; anything longer is refused before any other work."""
+
+DEFAULT_MAX_TOKENS = 1_000
+"""Most tokens (keywords, names, literals, operators) the guard parses. A
+real analytical query has a few hundred; the cap is checked on the token
+stream, before the parser runs."""
+
+DEFAULT_MAX_DEPTH = 20
+"""Deepest nesting of brackets, parentheses and CASE ... END the guard
+parses, checked on the token stream before the parser runs. A real query
+nests a handful of levels; the parser recurses per level, and so does
+everything downstream of it."""
+
+MAX_TYPE_NESTING = 4
+"""Most brackets that may be open at once where each was opened right after
+a data-type keyword (`ARRAY[`, `numeric(`, `int[`, `struct(`). sqlglot
+tries each such bracket as a type first and then parses it again as an
+expression, so the work doubles per level; four levels cover arrays of
+arrays and typed casts, and cost at most 16 times a plain parse."""
 
 DEFAULT_MAX_NODES = 2_500
-"""Most syntax-tree nodes the guard validates. A real analytical query has a
-few hundred at most; the budget bounds the guard's own work (every check is
-linear in the tree) independently of how the text packs its nodes."""
+"""Most syntax-tree nodes the guard validates, and most nodes the parser may
+build while reading the text (abandoned attempts included). A real
+analytical query has a few hundred at most."""
+
+_TREE_LEVELS_PER_DEPTH = 4
+"""Tree levels one nesting level may add (a subquery in FROM is a Subquery,
+a Select, a From and a Table node): the parsed tree may be at most
+`_TREE_LEVELS_PER_DEPTH * max_depth` levels deep. That also bounds what the
+text cannot show - `- - - 1` or `1::int::int` nest without brackets - and
+keeps every recursive pass after parsing far from Python's recursion
+limit."""
+
+_OPENERS = frozenset({TokenType.L_PAREN, TokenType.L_BRACKET, TokenType.L_BRACE})
+_CLOSERS = frozenset({TokenType.R_PAREN, TokenType.R_BRACKET, TokenType.R_BRACE})
+_TYPE_TOKENS = frozenset(_POSTGRES.parser_class.TYPE_TOKENS)
 
 DEFAULT_ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
     {
@@ -331,12 +374,15 @@ def parse_relation_name(name: str) -> tuple[str, str]:
 
 @dataclass(frozen=True)
 class QueryPolicy:
-    """What a guarded query may touch: relations, functions and text length."""
+    """What a guarded query may touch (relations, functions) and how large it
+    may be (text length, tokens, nesting depth, tree nodes)."""
 
     allowed_relations: frozenset[tuple[str, str]]
     allowed_functions: frozenset[str] = field(default=DEFAULT_ALLOWED_FUNCTIONS)
     max_sql_length: int = DEFAULT_MAX_SQL_LENGTH
     max_nodes: int = DEFAULT_MAX_NODES
+    max_tokens: int = DEFAULT_MAX_TOKENS
+    max_depth: int = DEFAULT_MAX_DEPTH
 
     def __post_init__(self) -> None:
         if not self.allowed_relations:
@@ -349,10 +395,9 @@ class QueryPolicy:
                     f"Allowlisted function {function!r} must be a plain "
                     "lower-case name."
                 )
-        if self.max_sql_length < 1:
-            raise ValueError("max_sql_length must be positive.")
-        if self.max_nodes < 1:
-            raise ValueError("max_nodes must be positive.")
+        for name in ("max_sql_length", "max_nodes", "max_tokens", "max_depth"):
+            if getattr(self, name) < 1:
+                raise ValueError(f"{name} must be positive.")
 
     def relation_names(self) -> list[str]:
         return sorted(f"{schema}.{name}" for schema, name in self.allowed_relations)
@@ -375,9 +420,110 @@ def _shown(identifier: str) -> str:
     return identifier[:_PG_IDENTIFIER_MAX]
 
 
-def _parse_single_statement(sql: str) -> exp.Expr:
+@dataclass(frozen=True)
+class _Limits:
+    """The size and depth caps one validation pass applies."""
+
+    tokens: int
+    depth: int
+    nodes: int
+    tree_depth: int
+
+    @classmethod
+    def of(cls, policy: QueryPolicy) -> _Limits:
+        return cls(
+            tokens=policy.max_tokens,
+            depth=policy.max_depth,
+            nodes=policy.max_nodes,
+            tree_depth=_TREE_LEVELS_PER_DEPTH * policy.max_depth,
+        )
+
+    def for_rendering(self) -> _Limits:
+        """Caps for the guard's own rendering of a tree these caps admitted.
+
+        The rendering adds a schema to every relation and writes `x::t` as
+        `CAST(x AS t)`: at most twice the tokens and nodes, and no more
+        bracket levels than the tree it was written from has levels.
+        """
+        return _Limits(
+            tokens=2 * self.tokens,
+            depth=self.tree_depth,
+            nodes=2 * self.nodes,
+            tree_depth=self.tree_depth,
+        )
+
+
+def _too_complex() -> QueryRejectedError:
+    return _reject(
+        "too_complex",
+        "The query is too large or too deeply nested for this tool. Simplify "
+        "it: fewer conditions or expressions, fewer nested subqueries or "
+        "brackets, or aggregate in fewer steps.",
+    )
+
+
+def _tokenize(sql: str) -> list[Token]:
     try:
-        parsed = sqlglot.parse(sql, read=_DIALECT)
+        return _POSTGRES.tokenize(sql)
+    except Exception as error:  # any tokenizer failure is a refusal
+        raise _reject("unparseable") from error
+
+
+def _check_tokens(tokens: list[Token], limits: _Limits) -> None:
+    """Refuse, in one pass over the tokens, what would make the parser slow.
+
+    Runs before the parser: the token count bounds its input, the nesting
+    depth bounds its recursion, and the type nesting bounds its backtracking
+    (see `MAX_TYPE_NESTING`). A bracket or CASE inside a string, a quoted
+    identifier or a comment is part of that one token and does not count.
+    """
+    if len(tokens) > limits.tokens:
+        raise _too_complex()
+    # Per open level: whether a type keyword opened it, and its depth.
+    open_levels: list[tuple[bool, int]] = []
+    type_nesting = 0
+    closed_depth = 0  # depth of the level the previous token closed
+    previous: TokenType | None = None
+    for token in tokens:
+        kind = token.token_type
+        if kind in _OPENERS or kind == TokenType.CASE:
+            by_type = kind in _OPENERS and previous in _TYPE_TOKENS
+            depth = (open_levels[-1][1] if open_levels else 0) + 1
+            if kind == TokenType.L_BRACKET and previous == TokenType.R_BRACKET:
+                # `x[1][2]` subscripts the value just closed: the parser
+                # recurses once per link (and walks the chain each time),
+                # so a chain nests like brackets inside brackets.
+                depth = closed_depth + 1
+            open_levels.append((by_type, depth))
+            type_nesting += by_type
+            if depth > limits.depth or type_nesting > MAX_TYPE_NESTING:
+                raise _too_complex()
+        elif (kind in _CLOSERS or kind == TokenType.END) and open_levels:
+            by_type, closed_depth = open_levels.pop()
+            type_nesting -= by_type
+        previous = kind
+
+
+def _over_node_budget(error: ParseError) -> bool:
+    return any(
+        "Maximum number of AST nodes" in str(detail.get("description", ""))
+        for detail in error.errors
+    )
+
+
+def _parse_single_statement(sql: str, tokens: list[Token], limits: _Limits) -> exp.Expr:
+    # `max_nodes` counts every node the parser builds, including those of
+    # attempts it abandons when it backtracks: a budget on its work, not
+    # only on the size of the tree it returns.
+    parser = _POSTGRES.parser(max_nodes=limits.nodes)
+    try:
+        parsed = parser.parse(tokens, sql)
+    except ParseError as error:
+        if _over_node_budget(error):
+            raise _too_complex() from error
+        raise _reject("unparseable") from error
+    except RecursionError as error:
+        raise _too_complex() from error
     except Exception as error:  # any parser failure is a refusal
         raise _reject("unparseable") from error
     statements = [statement for statement in parsed if statement is not None]
@@ -388,19 +534,33 @@ def _parse_single_statement(sql: str) -> exp.Expr:
     return statements[0]
 
 
-def _too_complex(policy: QueryPolicy) -> QueryRejectedError:
-    return _reject(
-        "too_complex",
-        f"The query is too complex for this tool (more than "
-        f"{policy.max_nodes} syntax elements). Simplify it: fewer "
-        "conditions or expressions, or aggregate in fewer steps.",
-    )
-
-
-def _check_size(statement: exp.Expr, policy: QueryPolicy, max_nodes: int) -> None:
+def _check_size(statement: exp.Expr, limits: _Limits) -> None:
     for count, _ in enumerate(statement.walk(), start=1):
-        if count > max_nodes:
-            raise _too_complex(policy)
+        if count > limits.nodes:
+            raise _too_complex()
+
+
+def _continues_chain(parent: exp.Expr, child: exp.Expr) -> bool:
+    """True for the links sqlglot walks iteratively instead of recursively:
+    an AND/OR under an AND/OR, or a binary operator under the same one."""
+    if isinstance(parent, exp.Connector):
+        return isinstance(child, exp.Connector)
+    return isinstance(parent, exp.Binary) and type(child) is type(parent)
+
+
+def _check_tree_depth(statement: exp.Expr, limits: _Limits) -> None:
+    """Refuse a tree deeper than the recursive passes after parsing can take.
+
+    Iterative, so it cannot itself run out of stack. A long AND/OR or
+    same-operator chain counts as one level: sqlglot renders it in a loop.
+    """
+    stack = [(statement, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > limits.tree_depth:
+            raise _too_complex()
+        for child in node.iter_expressions():
+            stack.append((child, depth if _continues_chain(node, child) else depth + 1))
 
 
 def _check_nodes(statement: exp.Expr) -> None:
@@ -617,15 +777,18 @@ def _check_relations(statement: exp.Expr, policy: QueryPolicy) -> list[str]:
 
 
 def _validate(
-    sql: str, policy: QueryPolicy, *, max_nodes: int
+    sql: str, policy: QueryPolicy, limits: _Limits
 ) -> tuple[exp.Select | exp.SetOperation, list[str]]:
-    """Parse *sql* and run the structural and relation checks.
+    """Parse *sql* within *limits* and run the structural and relation checks.
 
     Relations come back schema-qualified. Function names and types are
     checked by `_render`, which every accepted query goes through.
     """
-    parsed = _parse_single_statement(sql)
-    _check_size(parsed, policy, max_nodes)
+    tokens = _tokenize(sql)
+    _check_tokens(tokens, limits)
+    parsed = _parse_single_statement(sql, tokens, limits)
+    _check_size(parsed, limits)
+    _check_tree_depth(parsed, limits)
     statement = normalize_identifiers(parsed, dialect=_DIALECT)
     if not isinstance(statement, exp.Select | exp.SetOperation):
         raise _reject("not_select")
@@ -670,25 +833,22 @@ def guard_query(sql: object, policy: QueryPolicy, *, row_limit: int) -> GuardedQ
     except QueryRejectedError:
         raise
     except RecursionError as error:
-        raise _too_complex(policy) from error
+        raise _too_complex() from error
     except Exception as error:  # any other failure is a refusal, never a crash
         raise _reject("unparseable") from error
 
 
 def _guard(sql: str, policy: QueryPolicy, row_limit: int) -> GuardedQuery:
-    statement, relations = _validate(sql, policy, max_nodes=policy.max_nodes)
+    limits = _Limits.of(policy)
+    statement, relations = _validate(sql, policy, limits)
     rendered = _render(statement, policy)
 
     # Fixed point: the rendering is what executes, so it must itself pass
     # every check and render back to exactly the same text. A renderer that
     # wrote a construct back in a form that reads differently fails here
     # instead of reaching the database with an unchecked meaning.
-    # The rendering only adds a schema to each relation (one identifier per
-    # table), so its tree is at most twice the size the budget admitted.
     try:
-        executed, relations = _validate(
-            rendered, policy, max_nodes=2 * policy.max_nodes
-        )
+        executed, relations = _validate(rendered, policy, limits.for_rendering())
         rerendered = _render(executed, policy)
     except QueryRejectedError as error:
         raise _reject("unparseable") from error

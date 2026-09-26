@@ -225,6 +225,219 @@ def test_the_node_budget_applies_to_the_query_not_to_its_qualified_rendering() -
     assert guard_query(sql, policy, row_limit=10).sql
 
 
+#: sqlglot's parser is not linear: a bracket opened right after a data-type
+#: keyword is parsed as a type, abandoned, and parsed again as an expression,
+#: so every level doubles the work. The length and node caps only applied
+#: after parsing: at depth 19 (141 characters) this took 33 s, and was then
+#: accepted. A worker thread does not bound it either - it keeps parsing
+#: after the caller gives up.
+_NESTED_ARRAY_19 = "SELECT " + "ARRAY[" * 19 + "1" + "]" * 19
+
+#: Tests must finish well inside this, including on a slow CI runner.
+_GUARD_BUDGET_S = 0.2
+
+
+def _best_guard_seconds(sql: str, policy: QueryPolicy = _SINGLE_SCHEMA_POLICY) -> float:
+    """Best of three runs: a real blow-up is slow every time, noise is not."""
+    return min(_guard_seconds(sql, policy) for _ in range(3))
+
+
+def test_nested_array_is_refused_before_the_parser_runs() -> None:
+    assert _reject_code(_NESTED_ARRAY_19) == "too_complex"
+    assert _best_guard_seconds(_NESTED_ARRAY_19) < _GUARD_BUDGET_S
+
+
+def _nest(opener: str, closer: str, depth: int, core: str = "1") -> str:
+    return opener * depth + core + closer * depth
+
+
+def test_brackets_opened_by_a_type_keyword_are_capped() -> None:
+    from agents_system.services import sql_guard
+
+    cap = sql_guard.MAX_TYPE_NESTING
+
+    assert guard_query(
+        "SELECT " + _nest("ARRAY[", "]", cap), _SINGLE_SCHEMA_POLICY, row_limit=5
+    ).sql
+    for opener, closer in (
+        ("ARRAY[", "]"),
+        ("int[", "]"),
+        ("numeric(", ")"),
+        ("struct(", ")"),
+    ):
+        assert _reject_code("SELECT " + _nest(opener, closer, cap + 1)) == "too_complex"
+
+
+def test_nesting_deeper_than_the_cap_is_refused() -> None:
+    from agents_system.services import sql_guard
+
+    depth = sql_guard.DEFAULT_MAX_DEPTH
+
+    assert guard_query(
+        "SELECT " + _nest("(", ")", depth), _SINGLE_SCHEMA_POLICY, row_limit=5
+    ).sql
+    for sql in (
+        "SELECT " + _nest("(", ")", depth + 1),
+        "SELECT " + _nest("(SELECT ", ")", depth + 1),
+        "SELECT " + _nest("CASE WHEN true THEN ", " END", depth + 1),
+        # A subscript chain nests too: the parser recurses once per link.
+        "SELECT ARRAY[1]" + "[1]" * (depth + 1),
+    ):
+        assert _reject_code(sql) == "too_complex"
+
+
+def test_size_and_nesting_are_refused_before_the_parser_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents_system.services import sql_guard
+
+    def no_parser(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the parser must not run")
+
+    monkeypatch.setattr(sql_guard, "_parse_single_statement", no_parser)
+
+    too_many_tokens = "SELECT " + ", ".join(["1"] * sql_guard.DEFAULT_MAX_TOKENS)
+    assert _reject_code(too_many_tokens) == "too_complex"
+    assert _reject_code(_NESTED_ARRAY_19) == "too_complex"
+    assert (
+        _reject_code("SELECT " + _nest("(", ")", sql_guard.DEFAULT_MAX_DEPTH + 1))
+        == "too_complex"
+    )
+
+
+def test_brackets_inside_strings_identifiers_and_comments_do_not_count() -> None:
+    sql = (
+        "SELECT '"
+        + "(" * 50
+        + "' AS \""
+        + "[" * 50
+        + '" FROM sales_v /* '
+        + "ARRAY[" * 50
+        + " */"
+    )
+    assert guard_query(sql, _SINGLE_SCHEMA_POLICY, row_limit=5).sql
+
+
+def test_a_tree_nested_without_brackets_is_capped() -> None:
+    # `- - - 1` and `1::int::int` nest in the tree, not in the text; the
+    # tree's depth is checked before anything walks it recursively.
+    assert guard_query(
+        "SELECT " + "- " * 10 + "1", _SINGLE_SCHEMA_POLICY, row_limit=5
+    ).sql
+    assert _reject_code("SELECT " + "- " * 100 + "1") == "too_complex"
+    assert _reject_code("SELECT 1" + "::int" * 100) == "too_complex"
+
+
+def test_the_parser_itself_works_within_the_node_budget() -> None:
+    # Four typed levels build more nodes while parsing (the abandoned type
+    # attempts) than the tree keeps: the budget counts the parser's work.
+    sql = "SELECT " + _nest("ARRAY[", "]", 4)
+    policy = QueryPolicy(
+        allowed_relations=_SINGLE_SCHEMA_POLICY.allowed_relations, max_nodes=12
+    )
+
+    assert _reject_code(sql, policy) == "too_complex"
+    assert guard_query("SELECT ARRAY[1]", policy, row_limit=5).sql
+
+
+def _fill(prefix: str, unit: str, suffix: str = "", sep: str = "") -> str:
+    """*prefix*, then as many *unit*s as fit under the token cap, then *suffix*."""
+    from agents_system.services import sql_guard
+
+    def tokens(text: str) -> int:
+        return len(sql_guard._tokenize(text))
+
+    count = (sql_guard.DEFAULT_MAX_TOKENS - tokens(prefix + suffix)) // tokens(
+        unit + sep
+    )
+    while count > 1 and tokens(prefix + sep.join([unit] * count) + suffix) > (
+        sql_guard.DEFAULT_MAX_TOKENS
+    ):
+        count -= 1
+    return prefix + sep.join([unit] * count) + suffix
+
+
+def _worst_cases() -> dict[str, str]:
+    from agents_system.services import sql_guard
+
+    depth = sql_guard.DEFAULT_MAX_DEPTH
+    typed = sql_guard.MAX_TYPE_NESTING
+    pad = (depth - typed) // typed
+
+    def typed_nest(opener: str, closer: str) -> str:
+        return (
+            "SELECT "
+            + (opener + "(" * pad) * typed
+            + "1"
+            + (")" * pad + closer) * typed
+        )
+
+    return {
+        # Exponential in the parser: brackets opened by a type keyword, at
+        # the type cap with the rest of the depth cap filled by parentheses,
+        # and far past it.
+        "array-at-caps": typed_nest("ARRAY[", "]"),
+        "int-array-at-caps": typed_nest("int[", "]"),
+        "numeric-at-caps": typed_nest("numeric(", ")"),
+        "struct-at-caps": typed_nest("struct(", ")"),
+        "array-depth-19": _NESTED_ARRAY_19,
+        "array-depth-40": "SELECT " + _nest("ARRAY[", "]", 40),
+        "struct-depth-40": "SELECT " + _nest("struct(", ")", 40),
+        # Quadratic in the parser: a subscript chain.
+        "subscript-chain": _fill("SELECT ARRAY[1]", "[1]"),
+        # Nesting at the depth cap.
+        "parens-at-depth": "SELECT " + _nest("(", ")", depth),
+        "scalar-subqueries-at-depth": "SELECT " + _nest("(SELECT ", ")", depth),
+        "from-subqueries-at-depth": (
+            "SELECT * FROM " + "(SELECT * FROM " * depth + "sales_v" + ") AS t" * depth
+        ),
+        "exists-at-depth": "SELECT " + _nest("EXISTS (SELECT ", ")", depth),
+        "case-at-depth": "SELECT " + _nest("CASE WHEN true THEN ", " END", depth),
+        # Breadth at the token cap.
+        "or-chain": _fill("SELECT 1 FROM sales_v WHERE ", "amount = 1", sep=" OR "),
+        "and-chain": _fill("SELECT 1 FROM sales_v WHERE ", "amount > 1", sep=" AND "),
+        "in-list": _fill("SELECT 1 FROM sales_v WHERE amount IN (", "1", ")", sep=", "),
+        "case-branches": _fill(
+            "SELECT CASE ", "WHEN amount = 1 THEN 1 ", "END FROM sales_v"
+        ),
+        "scalar-subqueries": _fill(
+            "SELECT ", "(SELECT max(amount) FROM sales_v)", sep=", "
+        ),
+        "ctes": _fill("WITH ", "c AS (SELECT * FROM sales_v)", " SELECT 1", sep=", "),
+        "joins": _fill("SELECT 1 FROM sales_v AS t ", "JOIN sales_v ON true "),
+        "windows": _fill(
+            "SELECT ",
+            "sum(amount) OVER (PARTITION BY product ORDER BY amount)",
+            " FROM sales_v",
+            sep=", ",
+        ),
+        "unions": _fill("", "SELECT amount FROM sales_v", sep=" UNION ALL "),
+        # Nesting without brackets, and the tokenizer at the length cap.
+        "unary-chain": _fill("SELECT ", "- ", "1"),
+        "cast-chain": _fill("SELECT 1", "::int"),
+        "long-string": "SELECT '" + "x" * (DEFAULT_MAX_SQL_LENGTH - 12) + "'",
+        "open-brackets": "SELECT " + "[" * (DEFAULT_MAX_SQL_LENGTH - 7),
+        "unterminated-comments": "SELECT 1 /*"
+        + "/*" * ((DEFAULT_MAX_SQL_LENGTH - 12) // 2),
+    }
+
+
+@pytest.mark.parametrize("shape", list(_worst_cases()))
+def test_worst_cases_at_the_caps_finish_within_a_fixed_budget(shape: str) -> None:
+    sql = _worst_cases()[shape]
+    assert len(sql) <= DEFAULT_MAX_SQL_LENGTH
+
+    assert _best_guard_seconds(sql) < _GUARD_BUDGET_S
+
+
+@pytest.mark.parametrize("field", ["max_tokens", "max_depth"])
+def test_the_new_caps_must_be_positive(field: str) -> None:
+    with pytest.raises(ValueError):
+        QueryPolicy(
+            allowed_relations=_SINGLE_SCHEMA_POLICY.allowed_relations, **{field: 0}
+        )
+
+
 @pytest.mark.parametrize(
     "sql",
     [

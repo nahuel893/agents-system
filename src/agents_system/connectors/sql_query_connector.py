@@ -21,7 +21,8 @@ every other one fails.
    reports truncation. Bytes are bounded too: the database blanks every row
    past `byte_limit` (a running sum of row sizes) before it is sent, and the
    JSON rows handed back are cut at the same budget (`truncated_bytes`).
-   The guard itself runs in a worker thread, off the event loop.
+   The guard bounds its own work before it parses anything, and runs on a
+   small executor of its own, off the event loop.
 3. Tool surface. Its own permission, `query:sql`, in its own `Query` family
    at T2, so Layer-2 revalidates every call. Error texts are fixed: none
    carries the SQL error, the driver's exception or connection details.
@@ -38,8 +39,10 @@ thing this tool must never run on.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 from collections.abc import Awaitable, Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -73,6 +76,7 @@ MAX_STATEMENT_TIMEOUT_MS = 30_000
 DEFAULT_BYTE_LIMIT = 65_536
 MIN_BYTE_LIMIT = 1_024
 MAX_BYTE_LIMIT = 1_048_576
+_GUARD_WORKERS = 4
 
 ConnectorOutput = dict[str, Any]
 AsyncConnector = Callable[..., Awaitable[ConnectorOutput]]
@@ -112,6 +116,12 @@ _QUERY_FAILED_MESSAGE = (
 
 _REFUSED_SQLSTATES = frozenset({"42501", "25006"})
 _TIMEOUT_SQLSTATES = frozenset({"57014", "55P03"})
+
+_GUARD_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_GUARD_WORKERS, thread_name_prefix="sql-query-guard"
+)
+"""Where the guard runs: a few threads of its own, not the loop's default
+executor, which getaddrinfo and every `asyncio.to_thread` call share."""
 
 
 @dataclass(frozen=True)
@@ -281,9 +291,14 @@ def build_sql_query_connector(engine: Any, config: SqlQueryConfig) -> AsyncConne
         try:
             # CPU-bound parsing and rendering: off the event loop, so it
             # stalls no other turn and the harness's per-call timeout keeps
-            # control of this one.
-            guarded = await asyncio.to_thread(
-                guard_query, inputs.get("sql"), policy, row_limit=row_limit
+            # control of this one. The guard bounds its own work (well under
+            # a second at its caps); its own small executor means even a
+            # slow run can never starve the loop's default executor.
+            guarded = await asyncio.get_running_loop().run_in_executor(
+                _GUARD_EXECUTOR,
+                functools.partial(
+                    guard_query, inputs.get("sql"), policy, row_limit=row_limit
+                ),
             )
         except QueryRejectedError as rejection:
             _logger.info("sql_query.rejected", reason=rejection.code)
