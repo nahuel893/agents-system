@@ -20,7 +20,7 @@ memory/CPU, turn/tool durations, the real-app live harness.
 ## TDD mode
 Strict TDD (per `.pi/ops/prompts/common-rules.txt` item 10 and the repo's
 global CLAUDE.md). Runner: `pytest -q` from the worktree root with
-`PATH=/home/nh/agents-system/.venv/bin:$PATH PYTHONPATH=<worktree>/src`.
+`PATH=<repo>/.venv/bin:$PATH PYTHONPATH=<worktree>/src`.
 
 ## Slice 1 — real token usage and cost per turn
 
