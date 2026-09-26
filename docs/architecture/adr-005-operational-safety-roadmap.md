@@ -149,20 +149,32 @@ contextvars at the start of the worker's claim loop and thread it into every
 
 ### 6. Observability
 
-**What exists:** `langsmith` is present only as a transitive dependency of
-`langchain-core` via `langgraph` (`uv.lock:956`) — not a direct
-`pyproject.toml` dependency. No `opentelemetry` or
-`langsmith`/`LANGCHAIN_TRACING` import exists anywhere under `src/`. No
-metrics library or `/metrics` endpoint exists in `main.py`.
-`evals/reporting.py::write_results` writes eval results to a file; nothing
-in `src/` reads that output back into a runtime signal.
+**What exists (updated by issue #78 Phase 0 Slice 2):** `GET /metrics`
+(`main.py`, gated by `metrics_enabled`/`metrics_api_key`, same fail-closed
+posture as the OpenAI adapter) now exports the minimal counter set this
+section called for — `agent_turns_total`, `agent_tool_calls_total`
+(including denied/blocked outcomes), `agent_limit_trips_total`, plus
+`agent_tokens_total`/`agent_cost_usd_total` and turn/tool-call duration
+histograms — via `prometheus_client`, a new direct dependency. Process
+resident memory and CPU (`process_resident_memory_bytes`,
+`process_cpu_seconds_total`) are exported too, through
+`prometheus_client`'s default `ProcessCollector`. See
+`docs/platform/observability.md` for the full metric/label reference.
+`langsmith` is still present only as a transitive dependency of
+`langchain-core` via `langgraph` (`uv.lock`) — not a direct
+`pyproject.toml` dependency; no `opentelemetry` or
+`langsmith`/`LANGCHAIN_TRACING` import exists anywhere under `src/`.
+`evals/reporting.py::write_results` writes eval results to a file, now
+including per-run/scenario turn duration; nothing in `src/` reads that
+output back into a runtime signal.
 
-**Gap:** zero traces, zero metrics; eval results are a standalone artifact
-disconnected from runtime monitoring.
+**Gap:** zero traces; eval results are still a standalone artifact
+disconnected from runtime monitoring. LangSmith tracing is not yet wired.
 
-**Direction:** wire LangSmith tracing behind an explicit settings flag first
-(the dependency is already resolved), then add a minimal counter set (tool
-calls, denials, limit trips) before any broader OpenTelemetry rollout.
+**Direction:** wire LangSmith tracing behind an explicit settings flag
+(the dependency is already resolved), then broaden past this slice's
+minimal counter set into OpenTelemetry once a concrete need for traces
+(not just counters) shows up.
 
 **Priority:** P3 · **Dependency:** none blocking; the counters areas 3 and 2
 produce are what area 7's alerts would consume.

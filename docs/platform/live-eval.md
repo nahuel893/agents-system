@@ -207,6 +207,32 @@ for every field) means an unknown usage is reported as the top-level
 `"usage": null`, never an object with `null` fields
 (`{"prompt_tokens": null, ...}` fails client-side Pydantic validation).
 
+## Turn duration (issue #78 Phase 0 Slice 2)
+
+`run_scenario` times each turn's `run_turn_with_usage` call with real
+wall-clock `time.monotonic()` and sums a run's turns into
+`RunOutcome.duration_s`; `ScenarioResult.total_duration_s` sums every run's
+duration into one scenario total. Both `write_results` outputs report it
+(`total_duration_s` in the JSON, per-run `duration_s` in `run_details`, and
+the `Duration (s)` column in the markdown table).
+
+Same honesty posture as tokens/cost above: `duration_s` is `None` only for
+a run that raised before its FIRST turn returned (there was nothing to
+time yet) -- a run that crashes mid-scenario still reports the real,
+partial sum of the turns that did complete before it failed.
+`ScenarioResult.total_duration_s` is `None` as soon as any one run's
+duration is unknown, the same coarser-grain rule `total_usage` already
+applies.
+
+**Per-tool-call durations were deliberately left out of this report** (the
+issue's own "if cheap" qualifier): getting them into this per-run report
+would need `TurnResult` to also carry a list of tool-call durations, which
+this slice did not add. They are available instead via `/metrics`'s
+`agent_tool_call_duration_seconds` histogram — see
+`docs/platform/observability.md`, which also covers process memory/CPU,
+the `agent_turns_total`/`agent_tool_calls_total`/`agent_limit_trips_total`
+counters, and `GET /metrics`'s own protection model.
+
 ## Running it as a role's own pipeline
 
 `agents_system.evals.runner.run_scenario(scenario, *, model, model_name,
@@ -246,6 +272,8 @@ bug in the pipeline.
 
 - ADR-002 E.18: `docs/architecture/adr-002-agent-model-and-capabilities.md`
 - Reference backends the eval runner wires in: `docs/platform/reference-backends.md`
+- Process/turn/tool metrics and `GET /metrics` (issue #78 Phase 0 Slice 2):
+  `docs/platform/observability.md`
 - Runner code: `src/agents_system/evals/{schema,runner,reporting,provider}.py`
 - Offline tests: `tests/test_eval_schema.py`, `tests/test_eval_runner.py`,
   `tests/test_eval_reporting.py`, `tests/test_eval_provider.py`

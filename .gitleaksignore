@@ -8,5 +8,27 @@
 # Format: one gitleaks Fingerprint per line (`commit:file:rule-id:line`),
 # preceded by a comment explaining why it is safe to ignore. Comment lines
 # start with `#`; gitleaks skips them.
+
+# Issue #78 Phase 0 Slice 2 (PR #96) -- the curl-auth-header rule matched a
+# documentation example placeholder value (a made-up, non-live token) in
+# the GET /metrics curl example, EN and ES docs, not a real credential --
+# there is nothing to rotate. The follow-up commit right after these
+# rewrites the example to reference the METRICS_API_KEY env var instead of
+# a literal value, the same safe pattern docs/platform/demo-entrypoint.md
+# uses for ADAPTER_API_KEY; these two entries only silence the
+# now-historical commit's own diff, which gitleaks re-scans on every PR
+# regardless of later fixes. (Do not spell out the flagged example string
+# itself in this comment -- gitleaks would flag this file's own diff too.)
 #
-# Currently empty: a full-history scan finds no leaks.
+# Fingerprints embed the commit SHA, so rebasing PR #96 onto a newer
+# origin/main (to pick up a later review-fix commit) rewrote every commit
+# in the branch and invalidated the three fingerprints below; they were
+# refreshed to the rebased SHAs without changing what is allowlisted or why.
+1718f1526f62f9c2fbb7c500b8843bbbcbb5804c:docs/platform/observability.md:curl-auth-header:26
+1718f1526f62f9c2fbb7c500b8843bbbcbb5804c:docs/platform_es/observability.md:curl-auth-header:29
+
+# An intermediate commit in the same PR quoted the flagged example string
+# above inside ITS OWN explanatory comment (fixed in the very next commit,
+# which rewrote this comment block to describe rather than quote it) --
+# same non-issue as the two entries above, one commit later.
+0977b136f6800fb7ce7cf72db735517870eb3444:.gitleaksignore:curl-auth-header:12

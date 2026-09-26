@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import time
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from functools import partial
@@ -45,6 +46,13 @@ from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.interceptor import CallResult, PolicyViolation, intercept
 from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS
+from agents_system.observability.metrics import (
+    DEFAULT_METRICS,
+    Metrics,
+    record_limit_trip,
+    record_tool_call,
+    record_turn,
+)
 from agents_system.permissions.permission_registry import permission_registry
 
 logger = structlog.get_logger()
@@ -281,11 +289,18 @@ async def _call_model(
     return {"messages": [response], "turn_usage": turn_usage}
 
 
+#: The fixed `tool` label value recorded for a "denied"/not_in_surface tool
+#: call, in place of the model-supplied `tool_name` -- see the note in
+#: `_execute_tools`'s `PolicyViolation` handling below.
+_UNRECOGNIZED_TOOL_LABEL = "_unrecognized_"
+
+
 async def _execute_tools(
     state: AgentState,
     equipped: EquippedRuntime,
     permissions: tuple[str, ...],
     tool_call_timeout_s: float,
+    metrics: Metrics,
 ) -> dict[str, Any]:
     """Execute all tool_calls in the last AIMessage through the Layer-2 interceptor.
 
@@ -301,6 +316,21 @@ async def _execute_tools(
     continues (same shape as the PolicyViolation handling below).
     tool_call_count is incremented by the number of calls attempted this node
     execution (not just successful ones), matching max_tool_calls semantics.
+
+    #78 Phase 0 Slice 2 -- every branch below records one `record_tool_call`
+    at this single choke point (never scattered elsewhere): "ok" on a
+    successful connector call, "denied" for a `PolicyViolation` on a tool
+    that was never in the equipped surface at all (reason="not_in_surface"),
+    "blocked" for a Layer-2 revalidation failure on a tool that WAS equipped
+    (reason in {"revalidation_required", "permission_revoked"}), "timeout"
+    when the call exceeds tool_call_timeout_s, and "error" for anything else
+    the connector itself raises -- recorded, then re-raised unchanged so
+    error handling behavior is exactly what it was before this metric
+    existed. The "denied" branch records the fixed `_UNRECOGNIZED_TOOL_LABEL`
+    instead of the model-supplied `tool_name` -- that name was never checked
+    against the equipped surface, so it is untrusted (possibly
+    prompt-injected or hallucinated) text with no monitoring value, and must
+    never reach the `tool` label (label hygiene, same rule as `session_id`).
     """
     last_message = state["messages"][-1]
     tool_calls: list[dict[str, Any]] = getattr(last_message, "tool_calls", []) or []
@@ -315,17 +345,18 @@ async def _execute_tools(
             tool_name: str = call["name"]
             tool_args: dict[str, Any] = call.get("args", {}) or {}
             call_id: str = call["id"]
+            call_start = time.monotonic()
 
             try:
                 async with asyncio.timeout(tool_call_timeout_s):
-                    outcome: CallResult = await intercept(
+                    call_result: CallResult = await intercept(
                         tool_name,
                         tool_args,
                         equipped,
                         current_permissions=permissions,
                         session=session,
                     )
-                output = outcome.output
+                output = call_result.output
                 content = (
                     json.dumps(output)
                     if isinstance(output, (dict, list))
@@ -335,6 +366,12 @@ async def _execute_tools(
                     ToolMessage(content=content, tool_call_id=call_id)
                 )
                 logger.info("runtime.tool_executed", tool=tool_name)
+                record_tool_call(
+                    metrics,
+                    tool=tool_name,
+                    outcome="ok",
+                    duration_s=time.monotonic() - call_start,
+                )
             except TimeoutError:
                 result_messages.append(
                     ToolMessage(
@@ -347,6 +384,12 @@ async def _execute_tools(
                     "runtime.tool_call_timeout",
                     tool=tool_name,
                     timeout_s=tool_call_timeout_s,
+                )
+                record_tool_call(
+                    metrics,
+                    tool=tool_name,
+                    outcome="timeout",
+                    duration_s=time.monotonic() - call_start,
                 )
             except PolicyViolation as violation:
                 result_messages.append(
@@ -361,6 +404,35 @@ async def _execute_tools(
                     tool=tool_name,
                     reason=violation.reason,
                 )
+                not_in_surface = violation.reason == "not_in_surface"
+                policy_outcome = "denied" if not_in_surface else "blocked"
+                # "denied"/not_in_surface means `tool_name` was never checked
+                # against the equipped surface -- by definition it is not a
+                # real registered connector name, so it is untrusted, model-
+                # supplied text (a prompt-injected or hallucinated "tool"
+                # call) with zero monitoring value. Recording it verbatim as
+                # a Prometheus label would let that text -- including PII --
+                # reach the process-wide, persistent /metrics label store
+                # (see docs/platform/observability.md's "Label hygiene").
+                # Every OTHER outcome's tool_name is already bound to a real,
+                # equipped ToolSpec and stays as is.
+                metric_tool_name = (
+                    _UNRECOGNIZED_TOOL_LABEL if not_in_surface else tool_name
+                )
+                record_tool_call(
+                    metrics,
+                    tool=metric_tool_name,
+                    outcome=policy_outcome,
+                    duration_s=time.monotonic() - call_start,
+                )
+            except Exception:
+                record_tool_call(
+                    metrics,
+                    tool=tool_name,
+                    outcome="error",
+                    duration_s=time.monotonic() - call_start,
+                )
+                raise
 
     return {
         "messages": result_messages,
@@ -368,14 +440,19 @@ async def _execute_tools(
     }
 
 
-async def _limit_reached(state: AgentState) -> dict[str, Any]:
+async def _limit_reached(state: AgentState, metrics: Metrics) -> dict[str, Any]:
     """Terminal node reached when tool_call_count exhausts max_tool_calls.
 
     Design AD-3: appends a non-empty terminal AIMessage (never an empty/silent
     reply) and logs the breach with the count that triggered it.
+
+    #78 Phase 0 Slice 2 -- the only limit this loop enforces via a terminal
+    node today, so `limit="max_tool_calls"` is not yet a caller-supplied
+    value; see `ADR-005` section 6.
     """
     tool_call_count = state.get("tool_call_count", 0)
     logger.warning("runtime.limit_reached", tool_call_count=tool_call_count)
+    record_limit_trip(metrics, limit="max_tool_calls")
     return {
         "messages": [
             AIMessage(
@@ -420,6 +497,7 @@ def _build_graph(
     permissions: tuple[str, ...],
     max_tool_calls: int,
     tool_call_timeout_s: float,
+    metrics: Metrics,
 ) -> StateGraph[AgentState]:
     """Build the StateGraph with call_model, execute_tools and limit_reached nodes."""
     graph = StateGraph(AgentState)
@@ -437,9 +515,10 @@ def _build_graph(
             equipped=equipped,
             permissions=permissions,
             tool_call_timeout_s=tool_call_timeout_s,
+            metrics=metrics,
         ),
     )
-    graph.add_node(_LIMIT_REACHED_NODE, _limit_reached)
+    graph.add_node(_LIMIT_REACHED_NODE, partial(_limit_reached, metrics=metrics))
 
     graph.set_entry_point("call_model")
     graph.add_conditional_edges(
@@ -557,6 +636,24 @@ class AgentRuntime:
         entry points with their own full-history contract (e.g. the OpenAI
         adapter) never pass a ``thread_id`` and stay byte-identical to the
         pre-D-014 stateless behavior.
+    runtime_id:
+        #78 Phase 0 Slice 2 -- the bounded, low-cardinality ``runtime_id``
+        label this runtime's metrics are recorded under (see
+        ``observability/metrics.py``'s module docstring on label hygiene).
+        ``None`` (default) falls back to this runtime's own derived provider
+        model id (``model_display_name(model)``, the same default
+        ``run_turn``'s ``model_id`` pricing override already uses) — the
+        only caller that has a more meaningful id to give (the operator's
+        own ``"{deployment}__{role}"`` runtime id) is ``main.py``'s lifespan,
+        which passes it explicitly; every other existing construction site
+        (``evals/runner.py``, direct library use) is unaffected.
+    metrics:
+        #78 Phase 0 Slice 2 -- the ``Metrics`` set this runtime's turns,
+        tool calls and limit trips are recorded into. ``None`` (default)
+        uses the process-wide ``DEFAULT_METRICS`` (the set ``GET /metrics``
+        serves); a test passes its own throw-away set built from a fresh
+        ``CollectorRegistry`` instead, so recorded values are isolated and
+        assertable without touching process-wide state.
     """
 
     def __init__(
@@ -564,6 +661,8 @@ class AgentRuntime:
         runtime: EquippedRuntime,
         model: BaseChatModel,
         checkpointer: BaseCheckpointSaver[Any] | None = None,
+        runtime_id: str | None = None,
+        metrics: Metrics | None = None,
     ) -> None:
         self._runtime = runtime
         self._equipped = runtime
@@ -579,6 +678,10 @@ class AgentRuntime:
         # is at most an optional override, never required for this runtime's
         # usage to be priced.
         self._model_id = model_display_name(model)
+        # #78 Phase 0 Slice 2 -- see the `runtime_id`/`metrics` parameter
+        # docs above.
+        self._runtime_id = runtime_id if runtime_id is not None else self._model_id
+        self._metrics = metrics if metrics is not None else DEFAULT_METRICS
         logger.info(
             "runtime.initialized",
             tools=len(self._schemas),
@@ -735,6 +838,7 @@ class AgentRuntime:
             effective_permissions,
             max_tool_calls=max_tool_calls,
             tool_call_timeout_s=effective_limits["tool_call_timeout_s"],
+            metrics=self._metrics,
         )
         # D-014 S4 (design AD-1): the system prompt is no longer prepended
         # here — _call_model prepends it to the MODEL INPUT on every call and
@@ -760,43 +864,69 @@ class AgentRuntime:
         # stays exactly within its own max_tool_calls budget could still crash
         # with GraphRecursionError instead of completing normally.
         recursion_limit = 2 * max_tool_calls + 10
+        # #78 Phase 0 Slice 2 -- measured across the whole call (graph build
+        # through the final _finish_turn below), the single choke point both
+        # the "ok" and "timeout" outcomes already return through. The outer
+        # `except Exception` records "error" for anything neither branch
+        # below catches (e.g. a genuine provider failure, or a checkpointer
+        # failure that is not a `redis.exceptions.RedisError`) and then
+        # re-raises unchanged -- this adds observability only, it does not
+        # change what was already unhandled before this metric existed.
+        turn_start = time.monotonic()
         try:
-            async with asyncio.timeout(effective_limits["total_execution_timeout_s"]):
-                result = await _ainvoke_with_optional_checkpointer(
-                    graph,
-                    self._checkpointer,
-                    thread_id,
-                    initial_state,
-                    recursion_limit,
-                )
-        except TimeoutError:
-            logger.warning(
-                "runtime.timeout",
-                total_execution_timeout_s=effective_limits["total_execution_timeout_s"],
-            )
-            # D-007: record runtime_timeout event
-            _emit(
-                "record_runtime_timeout",
-                definition=self._equipped.definition,
-                total_execution_timeout_s=effective_limits["total_execution_timeout_s"],
-            )
-            # #78 Phase 0 -- a timeout cancels the invocation before this
-            # runtime can read back how many call_model invocations actually
-            # completed, so `model_calls` (and every token total) is
-            # genuinely UNKNOWN here -- never reported as 0.
-            return self._finish_turn(
-                all_messages
-                + [
-                    AIMessage(
-                        content=(
-                            "This is taking longer than expected. Please try again."
-                        )
+            try:
+                async with asyncio.timeout(
+                    effective_limits["total_execution_timeout_s"]
+                ):
+                    result = await _ainvoke_with_optional_checkpointer(
+                        graph,
+                        self._checkpointer,
+                        thread_id,
+                        initial_state,
+                        recursion_limit,
                     )
-                ],
-                usage=_UNKNOWN_TURN_USAGE,
-                session_id=session_id,
-                model_id=effective_model_id,
+            except TimeoutError:
+                logger.warning(
+                    "runtime.timeout",
+                    total_execution_timeout_s=effective_limits[
+                        "total_execution_timeout_s"
+                    ],
+                )
+                # D-007: record runtime_timeout event
+                _emit(
+                    "record_runtime_timeout",
+                    definition=self._equipped.definition,
+                    total_execution_timeout_s=effective_limits[
+                        "total_execution_timeout_s"
+                    ],
+                )
+                # #78 Phase 0 -- a timeout cancels the invocation before this
+                # runtime can read back how many call_model invocations actually
+                # completed, so `model_calls` (and every token total) is
+                # genuinely UNKNOWN here -- never reported as 0.
+                return self._finish_turn(
+                    all_messages
+                    + [
+                        AIMessage(
+                            content=(
+                                "This is taking longer than expected. Please try again."
+                            )
+                        )
+                    ],
+                    usage=_UNKNOWN_TURN_USAGE,
+                    session_id=session_id,
+                    model_id=effective_model_id,
+                    outcome="timeout",
+                    duration_s=time.monotonic() - turn_start,
+                )
+        except Exception:
+            record_turn(
+                self._metrics,
+                runtime_id=self._runtime_id,
+                outcome="error",
+                duration_s=time.monotonic() - turn_start,
             )
+            raise
         # #78 Phase 0 (review finding 3) -- `turn_usage` is the sentinel
         # `None` (never a real, possibly-empty list) exactly when
         # `_ainvoke_with_optional_checkpointer` degraded past a checkpointer
@@ -815,6 +945,8 @@ class AgentRuntime:
             usage=usage,
             session_id=session_id,
             model_id=effective_model_id,
+            outcome="ok",
+            duration_s=time.monotonic() - turn_start,
         )
 
     def _finish_turn(
@@ -824,9 +956,12 @@ class AgentRuntime:
         usage: TurnUsage,
         session_id: str,
         model_id: str | None,
+        outcome: str,
+        duration_s: float,
     ) -> TurnResult:
         """Attach real cost to *usage*, log one `runtime.turn_usage` event
-        (issue #78 Phase 0), and return `messages`/`usage` as a `TurnResult`.
+        (issue #78 Phase 0), record this turn's metrics (issue #78 Phase 0
+        Slice 2), and return `messages`/`usage` as a `TurnResult`.
 
         The log call carries no explicit correlation id: it reuses this
         module's existing `structlog` logger, which already picks up
@@ -834,6 +969,12 @@ class AgentRuntime:
         (`observability/middleware.py`'s `RequestIdMiddleware` for the
         adapter path) — the same mechanism every other `runtime.*` log line
         in this file already relies on.
+
+        Both callers of this method (the "ok" and "timeout" return points in
+        `run_turn_with_usage`) are this turn's single choke point for
+        `record_turn` -- see that method's own comment for the "error"
+        outcome, which never reaches here (it is recorded and re-raised
+        before this method could be called).
         """
         cost_usd = _compute_turn_cost(usage, model_id, get_settings())
         usage = dataclasses.replace(usage, cost_usd=cost_usd)
@@ -845,6 +986,15 @@ class AgentRuntime:
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             total_tokens=usage.total_tokens,
+            cost_usd=usage.cost_usd,
+        )
+        record_turn(
+            self._metrics,
+            runtime_id=self._runtime_id,
+            outcome=outcome,
+            duration_s=duration_s,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
             cost_usd=usage.cost_usd,
         )
         return TurnResult(messages=messages, usage=usage)
