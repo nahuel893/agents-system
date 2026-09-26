@@ -79,14 +79,19 @@ El archivo `manifest.md` del despliegue no puede:
 
 El archivo `policy.md` del despliegue puede:
 - Restringir el nivel de autonomía (ej. `supervised` → `confirm`).
-- Añadir reglas de escalamiento más estrictas.
+- Añadir reglas de escalamiento más estrictas: `escalation_rules: {inherit: true, add: [...]}` agrega condiciones, y sus `descriptions` describen las que agrega.
+- Endurecer la redacción de auditoría (agregar `redact_keys`).
 - Reducir los límites de ejecución (timeouts más cortos, menor número de llamadas a herramientas permitidas).
 - Definir umbrales específicos del cliente para la intervención humana (*human-in-the-loop*).
 
 El archivo `policy.md` del despliegue no puede:
 - Elevar el nivel de autonomía por encima del límite máximo del rol predefinido.
-- Eliminar reglas de escalamiento definidas en la política predefinida.
+- Eliminar una condición de escalamiento definida en la política predefinida. Un mapeo `escalation_rules` simple reemplaza el del rol, así que tiene que repetir cada condición; una directiva `remove:` no puede nombrar una heredada.
+- Reescribir la descripción de una condición heredada, ni cambiar o dejar en blanco el `escalate_to` del rol. Un mapeo `escalation_rules` simple tiene que repetir `escalate_to`, porque omitirlo lo dejaría en blanco. No necesita repetir las descripciones del rol: un despliegue describe solo las condiciones que agrega, así que las descripciones del rol se conservan también bajo un mapeo simple. `descriptions` tiene que ser un mapeo; un `null` (una clave `descriptions:` sin valor), una lista o un texto lanza `DefinitionError` en lugar de reemplazar las descripciones del rol.
+- Aflojar la redacción de auditoría: poner `audit_policy.capture_tool_input` en un valor verdadero que el rol no tiene, u omitir una clave que lista el `redact_keys` del rol. Un mapeo `audit_policy` simple reemplaza el del rol, así que tiene que conservarlas.
 - Incrementar los límites de ejecución más allá de los valores por defecto de la plataforma.
+
+Romper cualquiera de estas reglas lanza `DefinitionError`, que nombra el despliegue, el campo y el motivo, y el runtime no se construye. Un campo de política que el despliegue omite, o deja vacío, conserva el valor del rol.
 
 ### `skills/`
 
@@ -107,7 +112,7 @@ Las dos fuentes de archivo quedan contenidas: un archivo de habilidad tiene que 
 El cargador de definiciones (`loader.py`) implementa un vocabulario preciso de directivas en YAML para regular cómo se mezclan las propiedades de la plantilla predefinida con las sobreescrituras del cliente. Esto evita redundancias y mantiene el control de versión limpio:
 
 ### 1. Comportamiento por defecto (Ausencia de campo)
-Si un campo está definido en la plantilla predefinida (`platform/roles/`) pero está **completamente ausente** en la sobreescritura del despliegue (`deployments/{client}/`), el cargador lo hereda automáticamente sin modificaciones.
+Si un campo está definido en la plantilla predefinida (`platform/roles/`) pero está **completamente ausente** en la sobreescritura del despliegue (`deployments/{client}/`), el cargador lo hereda automáticamente sin modificaciones. Un mapeo de política vacío (`{}`) cuenta igual que uno ausente.
 
 ### 2. Heredar explícitamente (`inherit`)
 Si un campo escalar se define con el valor literal `"inherit"` en la sobreescritura, toma el valor original del padre tal cual:
@@ -116,43 +121,44 @@ permissions: inherit
 ```
 
 ### 3. Directivas para listas (List Directives)
-Para campos que contienen colecciones (como `tools`, `skills` o `permissions`), el cargador admite directivas estructuradas en lugar de simples valores planos:
+`permissions` admite directivas estructuradas en lugar de una lista plana. `tools` y `skills` de un despliegue son siempre listas planas: el subconjunto que el despliegue conserva.
 - **`add` (Agregar con deduplicación)**: Mantiene la lista del padre y le añade nuevos elementos, eliminando duplicados automáticamente y preservando el orden.
   ```yaml
-  skills:
+  permissions:
     inherit: true
     add:
-      - order_extraction
-      - colloquial_matching
+      - read:catalog
   ```
 - **`remove` (Remover elementos)**: Mantiene la lista del padre pero filtra y elimina los elementos indicados.
   ```yaml
-  tools:
+  permissions:
     inherit: true
     remove:
-      - redis_session_state
+      - write:orders
   ```
 - **`override` (Reemplazo total)**: Sobreescribe por completo la lista del padre por la nueva lista proporcionada (sujeto a las restricciones de los invariantes). Se puede declarar como una lista directa o usando la clave `override`:
   ```yaml
-  tools:
+  permissions:
     override:
-      - whatsapp_sender
-      - rag_catalog_search
+      - read:catalog
+      - send:message
   ```
 
 ### 4. Directivas para diccionarios y mapeos (Mapping Directives)
 Para campos estructurados como diccionarios (por ejemplo, `escalation_rules`, `delegation_policy`, `memory_policy` o `audit_policy`), se admite la mezcla incremental:
-- **Mezcla con `inherit: true`**: Si el diccionario incluye `inherit: true`, el cargador toma todas las propiedades del padre como base y aplica selectivamente los campos declarados en el hijo.
+- **Mezcla con `inherit: true`**: Si el diccionario incluye `inherit: true`, el cargador toma todas las propiedades del padre como base y aplica selectivamente los campos declarados en el hijo. Solo en `escalation_rules`, `add` y `remove` editan su lista `conditions`:
   ```yaml
   escalation_rules:
     inherit: true
-    conditions:
-      inherit: true
-      add:
-        - "el cliente no está registrado"
+    add:
+      - vip_complaint
+    descriptions:
+      vip_complaint: un cliente VIP presenta un reclamo.
   ```
-  *(Las listas dentro de estos mapeos, como `conditions`, también soportan las directivas `add` y `remove` mencionadas arriba).*
-- **Reemplazo absoluto**: Si el diccionario no contiene `inherit: true`, la sobreescritura reemplaza por completo la configuración del padre.
+- **Reemplazo absoluto**: Si el diccionario no contiene `inherit: true`, la sobreescritura reemplaza por completo la configuración del padre. En `escalation_rules` y `audit_policy` el resultado sigue sujeto al Invariante 5.
+
+### 5. Directivas no reconocidas
+Una directiva que el cargador no reconoce lanza `DefinitionError`: `{remove: [...]}` sin `inherit: true`, una clave mal escrita, `inherit: 'yes'`, `inherit` mezclado con `override`, o `add`/`remove` en un mapeo de política que no es `escalation_rules`. Una directiva así antes se resolvía al conjunto completo del padre, así que se conservaba un permiso que el despliegue quería quitar. La misma regla vale para los roles predefinidos y los agentes propios (`docs/platform_es/role.md`).
 
 ---
 
@@ -160,7 +166,7 @@ Para campos estructurados como diccionarios (por ejemplo, `escalation_rules`, `d
 
 > **Regla de Oro de la Plataforma:** Un despliegue específico de cliente solo puede *restringir o especializar* el comportamiento. Jamás puede elevar capacidades, relajar límites ni saltarse controles de seguridad definidos en el rol predefinido.
 
-Durante el proceso de mezcla (`merge`), el cargador de configuraciones (`loader.py`) valida de forma estricta los siguientes **cuatro invariantes estructurales**. Si se viola cualquiera de ellos, el cargador aborta de inmediato levantando una excepción `DefinitionError`, bloqueando la instanciación del runtime:
+Durante el proceso de mezcla (`merge`), el cargador de configuraciones (`loader.py`) valida de forma estricta los siguientes **cinco invariantes estructurales**. Si se viola cualquiera de ellos, el cargador aborta de inmediato levantando una excepción `DefinitionError`, bloqueando la instanciación del runtime:
 
 ### Invariante 1 — Restricción de Herramientas (`tools`)
 Las herramientas declaradas por la sobreescritura del despliegue del cliente deben ser un subconjunto estricto de las herramientas declaradas en la plantilla predefinida del rol:
@@ -196,6 +202,11 @@ Por ejemplo, un cliente puede configurar `max_tool_calls: 10` para prevenir bucl
 
 Un valor `null` cuenta como el valor por defecto de la plataforma y se valida igual que cualquier otro. Un valor que no es un número finito y no negativo (`NaN`, infinito, un valor negativo, un booleano) también lanza `DefinitionError`.
 
+### Invariante 5 — Escalamiento y redacción de auditoría (`escalation_rules`, `audit_policy`)
+Las `escalation_rules` resueltas del despliegue conservan cada condición del rol predefinido, con su descripción y su `escalate_to`:
+$$\text{parent.conditions} \subseteq \text{resolved.conditions}$$
+Y el `audit_policy` resuelto no afloja la redacción: `capture_tool_input` no pasa a un valor verdadero que el rol no tiene, y `redact_keys` conserva cada clave del rol. Es el mismo techo que tiene un agente del importador sobre su padre (`docs/platform_es/role.md`).
+
 ---
 
 ## El algoritmo de mezcla del harness (*harness merge algorithm*)
@@ -213,6 +224,8 @@ function build_runtime(client, role_type, user_identity):
     assert definition.permissions ⊆ generic.permissions  # Invariante 2: subconjunto de permisos
     assert definition.autonomy ≤ generic.autonomy  # Invariante 3: techo de autonomía
     assert definition.execution_limits ≤ generic.execution_limits  # Invariante 4: límites más estrictos
+    assert generic.escalation_conditions ⊆ definition.escalation_conditions  # Invariante 5: escalamiento
+    assert definition.audit_redaction ⊇ generic.audit_redaction  # Invariante 5: redacción de auditoría
 
   return AgentFactory.build(definition, user_identity)
 ```

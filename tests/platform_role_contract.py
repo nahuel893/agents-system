@@ -292,7 +292,7 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "read:reports",
             }
         ),
-        version="1.1",
+        version="2.0",
     ),
     "orchestrator": RoleGovernanceSnapshot(
         tools=frozenset({"client_lookup", "session_state", "escalation_notifier"}),
@@ -307,7 +307,7 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "spawn:summary-agent",
             }
         ),
-        version="1.0",
+        version="2.0",
     ),
     "sales-agent": RoleGovernanceSnapshot(
         tools=frozenset(
@@ -332,7 +332,7 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "send:message",
             }
         ),
-        version="1.0",
+        version="2.0",
     ),
     "summary-agent": RoleGovernanceSnapshot(
         tools=frozenset(
@@ -352,7 +352,7 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "write:summary_output",
             }
         ),
-        version="1.0",
+        version="2.0",
     ),
 }
 

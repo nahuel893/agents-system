@@ -1,7 +1,7 @@
 ---
 role: summary-agent
 extends: platform/roles/agent
-version: "1.0"
+version: "2.0"
 tools: [conversation_summarizer, knowledge_retrieval, session_state]
 skills: []
 context:

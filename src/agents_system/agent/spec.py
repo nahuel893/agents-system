@@ -22,53 +22,77 @@ from __future__ import annotations
 import dataclasses
 import os
 import pathlib
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from types import MappingProxyType
 from typing import Any, NoReturn, Self
 
 from agents_system.harness.loader import (
+    _POLICY_FIELDS,
     DefinitionError,
     FolderLocator,
     InlineLocator,
     RawDefinition,
     RoleLocator,
     _as_str_list,
+    _check_list_directive,
+    _check_mapping_directive,
     _parse_untrusted_input,
     _validate_inline_skills,
 )
 
 
-class _FrozenDict(dict[str, Any]):
-    """A ``dict`` that cannot change once built: every mutator raises
-    ``TypeError``.
+class _FrozenDict(Mapping[str, Any]):
+    """A read-only mapping: it cannot change once built.
 
     Issue #93: a ``MappingProxyType`` is read-only too, but it cannot be
     pickled or deep-copied, so neither could any ``Agent`` (every one has
     at least an empty ``skill_contents``), and ``dataclasses.asdict``
-    failed with it. A ``dict`` subclass pickles through ``__reduce__``,
-    deep-copies, and ``asdict`` rebuilds it like any other ``dict``.
+    failed with it. This one pickles and deep-copies through
+    ``__reduce__``, so ``asdict`` copies it like any other value.
 
-    The content is set in ``__new__``, and ``__init__`` does nothing:
-    ``dict.__init__`` merges into an existing instance, so calling it a
-    second time would otherwise be a way around the blocked mutators.
+    Issue #106: it used to be a ``dict`` subclass whose mutators raised, but
+    the base methods still reached the storage (``dict.__setitem__(m, k,
+    v)``, ``dict.update(m, ...)``). It is not a ``dict`` now, so those raise
+    ``TypeError``, and its content sits behind a ``MappingProxyType`` that
+    nothing else holds. The mutator names still exist, and raise, so a
+    caller treating it as a ``dict`` gets ``TypeError`` rather than
+    ``AttributeError``. Only ``object.__setattr__`` can still replace the
+    content, the same way it can reassign a field of the frozen ``Agent``
+    itself.
     """
 
-    __slots__ = ()
+    __slots__ = ("_data",)
+    _data: MappingProxyType[str, Any]
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         self = super().__new__(cls)
-        dict.update(self, *args, **kwargs)
+        object.__setattr__(self, "_data", MappingProxyType(dict(*args, **kwargs)))
         return self
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # The content was set in `__new__`: calling `__init__` again, as
+        # `dict.__init__` would allow, changes nothing.
         pass
 
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __repr__(self) -> str:
+        return repr(dict(self._data))
+
     def __reduce__(self) -> tuple[Any, ...]:
-        return (type(self), (dict(self),))
+        return (type(self), (dict(self._data),))
 
     def _immutable(self, *args: Any, **kwargs: Any) -> NoReturn:
         raise TypeError(f"'{type(self).__name__}' object is immutable")
 
-    __setitem__ = __delitem__ = _immutable
+    __setattr__ = __delattr__ = __setitem__ = __delitem__ = _immutable
     clear = pop = popitem = setdefault = update = __ior__ = _immutable
 
 
@@ -121,10 +145,8 @@ _MAPPING_PARAMS = frozenset(
         "audit_policy",
     }
 )
-#: The two shapes `_resolve_list_directive` actually honours. Any other
-#: mapping resolves to the parent's full set, so a typo would keep a
-#: permission it meant to remove.
-_INHERIT_DIRECTIVE_KEYS = frozenset({"inherit", "add", "remove"})
+#: The mappings that take `{inherit: true, ...}` directives.
+_DIRECTIVE_MAPPING_PARAMS = frozenset(_POLICY_FIELDS)
 
 
 def _str_list(who: str, name: str, value: Any) -> tuple[str, ...]:
@@ -151,20 +173,11 @@ def _permissions(who: str, value: Any) -> Any:
     string ``"inherit"``, or a directive mapping. A mapping is passed through
     to the loader's ``_resolve_list_directive``, like the folder path does;
     it used to be iterated, which turned its keys into the permissions
-    ``'inherit'`` and ``'remove'`` and ignored the removal."""
+    ``'inherit'`` and ``'remove'`` and ignored the removal. A mapping the
+    loader does not recognise is rejected here, by the loader's own check
+    (``_check_list_directive``), so the two cannot drift."""
     if isinstance(value, Mapping):
-        keys = set(value)
-        if not (
-            (value.get("inherit") is True and keys <= _INHERIT_DIRECTIVE_KEYS)
-            or keys == {"override"}
-        ):
-            raise DefinitionError(
-                f"Invariant violation — permissions: {who} declares the "
-                f"directive {dict(value)!r}, which the loader does not "
-                f"recognise and would resolve to the parent's full set. Use "
-                f"{{'inherit': True, 'add': [...], 'remove': [...]}} or "
-                f"{{'override': [...]}}."
-            )
+        _check_list_directive(dict(value), who=who, field="permissions")
         return {
             key: item
             if key == "inherit"
@@ -186,6 +199,11 @@ def _mapping(who: str, name: str, value: Any) -> Mapping[str, Any]:
             f"Invariant violation — {name}: {who} declares {name}={value!r} "
             f"({type(value).__name__}), which is not a mapping."
         )
+    if name in _DIRECTIVE_MAPPING_PARAMS:
+        # The loader's own check (issue #106): `{"add": [...]}` without
+        # `"inherit": True`, or `"inherit": "yes"`, used to be stored as
+        # literal policy keys or replace the parent's whole mapping.
+        _check_mapping_directive(dict(value), who=who, field=name)
     if name == "skill_contents" and not all(
         isinstance(key, str) and isinstance(text, str) for key, text in value.items()
     ):
@@ -274,6 +292,23 @@ class Agent:
 
     def __post_init__(self) -> None:
         who = f"agent '{self.name}'"
+        if self._folder is not None and isinstance(self._folder_overrides, _FrozenDict):
+            # `from_folder` passes a plain dict, which this method freezes
+            # below. A frozen one means these arguments are an existing
+            # Agent's fields: `dataclasses.replace()` (or, on Python 3.13+,
+            # `copy.replace()`) rebuilding it. Issue #106: rejected, not folded into the
+            # overrides. A folder agent resolves from its folder and
+            # overrides only, so every replaced field was silently dropped,
+            # `untrusted_input=True` included; and `replace()` cannot tell a
+            # field set to its default value (`tools=()`) from one it did not
+            # pass, so folding would still drop that one.
+            raise DefinitionError(
+                f"Invariant violation — replace: {who} was built with "
+                f"Agent.from_folder, and dataclasses.replace() cannot change "
+                f"it: the agent resolves from its folder and its overrides "
+                f"only, so a replaced field would be silently dropped. Build "
+                f"it again with Agent.from_folder(path, **overrides) instead."
+            )
         own = {name: getattr(self, name) for name in _CHECKED_FIELDS}
         if own["untrusted_input"] is None:
             # The default, meaning "not declared": only an explicit value is

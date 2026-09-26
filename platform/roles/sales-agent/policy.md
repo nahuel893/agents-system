@@ -1,6 +1,6 @@
 ---
 role: sales-agent
-version: "1.0"
+version: "2.0"
 autonomy: supervised
 untrusted_input: true
 escalation_rules:
@@ -11,6 +11,7 @@ escalation_rules:
     - confidence_below_threshold
     - required_tool_missing
     - customer_requests_human
+    - explicit_user_request
     - order_exceeds_approval_threshold
 delegation_policy:
   allowed: false
@@ -53,6 +54,10 @@ All conditions below trigger an immediate escalation to a human operator.
   operator at any point during the session.
 - `order_exceeds_approval_threshold` — the computed order total exceeds the
   deployment-configured approval threshold.
+
+`explicit_user_request` is inherited from `agent` and keeps its description.
+A child role must restate every condition it inherits: the loader rejects a
+`conditions:` list that drops one.
 
 ## delegation_policy
 

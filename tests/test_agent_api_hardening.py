@@ -413,15 +413,18 @@ def test_a_folder_agents_escalation_conditions_are_additive_too(
     assert conditions[-1] == "vip_complaint"
 
 
-def test_platform_role_folds_still_replace_conditions() -> None:
-    """Out of scope: two platform roles are written by the same author.
-    `sales-agent` restates its own list, which leaves out `agent`'s
-    `explicit_user_request`."""
+def test_platform_role_folds_keep_inherited_conditions() -> None:
+    """A predefined child role still restates its whole list, but issue #106
+    holds it to the rule too: `sales-agent`'s list used to leave out
+    `agent`'s `explicit_user_request`. It restates it now, and a fold that
+    drops a condition raises (`tests/test_loader_fail_closed.py`)."""
     agent = resolve("agent", roots=ROOTS)
     sales = resolve("sales-agent", roots=ROOTS)
 
     assert "explicit_user_request" in agent.escalation_rules["conditions"]
-    assert "explicit_user_request" not in sales.escalation_rules["conditions"]
+    assert set(agent.escalation_rules["conditions"]) <= set(
+        sales.escalation_rules["conditions"]
+    )
 
 
 # ---------------------------------------------------------------------------

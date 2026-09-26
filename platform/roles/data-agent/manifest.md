@@ -1,7 +1,7 @@
 ---
 role: data-agent
 extends: platform/roles/agent
-version: "1.1"
+version: "2.0"
 tools: [catalog_search, client_lookup, knowledge_retrieval, run_report, session_state]
 skills: []
 context:

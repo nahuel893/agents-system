@@ -1,6 +1,6 @@
 ---
 role: summary-agent
-version: "1.0"
+version: "2.0"
 autonomy: full
 untrusted_input: false
 escalation_rules:
@@ -8,6 +8,8 @@ escalation_rules:
   conditions:
     - conversation_history_empty_or_malformed
     - required_tool_missing
+    - confidence_below_threshold
+    - explicit_user_request
     - content_policy_restriction
 delegation_policy:
   allowed: false
@@ -41,6 +43,10 @@ users. `full` autonomy is appropriate within the declared read-only surface.
   from the injected surface at execution time.
 - `content_policy_restriction` — the summary output cannot be produced due to
   a content policy restriction triggered by the conversation content.
+
+`confidence_below_threshold` and `explicit_user_request` are inherited from
+`base` and `agent` and keep their descriptions. A child role must restate every
+condition it inherits: the loader rejects a `conditions:` list that drops one.
 
 ## delegation_policy
 
