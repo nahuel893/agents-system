@@ -892,3 +892,37 @@ def test_compose_prompt_collapses_embedded_newlines_in_description() -> None:
     # its own, so "## escalation rules" (the one real heading this block
     # renders) appears exactly once in the whole prompt.
     assert prompt.count("\n## escalation rules\n") == 1
+
+
+def test_compose_prompt_collapses_internal_whitespace_in_condition_names() -> None:
+    """A condition NAME is normalized the same way a description already is
+    (#88 follow-up): internal whitespace runs collapse to single spaces, not
+    just leading/trailing (`.strip()` alone leaves an embedded double space
+    or tab untouched)."""
+    from agents_system.harness.factory import _compose_prompt
+
+    definition = _fx_definition(
+        {"escalate_to": "human", "conditions": ["two\t\t spaces  condition"]}
+    )
+
+    prompt = _compose_prompt(definition, ())
+
+    bullet_lines = [line for line in prompt.splitlines() if line.startswith("- ")]
+    assert bullet_lines == ["- two spaces condition"]
+
+
+def test_compose_prompt_rejects_condition_name_containing_a_newline() -> None:
+    """Unlike a description (whose embedded newline is silently collapsed
+    away as harmless prose), a condition NAME is a structural identifier --
+    an embedded newline is not loose formatting to tidy up, it is exactly
+    what let a single condition fragment `_render_escalation_block`'s
+    output into extra bullet/heading-shaped lines (#88 follow-up). It must
+    fail loud instead."""
+    from agents_system.harness.factory import FactoryError, _compose_prompt
+
+    definition = _fx_definition(
+        {"escalate_to": "human", "conditions": ["weird\ncondition"]}
+    )
+
+    with pytest.raises(FactoryError, match="newline"):
+        _compose_prompt(definition, ())

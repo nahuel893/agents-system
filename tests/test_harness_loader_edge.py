@@ -251,6 +251,65 @@ def test_parse_escalation_descriptions_empty_known_conditions_returns_empty() ->
     assert out == {}
 
 
+def test_parse_escalation_descriptions_ignores_bullets_inside_fenced_code_block() -> (
+    None
+):
+    """A `- `name` — text` bullet inside a ``` fenced code block (a
+    documentation example for a future maintainer) must never be mistaken
+    for a real description — only the real bullet outside the fence counts
+    (#88 follow-up)."""
+    from agents_system.harness.loader import _parse_escalation_descriptions
+
+    body = (
+        "- `real_condition` — the real, intended description.\n"
+        "\n"
+        "Example of the convention for a future maintainer:\n"
+        "\n"
+        "```\n"
+        "- `real_condition` — EXAMPLE TEXT.\n"
+        "```\n"
+    )
+
+    out = _parse_escalation_descriptions(body, known_conditions=["real_condition"])
+
+    assert out == {"real_condition": "the real, intended description."}
+
+
+def test_parse_escalation_descriptions_ignores_fence_with_language_tag() -> None:
+    """A fence opened with a language tag (e.g. ```yaml) is still a fence."""
+    from agents_system.harness.loader import _parse_escalation_descriptions
+
+    body = (
+        "- `real_condition` — the real description.\n"
+        "\n"
+        "```yaml\n"
+        "- `real_condition` — from a yaml example, must be ignored.\n"
+        "```\n"
+    )
+
+    out = _parse_escalation_descriptions(body, known_conditions=["real_condition"])
+
+    assert out == {"real_condition": "the real description."}
+
+
+def test_parse_escalation_descriptions_raises_on_duplicate_bullet_for_same_condition() -> (
+    None
+):
+    """Two real (non-fenced) bullets for the same condition name in one
+    file's prose is an authoring mistake, not a silent "last one wins" —
+    it must fail loud (#88 follow-up)."""
+    from agents_system.harness.loader import _parse_escalation_descriptions
+
+    body = (
+        "- `dup_condition` — first description.\n"
+        "\n"
+        "- `dup_condition` — second, conflicting description.\n"
+    )
+
+    with pytest.raises(DefinitionError, match="dup_condition"):
+        _parse_escalation_descriptions(body, known_conditions=["dup_condition"])
+
+
 # ---------------------------------------------------------------------------
 # _fold_parent_into_child — descriptions accumulate across `extends:` (#88)
 # ---------------------------------------------------------------------------
