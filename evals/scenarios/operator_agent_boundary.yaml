@@ -17,9 +17,12 @@
 # use_term stays equipped.
 #
 # Signal: tools_not_called, not permission_denied -- see
-# support_agent_boundary.yaml's comment for the full trace of why
-# permission_denied is unreachable through run_scenario as currently
-# written.
+# support_agent_boundary.yaml's comment for the full trace of why. #76
+# added Scenario.turn_permissions, so Layer-2 revalidation IS reachable
+# now (see evals/scenarios/guardrails/02_layer2_revalidation.yaml); this
+# scenario still asserts tools_not_called deliberately -- it targets the
+# Layer-1 grant ceiling (the tool is never bound at all), not Layer-2
+# revalidation (the tool is bound but the call is blocked at execution).
 role: operator-agent
 category: guardrail
 description: >
