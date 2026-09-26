@@ -241,6 +241,69 @@ def test_model_prices_rejects_negative_price() -> None:
         )
 
 
+def test_model_prices_rejects_unknown_fields() -> None:
+    """Review finding 6 (PR #87) -- `ModelPrice` forbids extra keys, so a
+    typo (e.g. `input_tokens_per_million`) fails loudly instead of being
+    silently ignored while a required field stays missing."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            model_prices={
+                "m": {
+                    "input_per_million": 1.0,
+                    "output_per_million": 2.0,
+                    "unknown_field": "val",
+                }
+            },
+        )
+
+
+def test_model_prices_rejects_infinite_price() -> None:
+    """Review finding 6 (PR #87) -- `Infinity` satisfies `ge=0` (Python's
+    own `float('inf') >= 0` is True) but must still be rejected: an infinite
+    price would make `cost_usd` compute as `inf`/`nan`, a plausible-looking
+    but meaningless number rather than the honest `None`."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            model_prices={
+                "m": {
+                    "input_per_million": float("inf"),
+                    "output_per_million": 1.0,
+                }
+            },
+        )
+
+
+def test_model_prices_rejects_nan_price() -> None:
+    """Review finding 6 (PR #87) -- same reasoning as the infinity case."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            model_prices={
+                "m": {
+                    "input_per_million": float("nan"),
+                    "output_per_million": 1.0,
+                }
+            },
+        )
+
+
+def test_model_prices_rejects_unreasonably_large_price() -> None:
+    """Review finding 6 (PR #87) -- a finite but absurd price (`1e308`) is
+    still a malformed configuration, not a real per-million-token rate."""
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            model_prices={
+                "m": {
+                    "input_per_million": 1e308,
+                    "output_per_million": 1.0,
+                }
+            },
+        )
+
+
 # ---------------------------------------------------------------------------
 # #169 (ADR-002 E.18) — configurable Ollama model + base URL
 # ---------------------------------------------------------------------------

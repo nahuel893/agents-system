@@ -293,6 +293,13 @@ class DeferredWebhookWorker:
         replay = _persisted_reply(work)
         if replay is None:
             try:
+                # #78 Phase 0 (review finding 4, PR #87) -- no `model_id` is
+                # passed here on purpose: `AgentRuntime` derives its own
+                # default `Settings.model_prices` key from the provider
+                # model it was constructed with (`model_display_name`), so
+                # this worker's turns are priced correctly without needing a
+                # routing id of its own to pass -- previously this call site
+                # was exactly why WhatsApp turns were never priced at all.
                 result_messages = await self._runtime.run_turn(
                     messages=[HumanMessage(content=turn.text)],
                     session_id=turn.meta_message_id,

@@ -92,22 +92,59 @@ class TurnUsage:
     cost_usd: float | None = None
 
 
-class TurnMessages(list[AnyMessage]):
-    """The `list[AnyMessage]` `run_turn` has always returned, carrying this
-    turn's real usage as an attribute (issue #78).
+@dataclasses.dataclass(frozen=True)
+class TurnResult:
+    """The result of one `AgentRuntime.run_turn_with_usage` call: the
+    accumulated message list plus this turn's real `TurnUsage` (issue #78,
+    review finding 5).
 
-    A plain subclass, not a new return shape: every existing caller that
-    iterates, indexes, slices, or spreads this like a `list[AnyMessage]`
-    (`evals/runner.py`, `integration/openai_adapter.py`,
-    `services/webhook_worker.py`, the test suite) keeps working unmodified.
+    A dedicated, explicit type -- NOT a `list[AnyMessage]` subclass. An
+    earlier design (`TurnMessages`) subclassed `list` to carry `.usage` as
+    an attribute for backward compatibility, but ordinary list operations
+    (slicing, `+`, `list(...)`, unpacking, LangGraph's own `add_messages`
+    reducer) all construct a plain `list` under the hood, which silently
+    dropped `.usage` -- a caller that transformed the result before reading
+    `.usage` lost it with no error. `run_turn` keeps returning a real
+    `list[AnyMessage]` (every existing caller that only needs the message
+    list -- `evals/runner.py`, `services/webhook_worker.py`, the wider test
+    suite -- keeps working unmodified); `run_turn_with_usage` is the
+    explicit entry point for a caller that also wants `.usage`, and it is
+    always this exact type, never silently degraded to a plain list.
     """
 
+    messages: list[AnyMessage]
     usage: TurnUsage
 
 
 _UNKNOWN_TURN_USAGE = TurnUsage(
     model_calls=None, input_tokens=None, output_tokens=None, total_tokens=None
 )
+
+
+def model_display_name(model: BaseChatModel) -> str:
+    """Best-effort human-readable model identifier across every
+    `_build_chat_model` provider branch (issue #78 review finding 4).
+
+    The ChatOpenAI-family classes (`groq`, `openai_compatible` -- including
+    OpenRouter, which reports ids like `"deepseek/deepseek-v4-flash"`)
+    expose the configured model as `model_name`; `ChatOllama`/`ChatAnthropic`
+    expose it as `model`. Falls back to the class name so a result is always
+    reportable even for a provider shape not seen before -- never raises.
+
+    This is `AgentRuntime`'s own default `Settings.model_prices` lookup key
+    (see `AgentRuntime.__init__`) -- prices belong to the provider model
+    actually billing the tokens, not to whichever runtime id a caller used
+    to select this agent. Originally defined in `evals/provider.py`; moved
+    here so both the live-eval pipeline and every `AgentRuntime` entry point
+    (the OpenAI adapter, the WhatsApp webhook worker) share the exact same
+    derivation instead of two copies drifting apart. `evals/provider.py`
+    re-exports this name for backward compatibility.
+    """
+    for attr in ("model_name", "model"):
+        value = getattr(model, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return type(model).__name__
 
 
 def _aggregate_turn_usage(entries: Sequence[UsageMetadata | None]) -> TurnUsage:
@@ -187,6 +224,7 @@ async def _call_model(
     every turn.
     """
     model_input = [SystemMessage(content=system_prompt), *state["messages"]]
+    retried_after_tool_format_error = False
     try:
         response: AIMessage = await bound_model.ainvoke(model_input)
     except Exception as exc:
@@ -197,6 +235,7 @@ async def _call_model(
             logger.warning("runtime.tool_format_error_retry", error=str(exc)[:120])
             base_model = bound_model.bound
             response = await base_model.ainvoke(model_input)
+            retried_after_tool_format_error = True
         else:
             raise
     logger.info("runtime.model_response", tool_calls=len(response.tool_calls or []))
@@ -205,7 +244,21 @@ async def _call_model(
     # call_model invocations THIS turn. No reducer on `turn_usage` (see
     # `AgentState`), so this read-then-append is what makes it accumulate
     # across the several call_model visits one turn can make.
-    turn_usage = [*state.get("turn_usage", []), response.usage_metadata]
+    #
+    # Review finding 3 (PR #87): the tool-format-error retry above makes TWO
+    # real provider calls, not one -- the first call above already consumed
+    # tokens before raising. There is no way to recover how many (the
+    # exception carries no usage_metadata), so it is recorded as an explicit
+    # `None` entry rather than silently dropped: this correctly counts
+    # `model_calls=2` and triggers `TurnUsage`'s own honesty rule (one `None`
+    # entry nulls the turn's token totals -- never a plausible-looking
+    # undercount that only reports the fallback call's numbers).
+    new_entries: list[UsageMetadata | None] = (
+        [None, response.usage_metadata]
+        if retried_after_tool_format_error
+        else [response.usage_metadata]
+    )
+    turn_usage = [*state.get("turn_usage", []), *new_entries]
     return {"messages": [response], "turn_usage": turn_usage}
 
 
@@ -413,7 +466,25 @@ async def _ainvoke_with_optional_checkpointer(
     ``asyncio.timeout``) is a DISTINCT failure class and is never caught
     here — it propagates to run_turn's own timeout handler. ``CancelledError``
     is never caught either.
+
+    Review finding 3 (PR #87) — usage under checkpointer degradation: the
+    FAILED invocation above may already have made one or more real provider
+    calls before the checkpointer backend error surfaced (LangGraph writes a
+    checkpoint after each super-step, so a failure there can follow a
+    completed ``call_model``). ``ainvoke`` raises without returning any
+    partial state, so exactly how many calls (and their tokens) is
+    unrecoverable. The retried invocation below runs the SAME turn from
+    scratch and its own ``turn_usage`` would silently miss whatever the
+    failed attempt already spent — reporting only the retry's numbers would
+    be a plausible-looking undercount, not an honest one. The chosen fix:
+    when degradation occurred, the returned ``turn_usage`` is the sentinel
+    ``None`` (distinct from a real, possibly-empty list) instead of
+    whatever the retried invocation recorded — ``run_turn_with_usage`` reads
+    that sentinel as "genuinely unknown" and reports ``_UNKNOWN_TURN_USAGE``
+    (``model_calls=None``, same as the AD-3 timeout backstop), rather than a
+    count that looks precise but is not.
     """
+    checkpointer_degraded = False
     if thread_id is not None and checkpointer is not None:
         compiled_with_checkpointer = graph.compile(checkpointer=checkpointer)
         checkpointed_config: RunnableConfig = {
@@ -432,13 +503,17 @@ async def _ainvoke_with_optional_checkpointer(
                 thread_id=thread_id,
                 error=str(exc),
             )
+            checkpointer_degraded = True
 
     compiled = graph.compile()
-    return dict(
+    result = dict(
         await compiled.ainvoke(
             initial_state, config={"recursion_limit": recursion_limit}
         )
     )
+    if checkpointer_degraded:
+        result["turn_usage"] = None
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +553,13 @@ class AgentRuntime:
         # Only call bind_tools when there are tools to bind — some fake models
         # raise NotImplementedError for bind_tools even with an empty list.
         self._bound_model = model.bind_tools(self._schemas) if self._schemas else model
+        # #78 Phase 0 (review finding 4) -- derived from the ORIGINAL,
+        # unbound `model` (bind_tools's return value, e.g. a RunnableBinding,
+        # no longer exposes `model_name`/`model`). This runtime's own default
+        # Settings.model_prices lookup key: a caller's `run_turn(model_id=...)`
+        # is at most an optional override, never required for this runtime's
+        # usage to be priced.
+        self._model_id = model_display_name(model)
         logger.info(
             "runtime.initialized",
             tools=len(self._schemas),
@@ -521,7 +603,34 @@ class AgentRuntime:
         permissions: tuple[str, ...] | None = None,
         thread_id: str | None = None,
         model_id: str | None = None,
-    ) -> TurnMessages:
+    ) -> list[AnyMessage]:
+        """Execute one conversational turn; return only the message list.
+
+        Delegates to `run_turn_with_usage` (issue #78 review finding 5) and
+        returns its `.messages` -- kept for every existing caller that only
+        ever needed a `list[AnyMessage]` (`evals/runner.py`'s call sites that
+        don't read usage, `services/webhook_worker.py`, the wider test
+        suite). A caller that also wants this turn's real `TurnUsage` calls
+        `run_turn_with_usage` instead -- see its docstring for the full
+        parameter reference, unchanged here.
+        """
+        result = await self.run_turn_with_usage(
+            messages,
+            session_id,
+            permissions=permissions,
+            thread_id=thread_id,
+            model_id=model_id,
+        )
+        return result.messages
+
+    async def run_turn_with_usage(
+        self,
+        messages: list[AnyMessage],
+        session_id: str,
+        permissions: tuple[str, ...] | None = None,
+        thread_id: str | None = None,
+        model_id: str | None = None,
+    ) -> TurnResult:
         """Execute one conversational turn.
 
         By default the runtime is stateless: it does NOT persist messages
@@ -556,25 +665,35 @@ class AgentRuntime:
             on this runtime. Ignored (treated as stateless) if this runtime
             was constructed without a ``checkpointer``.
         model_id:
-            The model id to price this turn's usage under (issue #78 Phase
-            0), looked up in ``Settings.model_prices`` -- e.g. the OpenAI
-            adapter's own ``"{deployment}__{role}"`` request model, or a
-            live-eval's ``model_name``. ``None`` (default) keeps ``TurnUsage.
-            cost_usd`` honestly ``None`` -- this runtime never guesses a
-            price for an unnamed model.
+            OPTIONAL OVERRIDE (issue #78 review finding 4) of the model id
+            this turn's usage is priced under, looked up in
+            ``Settings.model_prices``. ``None`` (default) uses this
+            runtime's OWN derived default instead --
+            ``model_display_name(model)``, computed once from the provider
+            model this ``AgentRuntime`` was constructed with (e.g.
+            ``"gpt-4o"``, ``"deepseek/deepseek-v4-flash"``) -- so a caller
+            that never names a model id (the WhatsApp webhook worker) still
+            gets priced correctly, keyed by the actual provider model
+            billing the tokens rather than a caller-chosen routing id. Pass
+            an explicit value only to price under a different id than this
+            runtime's own model (e.g. a live-eval comparing several runtime
+            configurations under one label).
 
         Returns
         -------
-        TurnMessages
-            A ``list[AnyMessage]`` — every existing caller keeps working
-            unmodified — of all messages accumulated during this turn (input
-            + model responses + tool messages), carrying this turn's real
-            ``.usage: TurnUsage`` (tokens + cost, honestly ``None`` where
-            unknown — see ``TurnUsage``'s docstring). When stateless, the
-            caller owns cross-turn aggregation; when a checkpointer is
-            engaged, the checkpointer owns cross-turn accumulation and this
-            return value already reflects it.
+        TurnResult
+            ``messages``: a real ``list[AnyMessage]`` of every message
+            accumulated during this turn (input + model responses + tool
+            messages). ``usage``: this turn's real ``TurnUsage`` (tokens +
+            cost, honestly ``None`` where unknown — see ``TurnUsage``'s
+            docstring). When stateless, the caller owns cross-turn
+            aggregation; when a checkpointer is engaged, the checkpointer
+            owns cross-turn accumulation and ``messages`` already reflects
+            it.
         """
+        # #78 Phase 0 (review finding 4) -- an explicit override always wins;
+        # otherwise fall back to this runtime's own derived provider model id.
+        effective_model_id = model_id if model_id is not None else self._model_id
         effective_permissions = (
             permissions
             if permissions is not None
@@ -657,14 +776,26 @@ class AgentRuntime:
                 ],
                 usage=_UNKNOWN_TURN_USAGE,
                 session_id=session_id,
-                model_id=model_id,
+                model_id=effective_model_id,
             )
-        usage = _aggregate_turn_usage(result.get("turn_usage", []))
+        # #78 Phase 0 (review finding 3) -- `turn_usage` is the sentinel
+        # `None` (never a real, possibly-empty list) exactly when
+        # `_ainvoke_with_optional_checkpointer` degraded past a checkpointer
+        # backend failure: that failed attempt may have already spent real,
+        # unrecoverable tokens the retried invocation's own turn_usage does
+        # not include, so the whole turn's usage is honestly unknown rather
+        # than a plausible-looking undercount.
+        raw_turn_usage = result.get("turn_usage", [])
+        usage = (
+            _UNKNOWN_TURN_USAGE
+            if raw_turn_usage is None
+            else _aggregate_turn_usage(raw_turn_usage)
+        )
         return self._finish_turn(
             list(result["messages"]),
             usage=usage,
             session_id=session_id,
-            model_id=model_id,
+            model_id=effective_model_id,
         )
 
     def _finish_turn(
@@ -674,9 +805,9 @@ class AgentRuntime:
         usage: TurnUsage,
         session_id: str,
         model_id: str | None,
-    ) -> TurnMessages:
+    ) -> TurnResult:
         """Attach real cost to *usage*, log one `runtime.turn_usage` event
-        (issue #78 Phase 0), and wrap *messages* as `TurnMessages`.
+        (issue #78 Phase 0), and return `messages`/`usage` as a `TurnResult`.
 
         The log call carries no explicit correlation id: it reuses this
         module's existing `structlog` logger, which already picks up
@@ -697,6 +828,4 @@ class AgentRuntime:
             total_tokens=usage.total_tokens,
             cost_usd=usage.cost_usd,
         )
-        turn_messages = TurnMessages(messages)
-        turn_messages.usage = usage
-        return turn_messages
+        return TurnResult(messages=messages, usage=usage)

@@ -10,9 +10,15 @@ and pydantic-settings reads the subclass's fields from the same environment.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
+
+#: Review finding 6 (PR #87) -- a generous but finite sanity ceiling on a
+#: per-million-token price. No real hosted provider prices anywhere near
+#: this; it exists only to reject a malformed config (a misplaced decimal,
+#: a unit mix-up) at boot rather than silently computing an absurd cost.
+_MAX_PRICE_PER_MILLION = 10_000.0
 
 
 class ModelPrice(BaseModel):
@@ -21,10 +27,23 @@ class ModelPrice(BaseModel):
     Both prices are USD per 1,000,000 tokens -- the unit every hosted
     provider quotes in, so a value here can be copy-pasted from a pricing
     page without conversion.
+
+    Review finding 6 (PR #87): `extra="forbid"` so a typo'd key (e.g.
+    `input_tokens_per_million`) fails loudly instead of being silently
+    ignored while a required field stays missing; `allow_inf_nan=False` plus
+    a finite upper bound so `Infinity`/`NaN`/an absurd value (`1e308`) can
+    never make `cost_usd` compute as `inf`/`nan` -- a malformed price is
+    refused at boot, never turned into a meaningless number later.
     """
 
-    input_per_million: float = Field(ge=0)
-    output_per_million: float = Field(ge=0)
+    model_config = ConfigDict(extra="forbid")
+
+    input_per_million: float = Field(
+        ge=0, le=_MAX_PRICE_PER_MILLION, allow_inf_nan=False
+    )
+    output_per_million: float = Field(
+        ge=0, le=_MAX_PRICE_PER_MILLION, allow_inf_nan=False
+    )
 
 
 class Settings(BaseSettings):

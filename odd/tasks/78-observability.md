@@ -103,6 +103,73 @@ global CLAUDE.md). Runner: `pytest -q` from the worktree root with
   real token usage and cost per turn (#78 1/3)"). PR:
   `feat(observability): real token usage and cost per turn (#78 1/3)`,
   `Refs #78` (not `Closes` — two slices remain).
+- [x] **S1.8 — review fixes (PR #87 adversarial review, `.pi/ops/logs/review87.txt`).**
+  Strict TDD per finding, each reproduced with its probe
+  (`.pi/ops/logs/review-87-probes/`) before the fix:
+  - **Finding 1 (CRITICAL, OpenAI SDK compat).** `_usage_payload`
+    (`integration/openai_adapter.py`) now returns `None` (top-level
+    `"usage": null`) for the WHOLE object whenever any field is unknown,
+    never an object with `null` fields — the official `openai` SDK's
+    `CompletionUsage` requires non-Optional ints. Added a test validating
+    both shapes against the real SDK
+    (`openai.types.chat.ChatCompletion.model_validate`).
+  - **Finding 2 (HIGH, scenario-total honesty).** `ScenarioResult.total_usage`
+    (`evals/runner.py`) is now unknown as soon as ANY run's usage is unknown
+    (including a crashed run), never a partial sum across only the runs that
+    succeeded. New test with `runs=3` (one crashed) — the previous
+    `runs=1` test could not expose this gap.
+  - **Finding 3 (HIGH, retries under-report).** `_call_model`'s
+    tool-format-error retry now records the failed first attempt as an
+    explicit `None` usage entry (2 real calls counted, tokens honestly
+    null) instead of silently dropping it.
+    `_ainvoke_with_optional_checkpointer`'s same-turn degradation retry now
+    returns a `turn_usage=None` sentinel when degradation occurred (the
+    failed attempt's tokens are unrecoverable — LangGraph's `ainvoke` raises
+    with no partial state — so the WHOLE turn is reported fully unknown,
+    the same honest choice AD-3's timeout backstop already makes, rather
+    than a plausible-looking undercount from only the retried invocation).
+  - **Finding 4 (MEDIUM, price keying).** `Settings.model_prices` is now
+    keyed by the PROVIDER MODEL id, not a caller-chosen routing id.
+    `model_display_name` moved from `evals/provider.py` to
+    `agent/graph.py` (re-exported from its old location for backward
+    compatibility); `AgentRuntime.__init__` derives `self._model_id` from
+    it at construction time. `run_turn(_with_usage)`'s `model_id` argument
+    is now at most an optional override. `openai_adapter.py` no longer
+    passes its own request model id as that override (it was the bug —
+    pricing config had to be duplicated per runtime id and never matched
+    what the eval pipeline used); `services/webhook_worker.py` needed no
+    code change (it never passed one) but is now priced correctly for free.
+  - **Finding 5 (MEDIUM, `TurnMessages` drops `.usage`).** Replaced the
+    `list[AnyMessage]` subclass with an explicit `TurnResult(messages,
+    usage)` frozen dataclass. `run_turn` keeps returning
+    `list[AnyMessage]` (delegates to the new method, returns
+    `.messages`) — every existing caller that never touched `.usage` keeps
+    working unmodified. `run_turn_with_usage` is the new explicit entry
+    point; `evals/runner.py::run_scenario` and
+    `integration/openai_adapter.py::chat_completions` were updated to call
+    it instead of reading `.usage` off a plain list.
+  - **Finding 6 (LOW, `ModelPrice` validation gaps).** Added
+    `extra="forbid"`, `allow_inf_nan=False`, and a finite upper bound
+    (10,000 USD/M tokens) to both price fields.
+  - **Finding 7 (LOW, missing tests).** Added: a 2-turn checkpointed thread
+    does not double-count turn 1 into turn 2; `_limit_reached`'s own fixed
+    message adds no extra `model_calls` entry (while the two REAL
+    `call_model` calls the breach scenario legitimately makes are both
+    counted); both retry paths (finding 3, above).
+  Docs updated (EN + this file's own update): `docs/platform/live-eval.md`
+  and its `_es` twin — the provider-model-id key format, the
+  derive-then-override default, and the `usage: null` object-level rule.
+  Full verification: `ruff check .` all checks passed; `ruff format --check .`
+  366 files already formatted; `mypy src/` success, 69 source files;
+  `pytest -q` 1417 passed, 97 deselected, 17 xfailed. RED evidence for the
+  whole slice: restoring the 6 pre-fix implementation files (`agent/graph.py`,
+  `config.py`, `evals/provider.py`, `evals/runner.py`,
+  `integration/openai_adapter.py`, `services/webhook_worker.py`) over the
+  updated tests reproduced 31 failures across `test_agent_runtime.py` (11),
+  `test_config.py` (3), `test_eval_runner.py` (2), and
+  `test_openai_adapter.py` (15, several via `ImportError: cannot import
+  name 'TurnResult'`); restoring the fixed implementation files returned to
+  GREEN (same full-suite result above).
 
 ## Slice 2 — process memory/CPU, durations, `/metrics` (pending)
 Not started. Per the issue: process memory/CPU sampling (no `psutil`/

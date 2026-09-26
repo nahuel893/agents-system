@@ -37,13 +37,24 @@ from agents_system.config import Settings, get_settings
 
 
 def _fake_runtimes(runtime_ids: list[str]) -> dict[str, MagicMock]:
-    """Build a stub runtimes dict keyed by model id."""
+    """Build a stub runtimes dict keyed by model id.
+
+    Review finding 5 (PR #87) -- the adapter now calls `run_turn_with_usage`
+    (not `run_turn`), which returns a `TurnResult(messages, usage)`. This
+    fake reports no usage at all (`.usage=None`, the "no `.usage` attribute"
+    case `_usage_payload` treats as honestly unknown), matching the previous
+    "this fake runtime returns a plain list with no `.usage`" behavior.
+    """
+    from agents_system.agent.graph import TurnResult
+
     result: dict[str, MagicMock] = {}
     for rid in runtime_ids:
         rt = MagicMock()
         # Use a real AIMessage so _extract_assistant_text's isinstance check passes
         fake_msg = AIMessage(content="ok")
-        rt.run_turn = AsyncMock(return_value=[fake_msg])
+        rt.run_turn_with_usage = AsyncMock(
+            return_value=TurnResult(messages=[fake_msg], usage=None)  # type: ignore[arg-type]
+        )
         result[rid] = rt
     return result
 
@@ -201,33 +212,99 @@ def test_chat_completion_happy_path(monkeypatch: pytest.MonkeyPatch):
     assert choice["message"]["content"]  # non-empty
     assert choice["finish_reason"] == "stop"
     assert "usage" in body
-    # #78 Phase 0 -- this fake runtime returns a plain list with no `.usage`
-    # attribute (see _fake_runtimes above): honestly null, never a guessed 0.
-    assert body["usage"] == {
-        "prompt_tokens": None,
-        "completion_tokens": None,
-        "total_tokens": None,
-    }
+    # Review finding 1 (PR #87) -- the official `openai` SDK's
+    # `CompletionUsage` requires non-Optional ints for every field
+    # (`ChatCompletion.usage` itself is `Optional[CompletionUsage]`), so an
+    # object with null fields crashes client-side validation. The
+    # OpenAI-compliant way to report "unknown" is the top-level `usage`
+    # being JSON `null` itself -- this fake runtime returns a plain list
+    # with no `.usage` attribute (see _fake_runtimes above).
+    assert body["usage"] is None
 
 
-def test_chat_completion_reports_real_usage_from_the_runtime(
+def test_chat_completion_usage_shapes_validate_against_the_openai_sdk(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """#78 Phase 0 -- when the runtime's TurnMessages carries real usage,
-    /v1/chat/completions reports those exact numbers, not zeros."""
-    from agents_system.agent.graph import TurnMessages, TurnUsage
+    """Review finding 1 (PR #87) -- both a fully-known and a fully-unknown
+    `usage` payload must validate against the OFFICIAL `openai` SDK's own
+    `ChatCompletion` model (`openai.types.chat.ChatCompletion`), not just our
+    own assumptions about its shape. `usage: null` is valid because
+    `ChatCompletion.usage: Optional[CompletionUsage]`; a partially-null
+    object is NOT valid because `CompletionUsage`'s own token fields are
+    required ints -- reproduces review probe `probe_point6.py`."""
+    from openai.types.chat import ChatCompletion
+
+    from agents_system.agent.graph import TurnResult, TurnUsage
 
     client = _make_client(
         runtime_ids=["acme__sales-agent"],
         adapter_api_key="test-key",
         monkeypatch=monkeypatch,
     )
-    turn_messages = TurnMessages([AIMessage(content="ok")])
-    turn_messages.usage = TurnUsage(
-        model_calls=1, input_tokens=42, output_tokens=8, total_tokens=50, cost_usd=0.001
+    payload = {
+        "model": "acme__sales-agent",
+        "messages": [{"role": "user", "content": "hola"}],
+    }
+
+    # Case 1: no usage reported at all -> "usage": null.
+    response_unknown = client.post(
+        "/v1/chat/completions",
+        json=payload,
+        headers={"Authorization": "Bearer test-key"},
+    )
+    ChatCompletion.model_validate(response_unknown.json())
+    assert response_unknown.json()["usage"] is None
+
+    # Case 2: full real usage reported -> a complete int-only usage object.
+    turn_result = TurnResult(
+        messages=[AIMessage(content="ok")],
+        usage=TurnUsage(
+            model_calls=1,
+            input_tokens=42,
+            output_tokens=8,
+            total_tokens=50,
+            cost_usd=0.001,
+        ),
     )
     runtime = client.app.state.runtimes["acme__sales-agent"]
-    runtime.run_turn = AsyncMock(return_value=turn_messages)
+    runtime.run_turn_with_usage = AsyncMock(return_value=turn_result)
+    response_known = client.post(
+        "/v1/chat/completions",
+        json=payload,
+        headers={"Authorization": "Bearer test-key"},
+    )
+    ChatCompletion.model_validate(response_known.json())
+    assert response_known.json()["usage"] == {
+        "prompt_tokens": 42,
+        "completion_tokens": 8,
+        "total_tokens": 50,
+    }
+
+
+def test_chat_completion_reports_real_usage_from_the_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """#78 Phase 0 -- when the runtime's TurnResult carries real usage,
+    /v1/chat/completions reports those exact numbers, not zeros."""
+    from agents_system.agent.graph import TurnResult, TurnUsage
+
+    client = _make_client(
+        runtime_ids=["acme__sales-agent"],
+        adapter_api_key="test-key",
+        monkeypatch=monkeypatch,
+    )
+    turn_result = TurnResult(
+        messages=[AIMessage(content="ok")],
+        usage=TurnUsage(
+            model_calls=1,
+            input_tokens=42,
+            output_tokens=8,
+            total_tokens=50,
+            cost_usd=0.001,
+        ),
+    )
+    runtime = client.app.state.runtimes["acme__sales-agent"]
+    runtime.run_turn_with_usage = AsyncMock(return_value=turn_result)
 
     payload = {
         "model": "acme__sales-agent",
@@ -246,9 +323,18 @@ def test_chat_completion_reports_real_usage_from_the_runtime(
     }
 
 
-def test_chat_completion_forwards_model_id_to_run_turn(monkeypatch: pytest.MonkeyPatch):
-    """#78 Phase 0 -- run_turn receives the request's own model id, the same
-    key Settings.model_prices is documented to use for this adapter."""
+def test_chat_completion_does_not_override_the_runtimes_own_price_key(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Review finding 4 (PR #87) -- the adapter must NOT pass its own
+    request model id (e.g. "acme__sales-agent", a caller-chosen ROUTING id)
+    as `run_turn_with_usage`'s `model_id` override: that id names WHICH
+    runtime to call, not which provider model bills the tokens, and using it
+    as the `Settings.model_prices` key broke pricing for every entry point
+    keyed differently (the eval pipeline) and left the WhatsApp webhook
+    worker permanently unpriced. The adapter must let `AgentRuntime` fall
+    back to its own derived default (`model_display_name` of its actual
+    model) instead."""
     client = _make_client(
         runtime_ids=["acme__sales-agent"],
         adapter_api_key="test-key",
@@ -264,8 +350,8 @@ def test_chat_completion_forwards_model_id_to_run_turn(monkeypatch: pytest.Monke
         headers={"Authorization": "Bearer test-key"},
     )
     runtime = client.app.state.runtimes["acme__sales-agent"]
-    runtime.run_turn.assert_awaited_once()
-    assert runtime.run_turn.await_args.kwargs["model_id"] == "acme__sales-agent"
+    runtime.run_turn_with_usage.assert_awaited_once()
+    assert "model_id" not in runtime.run_turn_with_usage.await_args.kwargs
 
 
 def test_chat_completion_unknown_model_404(monkeypatch: pytest.MonkeyPatch):
@@ -388,17 +474,25 @@ def test_chat_completions_uses_the_shared_admission_limiter_around_run_turn(
     worker, and must be gated by the SAME TurnAdmissionLimiter the lifespan
     installs on app.state, not run unbounded. Proven deterministically with
     a spy limiter: the turn must run strictly between its enter and exit."""
+    from agents_system.agent.graph import TurnResult, TurnUsage
+
     app_instance = create_test_app()
     events: list[str] = []
 
-    async def run_turn(
-        *, messages: object, session_id: str, model_id: str | None = None
-    ) -> list[AIMessage]:
+    async def run_turn_with_usage(*, messages: object, session_id: str) -> TurnResult:
         events.append("run_turn")
-        return [AIMessage(content="ok")]
+        return TurnResult(
+            messages=[AIMessage(content="ok")],
+            usage=TurnUsage(
+                model_calls=None,
+                input_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+            ),
+        )
 
     runtime = MagicMock()
-    runtime.run_turn = AsyncMock(side_effect=run_turn)
+    runtime.run_turn_with_usage = AsyncMock(side_effect=run_turn_with_usage)
     app_instance.state.runtimes = {"acme__sales-agent": runtime}
     app_instance.state.adapter_model_ids = frozenset({"acme__sales-agent"})
     app_instance.state.engine = MagicMock()
@@ -438,12 +532,23 @@ def test_chat_completions_uses_the_shared_admission_limiter_around_run_turn(
 def test_system_message_dropped(monkeypatch: pytest.MonkeyPatch):
     """Client system message is dropped; only user/assistant turns reach run_turn."""
     # Build a fresh app with an inspectable fake runtime
+    from agents_system.agent.graph import TurnResult, TurnUsage
 
     app_instance = create_test_app()
     app_instance.state.runtimes = {"acme__sales-agent": MagicMock()}
     app_instance.state.adapter_model_ids = frozenset({"acme__sales-agent"})
     fake_rt = app_instance.state.runtimes["acme__sales-agent"]
-    fake_rt.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
+    fake_rt.run_turn_with_usage = AsyncMock(
+        return_value=TurnResult(
+            messages=[AIMessage(content="reply")],
+            usage=TurnUsage(
+                model_calls=None,
+                input_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+            ),
+        )
+    )
 
     import agents_system.integration.openai_adapter as adapter_mod
 
@@ -463,9 +568,10 @@ def test_system_message_dropped(monkeypatch: pytest.MonkeyPatch):
     response = client2.post("/v1/chat/completions", json=payload)
     assert response.status_code == 200
 
-    # run_turn must have been called; the system message must NOT appear in args
-    fake_rt.run_turn.assert_awaited_once()
-    call_args = fake_rt.run_turn.call_args
+    # run_turn_with_usage must have been called; the system message must NOT
+    # appear in args
+    fake_rt.run_turn_with_usage.assert_awaited_once()
+    call_args = fake_rt.run_turn_with_usage.call_args
     mapped_messages = call_args[1]["messages"] if call_args[1] else call_args[0][0]
     # None of the mapped messages should be a SystemMessage-equivalent with "evil"
     from langchain_core.messages import SystemMessage as LCSystemMessage

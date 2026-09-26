@@ -16,8 +16,18 @@ from __future__ import annotations
 
 from langchain_core.language_models import BaseChatModel
 
+from agents_system.agent.graph import model_display_name
 from agents_system.config import get_settings
 from agents_system.main import _build_chat_model
+
+#: Re-exported for backward compatibility -- `model_display_name` moved to
+#: `agent/graph.py` (issue #78 review finding 4) so `AgentRuntime` itself can
+#: derive its own default `Settings.model_prices` key from exactly the same
+#: logic the live-eval pipeline already used, instead of two copies drifting
+#: apart. Every existing `from agents_system.evals.provider import
+#: model_display_name` (this module, `evals/__init__.py`, the test suite)
+#: keeps working unmodified.
+__all__ = ["build_eval_model", "model_display_name"]
 
 
 def build_eval_model() -> tuple[BaseChatModel, str]:
@@ -30,19 +40,3 @@ def build_eval_model() -> tuple[BaseChatModel, str]:
     """
     model = _build_chat_model(get_settings().eval_provider)
     return model, model_display_name(model)
-
-
-def model_display_name(model: BaseChatModel) -> str:
-    """Best-effort human-readable model identifier across every
-    `_build_chat_model` provider branch.
-
-    The ChatOpenAI-family classes (`groq`, `openai_compatible`) expose the
-    configured model as `model_name`; `ChatOllama`/`ChatAnthropic` expose it
-    as `model`. Falls back to the class name so a result is always
-    reportable even for a provider shape not seen before -- never raises.
-    """
-    for attr in ("model_name", "model"):
-        value = getattr(model, attr, None)
-        if isinstance(value, str) and value:
-            return value
-    return type(model).__name__
