@@ -509,7 +509,23 @@ def _run_migrations(database_url: str, *, repo_root: Path) -> None:
     )
 
 
-def _seed_demo_company(database_url: str, *, repo_root: Path) -> None:
+#: Bound on `_seed_demo_company`'s own subprocess (#119 review, medium
+#: finding): without an explicit `timeout=`, an unreachable or misconfigured
+#: demo database hangs `subprocess.run` indefinitely -- and that call runs
+#: inside `boot_live_harness`'s process-global `_boot_lock` (held boot-through
+#: -teardown, #113 review), so a hang here also starves every other
+#: `boot_live_harness()` caller in the same process. 60s comfortably covers
+#: `demo/load_demo_company.py`'s own normal runtime against a reachable
+#: throwaway database.
+_SEED_DEMO_COMPANY_TIMEOUT_S = 60.0
+
+
+def _seed_demo_company(
+    database_url: str,
+    *,
+    repo_root: Path,
+    timeout: float = _SEED_DEMO_COMPANY_TIMEOUT_S,
+) -> None:
     """Load `demo/load_demo_company.py`'s fixture data (catalog, clients,
     sales) into *database_url* (#79, Phase 1) -- the SAME script an operator
     runs by hand, reused here rather than reimplemented so the harness's
@@ -518,19 +534,32 @@ def _seed_demo_company(database_url: str, *, repo_root: Path) -> None:
     against a fresh throwaway database: the script only refuses to run
     against one that already holds unrecognized objects (`classify_target`),
     which an empty, just-migrated database never does.
+
+    *timeout* (#119 review, medium finding) bounds the subprocess so a
+    broken/unreachable demo database fails fast with a clear `RuntimeError`
+    instead of hanging this call -- and, transitively, every other
+    `boot_live_harness()` caller blocked on the same `_boot_lock` -- forever.
     """
     import subprocess
     import sys
 
     env = {**os.environ, "DEMO_DATABASE_URL": database_url}
-    subprocess.run(
-        [sys.executable, str(repo_root / "demo" / "load_demo_company.py")],
-        cwd=repo_root,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        subprocess.run(
+            [sys.executable, str(repo_root / "demo" / "load_demo_company.py")],
+            cwd=repo_root,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            "_seed_demo_company: demo/load_demo_company.py did not finish "
+            f"within {timeout}s -- the demo database is likely unreachable "
+            "or misconfigured (LIVE_HARNESS_ADMIN_DATABASE_URL)"
+        ) from exc
 
 
 async def _execute_sql_script(database_url: str, sql_text: str) -> None:
@@ -811,8 +840,13 @@ async def boot_live_harness(
     e.g. `Agent.from_folder(...)` or a bare `Agent(...)`), registered exactly
     as `create_app(agents=...)` already accepts both. *permissions* is the
     matching deploy-time grant; omitted, it keeps #78's original
-    `SALES_AGENT_PERMISSIONS` default (correct only when *role* is left at
-    its own `"sales-agent"` default). *terminal_policy* is forwarded to the
+    `SALES_AGENT_PERMISSIONS` default, but ONLY when *role* is left at its
+    own `"sales-agent"` default -- for any other *role*, omitting
+    *permissions* raises `ValueError` instead of silently granting
+    `SALES_AGENT_PERMISSIONS` to a role it was never meant for (#119 review:
+    a fail-open default on this exact deploy-grant trust boundary). Every
+    non-default caller must state its own grant explicitly. *terminal_policy*
+    is forwarded to the
     live registry so `use_term`/`read_file` can be genuinely exercised
     instead of always refusing. *seed_demo* additionally creates a SECOND
     throwaway database and loads `demo/load_demo_company.py`'s fixture data
@@ -846,9 +880,17 @@ async def boot_live_harness(
     redis_url = os.environ.get(_REDIS_URL_ENV, DEFAULT_REDIS_URL)
     db_name = f"live_harness_{uuid.uuid4().hex[:12]}"
     database_url = _with_database(admin_url, db_name)
-    grant_list = (
-        list(permissions) if permissions is not None else list(SALES_AGENT_PERMISSIONS)
-    )
+    if permissions is not None:
+        grant_list = list(permissions)
+    elif role == "sales-agent":
+        grant_list = list(SALES_AGENT_PERMISSIONS)
+    else:
+        raise ValueError(
+            "boot_live_harness(): permissions must be given explicitly when "
+            'role is not the default "sales-agent" (got '
+            f"role={role!r}) -- omitting it must never silently grant "
+            "SALES_AGENT_PERMISSIONS to a different role"
+        )
     agents: dict[str, Agent | str] = {runtime_id: role}
     grants: dict[str, list[str]] = {runtime_id: grant_list}
     whatsapp_runtime_id = runtime_id
@@ -880,12 +922,19 @@ async def boot_live_harness(
 
     async with _boot_lock:
         await _create_database(admin_url, db_name)
-        if demo_db_name is not None:
-            await _create_database(admin_url, demo_db_name)
         outbound = FakeWhatsAppServer()
         registry_engine: AsyncEngine | None = None
         harness: LiveHarness | None = None
         try:
+            # #119 review (medium finding): this second `_create_database`
+            # call must stay INSIDE this `try` -- the `finally` below is what
+            # drops *db_name* (already created above), so if this demo
+            # create raises outside the try, *db_name* is never dropped and
+            # leaks. `_drop_database` already tolerates a database that was
+            # never created (`DROP DATABASE IF EXISTS`), so entering the
+            # `finally` before this call succeeds is always safe.
+            if demo_db_name is not None:
+                await _create_database(admin_url, demo_db_name)
             await asyncio.to_thread(_run_migrations, database_url, repo_root=_REPO_ROOT)
             if demo_database_url is not None:
                 await asyncio.to_thread(

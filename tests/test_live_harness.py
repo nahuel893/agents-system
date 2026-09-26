@@ -480,6 +480,160 @@ async def test_boot_live_harness_never_overlaps_two_concurrent_boots(
 
 
 # ---------------------------------------------------------------------------
+# #119 review fixes -- boot_live_harness() permissions default, the demo
+# database create/drop bracket, and _seed_demo_company()'s subprocess timeout.
+# ---------------------------------------------------------------------------
+
+
+async def test_boot_live_harness_requires_explicit_permissions_for_a_non_default_role(
+    monkeypatch,
+) -> None:
+    """Omitting `permissions` must be a fail-CLOSED default, not a silent
+    grant of `SALES_AGENT_PERMISSIONS` to whatever *role* happens to be
+    passed (#119 review, medium finding: a fail-open default on the
+    deploy-grant trust boundary this harness exists to exercise). Every real
+    I/O boundary is faked (mirrors `test_boot_live_harness_never_overlaps_
+    two_concurrent_boots` above) so the fixed code's `ValueError` is reached
+    before any of it would even run.
+    """
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from agents_system.evals import live_harness
+
+    async def fake_create_database(admin_url: str, name: str) -> None:
+        return None
+
+    async def fake_drop_database(admin_url: str, name: str) -> None:
+        return None
+
+    def fake_run_migrations(database_url: str, *, repo_root: object) -> None:
+        return None
+
+    def fake_build_eval_model():
+        return object(), "fake-model"
+
+    captured_grants: dict[str, list[str]] = {}
+
+    def fake_create_app(**kwargs: object) -> FastAPI:
+        captured_grants.update(kwargs["grants"])  # type: ignore[arg-type]
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            app.state.engine = object()
+            yield
+
+        return FastAPI(lifespan=lifespan)
+
+    monkeypatch.setattr(live_harness, "_create_database", fake_create_database)
+    monkeypatch.setattr(live_harness, "_drop_database", fake_drop_database)
+    monkeypatch.setattr(live_harness, "_run_migrations", fake_run_migrations)
+    monkeypatch.setattr(live_harness, "build_eval_model", fake_build_eval_model)
+    monkeypatch.setattr(live_harness, "create_app", fake_create_app)
+
+    with pytest.raises(ValueError, match="permissions"):
+        async with live_harness.boot_live_harness(
+            role="operator-agent", runtime_id="probe-operator-agent"
+        ):
+            pass
+
+    assert "probe-operator-agent" not in captured_grants, (
+        "operator-agent must never be deploy-granted through the "
+        "sales-agent default when permissions is omitted"
+    )
+
+
+async def test_boot_live_harness_drops_the_primary_database_when_the_demo_create_fails(
+    monkeypatch,
+) -> None:
+    """`seed_demo=True` creates a SECOND (demo) throwaway database after the
+    primary one already exists: if that second `_create_database` call
+    raises, the primary database must still be dropped, never orphaned
+    (#119 review, medium finding). Every real I/O boundary up to the
+    simulated failure is faked; only the harness's own create/drop
+    bookkeeping is exercised.
+    """
+    from agents_system.evals import live_harness
+
+    created: list[str] = []
+    dropped: list[str] = []
+
+    async def fake_create_database(admin_url: str, name: str) -> None:
+        created.append(name)
+        if name.endswith("_demo"):
+            raise RuntimeError("simulated demo database creation failure")
+
+    async def fake_drop_database(admin_url: str, name: str) -> None:
+        dropped.append(name)
+
+    monkeypatch.setattr(live_harness, "_create_database", fake_create_database)
+    monkeypatch.setattr(live_harness, "_drop_database", fake_drop_database)
+
+    with pytest.raises(RuntimeError, match="simulated demo database creation failure"):
+        async with live_harness.boot_live_harness(seed_demo=True):
+            pass
+
+    assert len(created) == 2, (
+        f"expected primary + demo create attempts, got {created!r}"
+    )
+    assert dropped == created, (
+        "every created database must be dropped when the demo create fails -- "
+        f"created={created!r} dropped={dropped!r}"
+    )
+
+
+def test_seed_demo_company_passes_an_explicit_timeout_to_subprocess_run(
+    monkeypatch,
+) -> None:
+    """An unreachable or misconfigured demo database must fail fast, not
+    hang the whole live-eval process indefinitely (#119 review, medium
+    finding) -- `subprocess.run` needs an explicit, bounded `timeout=`.
+    """
+    import subprocess
+    from pathlib import Path
+
+    from agents_system.evals import live_harness
+
+    captured: dict[str, object] = {}
+
+    def fake_run(*args: object, **kwargs: object):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args[0] if args else [], 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    live_harness._seed_demo_company("postgresql://x/y", repo_root=Path("/tmp"))
+
+    assert isinstance(captured.get("timeout"), (int, float)), (
+        f"subprocess.run was called with no bounded timeout: {captured!r}"
+    )
+    assert captured["timeout"] > 0
+
+
+def test_seed_demo_company_raises_a_clear_error_on_timeout(monkeypatch) -> None:
+    """A `subprocess.TimeoutExpired` from the demo-seeding subprocess must
+    surface as a clear, distinguishing error -- not a hang, and not a bare
+    `TimeoutExpired` indistinguishable from any other subprocess failure
+    (#119 review, medium finding).
+    """
+    import subprocess
+    from pathlib import Path
+
+    from agents_system.evals import live_harness
+
+    def fake_run(*args: object, **kwargs: object):
+        raise subprocess.TimeoutExpired(
+            cmd="load_demo_company.py", timeout=kwargs.get("timeout", 1)
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="did not finish"):
+        live_harness._seed_demo_company("postgresql://x/y", repo_root=Path("/tmp"))
+
+
+# ---------------------------------------------------------------------------
 # render_provision_sql_readonly -- Phase 1 (#79) SQL-tool fixture
 # provisioning. Renders the CHECKED-IN `scripts/provision_sql_readonly.sql`
 # (#80, ADR-007) into plain SQL runnable over one asyncpg connection, so a

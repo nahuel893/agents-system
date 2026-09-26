@@ -527,6 +527,11 @@ shape, all opt-in (every #78 call keeps working with no changes):
 - **`role: Agent | str`, `permissions`** -- any predefined role (not just
   `sales-agent`) or a Python-built `Agent` (`agent.spec.Agent`,
   `Agent.from_folder(...)` included), with its own deploy-time grant.
+  Omitting `permissions` keeps #78's original `SALES_AGENT_PERMISSIONS`
+  default ONLY when `role` is left at its own `"sales-agent"` default; for
+  any other role, omitting `permissions` raises `ValueError` (#119 review) --
+  every non-default caller must state its own grant explicitly, never
+  inherit `sales-agent`'s.
 - **`seed_demo=True`** -- loads `demo/load_demo_company.py`'s fixture data
   (catalog, clients, sales) so `catalog_search`/`client_lookup`/`run_report`
   have real rows to query. Seeds into a SECOND throwaway database, never

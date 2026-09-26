@@ -572,7 +572,11 @@ sin cambios):
 - **`role: Agent | str`, `permissions`** -- cualquier rol predefinido (no
   solo `sales-agent`) o un `Agent` construido en Python (`agent.spec.Agent`,
   `Agent.from_folder(...)` incluido), con su propio grant de tiempo de
-  despliegue.
+  despliegue. Omitir `permissions` conserva el default original de #78
+  (`SALES_AGENT_PERMISSIONS`) SOLO cuando `role` queda en su propio default
+  `"sales-agent"`; para cualquier otro rol, omitir `permissions` lanza
+  `ValueError` (revisión #119) -- todo caller no-default debe declarar su
+  propio grant explícitamente, nunca heredar el de `sales-agent`.
 - **`seed_demo=True`** -- carga los datos de fixture de
   `demo/load_demo_company.py` (catálogo, clientes, ventas) para que
   `catalog_search`/`client_lookup`/`run_report` tengan filas reales para
