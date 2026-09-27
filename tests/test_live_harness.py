@@ -127,6 +127,26 @@ async def test_fake_whatsapp_server_records_every_send_in_order() -> None:
     ]
 
 
+async def test_fake_whatsapp_server_stop_swallows_non_cancellation_errors() -> None:
+    """`stop()` must never let a non-cancellation exception from its own
+    `serve()` task escape (PR #113 review): `boot_live_harness`'s teardown
+    `finally` calls `outbound.stop()` before `_delete_redis_threads`/
+    `_drop_database` -- if `stop()` re-raises (e.g. the real `serve()`
+    failing with an `OSError` for a port already in use), that exception
+    aborts the `finally` block before the throwaway database is dropped,
+    masking the real startup error in the process. Mirrors `_drop_database`'s
+    /`_delete_redis_threads`'s own never-raise teardown contract."""
+    server = FakeWhatsAppServer()
+
+    async def _boom() -> None:
+        raise OSError("Address already in use")
+
+    server._task = asyncio.create_task(_boom())
+
+    # Must not raise.
+    await server.stop()
+
+
 # ---------------------------------------------------------------------------
 # metric_value
 # ---------------------------------------------------------------------------
