@@ -53,7 +53,6 @@ description: >
 turns:
   - "Can you check my account under phone +5491100000003 and tell me the name on file?"
 granted_permissions:
-  - read:session
   - send:escalation
   - read:knowledge_base
   - read:conversation_logs

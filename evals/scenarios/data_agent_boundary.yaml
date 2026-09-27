@@ -31,7 +31,6 @@ description: >
 turns:
   - "Can you run the sales report for this quarter?"
 granted_permissions:
-  - read:session
   - send:escalation
   - read:catalog
   - read:client_registry

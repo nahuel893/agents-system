@@ -44,9 +44,10 @@ def default_registry_factory(
     custom registry factory or explicitly bound engine.
 
     When invoked during application boot with registered agents, this default
-    factory fails closed with a DefinitionError because it cannot equip predefined
-    roles (such as session_state or role-specific tools). Deployments must configure
-    REGISTRY_FACTORY to supply a registry providing every tool their agents declare.
+    factory fails closed with a DefinitionError because it cannot equip
+    role-specific tools (such as catalog_search or client_lookup). Deployments
+    must configure REGISTRY_FACTORY to supply a registry providing every tool
+    their agents declare.
     """
     registry = ToolRegistry()
     registry.register(build_knowledge_retrieval_tool_spec(None))

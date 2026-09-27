@@ -1,7 +1,7 @@
 ---
 extends: platform/roles/data-agent
 deployment: client-a
-tools: [run_report, client_lookup, catalog_search, session_state]
+tools: [run_report, client_lookup, catalog_search]
 skills: [report_context_disclosure, query_term_normalization]
 context:
   session: true

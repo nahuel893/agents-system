@@ -199,7 +199,7 @@ def test_audit_rows_statement_combines_every_filter() -> None:
     stmt = audit_rows_statement(
         role="sales-agent",
         event_type="tool_call_attempted",
-        tool_name="session_state",
+        tool_name="catalog_search",
         occurred_after=datetime(2026, 1, 1, tzinfo=UTC),
     )
     compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
@@ -208,7 +208,7 @@ def test_audit_rows_statement_combines_every_filter() -> None:
     assert "audit_event.event_type" in compiled
     assert "tool_call_attempted" in compiled
     assert "audit_event.tool_name" in compiled
-    assert "session_state" in compiled
+    assert "catalog_search" in compiled
     assert "audit_event.occurred_at" in compiled
 
 

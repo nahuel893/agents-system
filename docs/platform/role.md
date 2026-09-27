@@ -197,7 +197,6 @@ product catalog and price list.
 - whatsapp_sender
 - rag_catalog_search
 - postgres_order_writer
-- redis_session_state
 - client_lookup
 
 ## skills
@@ -253,7 +252,7 @@ product catalog and price list.
   retention_days: 90
 ```
 
-This agent definition folder defines the Preventa Agent's behavioral boundary. At instantiation time the platform injects exactly the five tools listed in `manifest.md`, the three skills listed, the session and user identity context, and validates that the requesting user holds all six permissions. The agent cannot delegate (`policy.md` sets `allowed: false`), so no orchestration policy is injected. Any condition in `policy.md`'s `escalation_rules` terminates the current execution path and hands control to a human operator.
+This agent definition folder defines the Preventa Agent's behavioral boundary. At instantiation time the platform injects exactly the four tools listed in `manifest.md`, the three skills listed, the session and user identity context, and validates that the requesting user holds all six permissions. (`session_state` was removed from predefined roles in #118; conversation memory is in the checkpointer, and structured memory is ADR-002 Wave 3 #29, #25). The agent cannot delegate (`policy.md` sets `allowed: false`), so no orchestration policy is injected. Any condition in `policy.md`'s `escalation_rules` terminates the current execution path and hands control to a human operator.
 
 ---
 

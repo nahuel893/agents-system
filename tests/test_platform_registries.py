@@ -46,7 +46,6 @@ ALL_PLATFORM_TOOLS = {
     "client_lookup",
     "order_writer",
     "message_sender",
-    "session_state",
     "knowledge_retrieval",
     "conversation_summarizer",
     "escalation_notifier",

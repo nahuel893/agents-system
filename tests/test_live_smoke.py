@@ -40,8 +40,6 @@ async def live_harness() -> AsyncIterator[LiveHarness]:
 
 
 async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> None:
-    session_id = f"smoke-{uuid.uuid4().hex[:8]}"
-
     metrics_before = await live_harness.scrape_metrics()
     turns_before = (
         metric_value(
@@ -55,10 +53,9 @@ async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> Non
 
     # --- Turn 1: the HTTP API (POST /v1/chat/completions) -----------------
     api_response = await live_harness.send_chat_completion(
-        "This is an automated harness check. Call the session_state tool "
-        f'with action="set", session_id="{session_id}-api", and '
-        'data={"note": "api-turn"}. Then reply with one short sentence '
-        "confirming you saved it. You must actually call the tool, not just "
+        "This is an automated harness check. Call the catalog_search tool "
+        'with q="fernet". Then reply with one short sentence '
+        "confirming you searched for it. You must actually call the tool, not just "
         "describe it."
     )
     assert api_response.status_code == 200, api_response.text
@@ -68,10 +65,10 @@ async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> Non
 
     api_audit_rows = await live_harness.audit_rows(correlation_id=correlation_id)
     assert any(
-        row.event_type == "tool_call_attempted" and row.tool_name == "session_state"
+        row.event_type == "tool_call_attempted" and row.tool_name == "catalog_search"
         for row in api_audit_rows
     ), (
-        "expected a session_state tool_call_attempted audit row for the API "
+        "expected a catalog_search tool_call_attempted audit row for the API "
         f"turn's correlation id {correlation_id!r}; got "
         f"{[(row.event_type, row.tool_name) for row in api_audit_rows]}"
     )
@@ -96,10 +93,9 @@ async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> Non
     webhook_response = await live_harness.deliver_webhook(
         phone=phone,
         text=(
-            "This is an automated harness check. Call the session_state "
-            f'tool with action="set", session_id="{session_id}-wa", and '
-            'data={"note": "webhook-turn"}. Then reply with one short '
-            "sentence confirming you saved it. You must actually call the "
+            "This is an automated harness check. Call the catalog_search "
+            'tool with q="fernet". Then reply with one short '
+            "sentence confirming you searched for it. You must actually call the "
             "tool, not just describe it."
         ),
     )
@@ -115,10 +111,10 @@ async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> Non
     assert sent["text"]["body"]
 
     webhook_audit_rows = await live_harness.audit_rows(
-        role="sales-agent", event_type="tool_call_attempted", tool_name="session_state"
+        role="sales-agent", event_type="tool_call_attempted", tool_name="catalog_search"
     )
     assert webhook_audit_rows, (
-        "expected at least one session_state tool_call_attempted audit row "
+        "expected at least one catalog_search tool_call_attempted audit row "
         "for the sales-agent role (webhook turns carry no per-request "
         "correlation id -- see live_harness.py's module docstring)"
     )

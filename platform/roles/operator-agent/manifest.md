@@ -1,6 +1,6 @@
 ---
 role: operator-agent
-version: "1.0"
+version: "2.0"
 extends: platform/roles/agent
 tools: [use_term, read_file]
 skills: []
@@ -28,5 +28,5 @@ Both tools set `always_revalidate=True`. Neither permission starts with
 call time by default — and a command that changes the host is exactly the
 sensitive read that opt-in exists for.
 
-Inherited from `agent`: `session_state` and `escalation_notifier`. An agent
-that can run commands and cannot escalate is the worst combination on offer.
+Inherited from `agent`: `escalation_notifier`. An agent that can run commands
+and cannot escalate is the worst combination on offer.

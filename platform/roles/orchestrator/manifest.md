@@ -1,8 +1,8 @@
 ---
 role: orchestrator
 extends: platform/roles/agent
-version: "2.0"
-tools: [client_lookup, session_state, escalation_notifier]
+version: "3.0"
+tools: [client_lookup, escalation_notifier]
 skills: []
 context:
   session: true
@@ -10,7 +10,6 @@ context:
   org_context: true
 permissions:
   - read:client_registry
-  - read:session
   - write:session
   - spawn:sales-agent
   - spawn:data-agent

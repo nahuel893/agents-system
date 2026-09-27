@@ -239,7 +239,6 @@ def test_base_contract_is_the_final_block_the_model_actually_receives() -> None:
         ("message_sender", ["send:message"]),
         ("catalog_search", ["read:catalog"]),
         ("order_writer", ["write:orders", "write:order_items"]),
-        ("session_state", []),
         ("client_lookup", ["read:client_registry"]),
         ("escalation_notifier", ["send:escalation"]),
     ):

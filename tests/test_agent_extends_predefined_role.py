@@ -39,9 +39,9 @@ def test_agent_extending_sales_agent_inherits_its_full_tool_surface() -> None:
 
 def test_agent_extending_the_generic_agent_starts_from_the_minimal_floor() -> None:
     """No predefined-role ancestor: the resolved agent inherits only
-    `agent`'s own floor (`session_state`/`escalation_notifier`,
-    `read:session`/`send:escalation`, `supervised` autonomy) before its own
-    fields fold on top — never a predefined role's extra tools."""
+    `agent`'s own floor (`escalation_notifier`, `send:escalation`,
+    `supervised` autonomy) before its own fields fold on top — never a
+    predefined role's extra tools."""
     from agents_system.agent.spec import Agent
 
     agent = Agent(name="triage-bot", extends="agent", tools=("catalog_search",))
@@ -49,9 +49,9 @@ def test_agent_extending_the_generic_agent_starts_from_the_minimal_floor() -> No
     definition = resolve(agent._to_locator(), roots=RootConfig())
 
     assert set(definition.tools) == {
-        "session_state",
         "escalation_notifier",
         "catalog_search",
     }
-    assert set(definition.permissions) >= {"read:session", "send:escalation"}
+    assert set(definition.permissions) >= {"send:escalation"}
+    assert "read:session" not in set(definition.permissions)
     assert definition.autonomy == "supervised"

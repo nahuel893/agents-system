@@ -313,14 +313,6 @@ def _full_sales_registry() -> Any:
             tier=Tier.T2,
         )
     )
-    reg.register(
-        ToolSpec(
-            name="session_state",
-            required_permissions=(),
-            connector=dummy,
-            tier=Tier.T0,
-        )
-    )
     return reg
 
 

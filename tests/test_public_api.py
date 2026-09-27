@@ -234,7 +234,7 @@ def test_consumer_builds_own_registry_and_tool_comes_back_granted() -> None:
             tier=agents_system.Tier.T1,
         )
     )
-    # The RESOLVED sales-agent declares 6 tools -- its own 5 plus
+    # The RESOLVED sales-agent declares 5 tools -- its own 4 plus
     # `escalation_notifier`, inherited from `platform/roles/agent`. The
     # injector raises on any declared tool absent from the registry, so a
     # consumer must cover the whole inherited surface, not just the leaf
@@ -243,7 +243,6 @@ def test_consumer_builds_own_registry_and_tool_comes_back_granted() -> None:
     for name, perms in (
         ("message_sender", ("send:message",)),
         ("order_writer", ("write:orders", "write:order_items")),
-        ("session_state", ()),
         ("client_lookup", ("read:client_registry",)),
         ("escalation_notifier", ("send:escalation",)),
     ):

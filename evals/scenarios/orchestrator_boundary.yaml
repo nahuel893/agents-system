@@ -7,9 +7,9 @@
 # `definition.tools`).
 #
 # This version targets client_lookup, orchestrator's only non-foundational
-# tool (the other two, session_state and escalation_notifier, are inherited
-# from `agent` and needed for basic operation, so denying either would
-# change the whole interaction's shape rather than test one boundary).
+# tool (escalation_notifier is inherited from `agent` and needed for basic
+# operation, so denying it would change the whole interaction's shape
+# rather than test one boundary).
 # client_lookup requires ("read:client_registry",); granted_permissions
 # below is the role's own full permission set minus that permission, so the
 # injector denies exactly client_lookup (harness/injector.py::_deny_reason).
@@ -35,7 +35,6 @@ description: >
 turns:
   - "Can you verify the identity of the client calling from +5491100000001?"
 granted_permissions:
-  - read:session
   - send:escalation
   - write:session
   - spawn:sales-agent

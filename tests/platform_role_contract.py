@@ -109,20 +109,17 @@ def discover_concrete_platform_roles() -> tuple[str, ...]:
 #: a change here is a change to what a platform role is allowed to do.
 EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
     # The taxonomy root that can be built. Everything below it inherits
-    # these two, which is why three roles gained `escalation_notifier`
+    # this tool, which is why three roles gained `escalation_notifier`
     # when they were re-parented: a base exists to stop each descendant
     # restating what they all need.
-    "agent": frozenset({"session_state", "escalation_notifier"}),
+    "agent": frozenset({"escalation_notifier"}),
     # The sibling branch: everything `agent` has, plus the two tools that
     # reach the host. Deliberately not reachable from any other role.
-    "operator-agent": frozenset(
-        {"session_state", "escalation_notifier", "use_term", "read_file"}
-    ),
+    "operator-agent": frozenset({"escalation_notifier", "use_term", "read_file"}),
     # Reads only, and every absence is deliberate: no order_writer, no
     # catalog_search. Selling is sales-agent's job.
     "support-agent": frozenset(
         {
-            "session_state",
             "escalation_notifier",
             "knowledge_retrieval",
             "conversation_summarizer",
@@ -131,10 +128,9 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
         }
     ),
     # The only role descending from operator-agent, so the only one that
-    # reaches the host. One tool declared, four inherited.
+    # reaches the host. One tool declared, three inherited.
     "developer-agent": frozenset(
         {
-            "session_state",
             "escalation_notifier",
             "use_term",
             "read_file",
@@ -144,7 +140,6 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
     # Holds no write permission of any kind.
     "accountant-agent": frozenset(
         {
-            "session_state",
             "escalation_notifier",
             "run_report",
             "knowledge_retrieval",
@@ -157,12 +152,9 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
             "client_lookup",
             "knowledge_retrieval",
             "run_report",
-            "session_state",
         }
     ),
-    "orchestrator": frozenset(
-        {"client_lookup", "session_state", "escalation_notifier"}
-    ),
+    "orchestrator": frozenset({"client_lookup", "escalation_notifier"}),
     "sales-agent": frozenset(
         {
             "escalation_notifier",
@@ -170,7 +162,6 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
             "client_lookup",
             "message_sender",
             "order_writer",
-            "session_state",
         }
     ),
     "summary-agent": frozenset(
@@ -178,7 +169,6 @@ EXPECTED_ROLE_TOOLS: dict[str, frozenset[str]] = {
             "escalation_notifier",
             "conversation_summarizer",
             "knowledge_retrieval",
-            "session_state",
         }
     ),
 }
@@ -195,23 +185,18 @@ PINNED_ROLES: tuple[str, ...] = tuple(sorted(EXPECTED_ROLE_TOOLS))
 #: CHANGELOG.md entry naming it — see `check_role_governance_snapshot`.
 EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
     "agent": RoleGovernanceSnapshot(
-        tools=frozenset({"session_state", "escalation_notifier"}),
-        permissions=frozenset({"read:session", "send:escalation"}),
-        version="1.0",
+        tools=frozenset({"escalation_notifier"}),
+        permissions=frozenset({"send:escalation"}),
+        version="2.0",
     ),
     "operator-agent": RoleGovernanceSnapshot(
-        tools=frozenset(
-            {"session_state", "escalation_notifier", "use_term", "read_file"}
-        ),
-        permissions=frozenset(
-            {"read:session", "send:escalation", "exec:command", "read:files"}
-        ),
-        version="1.0",
+        tools=frozenset({"escalation_notifier", "use_term", "read_file"}),
+        permissions=frozenset({"send:escalation", "exec:command", "read:files"}),
+        version="2.0",
     ),
     "support-agent": RoleGovernanceSnapshot(
         tools=frozenset(
             {
-                "session_state",
                 "escalation_notifier",
                 "knowledge_retrieval",
                 "conversation_summarizer",
@@ -221,7 +206,6 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
         ),
         permissions=frozenset(
             {
-                "read:session",
                 "send:escalation",
                 "read:knowledge_base",
                 "read:conversation_logs",
@@ -229,12 +213,11 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "send:message",
             }
         ),
-        version="1.0",
+        version="2.0",
     ),
     "developer-agent": RoleGovernanceSnapshot(
         tools=frozenset(
             {
-                "session_state",
                 "escalation_notifier",
                 "use_term",
                 "read_file",
@@ -243,19 +226,17 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
         ),
         permissions=frozenset(
             {
-                "read:session",
                 "send:escalation",
                 "exec:command",
                 "read:files",
                 "read:knowledge_base",
             }
         ),
-        version="1.0",
+        version="2.0",
     ),
     "accountant-agent": RoleGovernanceSnapshot(
         tools=frozenset(
             {
-                "session_state",
                 "escalation_notifier",
                 "run_report",
                 "knowledge_retrieval",
@@ -263,13 +244,12 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
         ),
         permissions=frozenset(
             {
-                "read:session",
                 "send:escalation",
                 "read:reports",
                 "read:knowledge_base",
             }
         ),
-        version="1.0",
+        version="2.0",
     ),
     "data-agent": RoleGovernanceSnapshot(
         tools=frozenset(
@@ -279,12 +259,10 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "client_lookup",
                 "knowledge_retrieval",
                 "run_report",
-                "session_state",
             }
         ),
         permissions=frozenset(
             {
-                "read:session",
                 "send:escalation",
                 "read:catalog",
                 "read:client_registry",
@@ -292,13 +270,12 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "read:reports",
             }
         ),
-        version="2.0",
+        version="3.0",
     ),
     "orchestrator": RoleGovernanceSnapshot(
-        tools=frozenset({"client_lookup", "session_state", "escalation_notifier"}),
+        tools=frozenset({"client_lookup", "escalation_notifier"}),
         permissions=frozenset(
             {
-                "read:session",
                 "send:escalation",
                 "read:client_registry",
                 "write:session",
@@ -307,7 +284,7 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "spawn:summary-agent",
             }
         ),
-        version="2.0",
+        version="3.0",
     ),
     "sales-agent": RoleGovernanceSnapshot(
         tools=frozenset(
@@ -317,12 +294,10 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "client_lookup",
                 "message_sender",
                 "order_writer",
-                "session_state",
             }
         ),
         permissions=frozenset(
             {
-                "read:session",
                 "send:escalation",
                 "read:catalog",
                 "read:client_registry",
@@ -332,7 +307,7 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "send:message",
             }
         ),
-        version="2.0",
+        version="3.0",
     ),
     "summary-agent": RoleGovernanceSnapshot(
         tools=frozenset(
@@ -340,19 +315,17 @@ EXPECTED_ROLE_SURFACE: dict[str, RoleGovernanceSnapshot] = {
                 "escalation_notifier",
                 "conversation_summarizer",
                 "knowledge_retrieval",
-                "session_state",
             }
         ),
         permissions=frozenset(
             {
-                "read:session",
                 "send:escalation",
                 "read:conversation_logs",
                 "read:knowledge_base",
                 "write:summary_output",
             }
         ),
-        version="2.0",
+        version="3.0",
     ),
 }
 
