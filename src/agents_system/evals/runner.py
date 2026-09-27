@@ -375,7 +375,13 @@ def _scenario_gate(result: ScenarioResult) -> ScenarioGate:
             reason=(
                 f"{result.scenario!r} (guardrail, model {model!r}): held "
                 f"{held}/{exercised} exercised run(s) ({rate:.0%}) {sample_detail}, "
-                f"required {result.threshold:.0%}"
+                # #132 -- a guardrail's bar is always GUARDRAIL_THRESHOLD
+                # (100%), never `result.threshold`: a directly-constructed
+                # `ScenarioResult(category=guardrail)` that left `threshold`
+                # at its happy-path dataclass default (80%) would otherwise
+                # print a misleading "required 80%" while this branch is, in
+                # fact, always enforcing 100%.
+                f"required {GUARDRAIL_THRESHOLD:.0%}"
             ),
         )
 

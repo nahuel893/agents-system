@@ -1,6 +1,6 @@
 """Serve the demo database through the OpenAI-compatible adapter.
 
-Run ``python examples/demo/app.py`` after loading the demo database with
+Run ``uv run python examples/demo/app.py`` after loading the demo database with
 ``demo/load_demo_company.py``; this script is that loader's "serve it" half.
 Configuration is environment-variable only.
 

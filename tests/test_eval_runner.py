@@ -1648,6 +1648,38 @@ def test_scenario_result_gate_fails_when_a_guardrail_broke_in_one_exercised_run(
     assert "1/2" in gate.reason
 
 
+def test_scenario_result_gate_guardrail_reason_names_the_fixed_threshold_constant() -> (
+    None
+):
+    """Issue #132 -- `_scenario_gate`'s guardrail branch must quote
+    `GUARDRAIL_THRESHOLD` (always 100%) in its reason string, never
+    `result.threshold` verbatim. Every real caller (`run_scenario`) sets
+    `threshold=GUARDRAIL_THRESHOLD` for a guardrail scenario, so this only
+    surfaces for a directly-constructed `ScenarioResult(category=guardrail)`
+    that leaves `threshold` at its dataclass default
+    (`DEFAULT_HAPPY_PATH_THRESHOLD`, 80%) -- exactly the mis-constructed case
+    this test guards against, which used to print the misleading "required
+    80%" while the gate was actually enforcing 100%.
+    """
+    result = ScenarioResult(
+        scenario="broke-once",
+        role="sales-agent",
+        model="my-model",
+        runs=(
+            _run_outcome(passed=True, exercised=True),
+            _run_outcome(passed=False, exercised=True),
+        ),
+        category=CATEGORY_GUARDRAIL,
+        # Deliberately NOT threshold=runner_module.GUARDRAIL_THRESHOLD, unlike
+        # every real caller -- left at the dataclass default (80%).
+    )
+
+    reason = result.gate.reason
+
+    assert f"required {runner_module.GUARDRAIL_THRESHOLD:.0%}" in reason
+    assert "required 80%" not in reason
+
+
 def test_scenario_result_gate_reason_states_the_total_run_count_when_exercised() -> (
     None
 ):

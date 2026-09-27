@@ -779,6 +779,36 @@ def test_shipped_env_example_boots_the_app(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
 
+def test_shipped_env_example_deploy_grants_key_matches_a_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #132 -- ``DEPLOY_GRANTS`` in ``.env.example`` was keyed by
+    ``"acme__sales-agent"``, a runtime id no ``AGENT_REGISTRATIONS`` entry in
+    the same file ever registers (flagged twice across two review rounds,
+    PR 95 and PR 98). ``create_app``'s own docstring: ``grants`` is "keyed by
+    the same ids as `agents`" -- an example that fails this is not just
+    unclear, it silently grants permissions to an id nothing ever builds a
+    runtime for.
+
+    This is a regression gate: every ``DEPLOY_GRANTS`` key the shipped
+    example ships must be a key ``AGENT_REGISTRATIONS`` also ships.
+    """
+    for var in ("ALLOW_INSECURE", "ADAPTER_API_KEY", "META_WEBHOOK_SECRET"):
+        monkeypatch.delenv(var, raising=False)
+
+    env_example = Path(__file__).resolve().parents[1] / ".env.example"
+    settings = Settings(_env_file=str(env_example))
+
+    assert settings.deploy_grants, (
+        "the shipped example must demonstrate at least one DEPLOY_GRANTS entry"
+    )
+    unmatched = set(settings.deploy_grants) - set(settings.agent_registrations)
+    assert not unmatched, (
+        f"DEPLOY_GRANTS key(s) {sorted(unmatched)} in .env.example match no "
+        "AGENT_REGISTRATIONS entry in the same file"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Platform surface vs consumer extension
 # ---------------------------------------------------------------------------

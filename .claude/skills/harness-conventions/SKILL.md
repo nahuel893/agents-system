@@ -48,5 +48,5 @@ Cross-cutting: `config.py` (pydantic Settings — **`.env` overrides code defaul
 
 1. Add the platform capability generically (role in `platform/roles/`, connector in `connectors/`).
 2. Inject client specifics under `deployments/<client>/`.
-3. Wire it into the lifespan runtime cache + `adapter_runtimes` in config.
+3. Register it (`AGENT_REGISTRATIONS` env var, or `create_app(agents=...)`), grant it (`DEPLOY_GRANTS`), and name it in `ADAPTER_RUNTIMES` / `WHATSAPP_RUNTIME_ID` -- the lifespan builds a runtime, and `main.py` exposes it, only once all three agree on the same runtime id (ADR-004 4b).
 4. Strict TDD: write the failing test first (`uv run pytest`). See the `run-app` skill to exercise it end to end.
