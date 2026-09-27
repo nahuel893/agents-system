@@ -56,6 +56,11 @@ skills-lock.json
 # CodeGraph index — generated, machine-local, and large.
 .codegraph/
 
+# Engram memory export (`engram sync`). The chunks are gzipped, so text scans
+# never see inside them, and they hold private working notes that have no
+# business in a public repository. Keep memories in Engram itself, not here.
+.engram/
+
 # Host forensic dumps (lastb/last/journal output). Machine-local evidence, and
 # they carry usernames and source addresses that have no business in a public
 # repository. Keep them, just not here.
