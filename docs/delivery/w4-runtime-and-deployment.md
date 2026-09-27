@@ -141,6 +141,26 @@ D-037 has a head start: `platform/roles/*/manifest.md` and
 work is making model and provider selection read from there, and validating it
 at startup instead of at first request.
 
+**D-037 — Done, #13.** A role's/deployment's `policy.md` (or the `Agent`/
+`Agent.from_folder` Python API's `model=` parameter) may declare
+`{provider, model, temperature?, max_tokens?}`. It resolves through the exact
+same fold/override machinery `execution_limits` already had: role-to-role
+`extends:` folds it per key, a deployment override replaces it wholesale, and
+— unlike `autonomy`/`execution_limits`/`audit_policy` — there is no ceiling
+check, because model/provider selection is not a capability or safety
+escalation. `main.py`'s `lifespan` builds a dedicated chat model for every
+runtime whose resolved definition declares one (`_resolve_model_for_
+definition`), still during boot, never lazily at first request; a runtime
+with no declaration keeps the single, global `ADAPTER_PROVIDER`-driven
+default exactly as before, so every existing deployment is unaffected. The
+closed key set (`harness.loader._validate_model_config`) structurally
+excludes any credential-shaped key — every real secret still comes only from
+`Settings`/the process environment, never from a versioned manifest.
+`MODEL_PRICES` (#78) needed no change: it is already keyed by the actual
+constructed model's own provider model id, regardless of which path built it.
+Docs: `docs/platform/policy.md` / `docs/platform_es/policy.md`, "Model
+configuration".
+
 D-038 is last on purpose. It is ergonomics over a mechanism that already works —
 a TUI that writes manifests. Valuable, but it must not consume the budget of the
 things that keep messages from being dropped.

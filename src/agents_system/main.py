@@ -326,8 +326,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 app.state.engine, expire_on_commit=False
             )
 
-            # Build chat model from configured provider
-            model = _build_chat_model(settings.adapter_provider)
+            # Build the shared, global default chat model from
+            # ADAPTER_PROVIDER. D-037 (issue #13, ADR-004) -- this stays the
+            # DEFAULT every runtime falls back to; a runtime whose own
+            # resolved definition declares its own `model:` gets a dedicated
+            # one instead, built per-runtime below
+            # (`_resolve_model_for_definition`).
+            default_model = _build_chat_model(settings.adapter_provider)
 
             # D-014 S4 (design AD-1/AD-7) — shared checkpointer, only built
             # when checkpointing is enabled at all. Injected into every
@@ -473,6 +478,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     session_provider=session_provider,
                     definition=definition,
                 )
+                # D-037 (issue #13, ADR-004) -- this runtime's own model:
+                # `default_model` unless `definition.model` names its own
+                # provider+model, in which case a dedicated one is built
+                # here, at boot -- never lazily at first request.
+                runtime_model = _resolve_model_for_definition(
+                    definition, settings, default_model
+                )
                 # #78 Phase 0 Slice 2 -- runtime_id=runtime_id labels this
                 # runtime's metrics with its registered runtime id (the
                 # opaque key from create_app(agents=...) or
@@ -481,7 +493,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # parameter docstring in agent/graph.py).
                 runtimes[runtime_id] = AgentRuntime(
                     runtime=equipped,
-                    model=model,
+                    model=runtime_model,
                     checkpointer=checkpointer,
                     runtime_id=runtime_id,
                 )
@@ -584,11 +596,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 _NO_API_KEY_PLACEHOLDER = "not-required"
 
 
-def _build_chat_model(provider: str) -> Any:
-    """Construct the chat model for the configured adapter provider.
+def _build_chat_model(
+    provider: str,
+    *,
+    model_override: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> Any:
+    """Construct the chat model for the given provider.
 
     Returns a LangChain BaseChatModel instance for the configured provider.
     Return typed as Any to avoid mypy false-positives from lazy imports.
+
+    D-037 (issue #13, ADR-004) -- ``model_override``/``temperature``/
+    ``max_tokens`` are an OPTIONAL per-agent override (an
+    `AgentDefinition.model` declaration, resolved by
+    `_resolve_model_for_definition`), never a caller requirement: every
+    existing call site that names none keeps building byte-identical to the
+    pre-D-037 defaults (`temperature=0` for ``openai_compatible``/``ollama``,
+    each provider's own hardcoded default model id). Credentials are
+    UNCHANGED by this parameter set -- still read exclusively from
+    ``Settings``/the process environment, never from an override, which is
+    exactly why `harness.loader._validate_model_config` never allows a
+    credential-shaped key into one.
     """
     import os
 
@@ -596,15 +626,30 @@ def _build_chat_model(provider: str) -> Any:
         from langchain_groq import ChatGroq
 
         api_key: str | None = os.getenv("GROQ_API_KEY") or None
-        return ChatGroq(model="llama-3.3-70b-versatile", api_key=api_key)  # type: ignore[arg-type]
+        groq_kwargs: dict[str, Any] = {}
+        if temperature is not None:
+            groq_kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            groq_kwargs["max_tokens"] = max_tokens
+        return ChatGroq(
+            model=model_override or "llama-3.3-70b-versatile",
+            api_key=api_key,  # type: ignore[arg-type]
+            **groq_kwargs,
+        )
 
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
         anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY") or None
+        anthropic_kwargs: dict[str, Any] = {}
+        if temperature is not None:
+            anthropic_kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            anthropic_kwargs["max_tokens"] = max_tokens
         return ChatAnthropic(  # type: ignore[call-arg]
-            model="claude-3-5-haiku-latest",
+            model=model_override or "claude-3-5-haiku-latest",
             anthropic_api_key=anthropic_api_key,
+            **anthropic_kwargs,
         )
 
     if provider == "openai_compatible":
@@ -619,7 +664,8 @@ def _build_chat_model(provider: str) -> Any:
                 "OPENAI_COMPATIBLE_BASE_URL is required when "
                 "ADAPTER_PROVIDER=openai_compatible"
             )
-        if not settings.openai_compatible_model:
+        model_id = model_override or settings.openai_compatible_model
+        if not model_id:
             raise ValueError(
                 "OPENAI_COMPATIBLE_MODEL is required when "
                 "ADAPTER_PROVIDER=openai_compatible"
@@ -637,11 +683,15 @@ def _build_chat_model(provider: str) -> Any:
             )
             compatible_api_key = _NO_API_KEY_PLACEHOLDER
 
+        openai_compatible_kwargs: dict[str, Any] = {}
+        if max_tokens is not None:
+            openai_compatible_kwargs["max_tokens"] = max_tokens
         return ReasoningSanitizedChatOpenAI(
-            model=settings.openai_compatible_model,
+            model=model_id,
             base_url=settings.openai_compatible_base_url,
             api_key=SecretStr(compatible_api_key),
-            temperature=0,
+            temperature=temperature if temperature is not None else 0,
+            **openai_compatible_kwargs,
         )
 
     # Default: ollama. Model + base URL come from Settings (#169, ADR-002
@@ -652,10 +702,54 @@ def _build_chat_model(provider: str) -> Any:
     from langchain_ollama import ChatOllama
 
     ollama_settings = get_settings()
+    ollama_kwargs: dict[str, Any] = {}
+    if max_tokens is not None:
+        # ChatOllama has no `max_tokens` field -- its equivalent is
+        # `num_predict` (verified against the installed langchain-ollama's
+        # own model fields; do not rename this to `max_tokens`).
+        ollama_kwargs["num_predict"] = max_tokens
     return ChatOllama(
-        model=ollama_settings.ollama_model,
+        model=model_override or ollama_settings.ollama_model,
         base_url=ollama_settings.ollama_base_url or None,
-        temperature=0,
+        temperature=temperature if temperature is not None else 0,
+        **ollama_kwargs,
+    )
+
+
+def _resolve_model_for_definition(
+    definition: Any, settings: Settings, default_model: Any
+) -> Any:
+    """The chat model ``definition``'s own runtime should use (D-037, issue
+    #13, ADR-004).
+
+    ``definition.model`` is ``None`` for the overwhelming majority of
+    resolved definitions -- no role/deployment/`Agent` in the chain declared
+    one -- in which case ``default_model`` (already built once from
+    ``settings.adapter_provider``, byte-identical to the pre-D-037 single
+    global model) is reused as-is: zero behavior change for an existing
+    deployment.
+
+    When it IS a mapping (already validated by
+    `harness.loader._validate_model_config` at resolution time -- this
+    function does not re-validate), a DEDICATED model is built fresh from
+    `_build_chat_model`, still reading every credential exclusively from
+    ``settings``/the process environment, never from ``definition.model``
+    itself (that mapping structurally cannot carry one).
+
+    ``isinstance(selection, Mapping)`` (not a truthiness check) deliberately
+    rejects anything that is not a real mapping -- including a `MagicMock`
+    test double's auto-created `.model` attribute, which is truthy but not a
+    mapping, so a test fixture that never explicitly sets `.model` keeps
+    resolving to ``default_model`` exactly as before this function existed.
+    """
+    selection = getattr(definition, "model", None)
+    if not isinstance(selection, Mapping) or not selection:
+        return default_model
+    return _build_chat_model(
+        selection["provider"],
+        model_override=selection["model"],
+        temperature=selection.get("temperature"),
+        max_tokens=selection.get("max_tokens"),
     )
 
 
