@@ -401,6 +401,128 @@ async def test_lifespan_skips_checkpointer_when_disabled() -> None:
         assert kwargs["checkpointer"] is None
 
 
+# ---------------------------------------------------------------------------
+# D-037 (issue #13, ADR-004) — a resolved definition's own `model:` builds a
+# dedicated per-runtime chat model; no declaration keeps the existing
+# single, global `ADAPTER_PROVIDER`-driven model (zero behavior change).
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_model_for_definition_falls_back_when_none() -> None:
+    from agents_system.main import _resolve_model_for_definition
+
+    fake_definition = MagicMock()
+    fake_definition.model = None
+    default_model = MagicMock(name="default_model")
+
+    with patch("agents_system.main._build_chat_model") as mock_build:
+        result = _resolve_model_for_definition(
+            fake_definition, _make_settings(), default_model
+        )
+
+    mock_build.assert_not_called()
+    assert result is default_model
+
+
+def test_resolve_model_for_definition_falls_back_for_non_mapping() -> None:
+    """A `MagicMock`-based fake definition that never set `.model` (most
+    existing lifespan tests) must keep resolving to the shared default,
+    never crash trying to subscript a mock as if it were a mapping."""
+    from agents_system.main import _resolve_model_for_definition
+
+    fake_definition = MagicMock()  # fake_definition.model is an unset MagicMock
+    default_model = MagicMock(name="default_model")
+
+    with patch("agents_system.main._build_chat_model") as mock_build:
+        result = _resolve_model_for_definition(
+            fake_definition, _make_settings(), default_model
+        )
+
+    mock_build.assert_not_called()
+    assert result is default_model
+
+
+def test_resolve_model_for_definition_builds_dedicated_model_when_declared() -> None:
+    from agents_system.main import _resolve_model_for_definition
+
+    fake_definition = MagicMock()
+    fake_definition.model = {
+        "provider": "groq",
+        "model": "llama-3.3-70b-versatile",
+        "temperature": 0.2,
+        "max_tokens": 128,
+    }
+    default_model = MagicMock(name="default_model")
+    dedicated_model = MagicMock(name="dedicated_model")
+
+    with patch(
+        "agents_system.main._build_chat_model", return_value=dedicated_model
+    ) as mock_build:
+        result = _resolve_model_for_definition(
+            fake_definition, _make_settings(), default_model
+        )
+
+    mock_build.assert_called_once_with(
+        "groq",
+        model_override="llama-3.3-70b-versatile",
+        temperature=0.2,
+        max_tokens=128,
+    )
+    assert result is dedicated_model
+    assert result is not default_model
+
+
+@pytest.mark.asyncio
+async def test_lifespan_builds_dedicated_model_for_agent_with_own_declaration() -> None:
+    """End-to-end through the real `lifespan()`: a resolved definition whose
+    `model` names its own provider gets ITS OWN `_build_chat_model` call,
+    distinct from the shared default built for every other runtime."""
+    test_settings = _make_settings()
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = None
+    fake_definition.model = {"provider": "anthropic", "model": "claude-3-5-opus"}
+    fake_equipped = MagicMock()
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agents_system.main._build_chat_model", return_value=MagicMock()
+        ) as mock_build_chat_model,
+        patch(
+            "agents_system.main._build_checkpointer_cm",
+            side_effect=_fake_checkpointer_cm_factory(MagicMock()),
+        ),
+        patch(
+            "agents_system.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agents_system.harness.loader.resolve", return_value=fake_definition),
+        patch(
+            "agents_system.harness.factory.build_runtime", return_value=fake_equipped
+        ),
+        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+    ):
+        app = create_test_app()
+
+        async with lifespan(app):
+            assert app.state.runtimes
+
+        # The default (no-override) call, made once from settings.adapter_provider,
+        # AND a second call for this runtime's own declared override.
+        override_calls = [
+            c
+            for c in mock_build_chat_model.call_args_list
+            if c.kwargs.get("model_override") == "claude-3-5-opus"
+        ]
+        assert len(override_calls) == 1
+        assert override_calls[0].args == ("anthropic",)
+
+
 @pytest.mark.asyncio
 async def test_lifespan_resource_teardown_survives_engine_dispose_failure() -> None:
     """engine.dispose() raising must not prevent whatsapp_client.aclose() or
@@ -612,6 +734,107 @@ def test_build_chat_model_ollama_defaults_leave_base_url_unset() -> None:
 
     assert model.model == "qwen2.5:3b"
     assert model.base_url is None
+
+
+# ---------------------------------------------------------------------------
+# D-037 (issue #13, ADR-004) — `_build_chat_model` accepts a per-agent
+# model/temperature/max_tokens override, while still reading every
+# credential exclusively from Settings/the process environment (unchanged).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected_class"),
+    [
+        ("ollama", "ChatOllama"),
+        ("groq", "ChatGroq"),
+        ("anthropic", "ChatAnthropic"),
+        ("openai_compatible", "ReasoningSanitizedChatOpenAI"),
+    ],
+)
+def test_build_chat_model_override_replaces_default_model_id(
+    provider: str, expected_class: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    with patch(
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model(provider, model_override="overridden-model-id")
+
+    assert type(model).__name__ == expected_class
+    model_attr = "model" if provider != "openai_compatible" else "model_name"
+    assert getattr(model, model_attr) == "overridden-model-id"
+
+
+def test_build_chat_model_override_leaves_credentials_to_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The override carries no credential of its own -- ANTHROPIC_API_KEY
+    still comes only from the environment, exactly as the global default
+    path already works."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "env-secret")
+    model = _build_chat_model("anthropic", model_override="claude-3-5-sonnet-latest")
+
+    assert model.model == "claude-3-5-sonnet-latest"
+    assert model.anthropic_api_key.get_secret_value() == "env-secret"
+
+
+def test_build_chat_model_temperature_and_max_tokens_override_anthropic() -> None:
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test"}):
+        model = _build_chat_model(
+            "anthropic",
+            model_override="claude-3-5-haiku-latest",
+            temperature=0.4,
+            max_tokens=256,
+        )
+
+    assert model.temperature == 0.4
+    assert model.max_tokens == 256
+
+
+def test_build_chat_model_temperature_and_max_tokens_override_groq() -> None:
+    with patch.dict("os.environ", {"GROQ_API_KEY": "test"}):
+        model = _build_chat_model(
+            "groq",
+            model_override="llama-3.3-70b-versatile",
+            temperature=0.9,
+            max_tokens=128,
+        )
+
+    assert model.temperature == 0.9
+    assert model.max_tokens == 128
+
+
+def test_build_chat_model_max_tokens_maps_to_num_predict_for_ollama() -> None:
+    """ChatOllama has no `max_tokens` field -- it is `num_predict` (verified
+    against the installed langchain-ollama's own model fields)."""
+    with patch("agents_system.main.get_settings", return_value=_make_settings()):
+        model = _build_chat_model("ollama", temperature=0.3, max_tokens=64)
+
+    assert model.temperature == 0.3
+    assert model.num_predict == 64
+
+
+def test_build_chat_model_openai_compatible_temperature_override() -> None:
+    with patch(
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model("openai_compatible", temperature=0.6, max_tokens=512)
+
+    assert model.temperature == 0.6
+    assert model.max_tokens == 512
+
+
+def test_build_chat_model_no_override_keeps_previous_defaults() -> None:
+    """Zero behavior change for a call site that names no override -- byte-
+    identical to the pre-D-037 defaults."""
+    with patch(
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model("openai_compatible")
+
+    assert model.temperature == 0
 
 
 # ---------------------------------------------------------------------------

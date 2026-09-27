@@ -172,6 +172,80 @@ Implementation and the full redaction table: `docs/platform/audit.md`.
 
 ---
 
+## Model configuration (D-037, ADR-004, issue #13)
+
+An agent's `policy.md` (a predefined role's own, a deployment override's, or
+the `Agent`/`Agent.from_folder` Python API's `model=` parameter) may declare
+which already-configured provider + model it runs on:
+
+```yaml
+model:
+  provider: anthropic          # ollama | groq | anthropic | openai_compatible
+  model: claude-3-5-sonnet-latest
+  temperature: 0.2             # optional, 0-2
+  max_tokens: 1024              # optional, positive integer
+```
+
+| Key | Required | Notes |
+|---|---|---|
+| `provider` | yes | One of the four values `ADAPTER_PROVIDER` accepts. |
+| `model` | yes | The provider's own model id (non-empty string). |
+| `temperature` | no | A finite number between 0 and 2. |
+| `max_tokens` | no | A positive integer, at most 1,000,000 (a sanity ceiling that catches a misplaced-decimal or unit-mixup typo, not a real provider limit). |
+
+No other key is accepted. This is closed deliberately: `provider`+`model`
+select WHICH already-configured provider/model to use, never a credential
+-- an API key, token or secret can never live in a `model:` block, in this
+file or in any deployment override. Every actual credential
+(`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `OPENAI_COMPATIBLE_API_KEY`, ...) is
+read exclusively from `Settings`/the process environment, the same as
+every provider the platform already supported. A `model:` block naming an
+unknown key, an unsupported `provider`, a missing/empty `model`, or a
+non-numeric `temperature`/`max_tokens` fails resolution with a
+`DefinitionError` naming the field and the reason.
+
+### Default: the global provider stays the default
+
+Declaring nothing (the overwhelming majority of roles today) is unchanged:
+the runtime uses the single, global `ADAPTER_PROVIDER`-driven model every
+existing deployment already runs on. Opting a role or deployment into its
+own `model:` never affects any other runtime.
+
+### Inheritance and override
+
+- **Role-to-role `extends:`** folds `model` per key, the same shape as
+  `execution_limits`: a child may declare only `temperature: 0.7` and still
+  inherit `provider`/`model` from its parent.
+- **A deployment override** replaces the role's `model:` wholesale, not per
+  key -- picking a provider+model for a client is a deliberate, complete
+  choice, not a partial tweak. A deployment that declares no `model:` at all
+  keeps the role's own.
+- **No ceiling.** Unlike `autonomy`/`execution_limits`/`audit_policy`,
+  model/provider selection is not a capability or safety escalation -- it
+  never widens what a role can do -- so an importer-authored `Agent` or a
+  deployment override may name ANY supported provider+model, never
+  restricted to "stricter than the parent."
+
+### Validated at boot, not at first request
+
+Every registered runtime's `model:` (if any) is resolved and its chat model
+is actually constructed during application startup (`main.py`'s
+`lifespan`), inside the same loop that already builds every other runtime
+-- a missing `OPENAI_COMPATIBLE_BASE_URL`, an unsupported provider, or any
+other malformed declaration fails boot loudly, the same posture every other
+boot-time configuration check in this file already has. Nothing here is
+deferred to the first inbound message.
+
+### Cost tracking is unaffected
+
+`MODEL_PRICES` (`Settings.model_prices`, see `docs/platform/live-eval.md`)
+stays keyed by the actual constructed model's own provider model id, which
+is unchanged by this feature: a runtime built from its own `model:`
+declaration is priced exactly the same way a runtime built from the global
+default already was.
+
+---
+
 ## Failure modes
 
 | Failure | Behavior |
