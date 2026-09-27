@@ -12,7 +12,7 @@ The platform gains `sql_query`, a tool that runs SQL **written by the model**. T
 
 **Why change it.** The live-test plan (`docs/delivery/live-test-plan.md`) needs ad hoc, read-only questions the report catalog cannot answer, and on 2026-09-25 the owner decided to build that as a real feature: a dedicated read-only role, allowlisted views only, a row limit and a statement timeout, its own permission, no DDL/DML, a single statement, capped results, tier recommended T2.
 
-**Numbering.** ADR-004 is library-first agents (`openspec/changes/library-first-agents/`), ADR-005 the operational-safety roadmap, and ADR-006 is tentatively reserved for delegation by the live-test plan. This is ADR-007.
+**Numbering.** ADR-004 is library-first agents (`openspec/changes/archive/2026-09-26-library-first-agents/`), ADR-005 the operational-safety roadmap, and ADR-006 is tentatively reserved for delegation by the live-test plan. This is ADR-007.
 
 ## Decision
 

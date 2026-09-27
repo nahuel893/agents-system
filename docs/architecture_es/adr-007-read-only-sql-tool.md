@@ -12,7 +12,7 @@ La plataforma incorpora `sql_query`, una herramienta que ejecuta SQL **escrito p
 
 **Por qué cambiarlo.** El plan de pruebas en vivo (`docs/delivery_es/live-test-plan.md`) necesita preguntas ad hoc de solo lectura que el catálogo de reportes no puede responder, y el 2026-09-25 el responsable decidió construirlo como funcionalidad real: rol de base de datos dedicado de solo lectura, solo vistas permitidas, límite de filas y timeout de sentencia, permiso propio, sin DDL/DML, una única sentencia, resultados acotados y tier recomendado T2.
 
-**Numeración.** ADR-004 corresponde a library-first agents (`openspec/changes/library-first-agents/`), ADR-005 a la hoja de ruta de seguridad operativa, y el plan de pruebas en vivo reserva tentativamente ADR-006 para la delegación. Este es ADR-007.
+**Numeración.** ADR-004 corresponde a library-first agents (`openspec/changes/archive/2026-09-26-library-first-agents/`), ADR-005 a la hoja de ruta de seguridad operativa, y el plan de pruebas en vivo reserva tentativamente ADR-006 para la delegación. Este es ADR-007.
 
 ## Decisión
 
