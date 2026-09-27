@@ -77,7 +77,8 @@ release-please currently believes is released; `pyproject.toml`'s
 `[project].version` is the file it edits to apply a release. A CI check
 (`tests/test_release_manifest.py`) fails the build if the two ever diverge,
 so a hand-edit to one without the other is caught immediately instead of
-surfacing later as a wrong build.
+surfacing later as a wrong build. The same test also checks `uv.lock`'s own
+`agents-system` entry against `pyproject.toml` (see below).
 
 ## What a release PR looks like
 
@@ -85,8 +86,18 @@ Running `scripts/release.sh pr` keeps exactly one standing pull request
 open, titled something like `chore(main): release 0.2.0`, that:
 
 - bumps `.release-please-manifest.json`, `pyproject.toml`'s `version`, and
-  the package's own entry in `uv.lock` (an `extra-files` rule), so the
-  lockfile never drifts from the released version;
+  the package's own entry in `uv.lock` (an `extra-files` rule with a TOML
+  `jsonpath`), so the lockfile never drifts from the released version. The
+  `jsonpath` must read `$.package[?(@.name.value == 'agents-system')].version`,
+  not `$.package[?(@.name == 'agents-system')].version` — release-please's
+  TOML updater parses with a tagging parser that wraps every scalar leaf
+  (strings, numbers) in a `{start, end, value}` object so it can splice the
+  file in place, so a filter predicate comparing `@.name` directly against a
+  string never matches; comparing `@.name.value` reaches the actual string
+  (issue #150). `tests/test_release_manifest.py` is a plain offline
+  `pytest` test (no network, no CI dependency) that fails if `uv.lock`'s
+  entry and `pyproject.toml` ever diverge, catching a regression of this
+  same jsonpath the moment `pytest -q` runs, locally or in CI;
 - writes the accumulated changes to a new dated `## [0.2.0]` heading in
   `CHANGELOG.md`, grouped into the configured sections (such as **Features**,
   **Bug Fixes**, and **Documentation**) and linked to their originating
