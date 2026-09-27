@@ -113,6 +113,14 @@ An importer folder is a trust boundary: whoever writes inside it may not be whoe
 - **Deployment skills are contained too.** `deployments/{client}/{role}/skills/{name}.md` must resolve inside both the deployments root and that `skills/` folder, so a skill name or role name with `..` in it cannot read outside it.
 - **Errors do not show host paths.** A loader error names a file relative to its root (`vip-support/policy.md`, `roles/<name>/policy.md`, `<client>/<role>/policy.md`), or names the agent. The one exception is a missing `platform_root` or `deployments_root`: that error prints the path that was searched, because the operator configured it and needs it to fix the setting.
 
+#### Siblings share a root — plan multi-tenant layouts around it
+
+`Agent.from_folder(path)` sets `root=path.parent`, which is deliberate: it is what lets a relative `extends:` (`extends: ../base-support`) reach a **sibling** folder at all (design.md D2). The corollary is the one to plan a layout around: two agent folders that share a parent directory share the same importer root, and either one's `extends:` chain can walk into the other and read its `role.md`/`manifest.md`/`policy.md` — the containment check only keeps reads *inside* the root, it says nothing about *which* folder inside that root is reachable.
+
+That is fine when every folder under a root belongs to the same tenant/deployer. It stops being fine the moment folders that must not read each other end up as siblings — for example, one folder per tenant under a single shared parent, expecting each tenant's `extends:` to be unable to reach another tenant's files. It can: `extends: ../other-tenant` resolves and loads cleanly, because both are inside the same root.
+
+The fix is at the call site, not the loader: give each mutually-untrusting folder **its own** root instead of a shared parent — call `Agent.from_folder` once per tenant with that tenant's own folder passed directly (so `root` becomes that tenant's own parent, not a folder holding every tenant), or build a `FolderLocator(path=..., root=...)` by hand with a `root` scoped to that one folder's own trust boundary. A per-tenant `root` makes another tenant's folder unreachable by construction: it is no longer inside the resolving folder's own root at all, so `_resolve_within_root` rejects it the same way it rejects any other escape.
+
 #### Reading after checking (TOCTOU)
 
 A check followed by a read leaves a window: a folder that passed the check can be swapped for a symlink before it is read. The loader closes that window on Linux and macOS with directory-handle reads. After the containment check, it opens the importer root and walks the checked path one folder at a time, opening each one relative to the previous one with `O_NOFOLLOW` (`os.open` with `dir_fd`). The file is opened the same way, non-blocking, and must be a regular file. A path component that became a symlink after the check fails the read instead of being followed, and a named pipe cannot block the load. A directory or named pipe where a file belongs fails the load with its handle closed, so reloading a hostile folder cannot exhaust the process's file descriptors.
@@ -121,7 +129,7 @@ This was chosen over documenting the window because it takes only the standard l
 
 Threat model:
 
-- **Untrusted:** anyone who can write inside an importer root, for example an uploaded or per-tenant agent folder.
+- **Untrusted:** anyone who can write inside an importer root, for example an uploaded or per-tenant agent folder. Every sibling folder under that same root is inside the same untrusted boundary and can be reached by another sibling's `extends:` chain (see "Siblings share a root" below) — a per-tenant layout must give each tenant its own root, never share one parent folder across tenants.
 - **Trusted:** the root path itself and everything above it, the platform role tree (`platform/roles/`) and the deployments tree. Those are the deployer's, so their role files are read by path.
 - **Out of scope:** hard links (a hard link inside the root to a file elsewhere on the same filesystem is a regular file inside the root, so keep untrusted importer roots on their own filesystem, or keep Linux's `fs.protected_hardlinks` on), mount points inside the root, and a folder whose files change between the three reads (each read is contained, but `role.md` and `policy.md` can come from different moments).
 - **Other platforms:** where `os.open` has no `dir_fd` support (Windows), the read falls back to a plain path read after the same check, and the window stays open there.
