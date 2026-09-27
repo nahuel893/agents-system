@@ -226,6 +226,33 @@ def test_role_extends_folds_model_per_key(tmp_path: pathlib.Path) -> None:
     }
 
 
+def test_role_extends_non_mapping_child_model_is_rejected_not_silently_inherited(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Issue #146 review: `_fold_parent_into_child`'s `model` fold only
+    branches on ``isinstance(child_model, dict)`` -- a non-mapping,
+    non-None, non-'inherit' child value (a bare scalar, the same authoring
+    typo `_resolve_model_declaration` already rejects at every OTHER
+    boundary) fell through to the `else` branch and silently resolved to
+    the PARENT's model instead of raising, discarding the child's malformed
+    declaration with no error at all."""
+    roots = _platform_roots(tmp_path)
+    _write_platform_role(
+        roots.platform_root,
+        "model-parent2",
+        policy_extra=_MODEL_BLOCK,
+    )
+    _write_platform_role(
+        roots.platform_root,
+        "model-child-typo",
+        extends="model-parent2",
+        policy_extra="model: 5\n",
+    )
+
+    with pytest.raises(DefinitionError, match="model"):
+        resolve("model-child-typo", roots=roots)
+
+
 # ---------------------------------------------------------------------------
 # 5. Validation -- shape/value only, never a ceiling.
 # ---------------------------------------------------------------------------

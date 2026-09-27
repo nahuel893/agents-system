@@ -472,6 +472,30 @@ def test_resolve_model_for_definition_builds_dedicated_model_when_declared() -> 
     assert result is not default_model
 
 
+def test_resolve_model_for_definition_names_the_role_when_its_model_fails_to_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #146 review: a per-agent `model:` declaration that fails to
+    build (e.g. a missing provider credential) must name WHICH role it was
+    for -- `_build_chat_model` itself has no runtime/role context, so
+    `_resolve_model_for_definition` (which does) adds it."""
+    from agents_system.main import _resolve_model_for_definition
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fake_definition = MagicMock()
+    fake_definition.role_name = "acme-support-agent"
+    fake_definition.model = {
+        "provider": "anthropic",
+        "model": "claude-3-5-haiku-latest",
+    }
+    default_model = MagicMock(name="default_model")
+
+    with pytest.raises(ValueError, match="acme-support-agent") as excinfo:
+        _resolve_model_for_definition(fake_definition, _make_settings(), default_model)
+
+    assert "ANTHROPIC_API_KEY" in str(excinfo.value)
+
+
 @pytest.mark.asyncio
 async def test_lifespan_builds_dedicated_model_for_agent_with_own_declaration() -> None:
     """End-to-end through the real `lifespan()`: a resolved definition whose
@@ -619,6 +643,25 @@ def test_build_chat_model_dispatches_by_provider(
         model = _build_chat_model(provider)
 
     assert type(model).__name__ == expected_class
+
+
+def test_build_chat_model_anthropic_requires_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #146 review: unlike groq (`ChatGroq` validates eagerly and
+    raises `GroqError` on a `None` key) and openai_compatible (this same
+    function's own explicit `OPENAI_COMPATIBLE_BASE_URL`/`_MODEL` guards),
+    anthropic used to construct successfully with no key at all --
+    `ChatAnthropic` validates nothing at construction time. With per-agent
+    models (#141) a role can now select its own provider, so a missing
+    credential must fail loudly at boot, the same posture every other
+    provider already has, not surface as an opaque authentication error on
+    the role's first turn.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+        _build_chat_model("anthropic")
 
 
 def test_build_chat_model_wires_openai_compatible_from_settings() -> None:

@@ -210,6 +210,43 @@ def test_changelog_check_rejects_unicode_dash_lookalike_collision(
     assert "CHANGELOG" in str(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    "lookalike_connector",
+    [
+        "⁓",  # SWUNG DASH (category Po, NOT Pd -- outside #134's normalization)
+        "‧",  # HYPHENATION POINT (category Po, NOT Pd)
+        "‿",  # UNDERTIE (category Pc, NOT Pd)
+    ],
+)
+def test_changelog_check_rejects_non_dash_connector_lookalike_collision(
+    lookalike_connector: str,
+) -> None:
+    """Regression (issue #146 review): #134 closed the collision for every
+    Unicode DASH-punctuation (category ``Pd``) look-alike by normalizing
+    that one category to ASCII ``-``. A look-alike from a DIFFERENT general
+    category that still visually/semantically joins a compound word --
+    e.g. the swung dash (``Po``) or the undertie (``Pc``) -- is neither
+    ``\\w`` nor the excluded ASCII ``-``/normalized dash, so the OLD
+    blacklist-shaped boundary check (\"anything that is not ``\\w``/``-`` is
+    a valid boundary\") still treated it as one, reopening the exact bug one
+    character class away. An explicit allowlist of real boundary characters
+    closes this for every such class at once, not one enumerated category
+    at a time."""
+    lookalike_changelog_text = (
+        f"### sales{lookalike_connector}agent gained order_writer\n"
+    )
+    with pytest.raises(AssertionError) as excinfo:
+        check_role_governance_snapshot(
+            "agent",
+            _FIXTURE_SNAPSHOT.tools | {"new_tool"},
+            _FIXTURE_SNAPSHOT.permissions,
+            "2.0",  # MAJOR bump satisfied
+            _FIXTURE_SNAPSHOT,
+            changelog_text=lookalike_changelog_text,
+        )
+    assert "CHANGELOG" in str(excinfo.value)
+
+
 def test_divergence_with_both_conditions_passes() -> None:
     check_role_governance_snapshot(
         _FIXTURE_ROLE,

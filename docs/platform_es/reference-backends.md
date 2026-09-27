@@ -123,14 +123,19 @@ registry.register(backends.message_sender_tool_spec())
   proceso. Un destinatario desconocido devuelve `status: "not_found"`.
 - `catalog_search` es solo léxica (subcadenas en SKU o descripción); no
   afirma búsqueda vectorial ni semántica. Aun así reporta una señal de
-  confianza real (#117): una coincidencia exacta, sin distinguir mayúsculas,
-  en el SKU o la descripción devuelve `classification: "direct"` con
+  confianza real (#117): la respuesta se clasifica como `"direct"` en cuanto
+  CUALQUIER fila devuelta es una coincidencia exacta, sin distinguir
+  mayúsculas, en el SKU o la descripción — solo esa fila devuelve
   `similarity: 1.0`, la clasificación de la plataforma para una coincidencia
   confiable (el contrato de `catalog_search` en `docs/platform/tool.md`).
-  Cualquier otra coincidencia es `classification: "ambiguous"` con
-  `similarity: null` — una coincidencia parcial por subcadena no tiene una
-  señal de distancia real más allá de "no es idéntica". Una consulta vacía o
-  sin coincidencias devuelve `results: []` con `classification: "no_match"`.
+  `classification` es una propiedad de toda la respuesta, no de cada fila:
+  una fila no exacta devuelta junto a esa coincidencia exacta sigue
+  reportando su propio `similarity: null`, aunque la respuesta completa sea
+  `"direct"`. Una respuesta sin ninguna coincidencia exacta se clasifica
+  como `"ambiguous"`, y cada fila en ella reporta `similarity: null` — una
+  coincidencia parcial por subcadena no tiene una señal de distancia real
+  más allá de "no es idéntica". Una consulta vacía o sin coincidencias
+  devuelve `results: []` con `classification: "no_match"`.
 - `run_report` expone el `CATALOG` portátil y cerrado de ventas; su esquema
   de herramienta documenta el tipo, los valores permitidos y el valor por
   defecto de cada parámetro desde las definiciones `ReportSpec` / `ParamSpec`

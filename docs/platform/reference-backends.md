@@ -120,13 +120,18 @@ registry.register(backends.message_sender_tool_spec())
   unknown recipient returns `status: "not_found"`.
 - `catalog_search` is lexical only (SKU or description substring matching);
   it makes no vector or semantic-search claim. It still reports a real
-  confidence signal (#117): an exact, case-insensitive match on the SKU or
-  description reports `classification: "direct"` with `similarity: 1.0`, the
-  platform's classification for a confident match (`docs/platform/tool.md`'s
-  `catalog_search` contract). Any other hit is `classification: "ambiguous"`
-  with `similarity: null` — a partial substring match has no real distance
-  signal beyond "not identical". An empty query or no match returns
-  `results: []` with `classification: "no_match"`.
+  confidence signal (#117): the response classifies as `"direct"` the
+  moment ANY returned row is an exact, case-insensitive match on the SKU or
+  description — that row alone reports `similarity: 1.0`, the platform's
+  classification for a confident match (`docs/platform/tool.md`'s
+  `catalog_search` contract). `classification` is a property of the whole
+  response, not of each row: a non-exact row returned alongside that exact
+  one still reports its own `similarity: null`, even though the response as
+  a whole is `"direct"`. A response with no exact hit at all classifies as
+  `"ambiguous"`, and every row in it reports `similarity: null` — a partial
+  substring match has no real distance signal beyond "not identical". An
+  empty query or no match returns `results: []` with
+  `classification: "no_match"`.
 - `run_report` exposes the closed portable sales `CATALOG`; its tool schema
   documents every report parameter's type, allowed values, and default from
   the catalog's `ReportSpec` / `ParamSpec` definitions. A parameter shared by
