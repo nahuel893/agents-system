@@ -173,6 +173,84 @@ Implementación y tabla completa de redacción: `docs/platform_es/audit.md`.
 
 ---
 
+## Configuración de modelo (D-037, ADR-004, issue #13)
+
+El `policy.md` de un agente (el de un rol predefinido, el de una anulación de
+despliegue, o el parámetro `model=` de la API Python `Agent`/
+`Agent.from_folder`) puede declarar sobre qué proveedor + modelo ya
+configurado corre:
+
+```yaml
+model:
+  provider: anthropic          # ollama | groq | anthropic | openai_compatible
+  model: claude-3-5-sonnet-latest
+  temperature: 0.2             # opcional, 0-2
+  max_tokens: 1024              # opcional, entero positivo
+```
+
+| Clave | Requerida | Notas |
+|---|---|---|
+| `provider` | sí | Uno de los cuatro valores que acepta `ADAPTER_PROVIDER`. |
+| `model` | sí | El id de modelo propio del proveedor (string no vacío). |
+| `temperature` | no | Un número finito entre 0 y 2. |
+| `max_tokens` | no | Un entero positivo, como máximo 1.000.000 (un techo de sanidad que detecta un typo de decimal mal ubicado o de mezcla de unidades, no un límite real de ningún proveedor). |
+
+No se acepta ninguna otra clave. Esto es deliberadamente cerrado:
+`provider`+`model` seleccionan QUÉ proveedor/modelo ya configurado usar,
+nunca una credencial -- una API key, token o secreto nunca puede vivir en
+un bloque `model:`, ni en este archivo ni en ninguna anulación de
+despliegue. Toda credencial real (`ANTHROPIC_API_KEY`, `GROQ_API_KEY`,
+`OPENAI_COMPATIBLE_API_KEY`, ...) se lee exclusivamente desde `Settings`/el
+entorno de proceso, igual que con cualquier proveedor que la plataforma ya
+soportaba. Un bloque `model:` que declare una clave desconocida, un
+`provider` no soportado, un `model` faltante o vacío, o un
+`temperature`/`max_tokens` no numérico, falla la resolución con un
+`DefinitionError` que nombra el campo y la razón.
+
+### Por defecto: el proveedor global sigue siendo el default
+
+No declarar nada (la gran mayoría de los roles hoy) no cambia nada: el
+runtime usa el único modelo global, gobernado por `ADAPTER_PROVIDER`, sobre
+el que ya corre cada despliegue existente. Que un rol o despliegue adopte su
+propio `model:` nunca afecta a ningún otro runtime.
+
+### Herencia y anulación
+
+- **`extends:` entre roles** combina `model` clave por clave, la misma
+  forma que `execution_limits`: un hijo puede declarar solo
+  `temperature: 0.7` y aun así heredar `provider`/`model` de su padre.
+- **Una anulación de despliegue** reemplaza el `model:` del rol por
+  completo, no clave por clave -- elegir un proveedor+modelo para un
+  cliente es una decisión deliberada y completa, no un ajuste parcial. Un
+  despliegue que no declara ningún `model:` conserva el del rol.
+- **Sin techo (*ceiling*).** A diferencia de `autonomy`/`execution_limits`/
+  `audit_policy`, elegir modelo/proveedor no es una escalada de capacidad
+  o seguridad -- nunca amplía lo que un rol puede hacer -- así que un
+  `Agent` importado o una anulación de despliegue puede nombrar CUALQUIER
+  proveedor+modelo soportado, sin estar restringido a "más estricto que el
+  padre".
+
+### Validado al arrancar, no en la primera solicitud
+
+El `model:` de cada runtime registrado (si lo tiene) se resuelve y su
+modelo de chat se construye realmente durante el arranque de la aplicación
+(`lifespan` de `main.py`), dentro del mismo bucle que ya construye cada
+otro runtime -- un `OPENAI_COMPATIBLE_BASE_URL` faltante, un proveedor no
+soportado, o cualquier otra declaración malformada hace fallar el arranque
+en voz alta, la misma postura que ya tiene cualquier otra verificación de
+configuración de arranque en este documento. Nada aquí se difiere hasta el
+primer mensaje entrante.
+
+### El seguimiento de costos no se ve afectado
+
+`MODEL_PRICES` (`Settings.model_prices`, ver `docs/platform_es/live-eval.md`)
+sigue indexado por el id de modelo del proveedor que realmente construyó el
+modelo, lo cual no cambia con esta funcionalidad: un runtime construido a
+partir de su propio `model:` se tarifa exactamente igual que uno construido
+a partir del default global.
+
+---
+
 ## Modos de fallo (*Failure modes*)
 
 | Fallo | Comportamiento |

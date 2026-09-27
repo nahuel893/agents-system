@@ -242,6 +242,15 @@ class AgentDefinition:
     #: walking from this root (`_read_within_root`). `None` exactly when
     #: `skills_folder` is.
     importer_root: pathlib.Path | None = None
+    #: D-037 (issue #13, ADR-004). `None` means this runtime uses the
+    #: global `ADAPTER_PROVIDER`-driven default (`main._build_chat_model`,
+    #: unchanged) -- the overwhelming majority of resolved definitions.
+    #: Otherwise a fully validated `{"provider": ..., "model": ...,
+    #: "temperature"?: ..., "max_tokens"?: ...}` mapping (never a
+    #: credential -- see `_validate_model_config`), which
+    #: `main._resolve_model_for_definition` builds a dedicated chat model
+    #: from at boot, never at first request.
+    model: Mapping[str, Any] | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -329,6 +338,17 @@ class RawDefinition:
     #: Issue #75. Set with `skills_folder`, to the `FolderLocator.root` it
     #: belongs to; see `AgentDefinition.importer_root`.
     importer_root: pathlib.Path | None = None
+    #: D-037 (issue #13, ADR-004) -- the raw `model:` declaration: `None`
+    #: (not declared -- inherits the parent's, or falls back to the global
+    #: `ADAPTER_PROVIDER`-driven default), the string `"inherit"`, or a
+    #: mapping with `provider`/`model` and optional `temperature`/
+    #: `max_tokens`. Shape/value-checked by `_validate_model_config` only at
+    #: the two `AgentDefinition`-construction sites (`_merge_validated`,
+    #: `resolve`'s no-override branch) -- exactly the same validation depth
+    #: `execution_limits` gets, which this field otherwise mirrors. Never a
+    #: capability or safety ceiling: an override may name ANY supported
+    #: provider+model, so there is no `_apply_importer_ceiling` involvement.
+    model: Mapping[str, Any] | str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1687,6 +1707,7 @@ _FOLDER_OVERRIDE_FIELDS: Mapping[str, str | None] = {
     "audit_policy": "audit_policy",
     "execution_limits": "execution_limits",
     "untrusted_input": "untrusted_input",
+    "model": "model",
 }
 
 
@@ -1910,6 +1931,11 @@ def _load_role_files(
         memory_policy=dict(policy_fm.get("memory_policy") or {}),
         audit_policy=dict(policy_fm.get("audit_policy") or {}),
         execution_limits=policy_fm.get("execution_limits"),
+        # D-037 (issue #13, ADR-004). Absent means NOT DECLARED (`None`): the
+        # role inherits its parent's `model:` (`_fold_parent_into_child`, per
+        # key, same shape as `execution_limits`) or, at the chain root, falls
+        # back to the global `ADAPTER_PROVIDER`-driven default.
+        model=policy_fm.get("model"),
         # ADR-002 C.11. Absent means NOT DECLARED (`None`), same reasoning as
         # `autonomy` above: a child role inherits the parent's value, so
         # defaulting here would erase the difference between "declared
@@ -1950,7 +1976,7 @@ def _plain_policies(definition: RawDefinition) -> RawDefinition:
     """
     changes: dict[str, Any] = {
         field: dict(value)
-        for field in (*_POLICY_FIELDS, "execution_limits")
+        for field in (*_POLICY_FIELDS, "execution_limits", "model")
         if isinstance(value := getattr(definition, field), Mapping)
         and not isinstance(value, dict)
     }
@@ -2080,6 +2106,23 @@ def _fold_parent_into_child(
     else:
         resolved_limits = parent_limits
 
+    # D-037 (issue #13, ADR-004) -- `model` folds exactly like
+    # `execution_limits` above: per-key merge, so a child role may override
+    # just `temperature` while inheriting `provider`/`model` from its
+    # parent. No ceiling either: model/provider selection is not a
+    # capability or safety escalation between two platform roles, same
+    # "same author writes both files" reasoning `execution_limits`/
+    # `autonomy` document above.
+    parent_model = dict(parent.model) if isinstance(parent.model, dict) else None
+    child_model = child.model
+    if isinstance(child_model, dict):
+        resolved_model: dict[str, Any] | str | None = {
+            **(parent_model or {}),
+            **child_model,
+        }
+    else:
+        resolved_model = parent_model
+
     def _merge_mapping(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         merged = dict(a)
         merged.update(b)
@@ -2157,6 +2200,7 @@ def _fold_parent_into_child(
         memory_policy=_fold_policy("memory_policy"),
         audit_policy=resolved_audit,
         execution_limits=resolved_limits,
+        model=resolved_model,
         untrusted_input=resolved_untrusted_input,
         command_tools=_union_preserving_order(
             parent.command_tools, child.command_tools
@@ -2466,6 +2510,13 @@ def load_override(
         memory_policy=dict(policy_fm.get("memory_policy") or {}),
         audit_policy=dict(policy_fm.get("audit_policy") or {}),
         execution_limits=policy_fm.get("execution_limits"),
+        # D-037 (issue #13). `None` means the deployment says nothing and
+        # inherits the resolved role's `model:` -- see `_merge_validated`. A
+        # declared mapping REPLACES the role's wholesale (a deployment
+        # operator picking a model is a deliberate, complete choice, not a
+        # partial tweak -- unlike the role-to-role fold in
+        # `_fold_parent_into_child`, which merges per key).
+        model=policy_fm.get("model"),
         # ADR-002 C.11. `None` means the override says nothing and inherits
         # the resolved role's value — see `_validate_untrusted_input_monotonic`.
         # `_parse_untrusted_input` type-checks whatever was actually written.
@@ -3006,6 +3057,146 @@ def _validate_execution_limits(
             )
 
 
+#: D-037 (issue #13, ADR-004) -- the provider values `main._build_chat_model`
+#: dispatches on. Kept identical to `Settings.adapter_provider`'s `Literal`
+#: (config.py); the loader cannot import `main`/`config` here without risking
+#: a cycle (`main` imports this module), so
+#: `tests/test_model_configuration.py::
+#: test_supported_providers_are_exactly_the_adapter_provider_literal` pins
+#: the two sets equal instead.
+_SUPPORTED_MODEL_PROVIDERS = frozenset(
+    {"ollama", "groq", "anthropic", "openai_compatible"}
+)
+
+#: The closed key set a `model:` declaration may use. Closed deliberately:
+#: `provider`/`model` select WHICH already-configured provider/model to use,
+#: never a credential -- `main._build_chat_model` reads every real secret
+#: exclusively from `Settings`/the process environment. A key outside this
+#: set (an attempted `api_key`, `token`, `secret`, ...) is rejected by
+#: `_validate_model_config`, so a versioned manifest structurally cannot
+#: carry one.
+_MODEL_CONFIG_KEYS = frozenset({"provider", "model", "temperature", "max_tokens"})
+
+#: A generous ceiling most hosted providers document as their own maximum
+#: (matches `config._MAX_PRICE_PER_MILLION`'s "reject nonsense, not tune to
+#: the provider" spirit) -- exists only to catch a misplaced-decimal or
+#: unit-mixup typo at boot, not to model any one provider's exact range.
+_MAX_MODEL_TEMPERATURE = 2.0
+
+#: Same "reject nonsense, not tune to the provider" spirit as
+#: `_MAX_MODEL_TEMPERATURE` above, for `max_tokens` (PR #141 review): no
+#: shipped provider documents an output-token limit anywhere near this, so
+#: it exists only to catch a misplaced-decimal or unit-mixup typo
+#: (`max_tokens: 1000000000` for `1000`) at boot, never to bound a real one.
+_MAX_MODEL_MAX_TOKENS = 1_000_000
+
+
+def _validate_model_config(value: Mapping[str, Any], *, who: str) -> None:
+    """Validate a resolved `model:` declaration (D-037, ADR-004).
+
+    Unlike `autonomy`/`execution_limits`/`audit_policy`, model/provider
+    selection is not a capability or safety ceiling -- it never widens what
+    a role can do -- so this checks SHAPE and VALUES only. There is no
+    parent/deployment ceiling to compare against, and no
+    `_apply_importer_ceiling` involvement.
+
+    Raises `DefinitionError` naming ``who``, the field and the reason, the
+    same style every other loader invariant uses.
+    """
+    unknown = sorted(set(value) - _MODEL_CONFIG_KEYS)
+    if unknown:
+        raise DefinitionError(
+            f"Invariant violation — model: {who} declares unknown key(s) "
+            f"{unknown} in its model configuration. Allowed keys: "
+            f"{sorted(_MODEL_CONFIG_KEYS)}. Credentials are never read from "
+            "here -- they come only from Settings/the process environment "
+            "(e.g. ANTHROPIC_API_KEY, GROQ_API_KEY)."
+        )
+
+    provider = value.get("provider")
+    if provider not in _SUPPORTED_MODEL_PROVIDERS:
+        raise DefinitionError(
+            f"Invariant violation — model: {who} declares "
+            f"provider={provider!r}, which is not one of "
+            f"{sorted(_SUPPORTED_MODEL_PROVIDERS)}."
+        )
+
+    model_id = value.get("model")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise DefinitionError(
+            f"Invariant violation — model: {who} declares model={model_id!r}, "
+            "which must be a non-empty string naming the provider's model id."
+        )
+
+    if "temperature" in value:
+        temperature = value["temperature"]
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, int | float)
+            or not math.isfinite(temperature)
+            or not 0 <= temperature <= _MAX_MODEL_TEMPERATURE
+        ):
+            raise DefinitionError(
+                f"Invariant violation — model: {who} declares "
+                f"temperature={temperature!r}, which must be a finite number "
+                f"between 0 and {_MAX_MODEL_TEMPERATURE}."
+            )
+
+    if "max_tokens" in value:
+        max_tokens = value["max_tokens"]
+        if (
+            isinstance(max_tokens, bool)
+            or not isinstance(max_tokens, int)
+            or max_tokens <= 0
+        ):
+            raise DefinitionError(
+                f"Invariant violation — model: {who} declares "
+                f"max_tokens={max_tokens!r}, which must be a positive integer."
+            )
+        if max_tokens > _MAX_MODEL_MAX_TOKENS:
+            raise DefinitionError(
+                f"Invariant violation — model: {who} declares "
+                f"max_tokens={max_tokens!r}, which exceeds the sanity ceiling "
+                f"of {_MAX_MODEL_MAX_TOKENS} (catches a misplaced-decimal or "
+                "unit-mixup typo, not any one provider's real limit)."
+            )
+
+
+def _resolve_model_declaration(
+    value: Mapping[str, Any] | str | None, *, who: str
+) -> Mapping[str, Any] | None:
+    """Resolve one already-folded `model:` declaration to either `None`
+    ("not declared here") or a validated dict (PR #141 review).
+
+    `None` and the literal string `"inherit"` both mean "not declared" --
+    the vocabulary `_merge_validated` already used for a deployment
+    override that says nothing, reused here for EVERY site that reads a
+    `model:` value so a malformed one (a bare scalar, a list, a typo'd
+    string -- anything that is not a mapping) can no longer slip past as
+    one of those two meanings. Before this helper existed, a non-dict value
+    other than `None` was silently coerced to `None` at three separate call
+    sites (a role's own declaration on the no-deployment-override path in
+    `resolve()`, a deployment override's own declaration in
+    `_merge_validated`, and -- because `_merge_validated`'s "override says
+    nothing" branch took `generic.model` straight from the role without
+    ever validating it -- a role's malformed declaration read through ANY
+    deployment override that itself did not touch `model:`, silently
+    passing every `_validate_model_config` invariant (allowlisted
+    providers, a required model id, the closed credential-shaped key set,
+    numeric temperature/max_tokens bounds) for that common case.
+    """
+    if value is None or value == "inherit":
+        return None
+    if isinstance(value, dict):
+        _validate_model_config(value, who=who)
+        return dict(value)
+    raise DefinitionError(
+        f"Invariant violation — model: {who} declares a malformed model: "
+        f"value {value!r}; expected a mapping with 'provider'/'model' keys "
+        "(or omit the key, or set it to 'inherit', to inherit)."
+    )
+
+
 def _validate_audit_redaction(
     ceiling: Mapping[str, Any],
     effective: Mapping[str, Any],
@@ -3425,6 +3616,25 @@ def _merge_validated(
     else:
         resolved_limits = None
 
+    # --- Resolve model (D-037, issue #13) --- unlike execution_limits above,
+    # a deployment's `model:` REPLACES the role's wholesale rather than
+    # merging per key: picking a provider+model is a deliberate, complete
+    # operator choice, not a partial tweak, and there is no ceiling to
+    # measure it against (model/provider selection is not a capability or
+    # safety escalation).
+    ov_model = override.model
+    if ov_model is None or ov_model == "inherit":
+        # PR #141 review: this used to take `generic.model` straight, never
+        # validating it -- so a malformed role `model:` passed silently
+        # through any deployment override that itself said nothing about
+        # `model:` (the common case). `_resolve_model_declaration` validates
+        # it exactly like the no-override path in `resolve()` does.
+        resolved_model = _resolve_model_declaration(
+            generic.model, who=f"role '{generic.role_name}'"
+        )
+    else:
+        resolved_model = _resolve_model_declaration(ov_model, who=who)
+
     # --- Resolve context ---
     resolved_context: dict[str, Any]
     if override.context:
@@ -3469,6 +3679,7 @@ def _merge_validated(
         memory_policy=policies["memory_policy"],
         audit_policy=resolved_audit,
         execution_limits=resolved_limits,
+        model=resolved_model,
         untrusted_input=resolved_untrusted_input,
         command_tools=resolved_command_tools,
         # design.md D4 (PR3). This branch only runs for a `str` (predefined
@@ -3560,6 +3771,16 @@ def resolve(
         if isinstance(generic.execution_limits, dict)
         else None
     )
+    # D-037 (issue #13, ADR-004). No deployment override exists on this
+    # path, so this is the ONLY validation a role's own `model:` gets when
+    # resolved without one -- the same depth `execution_limits` gets here
+    # (shape-coerced, not ceiling-checked; the fold already happened in
+    # `_resolve_role_chain`/`_fold_parent_into_child`). PR #141 review:
+    # `_resolve_model_declaration` also raises on a malformed non-mapping
+    # value instead of silently discarding it as `None`.
+    resolved_model = _resolve_model_declaration(
+        generic.model, who=f"role '{generic.role_name}'"
+    )
 
     # --- ADR-002 C.11: untrusted_input ⊥ exec:*, the no-override branch ---
     # `merge()` is never called on this path, so nothing above has validated
@@ -3586,6 +3807,7 @@ def resolve(
         memory_policy=dict(generic.memory_policy),
         audit_policy=dict(generic.audit_policy),
         execution_limits=exec_limits,
+        model=resolved_model,
         untrusted_input=resolved_untrusted_input,
         command_tools=tuple(
             generic.command_tool_declarations[name] for name in generic.command_tools

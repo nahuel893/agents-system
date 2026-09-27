@@ -282,6 +282,14 @@ class Agent:
     memory_policy: Mapping[str, Any] = dataclasses.field(default_factory=dict)
     audit_policy: Mapping[str, Any] = dataclasses.field(default_factory=dict)
     execution_limits: Mapping[str, Any] | str | None = None
+    #: D-037 (issue #13, ADR-004). `{"provider": ..., "model": ...,
+    #: "temperature"?: ..., "max_tokens"?: ...}`, checked the same way (and
+    #: at the same stage) as `execution_limits` above -- `_checked` does NOT
+    #: touch it either, since it is not a capability/safety ceiling field;
+    #: `harness.loader._validate_model_config` validates it once resolved.
+    #: `None` (the default) means this agent uses its parent's `model:`, or
+    #: -- at the chain root -- the global `ADAPTER_PROVIDER`-driven default.
+    model: Mapping[str, Any] | str | None = None
     untrusted_input: bool | None = None
     system_prompt: str = ""
     version: str = "1.0"
@@ -405,6 +413,7 @@ class Agent:
             memory_policy=_thaw(self.memory_policy),
             audit_policy=_thaw(self.audit_policy),
             execution_limits=_thaw(self.execution_limits),
+            model=_thaw(self.model),
             untrusted_input=self.untrusted_input,
             inline_skills=dict(self.skill_contents),
         )
