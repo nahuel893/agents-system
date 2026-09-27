@@ -95,6 +95,14 @@ más abajo.
   (las corridas en vivo sustituyen un `_CapturingAuditSink` en memoria),
   `command_tools:` (ningún rol de la plataforma envía uno), y el camino T3
   de `read_file` (`operator_agent_happy.yaml` solo ejercita `use_term`).
+  **Actualización (#79):** todo lo anterior ahora se ejercita en vivo en
+  `tests/test_live_eval_phase1.py`, a través de `boot_live_harness` (#78) --
+  `command_tools:` mediante un agente de prueba construido con la API
+  `Agent` (`Agent.from_folder`, el mismo rol de fixture
+  `tests/fixtures/agents/command_tools/roles/cmdtool-role` que ya se valida
+  offline), `read_file` contra un sandbox real de bubblewrap, y una fila de
+  auditoría ejecutada confirmada en la tabla real `audit_event` para cada
+  escenario.
 - **El historial de conversación no tiene límite.** El reductor
   `Annotated[list[AnyMessage], add_messages]` de `agent/state.py:11` nunca
   recorta; el TTL del checkpointer de Redis se refresca en cada lectura
@@ -139,6 +147,27 @@ siguientes.
   exista.
 
 ## Fase 1 — El agente funciona, de punta a punta
+
+**Estado: hecho (#79).** `tests/test_live_eval_phase1.py` (`pytest -m
+live`) cubre cada punto de abajo a través de `boot_live_harness` (#78) --
+la API HTTP real o el webhook real de WhatsApp, nunca el atajo directo al
+runtime -- con la compuerta de #81 en `DEFAULT_HAPPY_PATH_THRESHOLD` (80%)
+sobre `EVAL_RUNS` (3 por defecto). Ver la sección propia "Escenarios en
+vivo de la Fase 1" de `docs/platform_es/live-eval.md` para lo que
+`boot_live_harness` necesitó crecer para llegar ahí.
+
+Un hallazgo real de una corrida, documentado en vez de disimulado: el
+backend de referencia `catalog_search` reporta `classification:
+"ambiguous"` para cada resultado (nunca una coincidencia confiable,
+`similarity` siempre es `None`), y `sales-agent` correctamente, de forma
+segura, escala por `confidence_below_threshold` en vez de pedir la mayoría
+de las veces, incluso con un SKU exacto explícitamente descrito como ya
+confirmado -- se observaron 1/6 llamadas a `order_writer` en dos intentos
+reales de `EVAL_RUNS=3`. El modelo hace lo correcto dada la señal honesta
+de la herramienta; la corrección pertenece al backend de referencia, no a
+este escenario, y se rastrea en #117. El sub-escenario `order_writer` es un
+`xfail` documentado que referencia #117 (`_run_gated_xfail`) -- no bloquea
+los otros tres sub-escenarios de `sales-agent` en la misma corrida en vivo.
 
 A través de la API y el webhook de WhatsApp, no del atajo directo al
 runtime:

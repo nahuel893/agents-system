@@ -276,6 +276,7 @@ def _build_webhook_only_harness(client: httpx.AsyncClient) -> LiveHarness:
         model_name="fake-model",
         meta_webhook_secret="test-secret",
         metrics_api_key="test-key",
+        database_url="postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/unused",
     )
 
 
@@ -476,3 +477,329 @@ async def test_boot_live_harness_never_overlaps_two_concurrent_boots(
         "b entered its own boot_live_harness() body before a's had exited -- "
         f"the two boots overlapped: {order!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# #119 review fixes -- boot_live_harness() permissions default, the demo
+# database create/drop bracket, and _seed_demo_company()'s subprocess timeout.
+# ---------------------------------------------------------------------------
+
+
+async def test_boot_live_harness_requires_explicit_permissions_for_a_non_default_role(
+    monkeypatch,
+) -> None:
+    """Omitting `permissions` must be a fail-CLOSED default, not a silent
+    grant of `SALES_AGENT_PERMISSIONS` to whatever *role* happens to be
+    passed (#119 review, medium finding: a fail-open default on the
+    deploy-grant trust boundary this harness exists to exercise). Every real
+    I/O boundary is faked (mirrors `test_boot_live_harness_never_overlaps_
+    two_concurrent_boots` above) so the fixed code's `ValueError` is reached
+    before any of it would even run.
+    """
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from agents_system.evals import live_harness
+
+    async def fake_create_database(admin_url: str, name: str) -> None:
+        return None
+
+    async def fake_drop_database(admin_url: str, name: str) -> None:
+        return None
+
+    def fake_run_migrations(database_url: str, *, repo_root: object) -> None:
+        return None
+
+    def fake_build_eval_model():
+        return object(), "fake-model"
+
+    captured_grants: dict[str, list[str]] = {}
+
+    def fake_create_app(**kwargs: object) -> FastAPI:
+        captured_grants.update(kwargs["grants"])  # type: ignore[arg-type]
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            app.state.engine = object()
+            yield
+
+        return FastAPI(lifespan=lifespan)
+
+    monkeypatch.setattr(live_harness, "_create_database", fake_create_database)
+    monkeypatch.setattr(live_harness, "_drop_database", fake_drop_database)
+    monkeypatch.setattr(live_harness, "_run_migrations", fake_run_migrations)
+    monkeypatch.setattr(live_harness, "build_eval_model", fake_build_eval_model)
+    monkeypatch.setattr(live_harness, "create_app", fake_create_app)
+
+    with pytest.raises(ValueError, match="permissions"):
+        async with live_harness.boot_live_harness(
+            role="operator-agent", runtime_id="probe-operator-agent"
+        ):
+            pass
+
+    assert "probe-operator-agent" not in captured_grants, (
+        "operator-agent must never be deploy-granted through the "
+        "sales-agent default when permissions is omitted"
+    )
+
+
+async def test_boot_live_harness_drops_the_primary_database_when_the_demo_create_fails(
+    monkeypatch,
+) -> None:
+    """`seed_demo=True` creates a SECOND (demo) throwaway database after the
+    primary one already exists: if that second `_create_database` call
+    raises, the primary database must still be dropped, never orphaned
+    (#119 review, medium finding). Every real I/O boundary up to the
+    simulated failure is faked; only the harness's own create/drop
+    bookkeeping is exercised.
+    """
+    from agents_system.evals import live_harness
+
+    created: list[str] = []
+    dropped: list[str] = []
+
+    async def fake_create_database(admin_url: str, name: str) -> None:
+        created.append(name)
+        if name.endswith("_demo"):
+            raise RuntimeError("simulated demo database creation failure")
+
+    async def fake_drop_database(admin_url: str, name: str) -> None:
+        dropped.append(name)
+
+    monkeypatch.setattr(live_harness, "_create_database", fake_create_database)
+    monkeypatch.setattr(live_harness, "_drop_database", fake_drop_database)
+
+    with pytest.raises(RuntimeError, match="simulated demo database creation failure"):
+        async with live_harness.boot_live_harness(seed_demo=True):
+            pass
+
+    assert len(created) == 2, (
+        f"expected primary + demo create attempts, got {created!r}"
+    )
+    assert dropped == created, (
+        "every created database must be dropped when the demo create fails -- "
+        f"created={created!r} dropped={dropped!r}"
+    )
+
+
+def test_seed_demo_company_passes_an_explicit_timeout_to_subprocess_run(
+    monkeypatch,
+) -> None:
+    """An unreachable or misconfigured demo database must fail fast, not
+    hang the whole live-eval process indefinitely (#119 review, medium
+    finding) -- `subprocess.run` needs an explicit, bounded `timeout=`.
+    """
+    import subprocess
+    from pathlib import Path
+
+    from agents_system.evals import live_harness
+
+    captured: dict[str, object] = {}
+
+    def fake_run(*args: object, **kwargs: object):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args[0] if args else [], 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    live_harness._seed_demo_company("postgresql://x/y", repo_root=Path("/tmp"))
+
+    assert isinstance(captured.get("timeout"), (int, float)), (
+        f"subprocess.run was called with no bounded timeout: {captured!r}"
+    )
+    assert captured["timeout"] > 0
+
+
+def test_seed_demo_company_raises_a_clear_error_on_timeout(monkeypatch) -> None:
+    """A `subprocess.TimeoutExpired` from the demo-seeding subprocess must
+    surface as a clear, distinguishing error -- not a hang, and not a bare
+    `TimeoutExpired` indistinguishable from any other subprocess failure
+    (#119 review, medium finding).
+    """
+    import subprocess
+    from pathlib import Path
+
+    from agents_system.evals import live_harness
+
+    def fake_run(*args: object, **kwargs: object):
+        raise subprocess.TimeoutExpired(
+            cmd="load_demo_company.py", timeout=kwargs.get("timeout", 1)
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="did not finish"):
+        live_harness._seed_demo_company("postgresql://x/y", repo_root=Path("/tmp"))
+
+
+# ---------------------------------------------------------------------------
+# render_provision_sql_readonly -- Phase 1 (#79) SQL-tool fixture
+# provisioning. Renders the CHECKED-IN `scripts/provision_sql_readonly.sql`
+# (#80, ADR-007) into plain SQL runnable over one asyncpg connection, so a
+# live Phase 1 run provisions the tool's role through the exact same runbook
+# an operator follows -- see this module's docstring for why a parallel
+# reimplementation would be the wrong choice.
+# ---------------------------------------------------------------------------
+
+
+def test_render_provision_sql_readonly_substitutes_every_psql_variable() -> None:
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="live_harness_abc123",
+        password="it's-a-secret",
+        views=("sql_tool_fixture.sales_v",),
+    )
+
+    # No unsubstituted psql variable or meta-command survives.
+    assert ":'" not in rendered
+    assert ':"' not in rendered
+    assert "\\set" not in rendered
+    assert "\\if" not in rendered
+    assert "\\else" not in rendered
+    assert "\\endif" not in rendered
+    # Each substitution landed, correctly quoted/escaped.
+    assert '"live_harness_abc123"' in rendered
+    assert "it''s-a-secret" in rendered
+    assert "sql_tool_fixture.sales_v" in rendered
+
+
+def test_render_provision_sql_readonly_defaults_temp_file_limit() -> None:
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("s.v",)
+    )
+
+    assert "'256MB'" in rendered
+
+
+def test_render_provision_sql_readonly_accepts_an_explicit_temp_file_limit() -> None:
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("s.v",), temp_file_limit="64MB"
+    )
+
+    assert "'64MB'" in rendered
+    assert "'256MB'" not in rendered
+
+
+def test_render_provision_sql_readonly_joins_multiple_views_as_one_csv_literal() -> (
+    None
+):
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("a.b", "c.d")
+    )
+
+    assert "'a.b,c.d'" in rendered
+
+
+# ---------------------------------------------------------------------------
+# live_registry_factory_adapter -- `extra_tool_specs` (#79, Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def test_live_registry_factory_adapter_extra_spec_replaces_a_same_named_base_tool() -> (
+    None
+):
+    """A scenario that needs to inspect `run_report`'s actual arguments and
+    result -- the audit trail carries neither, only name/timing/outcome --
+    wraps the SAME connector and passes it as `extra_tool_specs`. This must
+    REPLACE the base registry's own `run_report`, not raise
+    `ToolRegistry.register`'s duplicate-name error."""
+    from agents_system.evals.live_harness import live_registry_factory_adapter
+    from agents_system.harness.registry import Tier, ToolSpec
+
+    async def _fake_connector(
+        inputs: dict[str, object], *, session: object = None
+    ) -> dict[str, object]:
+        return {"replaced": True}
+
+    replacement = ToolSpec(
+        name="run_report",
+        description="replacement",
+        required_permissions=(),
+        input_schema={"type": "object", "properties": {}},
+        connector=_fake_connector,
+        tier=Tier.T0,
+    )
+
+    factory = live_registry_factory_adapter(
+        object(), object(), extra_tool_specs=(replacement,)
+    )
+    registry = factory()
+
+    assert registry.get("run_report") is replacement
+    # Every other base tool -- unrelated to the replacement -- still comes
+    # from the reference backends untouched.
+    assert "catalog_search" in registry
+    assert "client_lookup" in registry
+
+
+def test_live_registry_factory_adapter_extra_spec_adds_a_genuinely_new_tool() -> None:
+    """A tool with no base-registry counterpart (e.g. `sql_query`, #80) is
+    simply added alongside every reference-backend tool."""
+    from agents_system.evals.live_harness import live_registry_factory_adapter
+    from agents_system.harness.registry import Tier, ToolSpec
+
+    async def _fake_connector(
+        inputs: dict[str, object], *, session: object = None
+    ) -> dict[str, object]:
+        return {}
+
+    extra = ToolSpec(
+        name="sql_query",
+        description="fake sql_query for this test",
+        required_permissions=(),
+        input_schema={"type": "object", "properties": {}},
+        connector=_fake_connector,
+        tier=Tier.T0,
+    )
+
+    factory = live_registry_factory_adapter(
+        object(), object(), extra_tool_specs=(extra,)
+    )
+    registry = factory()
+
+    assert registry.get("sql_query") is extra
+    assert "catalog_search" in registry
+
+
+def test_live_registry_factory_adapter_tool_wrappers_replaces_with_the_wrapper_result() -> (
+    None
+):
+    """A scenario needing `run_report`'s actual arguments/result -- unlike
+    `extra_tool_specs`, which cannot pre-build a spec bound to a database
+    whose name is only known once `boot_live_harness` has already booted --
+    wraps whatever the base registry already built."""
+    import dataclasses
+
+    from agents_system.evals.live_harness import live_registry_factory_adapter
+    from agents_system.harness.registry import ToolSpec
+
+    calls: list[dict[str, object]] = []
+
+    def wrap(spec: ToolSpec) -> ToolSpec:
+        original = spec.connector
+
+        async def recording(
+            inputs: dict[str, object], *, session: object = None
+        ) -> object:
+            calls.append(dict(inputs))
+            return await original(inputs, session=session)
+
+        return dataclasses.replace(spec, connector=recording)
+
+    factory = live_registry_factory_adapter(
+        object(), object(), tool_wrappers={"run_report": wrap}
+    )
+    registry = factory()
+    wrapped = registry.get("run_report")
+
+    assert wrapped is not registry.get("catalog_search")
+    assert wrapped.name == "run_report"
+    assert wrapped.connector is not None
