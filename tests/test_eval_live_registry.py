@@ -27,6 +27,7 @@ from agents_system.evals.live_registry import (
     build_live_registry_factory,
 )
 from agents_system.harness.registry import Tier
+from agents_system.services.reference import KnowledgeDocument
 
 # ---------------------------------------------------------------------------
 # Fake AsyncEngine -- same shape as tests/test_reference_backends.py's own
@@ -141,6 +142,89 @@ async def test_knowledge_retrieval_returns_no_hit_for_an_unseeded_fact() -> None
 
     assert "error_kind" not in result
     assert result["results"] == []
+
+
+# ---------------------------------------------------------------------------
+# #130 -- extra_documents (guardrail-only fixtures scoped out of the shared
+# knowledge base every OTHER live-eval registry builds from)
+# ---------------------------------------------------------------------------
+
+_EXTRA_DOCUMENT = KnowledgeDocument(
+    id="extra-fixture-130",
+    title="Extra fixture only a specific caller should see",
+    content="This content must never leak into a registry that did not ask for it.",
+)
+
+
+async def test_knowledge_retrieval_finds_nothing_for_a_document_no_caller_passed() -> (
+    None
+):
+    """Baseline: the default (no `extra_documents`) registry's knowledge
+    base -- the one every role scenario and `examples/demo/app.py` build
+    from -- must never retrieve fixture content it was never given."""
+    registry = build_live_registry(_ReadOnlyEngine(), _fake_model())
+
+    result = await registry.get("knowledge_retrieval").connector(
+        {"q": "extra fixture only a specific caller"}
+    )
+
+    assert "error_kind" not in result
+    assert result["results"] == []
+
+
+async def test_build_live_registry_extra_documents_are_retrievable() -> None:
+    """A caller that DOES pass `extra_documents` (only the guardrail suite,
+    per #130) gets a knowledge base that can retrieve them, on top of the
+    two always-seeded facts."""
+    registry = build_live_registry(
+        _ReadOnlyEngine(), _fake_model(), extra_documents=(_EXTRA_DOCUMENT,)
+    )
+
+    extra_result = await registry.get("knowledge_retrieval").connector(
+        {"q": "extra fixture only a specific caller"}
+    )
+    baseline_result = await registry.get("knowledge_retrieval").connector(
+        {"q": "delivery zones"}
+    )
+
+    assert "error_kind" not in extra_result
+    assert extra_result["results"], "expected a hit for the passed-in extra document"
+    assert "error_kind" not in baseline_result
+    assert baseline_result["results"], "the always-seeded facts must still work"
+
+
+async def test_build_live_registry_extra_documents_defaults_to_none_added() -> None:
+    """Omitting `extra_documents` must change nothing about the always-seeded
+    knowledge base -- same two known-true facts as before this parameter
+    existed."""
+    with_default = build_live_registry(_ReadOnlyEngine(), _fake_model())
+    with_explicit_empty = build_live_registry(
+        _ReadOnlyEngine(), _fake_model(), extra_documents=()
+    )
+
+    for registry in (with_default, with_explicit_empty):
+        result = await registry.get("knowledge_retrieval").connector(
+            {"q": "delivery zones"}
+        )
+        assert result["results"]
+
+
+async def test_build_live_registry_factory_passes_through_extra_documents() -> None:
+    """`build_live_registry_factory` must forward `extra_documents` to every
+    registry its closure builds -- the shape
+    `tests/test_live_eval_guardrails.py` actually calls."""
+    factory = build_live_registry_factory(
+        _ReadOnlyEngine(), _fake_model(), extra_documents=(_EXTRA_DOCUMENT,)
+    )
+
+    registry = factory()
+
+    result = await registry.get("knowledge_retrieval").connector(
+        {"q": "extra fixture only a specific caller"}
+    )
+
+    assert "error_kind" not in result
+    assert result["results"], "expected the factory-built registry to see it too"
 
 
 # ---------------------------------------------------------------------------

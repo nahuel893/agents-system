@@ -88,7 +88,7 @@ llamó, si una llamada fue denegada, si un escalamiento se completó con
 
 ```yaml
 role: sales-agent            # obligatorio — el nombre de la carpeta del rol
-category: happy_path         # opcional — "guardrail" o "happy_path" (default); ver Gating (compuertas) abajo
+category: happy_path         # opcional para la mayoría de los archivos — "guardrail" o "happy_path" (default); un nombre de archivo *_boundary.yaml/*_escalation.yaml/*_no_fabrication.yaml EXIGE "guardrail" explícito (ver abajo); ver Gating (compuertas) abajo
 threshold: 0.6                # opcional, solo happy_path — sobreescribe el default de 80%; exige threshold_reason
 threshold_reason: >           # obligatorio junto con threshold
   modelo chico, el tool-calling es inestable por diseño
@@ -140,6 +140,17 @@ los `*.yaml`/`*.yml` de un directorio con `load_scenarios(directory)`.
 Cualquiera de los dos lanza `ScenarioError`, nombrando el archivo
 problemático, ante cualquier problema estructural (`role` faltante, `turns`
 vacío, un `escalation_expected` que no es booleano, ...).
+
+Un archivo de escenario cuyo nombre coincide con `*_boundary.yaml`,
+`*_escalation.yaml`, o `*_no_fabrication.yaml` (en cualquier directorio que
+lea `load_scenario`, incluido `evals/scenarios/guardrails/`) debe declarar
+`category: guardrail` explícitamente (issue #130). `load_scenario` lanza
+`ScenarioError` cuando se viola esa convención de nombres -- ya sea porque
+falta el campo o porque nombra `happy_path` -- así un escenario de seguridad
+recién agregado nunca puede caer en silencio en la clase happy-path, laxa y
+con umbral del 80%, solo porque quien lo escribió olvidó declararlo. Un
+nombre de archivo ordinario (sin ninguno de esos marcadores) no se ve
+afectado y sigue usando el default `happy_path` como antes.
 
 ## Tipos de aserción para guardrails y overrides por turno (issue #76)
 
@@ -275,6 +286,16 @@ está cubierto por `data_agent_escalation.yaml`,
 criterios de aceptación del propio issue — ver los `*_no_fabrication.yaml`
 existentes para esa señal blanda.
 
+El fixture del escenario 3 (el `PROMPT_INJECTION_DOCUMENT` de
+`evals/live_registry.py`, una carga de prompt injection embebida) se siembra
+solo en el registro de esta suite, vía el parámetro `extra_documents` de
+`build_live_registry(_factory)` (issue #130) -- `tests/test_live_eval_guardrails.py`
+es el único caller que lo pasa. El `_KNOWLEDGE_DOCUMENTS` compartido del que
+parte cualquier otro registro de live-eval (escenarios de rol,
+`examples/demo/app.py`) nunca lo incluye, así que ningún escenario ajeno
+puede toparse por accidente con el documento envenenado en una llamada a
+`knowledge_retrieval`.
+
 Cómo leer los resultados: la propia `ScenarioResult.gate` de cada escenario
 (ver Compuertas de calidad abajo) reporta **held** (se sostuvo en cada
 corrida ejercitada), **broken** (al menos una corrida ejercitada falló una
@@ -285,6 +306,14 @@ demuestra nada en ningún sentido). `tests/test_live_eval_guardrails.py`
 imprime exactamente esto por escenario y por corrida, y `write_results`
 persiste el mismo detalle en `evals/results/` junto al resto de los drivers
 en vivo.
+
+El gap propio de `02_layer2_revalidation` (ver el comentario de cabecera de
+su archivo de escenario) se reporta como `xfail`, no como una falla dura --
+pero solo cuando genuinamente nunca fue ejercitado. `_is_known_non_exercised_gap`
+también chequea que ninguna corrida del resultado haya fallado
+(`RunOutcome.error`, issue #130), así que un crash real de infraestructura en
+todas las corridas nunca se confunde con este gap documentado ni se degrada
+en silencio a él.
 
 ## Compuertas de calidad — gating (issue #81)
 

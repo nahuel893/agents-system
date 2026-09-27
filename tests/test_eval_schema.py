@@ -277,6 +277,103 @@ def test_load_scenario_rejects_an_unknown_category(tmp_path: pathlib.Path) -> No
         load_scenario(path)
 
 
+# ---------------------------------------------------------------------------
+# #130 -- a security-shaped filename must declare category: guardrail
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "data_agent_boundary.yaml",
+        "sales_agent_escalation.yaml",
+        "support_agent_no_fabrication.yaml",
+    ],
+)
+def test_load_scenario_rejects_a_guardrail_shaped_filename_with_no_category(
+    tmp_path: pathlib.Path, filename: str
+) -> None:
+    """A `*_boundary.yaml`/`*_escalation.yaml`/`*_no_fabrication.yaml`
+    filename is a security-relevant naming convention every scenario in
+    `evals/scenarios/` already follows (#130) -- omitting `category` here
+    must not silently fall back to the lenient `happy_path` default (graded
+    at 80%) the way an ordinary scenario's omission does.
+    """
+    path = _write(tmp_path, filename, _MINIMAL)
+
+    with pytest.raises(ScenarioError, match="category"):
+        load_scenario(path)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "data_agent_boundary.yaml",
+        "sales_agent_escalation.yaml",
+        "support_agent_no_fabrication.yaml",
+    ],
+)
+def test_load_scenario_rejects_a_guardrail_shaped_filename_declared_happy_path(
+    tmp_path: pathlib.Path, filename: str
+) -> None:
+    """Same gap as above, but the field IS present and merely wrong -- a
+    typo or a copy-pasted `category: happy_path` must fail just as loudly as
+    a forgotten field.
+    """
+    path = _write(tmp_path, filename, _MINIMAL + "\ncategory: happy_path\n")
+
+    with pytest.raises(ScenarioError, match="category"):
+        load_scenario(path)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "data_agent_boundary.yaml",
+        "sales_agent_escalation.yaml",
+        "support_agent_no_fabrication.yaml",
+    ],
+)
+def test_load_scenario_accepts_a_guardrail_shaped_filename_declared_guardrail(
+    tmp_path: pathlib.Path, filename: str
+) -> None:
+    """The intended, correct shape -- every scenario file actually shipped
+    under `evals/scenarios/` already looks like this -- must keep loading
+    with no error."""
+    path = _write(tmp_path, filename, _MINIMAL + "\ncategory: guardrail\n")
+
+    scenario = load_scenario(path)
+
+    assert scenario.category == CATEGORY_GUARDRAIL
+
+
+def test_load_scenario_ordinary_filename_still_defaults_to_happy_path(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The new filename lint must not touch a scenario whose name carries no
+    guardrail-shaped marker -- the pre-existing lenient default is still the
+    correct, documented behavior for it."""
+    path = _write(tmp_path, "sales_agent_smoke.yaml", _MINIMAL)
+
+    scenario = load_scenario(path)
+
+    assert scenario.category == CATEGORY_HAPPY_PATH
+
+
+def test_load_scenario_guardrail_shaped_filename_inside_a_subdirectory_is_checked(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The lint reads the filename alone, not the parent directory -- a
+    scenario under `evals/scenarios/guardrails/` named with one of the
+    markers must be checked exactly like a top-level one."""
+    subdir = tmp_path / "guardrails"
+    subdir.mkdir()
+    path = _write(subdir, "07_new_escalation.yaml", _MINIMAL)
+
+    with pytest.raises(ScenarioError, match="category"):
+        load_scenario(path)
+
+
 def test_load_scenario_accepts_a_happy_path_threshold_override_with_a_reason(
     tmp_path: pathlib.Path,
 ) -> None:

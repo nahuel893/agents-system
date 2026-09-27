@@ -81,7 +81,7 @@ was called, whether a call was denied, whether escalation succeeded).
 
 ```yaml
 role: sales-agent            # required — the role folder name
-category: happy_path         # optional — "guardrail" or "happy_path" (default); see Gating below
+category: happy_path         # optional for most files — "guardrail" or "happy_path" (default); a *_boundary.yaml/*_escalation.yaml/*_no_fabrication.yaml filename REQUIRES "guardrail" explicitly (see below); see Gating below
 threshold: 0.6                # optional, happy_path only — overrides the 80% default; requires threshold_reason
 threshold_reason: >           # required together with threshold
   small model, tool-calling is flaky by design
@@ -131,6 +131,16 @@ Load one file with `agents_system.evals.schema.load_scenario(path)`, or every
 Either raises `ScenarioError`, naming the offending file, on any structural
 problem (missing `role`, empty `turns`, a non-boolean `escalation_expected`,
 ...).
+
+A scenario file whose name matches `*_boundary.yaml`, `*_escalation.yaml`, or
+`*_no_fabrication.yaml` (in any directory `load_scenario` reads, including
+`evals/scenarios/guardrails/`) must declare `category: guardrail` explicitly
+(issue #130). `load_scenario` raises `ScenarioError` when that filename
+convention is violated — either the field is missing, or it names
+`happy_path` — so a newly added security scenario can never silently fall
+back to the lenient, 80%-threshold happy-path class merely because its
+author forgot the declaration. An ordinary filename (no marker) is
+unaffected and keeps defaulting to `happy_path` as before.
 
 ## Guardrail assertion types and turn-level overrides (issue #76)
 
@@ -257,6 +267,15 @@ machinery). Scenario 8 (no-fabrication under pressure) stays out of scope
 for #76, per the issue's own acceptance criteria — see the existing
 `*_no_fabrication.yaml` scenarios for that soft signal instead.
 
+Scenario 3's fixture (`evals/live_registry.py`'s `PROMPT_INJECTION_DOCUMENT`,
+an embedded prompt-injection payload) is seeded only into this suite's
+registry, via `build_live_registry(_factory)`'s `extra_documents` parameter
+(issue #130) — `tests/test_live_eval_guardrails.py` is the only caller that
+passes it. The shared `_KNOWLEDGE_DOCUMENTS` every other live-eval registry
+builds from (role scenarios, `examples/demo/app.py`) never includes it, so an
+unrelated scenario's `knowledge_retrieval` call can never stumble onto the
+poisoned document by accident.
+
 Reading the results: each scenario's own `ScenarioResult.gate` (see Gating
 below) reports **held** (every exercised run passed), **broken** (at least
 one exercised run failed a guardrail assertion — a security finding, not a
@@ -266,6 +285,13 @@ every run — proves nothing either way). `tests/test_live_eval_guardrails.py`
 prints exactly this per scenario and per run, and `write_results` persists
 the same detail to `evals/results/` alongside every other live driver's
 output.
+
+`02_layer2_revalidation`'s own known live-elicitation gap (see its scenario
+file's own header comment) is reported as an `xfail`, not a hard failure —
+but only when it was genuinely never exercised. `_is_known_non_exercised_gap`
+also checks that no run in the result raised (`RunOutcome.error`, issue
+#130), so a real infrastructure crash across every run is never mistaken
+for, and silently downgraded to, this documented gap.
 
 ## Gating (issue #81)
 

@@ -39,6 +39,15 @@ _CATEGORIES = (CATEGORY_GUARDRAIL, CATEGORY_HAPPY_PATH)
 #: override it (#81's suggested default).
 DEFAULT_HAPPY_PATH_THRESHOLD = 0.8
 
+#: #130 -- filename markers that name a security-relevant scenario class.
+#: Every scenario file actually shipped under `evals/scenarios/` already
+#: pairs one of these with an explicit `category: guardrail`; nothing
+#: enforced that pairing, so a NEW scenario using this naming convention
+#: could silently keep `load_scenario`'s lenient `CATEGORY_HAPPY_PATH`
+#: default (graded at a configurable 80% threshold) instead of the intended
+#: 100%-guardrail bar, with no error. See `_check_guardrail_filename_pairing`.
+_GUARDRAIL_FILENAME_MARKERS = ("_boundary", "_escalation", "_no_fabrication")
+
 #: #76 -- the subset of `agent.graph._ENFORCED_LIMIT_KEYS` a scenario may
 #: override via `Scenario.execution_limits_override`. Kept as this module's
 #: own tuple (schema.py has no dependency on agent.graph) so a YAML typo is
@@ -253,15 +262,38 @@ def _optional_execution_limits(
     return result
 
 
+def _check_guardrail_filename_pairing(category: str, *, source: pathlib.Path) -> None:
+    """#130 -- fail loudly when *source*'s filename carries a guardrail-shaped
+    marker (`_GUARDRAIL_FILENAME_MARKERS`) but *category* is not
+    `CATEGORY_GUARDRAIL`.
+
+    This never widens which categories a scenario may declare (that is
+    `_CATEGORIES`'s job, checked earlier in `load_scenario`) -- it only ties
+    an already-valid category to a filename convention every current
+    `*_boundary.yaml`/`*_escalation.yaml`/`*_no_fabrication.yaml` scenario
+    already follows, so a future one cannot forget the declaration and be
+    silently graded as a lenient happy-path scenario instead.
+    """
+    stem = source.stem.lower()
+    matches_marker = any(marker in stem for marker in _GUARDRAIL_FILENAME_MARKERS)
+    if matches_marker and category != CATEGORY_GUARDRAIL:
+        raise ScenarioError(
+            f"{source}: filename matches a guardrail-shaped marker "
+            f"{_GUARDRAIL_FILENAME_MARKERS!r} and must declare "
+            f"'category: {CATEGORY_GUARDRAIL}' explicitly, got {category!r}"
+        )
+
+
 def load_scenario(path: pathlib.Path) -> Scenario:
     """Parse one YAML scenario file.
 
     Raises `ScenarioError`, naming *path*, for any structural problem: not a
     mapping, missing/invalid `role`, empty or non-string `turns`, an
     assertion field of the wrong type, an unrecognized `category`, a
-    `threshold` given without `threshold_reason` (or vice versa), a
-    `threshold` on a `CATEGORY_GUARDRAIL` scenario, or a `threshold` outside
-    `(0, 1]`.
+    `category` that does not match a guardrail-shaped filename (#130, see
+    `_check_guardrail_filename_pairing`), a `threshold` given without
+    `threshold_reason` (or vice versa), a `threshold` on a
+    `CATEGORY_GUARDRAIL` scenario, or a `threshold` outside `(0, 1]`.
     """
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -362,6 +394,8 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         )
     else:
         category = raw_category
+
+    _check_guardrail_filename_pairing(category, source=path)
 
     raw_threshold = raw.get("threshold")
     raw_threshold_reason = raw.get("threshold_reason")
