@@ -178,12 +178,13 @@ was exercised, and it was exercised at least once.
 - History growth in long-running conversations (unbounded `add_messages`
   reducer, above).
 
-## Phase 4 — Full lifecycle (blocked by ADR-004 / library-first-agents)
+## Phase 4 — Full lifecycle (unblocked; ADR-004 / library-first-agents merged)
 
 Define a custom agent → register it → serve it → converse with it → audit it
-→ update it. Depends on the library-first-agents work
-(`openspec/changes/library-first-agents/`) landing the locator/registration
-surface this phase needs; not started until that work merges.
+→ update it. The library-first-agents work
+(`openspec/changes/archive/2026-09-26-library-first-agents/`) has merged and
+archived, landing the locator/registration surface this phase needs; not yet
+started (tracked at #84).
 
 ## Feature → scenario → assertion → how observed (Phases 0–2)
 
@@ -241,4 +242,4 @@ plan.
 - #76 (live guardrail suite, absorbed by Phase 2)
 - Role eval scenarios and baseline methodology:
   `docs/delivery/171-role-eval-scenarios.md`
-- library-first-agents (blocks Phase 4): `openspec/changes/library-first-agents/`
+- library-first-agents (ADR-004, merged; unblocked Phase 4): `openspec/changes/archive/2026-09-26-library-first-agents/`

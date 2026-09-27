@@ -57,3 +57,15 @@ No existing spec under `openspec/specs/` overlapped with any of these three capa
 
 The change is archived. Implementation: **complete** — all ten PR slices (#68, #70, #85, #91, #92, #95, #98, #101, #103, #111) merged to `origin/main`. Verification: **complete**, 36/37 PASS, full suite/lint/format/type-check green.
 Unfinished tasks: none. Unresolved findings: none blocking; one new-to-tracking-but-not-newly-discovered open follow-up noted above (Guard 1 SemVer-independence regression test) for separate GitHub issue filing (outside this SDD change's edit scope).
+
+## Addendum — stale cross-references from the folder move (review fix)
+
+A review of PR #114 found that the `git mv` from `openspec/changes/library-first-agents/` to `openspec/changes/archive/2026-09-26-library-first-agents/` broke four pre-existing EN/ES doc pairs that still pointed at the old path: `docs/delivery/live-test-plan.md`, `docs/delivery_es/live-test-plan.md`, `docs/architecture/adr-007-read-only-sql-tool.md`, `docs/architecture_es/adr-007-read-only-sql-tool.md`. Unlike the `permission-hierarchy` spec-promotion note this change's own `verify-report.md` already tracked as a pre-existing, out-of-scope gap, this one was newly caused by this change's own archive move and had not been logged anywhere.
+
+Fixed in this same PR, after this report was first written:
+
+- Repointed all six stale-path occurrences across the four files to `openspec/changes/archive/2026-09-26-library-first-agents/`.
+- `docs/delivery/live-test-plan.md` and its ES twin also described Phase 4 as still "blocked" / "not started until that work merges" — no longer true now that all ten ADR-004 PR slices are merged and the change is archived. Reworded both the Phase 4 heading and body (and the matching "Cross-references" list entries) to state the dependency is merged/unblocked, while leaving Phase 4 itself as not yet started (tracked at #84).
+- Added a regression test, `tests/test_docs_no_stale_archive_paths.py`, that fails on any future reference to the pre-archive path in these four files, and on the Phase-4 text reading as blocked again.
+
+No further doc references to the pre-archive path were found outside this archived change folder's own frozen historical records (`state.yaml`, `tasks.md`), which are left untouched — they are byte-identical archival evidence of the pre-move state, not live documentation.

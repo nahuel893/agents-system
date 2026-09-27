@@ -204,13 +204,13 @@ corrida en la que fue ejercitado, y fue ejercitado al menos una vez.
 - Crecimiento del historial en conversaciones largas (reductor
   `add_messages` sin límite, arriba).
 
-## Fase 4 — Ciclo de vida completo (bloqueada por ADR-004 / library-first-agents)
+## Fase 4 — Ciclo de vida completo (desbloqueada; ADR-004 / library-first-agents fusionado)
 
 Definir un agente personalizado → registrarlo → servirlo → conversar con él
-→ auditarlo → actualizarlo. Depende de que el trabajo library-first-agents
-(`openspec/changes/library-first-agents/`) entregue la superficie de
-localizador/registro que esta fase necesita; no comienza hasta que ese
-trabajo se fusione.
+→ auditarlo → actualizarlo. El trabajo library-first-agents
+(`openspec/changes/archive/2026-09-26-library-first-agents/`) se fusionó y
+archivó, entregando la superficie de localizador/registro que esta fase
+necesita; todavía no comenzada (seguimiento en #84).
 
 ## Funcionalidad → escenario en vivo → aserción → cómo se observa (Fases 0–2)
 
@@ -270,5 +270,5 @@ de este plan.
 - #76 (suite de guardrails en vivo, absorbida por la Fase 2)
 - Escenarios de evaluación por rol y metodología de línea base:
   `docs/delivery_es/171-role-eval-scenarios.md`
-- library-first-agents (bloquea la Fase 4):
-  `openspec/changes/library-first-agents/`
+- library-first-agents (ADR-004, fusionado; desbloquea la Fase 4):
+  `openspec/changes/archive/2026-09-26-library-first-agents/`
