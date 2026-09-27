@@ -121,7 +121,7 @@
   <table>
     <tr><th>Aporta</th><th>Detalle</th></tr>
     <tr><td>contexto</td><td><code>role.md</code>: empresa, español rioplatense, vocabulario (<code>"la rubia"→BrandA</code>, <code>"cajón"→24u</code>)</td></tr>
-    <tr><td>tools activas</td><td><code>message_sender</code>, <code>catalog_search</code>, <code>order_writer</code>, <code>session_state</code>, <code>client_lookup</code></td></tr>
+    <tr><td>tools activas</td><td><code>message_sender</code>, <code>catalog_search</code>, <code>order_writer</code>, <code>client_lookup</code></td></tr>
     <tr><td>skills</td><td><code>order_extraction</code>, <code>colloquial_matching</code>, <code>confirm_flow</code></td></tr>
   </table>
 
@@ -401,7 +401,7 @@ skills:       tuple[LoadedSkill, ...]    <span class="cm"># name + content, leí
   <h2>Ejemplo trabajado — sales-agent para acme</h2>
   <table>
     <tr><th>Entrada</th><td><code>resolve("sales-agent", client="acme")</code> · al usuario se le otorga <code>{read:catalog, send:message}</code></td></tr>
-    <tr><th>Tras el merge</th><td>AgentDefinition con tools <code>[message_sender, catalog_search, order_writer, session_state, client_lookup]</code>, autonomy <code>supervised</code>, permisos heredados del rol genérico</td></tr>
+    <tr><th>Tras el merge</th><td>AgentDefinition con tools <code>[message_sender, catalog_search, order_writer, client_lookup]</code>, autonomy <code>supervised</code>, permisos heredados del rol genérico</td></tr>
     <tr><th>effective</th><td><code>definition.permissions ∩ {read:catalog, send:message}</code> = <code>{read:catalog, send:message}</code></td></tr>
     <tr><th>Resultado</th><td><code>catalog_search</code> + <code>message_sender</code> → <b>granted</b>; <code>order_writer</code> (necesita <code>write:orders</code>) → <b>denied</b> (falta el permiso)</td></tr>
   </table>

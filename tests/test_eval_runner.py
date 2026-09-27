@@ -1304,14 +1304,14 @@ async def test_run_scenario_omitted_grant_passes_role_permissions_and_equips_man
     assert result.runs[0].passed
 
 
-async def test_run_scenario_explicit_empty_grant_equips_only_unpermissioned_tools() -> (
+async def test_run_scenario_explicit_empty_grant_leaves_permissioned_tools_unequipped() -> (
     None
 ):
     """``granted_permissions=()`` is a deliberate explicit grant of nothing
     -- distinct from omitting the field -- so it must reach
     ``build_runtime`` unchanged as an empty tuple (no widening to
     all-declared), leave every permissioned in-manifest tool unequipped
-    (only ``session_state``, which requires no permission, is equipped),
+    (all sales-agent tools require permissions, so none is equipped),
     and never emit the all-declared default log."""
     from conftest import build_test_registry
 
@@ -1349,8 +1349,7 @@ async def test_run_scenario_explicit_empty_grant_equips_only_unpermissioned_tool
         )
 
     assert build_runtime_spy.call_args.args[2] == ()
-    assert len(bound_tool_names) == 1
-    assert set(bound_tool_names[0]) == {"session_state"}
+    assert len(bound_tool_names) == 0
     log_info.assert_not_called()
 
 

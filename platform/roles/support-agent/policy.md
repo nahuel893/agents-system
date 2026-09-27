@@ -1,6 +1,6 @@
 ---
 role: support-agent
-version: "1.0"
+version: "2.0"
 autonomy: supervised
 untrusted_input: true
 escalation_rules:

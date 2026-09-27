@@ -192,7 +192,7 @@ def test_a_permissions_directive_is_honoured_inline_as_from_folder(
         roots=ROOTS,
     )
 
-    assert inline.permissions == folder.permissions == ("read:session",)
+    assert inline.permissions == folder.permissions == ()
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 ---
 role: operator-agent
-version: "1.0"
+version: "2.0"
 autonomy: supervised
 untrusted_input: false
 escalation_rules:

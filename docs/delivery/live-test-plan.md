@@ -63,16 +63,11 @@ blocks a merge on a low success rate. See **Gating** below.
   `usage` hardcoded to `{prompt_tokens:0, completion_tokens:0,
   total_tokens:0}` (`integration/openai_adapter.py:322-327`). No `psutil`, no
   `resource.getrusage`, nothing tracks per-turn cost anywhere in `src/`.
-- **`session_state` has no production connector.** Every role that extends
-  `platform/roles/agent` declares the tool, but `src/` ships none. It exists
-  only as a test fixture (`tests/conftest.py`) and the live-eval driver's own
-  in-memory fake (`evals/live_registry.py:_build_session_state_tool_spec:113`),
-  which reads `session_id` straight from the model's own tool-call input
-  (`str(inputs.get("session_id") or "")`) — **the model picks the session
-  id**, not the harness. An importer registry that omits it raises
-  `InjectionError: Unknown tool: session_state`
-  (`harness/injector.py:145`); the demo works today only because
-  `demo.py:45` reuses the eval live registry. Decision pending — see below.
+- **`session_state` removed from predefined roles (issue #118).** Previously,
+  every role that extended `platform/roles/agent` declared `session_state`,
+  but `src/` shipped no production connector for it. It was removed from
+  predefined roles; conversation history is preserved by the checkpointer,
+  and structured, agent-owned memory is tracked under ADR-002 Wave 3 (#29, #25).
 - **`spawn`/delegation is declared, not implemented.** The orchestrator role
   grants `spawn:sales-agent`/`spawn:data-agent`/`spawn:summary-agent`
   (`Spawn` permission class, `permissions/builtins.py:49-54`) and
@@ -96,16 +91,12 @@ blocks a merge on a low success rate. See **Gating** below.
 - **Live tests do not gate.** They assert run counts only; nothing fails CI
   on a low success rate.
 
-## Open decision
+## Decisions already taken
 
-- **`session_state`**: implement a real, harness-bound connector (session id
-  derived from the conversation/thread, not chosen by the model), or remove
-  the tool from the shared `platform/roles/agent` role entirely. Not decided
-  here.
-
-## Decisions already taken (owner, 2026-09-25)
-
-- Start the live-test program with **Phase 0 + Phase 1**.
+- **`session_state`** (owner, 2026-09-26, #118): removed from predefined
+  roles. Conversation history is kept by the checkpointer; structured,
+  agent-owned memory belongs to ADR-002 Wave 3 (#29, #25).
+- Start the live-test program with **Phase 0 + Phase 1** (owner, 2026-09-25).
 - Build a **read-only SQL tool**: dedicated read-only DB role, allowlisted
   views only, row limit, statement timeout, its own permission, no DDL/DML,
   single statement, capped results. Recommended tier **T2**; the final tier

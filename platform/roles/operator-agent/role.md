@@ -1,6 +1,6 @@
 ---
 name: operator-agent
-version: "1.0"
+version: "2.0"
 ---
 
 # Role: operator-agent
@@ -10,8 +10,8 @@ The agent that touches the machine.
 ## purpose
 
 Inspect and operate on a working tree: run approved commands, read files,
-report what it found. Everything `agent` does — conversation, session state,
-escalation — it does too, by inheritance.
+report what it found. Everything `agent` does — conversation, escalation —
+it does too, by inheritance.
 
 ## what it is NOT
 

@@ -645,7 +645,6 @@
           client_lookup(inputs) → dict<br>
           order_writer(inputs) → dict<br>
           message_sender(inputs) → dict<br>
-          session_state(inputs) → dict<br>
           build_acme_registry() → ToolRegistry
         </div>
       </div>
@@ -1033,26 +1032,6 @@
           </div>
         </div>
 
-        <div class="connector-card">
-          <div class="connector-header">
-            <div class="connector-icon">🗄️</div>
-            <div>
-              <div class="connector-name">session_state</div>
-              <div class="connector-perms">(no permissions)</div>
-            </div>
-          </div>
-          <div class="connector-in-out">
-            <div>
-              <div class="connector-io-label">Input</div>
-              <div class="connector-io-val">action: "get"|"set"<br>session_id: str</div>
-            </div>
-            <div>
-              <div class="connector-io-label">Output</div>
-              <div class="connector-io-val">get → {session_id, data}<br>set → {status: "ok"}</div>
-            </div>
-          </div>
-        </div>
-
       </div>
     </div>
 
@@ -1432,7 +1411,7 @@ const stageData = {
     sub: 'The callable that executes the external operation',
     items: [
       { label: 'Signature', val: 'connector(tool_input: dict) → dict' },
-      { label: 'ACME tools', val: 'catalog_search · client_lookup · order_writer · message_sender · session_state' },
+      { label: 'ACME tools', val: 'catalog_search · client_lookup · order_writer · message_sender' },
       { label: 'Current state', val: 'Stubs (D-006) — deterministic fake responses. Real connectors (Postgres, WhatsApp API) come later.' },
       { label: 'Real connectors', val: 'WhatsApp → Meta Cloud API · catalog/orders → Postgres · session → Redis' },
       { label: 'Status', val: '✅ Stubs done (D-006). Real connectors: planned.' },

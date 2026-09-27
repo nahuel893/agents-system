@@ -33,7 +33,6 @@ description: >
 turns:
   - "Can you show me what's in notes.txt?"
 granted_permissions:
-  - read:session
   - send:escalation
   - exec:command
 assertions:

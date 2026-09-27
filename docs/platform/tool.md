@@ -206,6 +206,8 @@ Writes a confirmed order and its line items to the local database. Fails closed 
 
 ### `redis_session_state`
 
+> **Note**: `session_state` is no longer a predefined role tool (#118). Turn conversation history is maintained by the checkpointer, and structured, agent-owned memory belongs to ADR-002 Wave 3 (#29, #25). `redis_session_state` describes the underlying Redis session connector.
+
 | Field | Value |
 |---|---|
 | Connector | `redis` |

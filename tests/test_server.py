@@ -29,15 +29,6 @@ def role_equipping_factory(
 
     registry.register(
         ToolSpec(
-            name="session_state",
-            description="Manage session state",
-            required_permissions=(),
-            tier=Tier.T0,
-            connector=_dummy_connector,
-        )
-    )
-    registry.register(
-        ToolSpec(
             name="escalation_notifier",
             description="Escalate to human",
             required_permissions=(),
@@ -236,7 +227,6 @@ def test_server_lifespan_fails_when_agent_registered_without_registry_factory(
         "Deployments must supply a registry factory providing every tool their agents declare"
         in err_msg
     )
-    assert "session_state" in err_msg
     assert "catalog_search" in err_msg
     assert "examples/demo/app.py" in err_msg
 

@@ -447,7 +447,7 @@ def test_a_deployment_that_removes_a_permission_actually_loses_it(
     (dep / "role.md").write_text("---\nname: sales-agent\n---\n\nbody\n")
     (dep / "manifest.md").write_text(
         "---\nrole: sales-agent\ndeployment: narrow\n"
-        "tools: [session_state]\nskills: []\ncontext: {}\n"
+        "tools: [client_lookup]\nskills: []\ncontext: {}\n"
         "permissions:\n  inherit: true\n  remove: [write:orders, write:order_items]\n"
         "---\n\nm\n"
     )

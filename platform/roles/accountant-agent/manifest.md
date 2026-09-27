@@ -1,6 +1,6 @@
 ---
 role: accountant-agent
-version: "1.0"
+version: "2.0"
 extends: platform/roles/agent
 tools: [run_report, knowledge_retrieval]
 skills: []

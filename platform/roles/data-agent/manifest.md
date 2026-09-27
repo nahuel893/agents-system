@@ -1,8 +1,8 @@
 ---
 role: data-agent
 extends: platform/roles/agent
-version: "2.0"
-tools: [catalog_search, client_lookup, knowledge_retrieval, run_report, session_state]
+version: "3.0"
+tools: [catalog_search, client_lookup, knowledge_retrieval, run_report]
 skills: []
 context:
   session: true
@@ -13,7 +13,6 @@ permissions:
   - read:client_registry
   - read:knowledge_base
   - read:reports
-  - read:session
 ---
 
 # Manifest: data-agent

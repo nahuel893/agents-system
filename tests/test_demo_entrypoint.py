@@ -204,7 +204,6 @@ def test_demo_registry_factory_registers_every_expected_tool() -> None:
         "conversation_summarizer",
         "escalation_notifier",
         "order_writer",
-        "session_state",
         "use_term",
         "read_file",
     )

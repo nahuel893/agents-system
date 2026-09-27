@@ -106,7 +106,7 @@ La siguiente tabla detalla qué roles de agente tienen permitido declarar e inye
 | **Outline Wiki** | `wiki_reader` | `data_agent`, `employee_agent` | `read:outline` |
 | **Element Chat** | `meeting_transcript_reader` | `summary_agent` | `read:element` |
 
-*Esta tabla ilustra los principios del modelo y no es un registro exhaustivo de todas las herramientas futuras.*
+*Esta tabla ilustra los principios del modelo y no es un registro exhaustivo de todas las herramientas futuras. (`session_state` ya no es una herramienta de roles predefinidos — ver #118; la memoria conversacional reside en el checkpointer y la memoria estructurada corresponde a la Ola 3 de ADR-002, #29, #25).*
 
 ---
 

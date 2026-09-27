@@ -1,8 +1,8 @@
 ---
 role: summary-agent
 extends: platform/roles/agent
-version: "2.0"
-tools: [conversation_summarizer, knowledge_retrieval, session_state]
+version: "3.0"
+tools: [conversation_summarizer, knowledge_retrieval]
 skills: []
 context:
   session: true
@@ -11,7 +11,6 @@ context:
 permissions:
   - read:conversation_logs
   - read:knowledge_base
-  - read:session
   - write:summary_output
 ---
 

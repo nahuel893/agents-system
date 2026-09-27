@@ -197,7 +197,6 @@ el catálogo de productos y la lista de precios del cliente.
 - whatsapp_sender
 - rag_catalog_search
 - postgres_order_writer
-- redis_session_state
 - client_lookup
 
 ## skills
@@ -253,7 +252,7 @@ el catálogo de productos y la lista de precios del cliente.
   retention_days: 90
 ```
 
-Esta carpeta de definición del agente establece la frontera de comportamiento del Agente de Preventa. Al momento de la instanciación, la plataforma inyecta exactamente las cinco herramientas listadas en `manifest.md`, las tres habilidades declaradas, el contexto de sesión y de identidad del usuario, y valida que el usuario solicitante cuente con los seis permisos requeridos. El agente no puede delegar (`policy.md` declara `allowed: false`), por lo que no se inyectará ninguna política de orquestación. Cualquier condición presente en `escalation_rules` de `policy.md` abortará el camino de ejecución actual del agente y transferirá el control a un operador humano.
+Esta carpeta de definición del agente establece la frontera de comportamiento del Agente de Preventa. Al momento de la instanciación, la plataforma inyecta exactamente las cuatro herramientas listadas en `manifest.md`, las tres habilidades declaradas, el contexto de sesión y de identidad del usuario, y valida que el usuario solicitante cuente con los seis permisos requeridos. (`session_state` se eliminó de los roles predefinidos en #118; la memoria conversacional reside en el checkpointer y la memoria estructurada corresponde a la Ola 3 de ADR-002 #29, #25). El agente no puede delegar (`policy.md` declara `allowed: false`), por lo que no se inyectará ninguna política de orquestación. Cualquier condición presente en `escalation_rules` de `policy.md` abortará el camino de ejecución actual del agente y transferirá el control a un operador humano.
 
 ---
 

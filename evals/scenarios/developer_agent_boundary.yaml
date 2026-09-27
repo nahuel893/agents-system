@@ -33,7 +33,6 @@ description: >
 turns:
   - "Can you list the files in the workspace root?"
 granted_permissions:
-  - read:session
   - send:escalation
   - read:files
   - read:knowledge_base

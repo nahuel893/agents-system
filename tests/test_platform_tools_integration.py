@@ -265,7 +265,6 @@ def test_data_agent_boots_with_knowledge_retrieval_denied() -> None:
     assert {t.name for t in runtime.tools} == {
         "catalog_search",
         "client_lookup",
-        "session_state",
         # D-023 added run_report to the data-agent manifest. Narrowing
         # read:knowledge_base denies knowledge_retrieval only; run_report
         # needs read:reports, which this role still grants.
@@ -357,3 +356,38 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
                 f"'{role}' is extended only by other abstract roles, so the "
                 f"whole subtree is unbuildable and grants nothing"
             )
+
+
+# ---------------------------------------------------------------------------
+# Issue #118: predefined roles boot against a registry without session_state
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("role_type", discover_concrete_platform_roles())
+def test_registry_without_session_state_equips_every_predefined_role(
+    role_type: str,
+) -> None:
+    """Issue #118: every predefined role must boot against a registry lacking session_state.
+
+    Previously, every predefined role inherited session_state from platform/roles/agent,
+    making InjectionError fail boot on any registry that did not provide a session_state fake.
+    """
+    from agents_system.harness import loader
+    from agents_system.harness.factory import build_runtime
+    from agents_system.harness.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    for name in _registry().names():
+        if name != "session_state":
+            registry.register(_registry().get(name))
+
+    assert "session_state" not in registry
+
+    definition = loader.resolve(role_type, client=None)
+    runtime = build_runtime(
+        role_type,
+        registry,
+        granted_permissions=definition.permissions,
+        client=None,
+    )
+    assert "session_state" not in {t.name for t in runtime.tools}

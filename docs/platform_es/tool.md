@@ -252,6 +252,8 @@ Escribe un pedido confirmado y sus correspondientes líneas de detalle en la bas
 
 ### `redis_session_state` (Estado de Sesión Redis)
 
+> **Nota**: `session_state` ya no es una herramienta de roles predefinidos (#118). La memoria conversacional es mantenida por el checkpointer, y la memoria estructurada pertenece a la Ola 3 de ADR-002 (#29, #25). `redis_session_state` describe el conector subyacente de sesiones en Redis.
+
 | Campo | Valor |
 |---|---|
 | Conector | `redis` |

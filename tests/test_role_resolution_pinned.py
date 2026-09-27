@@ -53,14 +53,11 @@ def _client_a_roots() -> RootConfig:
 
 PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     "orchestrator": {
-        # Order is parent-first: `agent` contributes session_state and
-        # escalation_notifier, then the role's own additions in declared
-        # order. orchestrator already named both, so it gains nothing —
-        # they are deduplicated, not repeated.
-        "tools": ["session_state", "escalation_notifier", "client_lookup"],
+        # Order is parent-first: `agent` contributes escalation_notifier,
+        # then the role's own additions in declared order.
+        "tools": ["escalation_notifier", "client_lookup"],
         "permissions": [
             "read:client_registry",
-            "read:session",
             "send:escalation",
             "spawn:data-agent",
             "spawn:sales-agent",
@@ -72,7 +69,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     },
     "sales-agent": {
         "tools": [
-            "session_state",
             "escalation_notifier",  # gained from `agent`
             "message_sender",
             "catalog_search",
@@ -83,7 +79,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
             "read:catalog",
             "read:client_registry",
             "read:price_lists",
-            "read:session",  # gained from `base`
             "send:escalation",  # gained from `agent`
             "send:message",
             "write:order_items",
@@ -94,7 +89,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     },
     "data-agent": {
         "tools": [
-            "session_state",
             "escalation_notifier",  # gained from `agent`
             "catalog_search",
             "client_lookup",
@@ -106,7 +100,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
             "read:client_registry",
             "read:knowledge_base",
             "read:reports",
-            "read:session",
             "send:escalation",  # gained from `agent`
         ],
         # `full` under a `supervised` parent, on purpose. Role-to-role
@@ -117,7 +110,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     },
     "summary-agent": {
         "tools": [
-            "session_state",
             "escalation_notifier",  # gained from `agent`
             "conversation_summarizer",
             "knowledge_retrieval",
@@ -125,7 +117,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
         "permissions": [
             "read:conversation_logs",
             "read:knowledge_base",
-            "read:session",
             "send:escalation",  # gained from `agent`
             "write:summary_output",
         ],
@@ -133,17 +124,16 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
         "context": {"org_context": False, "session": True, "user_identity": True},
     },
     "agent": {
-        "tools": ["session_state", "escalation_notifier"],
-        "permissions": ["read:session", "send:escalation"],
+        "tools": ["escalation_notifier"],
+        "permissions": ["send:escalation"],
         "autonomy": "supervised",
         "context": {"org_context": False, "session": True, "user_identity": True},
     },
     "operator-agent": {
-        "tools": ["session_state", "escalation_notifier", "use_term", "read_file"],
+        "tools": ["escalation_notifier", "use_term", "read_file"],
         "permissions": [
             "exec:command",
             "read:files",
-            "read:session",
             "send:escalation",
         ],
         "autonomy": "supervised",
@@ -151,7 +141,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     },
     "support-agent": {
         "tools": [
-            "session_state",
             "escalation_notifier",
             "knowledge_retrieval",
             "conversation_summarizer",
@@ -162,7 +151,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
             "read:client_registry",
             "read:conversation_logs",
             "read:knowledge_base",
-            "read:session",
             "send:escalation",
             "send:message",
         ],
@@ -171,7 +159,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     },
     "developer-agent": {
         "tools": [
-            "session_state",
             "escalation_notifier",
             "use_term",
             "read_file",
@@ -181,7 +168,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
             "exec:command",
             "read:files",
             "read:knowledge_base",
-            "read:session",
             "send:escalation",
         ],
         "autonomy": "supervised",
@@ -189,7 +175,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
     },
     "accountant-agent": {
         "tools": [
-            "session_state",
             "escalation_notifier",
             "run_report",
             "knowledge_retrieval",
@@ -197,7 +182,6 @@ PINNED_PLATFORM: dict[str, dict[str, Any]] = {
         "permissions": [
             "read:knowledge_base",
             "read:reports",
-            "read:session",
             "send:escalation",
         ],
         "autonomy": "supervised",
@@ -213,7 +197,7 @@ PINNED_DEPLOYMENT: dict[str, dict[str, Any]] = {
     # actually runs is exactly what ran before.
     #
     # PERMISSIONS did move, because both manifests say `permissions: inherit`
-    # and the resolved role now carries `read:session` and `send:escalation`.
+    # and the resolved role now carries `send:escalation`.
     # Both are inert here: the injector resolves the tool surface as
     # `role.permissions ∩ granted`, so a permission with no declared tool
     # grants nothing. The generic data-agent fixture pins this inert
@@ -223,14 +207,12 @@ PINNED_DEPLOYMENT: dict[str, dict[str, Any]] = {
             "message_sender",
             "catalog_search",
             "order_writer",
-            "session_state",
             "client_lookup",
         ],
         "permissions": [
             "read:catalog",
             "read:client_registry",
             "read:price_lists",
-            "read:session",  # inherited, inert
             "send:escalation",  # inherited, inert — no escalation_notifier here
             "send:message",
             "write:order_items",
@@ -240,13 +222,12 @@ PINNED_DEPLOYMENT: dict[str, dict[str, Any]] = {
         "context": {"org_context": False, "session": True, "user_identity": True},
     },
     "data-agent": {
-        "tools": ["run_report", "client_lookup", "catalog_search", "session_state"],
+        "tools": ["run_report", "client_lookup", "catalog_search"],
         "permissions": [
             "read:catalog",
             "read:client_registry",
             "read:knowledge_base",
             "read:reports",
-            "read:session",
             "send:escalation",  # inherited, inert
         ],
         "autonomy": "full",
@@ -328,7 +309,7 @@ def test_a_deployment_that_tries_to_widen_is_refused(tmp_path: pathlib.Path) -> 
         "---\nrole: summary-agent\ndeployment: greedy\n"
         # `use_term` belongs to the operator branch; summary-agent has no path
         # to it, so asking for it is a deployment trying to widen.
-        "tools: [session_state, use_term]\n"
+        "tools: [conversation_summarizer, use_term]\n"
         "skills: []\ncontext: {}\npermissions: inherit\n---\n\nm\n"
     )
     (dep / "policy.md").write_text(

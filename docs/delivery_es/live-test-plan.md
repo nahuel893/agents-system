@@ -73,18 +73,12 @@ más abajo.
   (`integration/openai_adapter.py:322-327`). No hay `psutil`, no hay
   `resource.getrusage`, nada rastrea el costo por turno en ningún lugar de
   `src/`.
-- **`session_state` no tiene conector de producción.** Todo rol que extiende
-  `platform/roles/agent` declara la herramienta, pero `src/` no envía
-  ninguno. Solo existe como fixture de test (`tests/conftest.py`) y como el
-  fake en memoria del propio driver de live-eval
-  (`evals/live_registry.py:_build_session_state_tool_spec:113`), que lee el
-  `session_id` directamente de la entrada de la llamada a herramienta del
-  modelo (`str(inputs.get("session_id") or "")`) — **el modelo elige el id
-  de sesión**, no el harness. Un registro de importador que lo omite lanza
-  `InjectionError: Unknown tool: session_state`
-  (`harness/injector.py:145`); el demo funciona hoy solo porque
-  `demo.py:45` reutiliza el registro en vivo de los evals. Decisión
-  pendiente — ver más abajo.
+- **`session_state` eliminado de los roles predefinidos (issue #118).**
+  Anteriormente, todo rol que extendía `platform/roles/agent` declaraba
+  `session_state`, pero `src/` no enviaba ningún conector de producción. Se
+  eliminó de los roles predefinidos; el historial de conversación es
+  mantenido por el checkpointer, y la memoria estructurada pertenece a la
+  Ola 3 de ADR-002 (#29, #25).
 - **`spawn`/delegación está declarado, no implementado.** El rol orchestrator
   otorga `spawn:sales-agent`/`spawn:data-agent`/`spawn:summary-agent` (clase
   de permiso `Spawn`, `permissions/builtins.py:49-54`) y `policy.md` declara
@@ -109,16 +103,12 @@ más abajo.
 - **Las pruebas en vivo no son una compuerta.** Solo aseveran conteos de
   corridas; nada falla en CI por una tasa de éxito baja.
 
-## Decisión abierta
+## Decisiones ya tomadas
 
-- **`session_state`**: implementar un conector real, ligado al harness (id
-  de sesión derivado de la conversación/hilo, no elegido por el modelo), o
-  eliminar la herramienta del rol compartido `platform/roles/agent` por
-  completo. No se decide aquí.
-
-## Decisiones ya tomadas (owner, 2026-09-25)
-
-- Iniciar el programa de pruebas en vivo con **Fase 0 + Fase 1**.
+- **`session_state`** (owner, 2026-09-26, #118): eliminado de los roles
+  predefinidos. El historial de conversación lo mantiene el checkpointer;
+  la memoria estructurada pertenece a la Ola 3 de ADR-002 (#29, #25).
+- Iniciar el programa de pruebas en vivo con **Fase 0 + Fase 1** (owner, 2026-09-25).
 - Construir una **herramienta SQL de solo lectura**: rol de base de datos de
   solo lectura dedicado, únicamente vistas en lista blanca, límite de filas,
   timeout de sentencia, su propio permiso, sin DDL/DML, sentencia única,

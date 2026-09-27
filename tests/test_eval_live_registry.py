@@ -100,7 +100,6 @@ def test_build_live_registry_registers_every_expected_tool() -> None:
         "conversation_summarizer",
         "escalation_notifier",
         "order_writer",
-        "session_state",
         "use_term",
         "read_file",
     }
@@ -174,34 +173,6 @@ async def test_conversation_summarizer_fails_for_an_unseeded_session() -> None:
 
 
 # ---------------------------------------------------------------------------
-# session_state -- the locally-defined tool (no platform connector exists)
-# ---------------------------------------------------------------------------
-
-
-async def test_session_state_set_then_get_round_trips_within_one_registry() -> None:
-    registry = build_live_registry(_ReadOnlyEngine(), _fake_model())
-    spec = registry.get("session_state")
-
-    set_result = await spec.connector(
-        {"action": "set", "session_id": "s-1", "data": {"topic": "fernet"}}
-    )
-    get_result = await spec.connector({"action": "get", "session_id": "s-1"})
-
-    assert set_result == {"status": "ok", "session_id": "s-1"}
-    assert get_result == {"session_id": "s-1", "data": {"topic": "fernet"}}
-
-
-async def test_session_state_get_on_an_unset_session_is_empty_not_an_error() -> None:
-    registry = build_live_registry(_ReadOnlyEngine(), _fake_model())
-
-    result = await registry.get("session_state").connector(
-        {"action": "get", "session_id": "never-set"}
-    )
-
-    assert result == {"session_id": "never-set", "data": {}}
-
-
-# ---------------------------------------------------------------------------
 # escalation_notifier / order_writer -- real reference backends
 # ---------------------------------------------------------------------------
 
@@ -266,20 +237,6 @@ async def test_build_live_registry_gives_two_calls_unshared_escalation_state() -
 
     assert result_a["escalation_id"] == "logged-escalation-000001"
     assert result_b["escalation_id"] == "logged-escalation-000001"
-
-
-async def test_build_live_registry_gives_two_calls_unshared_session_state() -> None:
-    registry_a = build_live_registry(_ReadOnlyEngine(), _fake_model())
-    registry_b = build_live_registry(_ReadOnlyEngine(), _fake_model())
-
-    await registry_a.get("session_state").connector(
-        {"action": "set", "session_id": "s-1", "data": {"leaked": True}}
-    )
-    result_b = await registry_b.get("session_state").connector(
-        {"action": "get", "session_id": "s-1"}
-    )
-
-    assert result_b == {"session_id": "s-1", "data": {}}
 
 
 async def test_build_live_registry_gives_two_calls_distinct_registry_objects() -> None:

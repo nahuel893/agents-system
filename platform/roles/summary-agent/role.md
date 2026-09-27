@@ -1,6 +1,6 @@
 ---
 name: summary-agent
-version: "2.0"
+version: "3.0"
 ---
 
 # Role: summary-agent

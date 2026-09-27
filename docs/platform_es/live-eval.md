@@ -530,12 +530,11 @@ directo desde Redis).
 
 El escenario smoke (`tests/test_live_smoke.py`, `pytest -m live`) prueba el
 cableado de punta a punta con un turno por la API y un turno por el
-webhook, ambos disparando la herramienta `session_state` (en memoria, no
-necesita datos sembrados -- `catalog_search` / `client_lookup` /
-`order_writer` esperan las vistas del contrato portable de reportes de la
-empresa demo, que es responsabilidad de la Fase 1 (#79), no de este
-harness), y hace assert sobre lo que hizo el SISTEMA: filas de auditoría,
-contadores de `/metrics`, y el mensaje que efectivamente recibió
+webhook, ambos disparando la herramienta `catalog_search` (`session_state`
+se eliminó de los roles predefinidos en #118; la memoria conversacional
+reside en el checkpointer y la memoria estructurada pertenece a la Ola 3 de
+ADR-002 #29, #25), y hace assert sobre lo que hizo el SISTEMA: filas de
+auditoría, contadores de `/metrics`, y el mensaje que efectivamente recibió
 `FakeWhatsAppServer` -- nunca el texto propio del modelo, según el
 Principio de este documento para tests en vivo.
 

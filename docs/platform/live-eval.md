@@ -488,12 +488,12 @@ checkpointed LangGraph thread straight out of Redis).
 
 The smoke scenario (`tests/test_live_smoke.py`, `pytest -m live`) proves the
 wiring end to end with one API turn and one webhook turn, both driving the
-`session_state` tool (in-memory, needs no seeded data -- `catalog_search` /
-`client_lookup` / `order_writer` expect the demo company's seeded portable-
-report views, which is Phase 1's (#79) concern, not this harness's), and
-asserts on what the SYSTEM did: audit rows, `/metrics` counters, and the
-message `FakeWhatsAppServer` actually received -- never the model's own
-wording, per this document's live-test Principle.
+`catalog_search` tool (`session_state` was removed from predefined roles in
+#118; conversation memory is in the checkpointer, and structured memory is
+ADR-002 Wave 3 #29, #25), and asserts on what the SYSTEM did: audit rows,
+`/metrics` counters, and the message `FakeWhatsAppServer` actually
+received -- never the model's own wording, per this document's live-test
+Principle.
 
 **Correlation id caveat**: `AuditEvent.correlation_id` comes from
 `structlog`'s `request_id` contextvar, which only `RequestIdMiddleware`

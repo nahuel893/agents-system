@@ -17,24 +17,11 @@ never build one ``ToolRegistry`` here and reuse it across runs.
 The ``AsyncEngine`` itself is just a connection pool, not stateful backend
 data, and is safe -- and intended -- to construct once and share across every
 call.
-
-``session_state`` is registered here even though it is not one of
-``ReferenceBackends``'s tools: every one of the seven roles this issue covers
-inherits it from ``platform/roles/agent``, and the platform ships no
-production connector for it (unlike ``knowledge_retrieval``,
-``conversation_summarizer``, etc., there is no ``services/session.py`` port
-and no ``build_session_state_tool_spec`` anywhere in ``src/``). Omitting it
-would make ``build_runtime`` raise ``InjectionError: Unknown tool:
-session_state`` for every single scenario in this issue -- so a small,
-genuinely-functioning in-memory implementation is defined locally, the same
-role ``tests/conftest.py::build_test_registry`` fills with its own ad hoc
-fake for the same reason.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -46,7 +33,7 @@ from agents_system.connectors.platform_connectors import (
     build_escalation_notifier_tool_spec,
     build_knowledge_retrieval_tool_spec,
 )
-from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
+from agents_system.harness.registry import ToolRegistry
 from agents_system.services.reference import (
     InMemoryKnowledgeBase,
     InMemoryOrderWriter,
@@ -147,49 +134,6 @@ _DEMO_SUMMARY_TRANSCRIPT = (
     ),
 )
 
-_SESSION_STATE_DESCRIPTION = (
-    "Get or set session state data for the current conversation."
-)
-_SESSION_STATE_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "action": {"type": "string", "enum": ["get", "set"]},
-        "session_id": {"type": "string"},
-        "data": {"type": "object"},
-    },
-    "required": ["action", "session_id"],
-}
-
-
-def _build_session_state_tool_spec() -> ToolSpec:
-    """Return a fresh, genuinely-functioning in-memory `session_state` tool.
-
-    Backed by a dict private to this call -- nothing shares it across two
-    calls to `_build_session_state_tool_spec` (and therefore across two
-    `build_live_registry` calls), the same isolation every other backend
-    here gets.
-    """
-    store: dict[str, dict[str, Any]] = {}
-
-    async def session_state(
-        inputs: dict[str, Any], *, session: Any = None
-    ) -> dict[str, Any]:
-        action = inputs.get("action", "get")
-        session_id = str(inputs.get("session_id") or "")
-        if action == "set":
-            store[session_id] = dict(inputs.get("data") or {})
-            return {"status": "ok", "session_id": session_id}
-        return {"session_id": session_id, "data": dict(store.get(session_id, {}))}
-
-    return ToolSpec(
-        name="session_state",
-        description=_SESSION_STATE_DESCRIPTION,
-        required_permissions=(),
-        tier=Tier.T0,
-        input_schema=_SESSION_STATE_INPUT_SCHEMA,
-        connector=session_state,
-    )
-
 
 def _seeded_knowledge_base() -> InMemoryKnowledgeBase:
     return InMemoryKnowledgeBase(_KNOWLEDGE_DOCUMENTS)
@@ -214,9 +158,9 @@ def build_live_registry(
     to construct once and share across many calls to this function.
 
     Every STATEFUL backend below (`ReferenceBackends`, the knowledge base,
-    the conversation summarizer, the escalation channel, the order writer,
-    `session_state`'s own store) is constructed FRESH by this call. Two
-    calls -- e.g. one per `run_scenario` run via
+    the conversation summarizer, the escalation channel, the order writer)
+    is constructed FRESH by this call. Two calls -- e.g. one per `run_scenario`
+    run via
     `build_live_registry_factory` -- never share process-local state (PR
     #176 review note 1): `ReferenceBackends.recorded_messages` from one call
     can never leak into another, an order written in one run is invisible to
@@ -242,8 +186,6 @@ def build_live_registry(
     )
     registry.register(build_escalation_notifier_tool_spec(LoggingEscalationChannel()))
     registry.register(build_order_writer_tool_spec(InMemoryOrderWriter()))
-
-    registry.register(_build_session_state_tool_spec())
 
     for spec in build_operator_tool_specs(terminal_policy):
         registry.register(spec)
