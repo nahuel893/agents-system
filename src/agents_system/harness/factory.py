@@ -481,6 +481,7 @@ def build_runtime(
     client: str | None = None,
     roots: RootConfig | None = None,
     session_provider: async_sessionmaker[AsyncSession] | None = None,
+    definition: AgentDefinition | None = None,
 ) -> EquippedRuntime:
     """Assemble an ``EquippedRuntime`` for a role (optionally a client deployment).
 
@@ -495,6 +496,8 @@ def build_runtime(
         containment), so accepting one here adds no path around them. The
         name stays ``role_type`` for existing keyword callers. ``client=``
         is valid only with a ``str`` — ``resolve()`` rejects the rest.
+        Ignored (together with ``client``/``roots``) when ``definition`` is
+        given.
     registry:
         The live tool registry the granted surface is resolved against.
     granted_permissions:
@@ -515,6 +518,18 @@ def build_runtime(
         merged on top of the generic role and its skill files are loaded.
     roots:
         Injectable path config. Defaults to the real repo roots.
+    definition:
+        An already-resolved ``AgentDefinition`` to use in place of resolving
+        ``role_type``/``client``/``roots`` again (issue #128 item 3). A
+        caller that already resolved the definition for its own purposes
+        (``main.py``'s boot-time untrusted_input/lease checks, which must
+        run BEFORE this function to fail boot before any resource exists —
+        see design.md ADR-002 C.13) passes it here instead of letting this
+        function resolve the SAME locator/client/roots a second,
+        independent time: two separate reads of an importer-owned
+        ``Agent.from_folder`` folder could in principle disagree with each
+        other. ``None`` (the default) resolves exactly as before, unchanged
+        for every existing caller.
     """
     if roots is None:
         roots = RootConfig()
@@ -524,7 +539,8 @@ def build_runtime(
     # declared-name subset the injector needs).
     granted = list(granted_permissions)
 
-    definition = resolve(role_type, client=client, roots=roots)
+    if definition is None:
+        definition = resolve(role_type, client=client, roots=roots)
 
     # Resolve every raw grant entry (string or class) to a known class ONCE.
     # Registered resource classes use the registry's reverse lookup; the

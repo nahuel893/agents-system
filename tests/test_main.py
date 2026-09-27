@@ -2466,6 +2466,108 @@ async def test_registration_with_a_client_needs_an_explicit_root_config() -> Non
     assert "RootConfig" in message
 
 
+# ---------------------------------------------------------------------------
+# issue #128 item 1 -- a client named explicitly (via `clients=` or the
+# `role@client` AGENT_REGISTRATIONS syntax) whose deployment override folder
+# does not exist used to silently fall back to the generic, un-narrowed role
+# (only `loader.override_not_found` warned -- see
+# tests/test_harness_loader.py::test_missing_deployment_emits_a_warning,
+# which keeps `load_override`'s own library-level contract unchanged).
+# Because a deployment override may only NARROW the generic role, that
+# fallback WIDENS the tool surface a typo'd or removed client folder was
+# meant to restrict -- boot must refuse instead.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_registration_fails_boot_when_the_client_override_folder_is_missing() -> (
+    None
+):
+    """`operator-agent` has no `client-a/` override in the fixture
+    deployments root (only `data-agent`, `sales-agent`, `simple-role` do)."""
+    app = create_test_app(
+        roots=RootConfig(deployments_root=_FIXTURE_DEPLOYMENTS),
+        agents={"acme-ops": "operator-agent"},
+        grants={"acme-ops": ["read:catalog"]},
+        clients={"acme-ops": "client-a"},
+    )
+
+    with pytest.raises(DefinitionError) as exc_info:
+        await _boot(app, _registration_settings())
+
+    message = str(exc_info.value)
+    assert "'acme-ops'" in message
+    assert "client-a" in message
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.asyncio
+async def test_registration_boots_when_the_client_override_folder_exists() -> None:
+    """Counterpart -- `client-a/sales-agent` exists in the fixture
+    deployments root, so boot succeeds and narrows normally."""
+    app = create_test_app(
+        roots=RootConfig(deployments_root=_FIXTURE_DEPLOYMENTS),
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": _SALES_GRANT},
+        clients={"acme-sales": "client-a"},
+    )
+
+    await _boot(app, _registration_settings())
+
+    definition = app.state.runtimes["acme-sales"]["runtime"].definition
+    assert definition.deployment == "client-a"
+
+
+@pytest.mark.asyncio
+async def test_registration_resolves_the_definition_only_once() -> None:
+    """issue #128 item 3 -- the lifespan used to resolve() the definition
+    once directly (for the untrusted_input/lease checks below, which must
+    run before build_runtime) and then again inside build_runtime: two
+    independent reads of the same locator/client/roots that could, for an
+    Agent.from_folder importer folder, in principle diverge. Boot must
+    resolve exactly once and pass that same definition into build_runtime."""
+    from agents_system.harness.loader import resolve as real_resolve
+
+    calls: list[Any] = []
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        calls.append((args, kwargs))
+        return real_resolve(*args, **kwargs)
+
+    app = create_test_app(
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": _SALES_GRANT},
+    )
+
+    with (
+        patch("agents_system.harness.loader.resolve", side_effect=spy),
+        patch("agents_system.harness.factory.resolve", side_effect=spy),
+    ):
+        await _boot(app, _registration_settings())
+
+    assert len(calls) == 1, f"resolve() was called {len(calls)} times, expected 1"
+
+
+@pytest.mark.asyncio
+async def test_registration_wires_the_registered_runtime_id_into_agent_runtime() -> (
+    None
+):
+    """issue #128 item 8 -- only a unit-level test (test_agent_runtime.py)
+    constructing `AgentRuntime` directly ever asserted `runtime_id` wiring;
+    nothing covered the REAL boot call site (`main.py`'s lifespan). This
+    section's stub `AgentRuntime` (see `_registration_patches`) keeps every
+    kwarg it was constructed with, so `runtime_id` is read back the same way
+    `runtime` already is above."""
+    app = create_test_app(
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": _SALES_GRANT},
+    )
+
+    await _boot(app, _registration_settings())
+
+    assert app.state.runtimes["acme-sales"]["runtime_id"] == "acme-sales"
+
+
 @pytest.mark.asyncio
 async def test_registration_rejects_an_unregistered_permission_class_grant_at_boot() -> (
     None
