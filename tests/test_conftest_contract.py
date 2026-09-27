@@ -194,3 +194,107 @@ async def test_fake_conversation_recorder_records_turns_and_supports_spy() -> No
 
     assert len(spy_calls) == 1
     assert spy_calls[0]["thread_id"] == "+15551234567"
+
+
+# ---------------------------------------------------------------------------
+# #158 -- the offline suite must be isolated from the developer's `.env` and
+# from ambient WHATSAPP_*/ADAPTER_*/AGENT_REGISTRATIONS/DEPLOY_GRANTS/
+# REGISTRY_FACTORY/provider env vars. `Settings` (agents_system.config)
+# defaults `model_config["env_file"]` to `.env`, so any `Settings()` call
+# that does not pass its own `_env_file` picks up whatever `.env` sits at
+# the process cwd -- and #141's fail-closed WhatsApp boot check
+# (main.py::lifespan) turns exactly that leak into a hard, machine-dependent
+# offline failure: a checkout whose `.env` configures WHATSAPP_TOKEN/
+# WHATSAPP_PHONE_NUMBER_ID with no matching WHATSAPP_RUNTIME_ID (the common
+# shape for a developer who only wants to poke the adapter locally) fails
+# every offline lifespan test that builds a real `Settings()`.
+#
+# These run the target test as a subprocess rather than in-process: the leak
+# happens at `Settings()` construction time inside `main.py`/`server.py`,
+# which this same test process cannot observe from the outside without
+# reaching into module internals, and a subprocess is what actually
+# reproduces "run `pytest -q` on a checkout with a populated `.env`".
+# ---------------------------------------------------------------------------
+
+
+def _run_offline_pytest(
+    *, cwd: Path, env: dict[str, str], node_id: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", node_id],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=str(cwd),
+        env=env,
+        check=False,
+    )
+
+
+def test_offline_lifespan_test_passes_whether_or_not_dotenv_sets_whatsapp_vars() -> (
+    None
+):
+    """Regression test for #158 acceptance criterion 1: `pytest -q` must
+    behave identically whether or not the checkout's `.env` configures
+    WHATSAPP_TOKEN/WHATSAPP_PHONE_NUMBER_ID with no matching
+    WHATSAPP_RUNTIME_ID.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    dotenv_path = repo_root / ".env"
+    if dotenv_path.exists():
+        # A real developer `.env` is never read, backed up, or overwritten
+        # by this test -- the write below would otherwise clobber it, and
+        # its content is out of scope to inspect. The fixture already
+        # covers this exact shape without a real `.env` (see the sibling
+        # ambient-env-var test), and CI/a fresh checkout has none.
+        pytest.skip(
+            "a real .env exists at the repo root; skipping to avoid touching it"
+        )
+
+    target = "tests/test_server.py::test_server_lifespan_boots_with_no_agents"
+    # The ambient environment must not itself carry the leak under test --
+    # only the `.env` file written below may.
+    clean_env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("WHATSAPP_", "ADAPTER_"))
+    }
+
+    without_dotenv = _run_offline_pytest(cwd=repo_root, env=clean_env, node_id=target)
+    dotenv_path.write_text(
+        "WHATSAPP_TOKEN=leaked-token\nWHATSAPP_PHONE_NUMBER_ID=leaked-phone-id\n"
+    )
+    try:
+        with_dotenv = _run_offline_pytest(cwd=repo_root, env=clean_env, node_id=target)
+    finally:
+        dotenv_path.unlink()
+
+    assert without_dotenv.returncode == 0, without_dotenv.stdout + without_dotenv.stderr
+    assert with_dotenv.returncode == 0, with_dotenv.stdout + with_dotenv.stderr
+
+
+def test_offline_lifespan_test_ignores_ambient_whatsapp_env_vars() -> None:
+    """Scope point 1 (#158): an exported WHATSAPP_TOKEN/WHATSAPP_PHONE_NUMBER_ID
+    in the developer's shell -- not only a `.env` file -- must not leak into
+    an offline `Settings()` build either.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    target = "tests/test_server.py::test_server_lifespan_boots_with_no_agents"
+    env = dict(os.environ)
+    env["WHATSAPP_TOKEN"] = "leaked-ambient-token"
+    env["WHATSAPP_PHONE_NUMBER_ID"] = "leaked-ambient-phone-id"
+
+    result = _run_offline_pytest(cwd=repo_root, env=env, node_id=target)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.live
+def test_isolate_offline_settings_fixture_is_a_noop_for_live_tests() -> None:
+    """Acceptance criterion 2 (#158): a test marked `live` (or `load`) keeps
+    `Settings`' default `.env` reading untouched -- the isolation fixture
+    added for #158 only applies to the offline suite.
+    """
+    from agents_system.config import Settings
+
+    assert Settings.model_config.get("env_file") == ".env"

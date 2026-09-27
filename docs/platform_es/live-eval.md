@@ -44,6 +44,27 @@ Ambos por defecto valen lo mismo que estaba hardcodeado antes de #169
 (`qwen2.5:3b`, la resolución de host propia de ChatOllama) — una corrida sin
 configurar no cambia.
 
+### Las pruebas offline nunca leen `.env`
+
+`Settings` (`agents_system.config`) lee un archivo `.env` por defecto, y
+`pytest -m live` / `pytest -m load` deliberadamente mantienen eso: necesitan
+claves reales de proveedor. Cualquier otra prueba es el caso contrario
+(#158) — un fixture autouse en `tests/conftest.py` hace que la suite offline
+construya cada `Settings()` como si `.env` no existiera, y limpia las
+variables de entorno ambientales `WHATSAPP_*`/`ADAPTER_*`/
+`AGENT_REGISTRATIONS`/`DEPLOY_GRANTS`/`REGISTRY_FACTORY`/de credenciales de
+proveedor antes de cada prueba. Antes de que existiera este fixture, un
+checkout cuyo `.env` configuraba `WHATSAPP_TOKEN`/`WHATSAPP_PHONE_NUMBER_ID`
+sin un `WHATSAPP_RUNTIME_ID` correspondiente — el caso común de un
+desarrollador que solo quiere probar el adapter en local — hacía fallar 15
+pruebas offline de lifespan que pasaban en cualquier otra máquina: el chequeo
+de boot que falla cerrado para WhatsApp de #141 (`main.py::lifespan`) veía
+esas dos credenciales filtrarse desde `.env` mientras `WHATSAPP_RUNTIME_ID`
+quedaba sin definir. `pytest -q` ahora da el mismo resultado esté o no
+poblado el `.env` del checkout. El fixture no hace nada para cualquier
+prueba marcada `live` o `load`, así que los comandos de esta sección no se
+ven afectados.
+
 ### La suite completa en un comando
 
 `scripts/run-live-suite.sh` corre todas las suites en vivo en orden: smoke,

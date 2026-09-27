@@ -40,6 +40,25 @@ pytest -m live
 Both default to what was hardcoded before #169 (`qwen2.5:3b`,
 ChatOllama's own host resolution) — an unconfigured run is unchanged.
 
+### Offline tests never read `.env`
+
+`Settings` (`agents_system.config`) reads a `.env` file by default, and
+`pytest -m live` / `pytest -m load` deliberately keep that: they need real
+provider keys. Every other test is the opposite case (#158) — an autouse
+fixture in `tests/conftest.py` makes the offline suite build every
+`Settings()` as if `.env` did not exist, and clears ambient
+`WHATSAPP_*`/`ADAPTER_*`/`AGENT_REGISTRATIONS`/`DEPLOY_GRANTS`/
+`REGISTRY_FACTORY`/provider-credential env vars before each test. Before
+this fixture existed, a checkout whose `.env` set `WHATSAPP_TOKEN`/
+`WHATSAPP_PHONE_NUMBER_ID` with no matching `WHATSAPP_RUNTIME_ID` — the
+common case for a developer who only wants to poke the adapter locally —
+failed 15 offline lifespan tests that passed on every other machine: #141's
+fail-closed WhatsApp boot check (`main.py::lifespan`) saw those two
+credentials leak in from `.env` while `WHATSAPP_RUNTIME_ID` stayed unset.
+`pytest -q` now gives the same result whether or not the checkout's `.env`
+is populated. The fixture is a no-op for any test carrying the `live` or
+`load` marker, so this section's commands are unaffected.
+
 ### The whole suite in one command
 
 `scripts/run-live-suite.sh` runs every live suite in order: smoke, roles,

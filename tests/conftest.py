@@ -37,6 +37,72 @@ os.environ["ALLOW_INSECURE"] = "true"
 
 _test_msg_counter = itertools.count(1)
 
+# ---------------------------------------------------------------------------
+# #158 -- isolate the offline suite from the developer's ambient environment
+# and from `.env`. `Settings` (`agents_system.config`) defaults
+# `model_config["env_file"]` to `.env`, so any `Settings()` call that does
+# not pass its own `_env_file` reads whatever `.env` sits at the process's
+# cwd -- and the same construction also picks up ambient
+# WHATSAPP_*/ADAPTER_*/... exported by a developer's shell. #141's
+# fail-closed WhatsApp boot check (`main.py::lifespan`) turns exactly that
+# leak into a hard, machine-dependent offline failure: a checkout whose
+# `.env` sets WHATSAPP_TOKEN/WHATSAPP_PHONE_NUMBER_ID with no matching
+# WHATSAPP_RUNTIME_ID (the common shape for a developer who only wants to
+# poke the adapter locally) fails every offline lifespan test that builds a
+# real `Settings()`, on that machine only.
+#
+# `pydantic_settings.BaseSettings._settings_build_values` reads
+# `cls.model_config.get('env_file')` fresh at every construction that does
+# not pass its own `_env_file` kwarg (pydantic-settings 2.x), so mutating
+# the class-level `model_config` dict in place -- not reassigning the
+# attribute -- makes every such `Settings()` call in the test skip `.env`
+# for the duration of the test; `monkeypatch.setitem` restores the original
+# value afterwards.
+#
+# Live/load tests (`-m live` / `-m load`) are the deliberate exception
+# (ADR-002 E.18, `docs/platform/live-eval.md`): the live-eval and load
+# pipelines need real provider keys from `.env`, so this fixture is a no-op
+# for anything carrying the `live` or `load` marker.
+# `tests/test_conftest_contract.py` pins this contract.
+_ENV_ISOLATED_PREFIXES = ("WHATSAPP_", "ADAPTER_", "META_")
+_ENV_ISOLATED_EXACT_NAMES = frozenset(
+    {
+        "AGENT_REGISTRATIONS",
+        "DEPLOY_GRANTS",
+        "REGISTRY_FACTORY",
+        # Model/embedding provider credentials and endpoints
+        # (agents_system.config.Settings).
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_COMPATIBLE_API_KEY",
+        "OPENAI_COMPATIBLE_BASE_URL",
+        "OPENAI_COMPATIBLE_MODEL",
+        "OLLAMA_BASE_URL",
+        "GROQ_API_KEY",
+    }
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings_from_developer_env(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Autouse: the offline suite never sees the developer's `.env` or
+    ambient WHATSAPP_*/ADAPTER_*/provider env vars (#158). No-op for any
+    test marked `live` or `load`.
+    """
+    if request.node.get_closest_marker("live") or request.node.get_closest_marker(
+        "load"
+    ):
+        return
+
+    from agents_system.config import Settings
+
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    for name in list(os.environ):
+        if name in _ENV_ISOLATED_EXACT_NAMES or name.startswith(_ENV_ISOLATED_PREFIXES):
+            monkeypatch.delenv(name, raising=False)
+
 
 @pytest.fixture
 def reset_permission_registry() -> Generator[None, None, None]:
