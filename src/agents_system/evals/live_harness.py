@@ -182,9 +182,10 @@ def build_meta_webhook_envelope(
 ) -> dict[str, Any]:
     """One Meta WhatsApp Cloud API inbound-text webhook envelope.
 
-    Shaped exactly as `integration/webhook.py::_extract_meta_messages` and
-    `services/webhook_worker.py::_extract_inbound_turn` read it: a single
-    text message inside one `entry`/`changes`/`value.messages` batch.
+    Shaped exactly as the WhatsApp channel adapter
+    (`channels/whatsapp.py`: `read_inbound` at the route, `extract_turn` in
+    the deferred worker) reads it: a single text message inside one
+    `entry`/`changes`/`value.messages` batch.
     """
     return {
         "object": "whatsapp_business_account",

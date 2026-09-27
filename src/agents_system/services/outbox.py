@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from agents_system.models.audit_event import AuditEvent
-from agents_system.models.outbox import InboundMessage, OutboxWork
+from agents_system.models.outbox import LEGACY_CHANNEL, InboundMessage, OutboxWork
 
 _INBOX_META_MESSAGE_CONSTRAINT = "uq_webhook_inbox_meta_message_id"
 MAX_OUTBOX_ATTEMPTS = 5
@@ -85,37 +85,68 @@ class OutboxLeaseLostError(RuntimeError):
     """Raised when a worker no longer owns a live, actionable outbox lease."""
 
 
+def channel_scoped_key(channel: str, key: str) -> str:
+    """The durable form of a channel-native message id or conversation key.
+
+    #22 -- several channels share one inbox, whose dedup key
+    (``webhook_inbox.meta_message_id``) and per-conversation ordering key
+    (``outbox_work.conversation_key``) are global. A channel's own ids are
+    only unique within that channel, so every channel's keys are prefixed
+    with its name -- except WhatsApp's (``LEGACY_CHANNEL``), which predate
+    channels and stay exactly as Meta sent them, so a Meta retry that spans
+    the upgrade still dedups against the row it already created.
+    """
+    return key if channel == LEGACY_CHANNEL else f"{channel}:{key}"
+
+
+def channel_native_key(channel: str, scoped_key: str) -> str:
+    """Invert ``channel_scoped_key`` -- the id the channel itself knows."""
+    if channel == LEGACY_CHANNEL:
+        return scoped_key
+    return scoped_key.removeprefix(f"{channel}:")
+
+
 async def accept_inbound_message(
     session: AsyncSession,
     *,
     meta_message_id: str,
     payload: dict[str, Any],
     conversation_key: str,
+    channel: str = LEGACY_CHANNEL,
 ) -> InboundAcceptance:
-    """Commit an inbound Meta message and its one work row atomically.
+    """Commit an inbound channel message and its one work row atomically.
 
-    A unique conflict is idempotent only when the conflicting Meta identity is
-    present after rollback. Other commit failures propagate so W2's HTTP route
-    can return a retryable failure instead of acknowledging an uncommitted row.
+    A unique conflict is idempotent only when the conflicting message identity
+    is present after rollback. Other commit failures propagate so W2's HTTP
+    route can return a retryable failure instead of acknowledging an
+    uncommitted row.
 
     *conversation_key* (#46 follow-up) is the caller's choice of what must
     serialize: two rows sharing one key are never both claimable at once (see
     ``pending_outbox_statement``). This module stays payload-format agnostic
     -- it does not interpret *payload* itself -- so the caller (the webhook
-    route) resolves the key from the Meta envelope before calling this.
+    route, through the channel's adapter) resolves the key before calling
+    this.
+
+    *channel* (#22) names the channel the message arrived on; the deferred
+    worker hands the row back to that channel's adapter. *meta_message_id*
+    and *conversation_key* are channel-native and are stored scoped to it
+    (``channel_scoped_key``); the default, WhatsApp, stores them unchanged.
     """
     if not conversation_key:
         raise ValueError("conversation_key must not be empty")
 
+    meta_message_id = channel_scoped_key(channel, meta_message_id)
     inbound = InboundMessage(
         id=uuid.uuid4(),
+        channel=channel,
         meta_message_id=meta_message_id,
         payload=payload,
     )
     work = OutboxWork(
         id=uuid.uuid4(),
         inbound_message_id=inbound.id,
-        conversation_key=conversation_key,
+        conversation_key=channel_scoped_key(channel, conversation_key),
     )
     session.add_all([inbound, work])
 

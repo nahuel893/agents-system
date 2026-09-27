@@ -12,13 +12,27 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from agents_system.models.base import ALEMBIC_OWNED, Base
 
+#: The channel of every inbox row accepted before channels were named (#22,
+#: migration 006): Meta WhatsApp. Its ids and conversation keys are stored
+#: exactly as Meta sent them; every other channel's are scoped to its name
+#: (``services.outbox.channel_scoped_key``).
+LEGACY_CHANNEL = "whatsapp"
+
 
 class InboundMessage(Base):
-    """A Meta webhook message durably accepted before an HTTP acknowledgement."""
+    """A channel message durably accepted before an HTTP acknowledgement.
+
+    ``meta_message_id`` is the dedup key: Meta's own id for a WhatsApp
+    message, ``"<channel>:<id>"`` for any other channel. The column keeps its
+    original name because its unique constraint is what dedup relies on.
+    """
 
     __tablename__ = "webhook_inbox"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    channel: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=LEGACY_CHANNEL
+    )
     meta_message_id: Mapped[str] = mapped_column(unique=True, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     received_at: Mapped[datetime] = mapped_column(

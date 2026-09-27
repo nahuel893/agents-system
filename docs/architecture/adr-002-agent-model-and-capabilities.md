@@ -967,9 +967,14 @@ that may not be marked `untrusted_input=true`, and the platform's only
 current defense is "you needed the API key to be in that conversation at
 all." If OpenWebUI usage patterns change (e.g., a workflow that pipes
 scraped external content through it), this acceptance should be revisited.
-See also #71 (channel port extraction) — related to how a channel's runtime
-is resolved, but distinct from this boot-time invariant; #111 does not
-depend on #71's port shape.
+See also #22 (channel port extraction, formerly archive #71) — related to
+how a channel's runtime is resolved, but distinct from this boot-time
+invariant; #111 does not depend on the port's shape. Since #22 the same
+boot check (and the outbox-lease budget check beside it) runs for every
+runtime a webhook channel is bound to: `WHATSAPP_RUNTIME_ID` exactly as
+above, and each channel a deployment registers with
+`create_app(channels={name: Channel(adapter=..., runtime_id=...)})` — see
+`docs/platform/channel.md`.
 
 **Unbounded body read — closed, not accepted (#37).** A separate risk on
 this same route was NOT accepted: `POST /v1/chat/completions` did
