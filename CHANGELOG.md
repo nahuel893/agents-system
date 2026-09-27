@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1](https://github.com/nahuel893/agents-system/compare/v0.3.0...v0.3.1) (2026-09-27)
+
+
+### Features
+
+* **evals:** run the whole live suite with scripts/run-live-suite.sh ([#151](https://github.com/nahuel893/agents-system/issues/151)) ([0777ba7](https://github.com/nahuel893/agents-system/commit/0777ba78e345a44e84bc201d646c543bbb265dcd))
+
+
+### Documentation
+
+* **readme:** document the v0.3.0 platform features ([#152](https://github.com/nahuel893/agents-system/issues/152)) ([5224e5b](https://github.com/nahuel893/agents-system/commit/5224e5bfcf2972c7d4825fd1410a5d4d3db82727))
+
 ## [0.3.0](https://github.com/nahuel893/agents-system/compare/v0.2.0...v0.3.0) (2026-09-27)
 
 
