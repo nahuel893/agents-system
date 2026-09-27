@@ -438,6 +438,42 @@ def test_openai_compatible_key_is_independent_from_embeddings_key(
 
 
 # ---------------------------------------------------------------------------
+# openai_compatible_request_timeout_s -- bounded per-call provider timeout
+# (issue #145: the previous unbounded default let one stuck HTTP call to the
+# provider wait up to the openai SDK's own 600s default before failing).
+# ---------------------------------------------------------------------------
+
+
+def test_openai_compatible_request_timeout_defaults_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S", raising=False)
+    settings = Settings(_env_file=None)
+    # Comfortably under total_execution_timeout_s (60s,
+    # harness.loader.PLATFORM_DEFAULT_LIMITS) so a single stuck provider call
+    # fails with a clear client-side timeout well before the platform's own
+    # per-turn budget would silently absorb it, and far under the openai SDK's
+    # own unbounded-in-practice 600s default.
+    assert 0 < settings.openai_compatible_request_timeout_s < 60
+
+
+def test_openai_compatible_request_timeout_overridable_via_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S", "12.5")
+    settings = Settings(_env_file=None)
+    assert settings.openai_compatible_request_timeout_s == 12.5
+
+
+def test_openai_compatible_request_timeout_rejects_non_positive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S", "0")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+# ---------------------------------------------------------------------------
 # D-014 S4 — checkpointer/persistence config fields (design AD-7)
 # ---------------------------------------------------------------------------
 

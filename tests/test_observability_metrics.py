@@ -16,6 +16,8 @@ from agents_system.observability.metrics import (
     DEFAULT_REGISTRY,
     build_metrics,
     record_limit_trip,
+    record_provider_request,
+    record_provider_retry,
     record_tool_call,
     record_turn,
 )
@@ -79,8 +81,13 @@ def test_turn_metrics_label_schema_is_bounded() -> None:
     assert metrics.tokens_total._labelnames == ("runtime_id", "direction")
     assert metrics.cost_usd_total._labelnames == ("runtime_id",)
     assert metrics.audit_events_dropped._labelnames == ()
+    # issue #145 -- provider-side 429/retry observability.
+    assert metrics.provider_requests_total._labelnames == ("provider", "status")
+    assert metrics.provider_retries_total._labelnames == ("provider",)
     families = {family.name for family in registry.collect()}
     assert "agent_audit_events_dropped" in families
+    assert "agent_provider_requests" in families
+    assert "agent_provider_retries" in families
 
 
 def test_no_unbounded_label_ever_reaches_the_exported_text() -> None:
@@ -225,3 +232,49 @@ def test_record_limit_trip_increments_counter() -> None:
     record_limit_trip(metrics, limit="max_tool_calls")
 
     assert metrics.limit_trips_total.labels(limit="max_tool_calls")._value.get() == 2
+
+
+# ---------------------------------------------------------------------------
+# record_provider_request / record_provider_retry (issue #145)
+# ---------------------------------------------------------------------------
+
+
+def test_record_provider_request_increments_counter_by_status() -> None:
+    registry = CollectorRegistry()
+    metrics = build_metrics(registry)
+
+    record_provider_request(metrics, provider="openai_compatible", status="success")
+    record_provider_request(
+        metrics, provider="openai_compatible", status="rate_limited"
+    )
+    record_provider_request(
+        metrics, provider="openai_compatible", status="rate_limited"
+    )
+
+    assert (
+        metrics.provider_requests_total.labels(
+            provider="openai_compatible", status="success"
+        )._value.get()
+        == 1
+    )
+    assert (
+        metrics.provider_requests_total.labels(
+            provider="openai_compatible", status="rate_limited"
+        )._value.get()
+        == 2
+    )
+
+
+def test_record_provider_retry_increments_counter_by_provider() -> None:
+    registry = CollectorRegistry()
+    metrics = build_metrics(registry)
+
+    record_provider_retry(metrics, provider="openai_compatible")
+    record_provider_retry(metrics, provider="openai_compatible")
+    record_provider_retry(metrics, provider="groq")
+
+    assert (
+        metrics.provider_retries_total.labels(provider="openai_compatible")._value.get()
+        == 2
+    )
+    assert metrics.provider_retries_total.labels(provider="groq")._value.get() == 1

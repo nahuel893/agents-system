@@ -136,6 +136,26 @@ registry.register(backends.message_sender_tool_spec())
   coincidencia parcial por subcadena no tiene una señal de distancia real
   más allá de "no es idéntica". Una consulta vacía o sin coincidencias
   devuelve `results: []` con `classification: "no_match"`.
+- Un `readonly_engine` que está seteado pero apunta a un esquema sin las
+  tablas demo (`articulos`, `padron_clientes` -- p. ej. `evals.live_harness.
+  boot_live_harness` llamado sin `seed_demo=True`) se degrada igual que un
+  `readonly_engine` sin setear: `catalog_search`/`client_lookup` (incluso a
+  través del propio chequeo de destinatario de `message_sender`) devuelven
+  `error_kind: "reference_data_not_configured"` y loguean una advertencia
+  `reference_backends.demo_schema_unavailable`, en vez de dejar que el
+  `asyncpg.exceptions.UndefinedTableError` subyacente (envuelto como
+  `sqlalchemy.exc.SQLAlchemyError`) rompa todo el turno (issue #145). La
+  misma degradación cubre un `readonly_engine` cuya *base de datos* es
+  inalcanzable -- conexión rechazada, host desconocido, timeout de conexión,
+  o un rechazo por contraseña/límite de conexiones -- algo que SQLAlchemy NO
+  envuelve en el camino de conexión de asyncpg (aparece como un `OSError` o
+  `asyncpg.PostgresError` sin envolver, la misma clase que
+  `DATABASE_UNAVAILABLE_ERRORS` de `services/db_role.py` ya captura para el
+  chequeo de rol de sólo lectura, issue #131). Un esquema demo genuinamente
+  vacío y bien migrado sigue reportando un `no_match` / `client_id: null`
+  honesto -- esta degradación aplica sólo cuando la conexión o la consulta
+  en sí fallan a nivel de base de datos, nunca a un resultado vacío
+  legítimo.
 - `run_report` expone el `CATALOG` portátil y cerrado de ventas; su esquema
   de herramienta documenta el tipo, los valores permitidos y el valor por
   defecto de cada parámetro desde las definiciones `ReportSpec` / `ParamSpec`

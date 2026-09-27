@@ -92,6 +92,8 @@ objetos de métricas viven en `src/agents_system/observability/metrics.py`.
 | `agent_tool_call_duration_seconds` | Histogram | `tool`, `outcome` | Igual que arriba. |
 | `agent_limit_trips_total` | Counter | `limit` | Un límite de ejecución se dispara -- hoy sólo `"max_tool_calls"` (el nodo terminal `_limit_reached`; los "limit trips" de ADR-005 sección 6). |
 | `agent_audit_events_dropped` | Gauge | ninguno | `AuditSink.dropped_count` actual y local al proceso, muestreado al servir `GET /metrics`. |
+| `agent_provider_requests_total` | Counter | `provider`, `status` | Cada intento HTTP crudo que hace el cliente async del chat model (issue #145) -- ver "Observabilidad del proveedor, y la investigación del issue #145" más abajo. |
+| `agent_provider_retries_total` | Counter | `provider` | Cada intento que el PROPIO loop de reintentos del SDK del proveedor reenvía después de que un intento anterior de la misma llamada falló (issue #145). |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total`, y el resto del `ProcessCollector` por defecto de `prometheus_client` | Gauge/Counter | ninguno | Siempre, para el proceso corriendo -- confirmado presente en Linux por `tests/test_observability_metrics.py`, no meramente asumido de la documentación de la librería. |
 
 **Outcomes de turno**: `ok` también cubre un turno que terminó
@@ -127,6 +129,140 @@ expiró por timeout o falló incrementa
 `agent_turns_total`/`agent_turn_duration_seconds` pero nunca una muestra
 de token o costo adivinada en `0`.
 
+## Observabilidad del proveedor, y la investigación del issue #145
+
+El issue #145 ("con 20 conversaciones concurrentes contra un modelo real,
+sólo 3/20 terminan dentro de 240s") sospechaba throttling del lado del
+proveedor de chat: el síntoma reportado -- la mayoría de los turnos
+fallando, "nunca vuelve ningún error" -- es exactamente lo que se vería si un
+429 fuera absorbido en silencio por el propio loop de reintentos del SDK del
+proveedor, dado que `agent_turns_total{outcome="error"}` sola no puede decir
+*por qué* falló un turno. `MetricsHTTPTransport`
+(`src/agents_system/observability/provider_http.py`) se construyó para hacer
+eso visible: envuelve el cliente httpx async del chat model
+`openai_compatible` para que cada intento HTTP crudo incremente
+`agent_provider_requests_total`, etiquetado por `provider` (un valor acotado
+y definido en código -- `openai_compatible` por ahora) y `status` -- uno de
+`success`, `rate_limited` (un 429 crudo), `client_error`, `server_error`, o
+`network_error` (un timeout de connect/read/write u otra falla de
+transporte), clasificado por `classify_provider_status`. Cada intento que el
+propio loop de reintentos del SDK reenvía (reconocido vía el header
+`x-stainless-retry-count` que todo SDK generado con Stainless -- openai,
+groq, anthropic -- estampa en los requests reintentados) también incrementa
+`agent_provider_retries_total{provider}` -- un reintento que nunca lanza
+excepción es, si no, invisible.
+
+**Esa misma instrumentación fue lo que descartó la hipótesis.** Se reprodujo
+contra una cuenta real con `EVAL_PROVIDER=openai_compatible` con 5, 10 y 20
+turnos concurrentes contra un modelo real, por el camino completo webhook →
+outbox → `AgentRuntime.run_turn`, ANTES del fix de abajo: una corrida de
+confirmación fresca con concurrencia=20 completó 10/20 conversaciones en
+240s (p50 84.96s, p95 158.20s), con `agent_provider_requests_total{
+provider="openai_compatible", status="success"}` = 73 de 73 intentos HTTP
+crudos -- cada request al proveedor tuvo éxito. Cero muestras `rate_limited`,
+`client_error`, `server_error`, o `network_error`, a cualquier concurrencia
+en toda la investigación. El proveedor nunca fue el cuello de botella.
+
+Cruzar `agent_turns_total{outcome="error"}` contra
+`agent_tool_calls_total{outcome="error",tool="catalog_search"}` para las
+MISMAS corridas encontró una correspondencia exacta 1:1 cada vez (12/12,
+63/63, 126/126 a lo largo de las tres rondas) -- cada turno fallido había
+fallado DENTRO de la llamada a la herramienta `catalog_search`, nunca dentro
+de la llamada al modelo. La causa: `catalog_search` de `sales-agent` consulta
+una tabla demo `articulos` que `evals.live_harness.boot_live_harness` sólo
+crea cuando se llama con `seed_demo=True`
+(`docs/platform/reference-backends.md`) -- y el escenario real-model de Phase
+3 (`tests/test_live_load_phase3.py`, del #83/PR #144, el escenario que el
+propio issue #145 cita) nunca lo pasaba, aunque su propio prompt ("Do you
+have Item Alpha in stock?") está diseñado para disparar esa herramienta. Cada
+llamada real a `catalog_search` lanzaba
+`asyncpg.exceptions.UndefinedTableError: relation "articulos" does not
+exist`, una excepción no manejada que hacía fallar todo el turno y
+alimentaba el loop de reintento-con-backoff de `services/outbox.py`
+(`MAX_OUTBOX_ATTEMPTS=5`, `_RETRY_BASE_SECONDS * 2**attempt`) -- que nunca le
+envía una respuesta al cliente mientras reintenta, calzando exactamente con
+el síntoma de "nunca vuelve ningún error". El OTRO benchmark de la suite de
+carga (100 conversaciones concurrentes con un modelo fake determinístico,
+`agent_turn_duration_seconds` p95 13.8s, sin errores) nunca ejercita esto en
+absoluto: ese modelo fake está hardcodeado para nunca llamar a una
+herramienta (el propio docstring de
+`tests/test_live_load_phase3.py::_LoadTestFakeModel`), así que
+estructuralmente no puede tocar el bug de esquema faltante de
+`catalog_search` -- lo cual explica por qué el número rápido/limpio de 100
+concurrentes y el número lento/roto de 20 con modelo real nunca fueron
+realmente comparables.
+
+**El fix tiene dos partes, ambas "de nuestro lado", no del proveedor:**
+
+1. El escenario real-model de `tests/test_live_load_phase3.py` ahora pasa
+   `seed_demo=True`, igual que cualquier otro escenario de live-eval que
+   toca `catalog_search`/`client_lookup`/`run_report`
+   (`tests/test_live_eval_phase1.py`) -- así este benchmark mide de verdad
+   la latencia y capacidad reales de un modelo real, no un bug de setup de
+   datos demo.
+2. `catalog_search`/`client_lookup` de `services/reference.py` (y, a través
+   de él, el propio chequeo de destinatario de `message_sender`) ahora
+   capturan un `sqlalchemy.exc.SQLAlchemyError` de la consulta en sí y se
+   degradan a la MISMA respuesta `error_kind: "reference_data_not_configured"`
+   que ya devuelve un `readonly_engine` sin setear, logueando una advertencia
+   `reference_backends.demo_schema_unavailable` -- en vez de dejar que un
+   esquema demo faltante o mal configurado rompa todo el turno. Esto es
+   defensa en profundidad para un despliegue real que reutilice este backend
+   de referencia sin haber migrado/sembrado realmente su esquema; ver la
+   sección "Comportamiento observable de la demo" en
+   `docs/platform/reference-backends.md`.
+
+**Lo que sigue siendo útil aunque el proveedor no tuviera la culpa esta vez:**
+los contadores de status/reintentos HTTP por llamada dan una visibilidad real
+de 429/5xx/timeout que la plataforma nunca tuvo antes, y el timeout acotado
+por llamada de abajo cierra un hueco real (un default sin límite de 600s) que
+SÍ afectaría a una cuenta genuinamente limitada en el futuro. Re-corrida
+después de ambos fixes, mismo escenario de 20 concurrentes:
+**20/20 conversaciones completaron en 76.92s** (mín 18.88s, p50 59.28s, p95
+76.67s, máx 76.91s -- latencia real de modelo, ahora libre del crash de
+esquema), `agent_turns_total{outcome="ok"}` = 20 con cero muestras
+`error`/`timeout`, `agent_tool_calls_total{outcome="ok",tool="catalog_search"}`
+= 78 con cero errores, y `agent_provider_requests_total{
+provider="openai_compatible",status="success"}` = 96 -- cada intento HTTP
+crudo realizado, ninguno rate-limited ni fallido. Cero filas en
+`outbox_work.last_error`. Comparar los números propios del issue original
+(3/20 dentro de 240s, p50 95s, p95/máx 152s para las tres que completaron) y
+la reproducción antes-del-fix de este mismo PR, justo arriba (10/20, p50
+84.96s, p95 158.20s, 63 errores de tool-call) -- el fix no es una
+optimización de latencia, es eliminar una excepción no manejada que estaba
+descartando en silencio la mayoría de las conversaciones al loop de
+reintentos del outbox.
+
+**Timeout acotado por llamada.** El chat model `openai_compatible`
+anteriormente dejaba `request_timeout` sin setear, lo cual dejaba en efecto
+el default propio del SDK de openai: 5s para conectar, pero 600s (diez
+minutos) para la respuesta en sí. Una llamada colgada podía retener un turno
+en silencio hasta diez minutos antes de que cualquier límite a nivel
+plataforma (`total_execution_timeout_s`, 60s por default) llegara a importar
+en la práctica para los reintentos/backoff de esa misma llamada.
+`Settings.openai_compatible_request_timeout_s` (env
+`OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S`, default `45.0`) ahora lo acota
+explícitamente, cómodamente por debajo de `total_execution_timeout_s` -- una
+única llamada colgada al proveedor ahora falla con un timeout tipado y
+claro, en vez de esperar en silencio.
+
+**Guía de dimensionamiento de cuenta para operadores.** `max_concurrent_turns`
+(default 10) acota cuántos turnos corre este proceso a la vez, pero NO acota
+el límite de tasa propio de la cuenta del proveedor (requests/minuto y/o
+tokens/minuto, según el proveedor). Ver crecer
+`agent_provider_requests_total{status="rate_limited"}` y
+`agent_provider_retries_total` bajo tráfico normal es la señal de que
+`max_concurrent_turns`, o el plan de la cuenta, necesita bajar (o subir) para
+calzar con lo que la cuenta del proveedor realmente sostiene -- dimensionar
+el limitador de admisión es una decisión de soporte/costo que la plataforma
+deja deliberadamente al operador, no algo que este fix pueda elegir por un
+número correcto. Una cuenta con rate limit también significa que cada
+reintento suma el propio backoff exponencial de `services/outbox.py`
+(`_RETRY_BASE_SECONDS * 2**attempt`, acotado por `_RETRY_MAX_SECONDS`)
+encima del propio delay del proveedor, así que una cuenta persistentemente
+subdimensionada se ve como una latencia end-to-end que crece lentamente, no
+que falla de inmediato.
+
 ## Higiene de labels
 
 Los labels son enums acotados y definidos en código, o identificadores
@@ -138,9 +274,14 @@ por el operador -- **excepto** para una llamada `denied`, donde el nombre
 de herramienta que dio el modelo nunca se validó contra ese registro:
 `_execute_tools` (`agent/graph.py`) sustituye ese único caso por el
 placeholder fijo `_unrecognized_`, así un nombre de herramienta atacante o
-alucinado nunca puede llegar al almacén de labels). No hay ningún
-parámetro en `record_turn`/`record_tool_call`/`record_limit_trip` por el
-cual un valor no acotado pudiera llegar a un label --
+alucinado nunca puede llegar al almacén de labels), y `provider`/`status`
+(`observability/metrics.PROVIDER_NAMES`/`PROVIDER_REQUEST_STATUSES` --
+`agent_provider_requests_total`/`agent_provider_retries_total` del issue
+#145: el código de status HTTP crudo y cualquier cuerpo de error del
+proveedor nunca son labels en sí mismos, sólo el bucket fijo de
+`classify_provider_status`). No hay ningún parámetro en
+`record_turn`/`record_tool_call`/`record_limit_trip`/`record_provider_request`/`record_provider_retry`
+por el cual un valor no acotado pudiera llegar a un label --
 `tests/test_observability_metrics.py` y `tests/test_agent_runtime.py` lo
 fijan: un test pinea el esquema exacto de nombres de labels, uno corre un
 turno real con un `session_id` con forma de número de teléfono y verifica
@@ -177,8 +318,10 @@ propio conjunto descartable -- `build_metrics(CollectorRegistry())` --
 para que los tests nunca choquen entre sí (registrar el mismo nombre de
 métrica dos veces en un registro lanza `ValueError`) ni muten estado de
 todo el proceso que otro test pudiera observar. Pasá un conjunto propio a
-`AgentRuntime(..., metrics=mis_metrics)` para verificar exactamente los
-valores que produjeron los turnos de un test.
+`AgentRuntime(..., metrics=mis_metrics)` -- o, para los contadores del
+proveedor, a `main._build_chat_model(..., metrics=mis_metricas)` (issue
+#145) -- para verificar exactamente los valores que produjeron los turnos de
+un test.
 
 ## Fuera de alcance en este slice
 
@@ -208,3 +351,14 @@ valores que produjeron los turnos de un test.
 - Tests offline: `tests/test_observability_metrics.py`,
   `tests/test_metrics_endpoint.py`, `tests/test_agent_runtime.py` (sección
   de métricas), `tests/test_config.py` (validador fail-closed)
+- Throttling/reintentos del proveedor (issue #145):
+  `src/agents_system/observability/provider_http.py`
+  (`MetricsHTTPTransport`, `classify_provider_status`), conectado en la
+  rama `openai_compatible` de `main._build_chat_model`;
+  `tests/test_provider_http_metrics.py`, `tests/test_main.py` (sección
+  `#145`), `tests/test_config.py` (`openai_compatible_request_timeout_s`)
+- La causa raíz real del #145 (un esquema demo faltante, no el proveedor):
+  `src/agents_system/services/reference.py` (manejo de `SQLAlchemyError` en
+  `_fetch_rows`), `tests/test_reference_backends.py` (sección `#145`), el
+  fix `seed_demo=True` en `tests/test_live_load_phase3.py`; ver
+  `docs/platform/reference-backends.md`
