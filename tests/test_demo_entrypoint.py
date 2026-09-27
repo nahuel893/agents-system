@@ -25,14 +25,18 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Every doc that tells a reader to run `examples/demo/app.py` (README.md's
 # "Run the Demo API" section, docs/platform/demo-entrypoint.md, and its ES
-# twin). Every other command these docs give (`uv run python
-# demo/load_demo_company.py`, `uv run pytest`, ...) is prefixed with
-# `uv run` specifically so it works without the reader having activated
-# `.venv` themselves; the invocation line must match that convention.
+# twin) PLUS the module's own docstring (issue #132: the same defect a prior
+# review fixed in the three docs below, commit 72e4072, was missed in the
+# module's own header by that fix's own regression test). Every other
+# command these docs give (`uv run python demo/load_demo_company.py`, `uv run
+# pytest`, ...) is prefixed with `uv run` specifically so it works without
+# the reader having activated `.venv` themselves; the invocation line must
+# match that convention.
 _DEMO_INVOCATION_DOCS = (
     "README.md",
     "docs/platform/demo-entrypoint.md",
     "docs/platform_es/demo-entrypoint.md",
+    "examples/demo/app.py",
 )
 
 
