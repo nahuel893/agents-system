@@ -614,6 +614,47 @@ async def test_the_timeout_text_states_the_configured_limit() -> None:
     assert "1.5" in result["error"]
 
 
+async def test_a_lost_connection_logs_the_traceback_but_no_query_detail() -> None:
+    """`connection_invalidated` is SQLAlchemy's own verdict (from the
+    dialect's `is_disconnect` check) that the connection was actually lost -
+    the real connect-phase-shaped failure worth a full traceback (issue
+    #131). Nothing about the failing statement is safe to log here, so this
+    branch logs only the traceback, never `sqlstate`/`error_class`.
+    """
+    orig = Exception(_DRIVER_SECRET)
+    error = DBAPIError(
+        f"SELECT 1 -- {_DRIVER_SECRET}", {}, orig, connection_invalidated=True
+    )
+    engine = _Engine(query_error=error)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await _run(engine, "SELECT product FROM sales_v")
+
+    assert result["error_kind"] == "database_unavailable"
+    assert [log.get("exc_info") for log in logs] == [True]
+    assert "sqlstate" not in logs[0]
+    assert "error_class" not in logs[0]
+
+
+async def test_a_query_phase_failure_with_no_sqlstate_never_logs_a_traceback() -> None:
+    """Before this fix, `exc_info=unavailable` was true whenever `sqlstate`
+    was `None`, treating that as if it were always a lost connection. Some
+    query-phase DBAPI errors carry no sqlstate either, and SQLAlchemy's text
+    for those still quotes the failing statement and its literal values
+    (possibly PII) - only a connection SQLAlchemy itself marked invalidated
+    is safe to log with its traceback (issue #131).
+    """
+    error = _db_error(None)  # connection_invalidated defaults to False
+    engine = _Engine(query_error=error)
+
+    with structlog.testing.capture_logs() as logs:
+        result = await _run(engine, "SELECT product FROM sales_v")
+
+    assert result["error_kind"] == "database_unavailable"
+    assert not any(log.get("exc_info") for log in logs)
+    assert [log["error_class"] for log in logs] == ["DBAPIError"]
+
+
 #: What connecting really raises. On the asyncpg connect path SQLAlchemy does
 #: not wrap these: a closed port, an unknown host, a rejected password and a
 #: connect timeout reach the caller as the driver's or the OS's own types.

@@ -216,16 +216,21 @@ def _database_error(error: SQLAlchemyError, config: SqlQueryConfig) -> Connector
     """Map a database failure to a fixed result; never the driver's text."""
     sqlstate = getattr(getattr(error, "orig", None), "sqlstate", None)
     sqlstate = str(sqlstate) if sqlstate else None
-    unavailable = sqlstate is None or sqlstate.startswith("08")
-    # Operators get the driver's detail only for connectivity failures, where
-    # they need it; a query error's text quotes the query and its data, so
-    # the log keeps just the SQLSTATE for those.
-    _logger.warning(
-        "sql_query.failed",
-        sqlstate=sqlstate,
-        error_class=type(error).__name__,
-        exc_info=unavailable,
-    )
+    # `connection_invalidated` is SQLAlchemy's own verdict - from the
+    # dialect's `is_disconnect` check on the real driver exception, not a
+    # guess of ours - that the connection was actually lost. `sqlstate is
+    # None` is NOT the same signal: a query-phase DBAPI error can carry no
+    # sqlstate too, and its text still quotes the failing statement and its
+    # literal values (possibly PII), so only a connection SQLAlchemy itself
+    # marked invalidated gets its traceback logged (issue #131).
+    connection_lost = bool(getattr(error, "connection_invalidated", False))
+    unavailable = connection_lost or sqlstate is None
+    if connection_lost:
+        _logger.warning("sql_query.failed", exc_info=connection_lost)
+    else:
+        _logger.warning(
+            "sql_query.failed", sqlstate=sqlstate, error_class=type(error).__name__
+        )
     if sqlstate in _TIMEOUT_SQLSTATES:
         seconds = config.statement_timeout_ms / 1000
         return {

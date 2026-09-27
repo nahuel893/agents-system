@@ -769,6 +769,64 @@ def test_render_provision_sql_readonly_joins_multiple_views_as_one_csv_literal()
     assert "'a.b,c.d'" in rendered
 
 
+def test_render_provision_sql_readonly_revokes_role_membership_by_its_grantor() -> None:
+    """PostgreSQL 16 tracks a role membership grant's real grantor; a bare
+    `REVOKE role FROM sql_readonly` (no `GRANTED BY`) only removes what the
+    CURRENT session role itself granted, leaving one granted by any other
+    role in place with just a WARNING (issue #131, reproduced against a real
+    PostgreSQL 16 - see `tests/test_sql_query_integration.py`'s docstring
+    for how to run the live suite that exercises this end to end).
+    """
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("a.b",)
+    )
+
+    assert "GRANTED BY" in rendered
+    assert "grantor.rolname" in rendered
+
+
+def test_render_provision_sql_readonly_strips_object_privileges_by_grantor_too() -> (
+    None
+):
+    """A delegated (`WITH GRANT OPTION`) object privilege re-granted by a
+    role other than the one running this script survives a blanket
+    `REVOKE ALL ... FROM sql_readonly` too (also reproduced against a real
+    PostgreSQL 16). Object-privilege `REVOKE ... GRANTED BY` only accepts
+    `CURRENT_USER` (unlike role membership above), so the actual grantor is
+    impersonated with `SET ROLE` instead - safe here because provisioning
+    always runs as a superuser.
+    """
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("a.b",)
+    )
+
+    assert "aclexplode" in rendered
+    assert "SET ROLE" in rendered
+    assert "RESET ROLE" in rendered
+
+
+def test_render_provision_sql_readonly_raises_if_anything_remains() -> None:
+    """Re-running the script is supposed to repair drift; without a check at
+    the end, a REVOKE that could not match its recorded grantor committed
+    anyway, so the tool's own per-call check was the first thing to notice
+    (issue #131). This final check raises inside the same transaction, so
+    nothing above it commits either.
+    """
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("a.b",)
+    )
+
+    assert "RAISE EXCEPTION" in rendered
+    assert "is still a member of role" in rendered
+    assert "can still access" in rendered
+
+
 # ---------------------------------------------------------------------------
 # live_registry_factory_adapter -- `extra_tool_specs` (#79, Phase 1)
 # ---------------------------------------------------------------------------

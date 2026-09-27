@@ -20,6 +20,7 @@ from sqlalchemy.exc import OperationalError
 from agents_system.services.db_role import (
     MAX_TEMP_FILE_LIMIT_KB,
     evaluate_query_role,
+    role_is_read_only,
     verify_query_role,
 )
 
@@ -198,6 +199,28 @@ def test_a_writable_sequence_is_a_problem() -> None:
     assert not evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED).safe
 
 
+def test_a_readable_sequence_is_a_problem() -> None:
+    # `can_select` for a sequence used to be hardcoded false, so a role
+    # granted plain SELECT on a sequence (never allowlisted - the allowlist
+    # only ever holds views) still verified as safe, letting the tool read
+    # the sequence's last_value (e.g. leaking a row count) (issue #131).
+    findings = [
+        *_SAFE_FINDINGS,
+        _relation(
+            "orders_id_seq",
+            relkind="S",
+            can_select=True,
+            can_write=False,
+            finding="sequence",
+        ),
+    ]
+
+    check = evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED)
+
+    assert not check.safe
+    assert any("orders_id_seq" in p and "not allowlisted" in p for p in check.problems)
+
+
 def test_create_on_a_schema_is_a_problem() -> None:
     findings = [
         *_SAFE_FINDINGS,
@@ -359,3 +382,76 @@ async def test_verify_query_role_is_none_for_the_real_connect_failures(
     # SQLAlchemy does not wrap these on the asyncpg connect path; "could
     # not answer" must still be None, not an exception at startup.
     assert await verify_query_role(_Engine(None, error), _ALLOWED) is None
+
+
+# ---------------------------------------------------------------------------
+# role_is_read_only: the sibling check `verify_query_role` is modeled on
+# (issue #131) - it caught only SQLAlchemyError, so the same raw asyncpg/OS
+# connect failures that `verify_query_role` already tolerates escaped here
+# instead and aborted whichever caller was checking a BI/demo database.
+# ---------------------------------------------------------------------------
+
+
+class _ShowResult:
+    def __init__(self, value: str) -> None:
+        self._value = value
+
+    def scalar(self) -> str:
+        return self._value
+
+
+class _ShowConnection:
+    def __init__(self, value: str) -> None:
+        self._value = value
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def execute(self, clause: Any) -> _ShowResult:
+        return _ShowResult(self._value)
+
+
+class _ShowEngine:
+    def __init__(
+        self, value: str | None = None, error: Exception | None = None
+    ) -> None:
+        self._value = value
+        self._error = error
+
+    def connect(self) -> _ShowConnection:
+        if self._error is not None:
+            raise self._error
+        assert self._value is not None
+        return _ShowConnection(self._value)
+
+
+async def test_role_is_read_only_is_true_when_the_default_is_on() -> None:
+    assert await role_is_read_only(_ShowEngine("on")) is True
+
+
+async def test_role_is_read_only_is_false_when_the_default_is_off() -> None:
+    assert await role_is_read_only(_ShowEngine("off")) is False
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionRefusedError(111, "Connect call failed"),
+        socket.gaierror(-2, "Name or service not known"),
+        asyncpg.exceptions.InvalidPasswordError("password authentication failed"),
+        TimeoutError("connect timed out"),
+        OperationalError("connect", {}, Exception("unreachable")),
+    ],
+    ids=lambda e: type(e).__name__,
+)
+async def test_role_is_read_only_is_none_for_every_real_connect_failure(
+    error: Exception,
+) -> None:
+    # Only SQLAlchemyError used to be caught: on the asyncpg connect path
+    # SQLAlchemy does not wrap a closed port, an unknown host, a rejected
+    # password or a connect timeout, so each of these used to escape and
+    # abort startup instead of answering "could not determine".
+    assert await role_is_read_only(_ShowEngine(error=error)) is None
