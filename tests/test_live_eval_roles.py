@@ -100,9 +100,20 @@ async def engine() -> AsyncIterator[AsyncEngine]:
         await eng.dispose()
 
 
-@pytest.fixture(scope="module")
-def eval_model() -> tuple[BaseChatModel, str]:
-    return build_eval_model()
+@pytest.fixture
+async def eval_model() -> AsyncIterator[tuple[BaseChatModel, str]]:
+    """A fresh model per test function, for the same reason `engine` is:
+    the openai_compatible model owns an `httpx.AsyncClient` (#145) whose
+    pooled connections are bound to the event loop that first used them.
+    Shared across the module, every test after the first crashed its first
+    run with "Event loop is closed" and failed its gate on that alone."""
+    model, model_name = build_eval_model()
+    try:
+        yield model, model_name
+    finally:
+        client = getattr(model, "http_async_client", None)
+        if client is not None:
+            await client.aclose()
 
 
 @pytest.fixture(scope="module")

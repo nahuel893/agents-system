@@ -90,9 +90,18 @@ async def engine() -> AsyncIterator[AsyncEngine]:
         await eng.dispose()
 
 
-@pytest.fixture(scope="module")
-def eval_model() -> tuple[BaseChatModel, str]:
-    return build_eval_model()
+@pytest.fixture
+async def eval_model() -> AsyncIterator[tuple[BaseChatModel, str]]:
+    """A fresh model per test function -- see
+    `tests/test_live_eval_roles.py::eval_model`'s docstring for why it must
+    not be shared across tests (its HTTP client is bound to one event loop)."""
+    model, model_name = build_eval_model()
+    try:
+        yield model, model_name
+    finally:
+        client = getattr(model, "http_async_client", None)
+        if client is not None:
+            await client.aclose()
 
 
 @pytest.fixture(scope="module")
