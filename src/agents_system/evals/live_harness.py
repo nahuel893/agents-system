@@ -53,16 +53,11 @@ Design decisions
   HTTP server that records every send instead of a mocked transport, since
   `WhatsAppClient` owns a real `httpx.AsyncClient` with no injectable
   transport of its own.
-- **`session_state` is the smoke scenario's tool of choice**, not
-  `catalog_search`/`client_lookup`/`order_writer`. Those three are wired
-  through `build_live_registry`'s `ReferenceBackends`, which expects the
-  demo company's seeded portable-report contract views (`demo/load_demo_
-  company.py`) -- out of scope for this harness to seed, and Phase 1 (#79)
-  is where DB-backed tool behavior is actually exercised. `session_state` is
-  a genuinely-functioning in-memory tool every role that extends
-  `platform/roles/agent` (including `sales-agent`) already declares, needing
-  no seeded data, so a smoke scenario proving the HARNESS's wiring can use it
-  without depending on Phase 1's scope.
+- **`catalog_search` is the smoke scenario's tool of choice**, not
+  `order_writer`. `order_writer` is a write tool that creates orders;
+  `catalog_search` is a safe read tool that every `sales-agent` declares,
+  needing no seeded data, so a smoke scenario proving the HARNESS's wiring can
+  use it cleanly.
 - **Correlation id caveat**: `AuditEvent.correlation_id` is read from
   `structlog`'s `request_id` contextvar (`audit/recorder.py::
   _correlation_id_from_context`), which only `RequestIdMiddleware` binds --

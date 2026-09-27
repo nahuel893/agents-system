@@ -31,7 +31,6 @@ description: >
 turns:
   - "What's our policy on partial refunds for wholesale clients?"
 granted_permissions:
-  - read:session
   - send:escalation
   - read:reports
 assertions:

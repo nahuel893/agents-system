@@ -30,7 +30,6 @@ description: >
 turns:
   - "What's our documented policy on how long we retain conversation summaries?"
 granted_permissions:
-  - read:session
   - send:escalation
   - read:conversation_logs
   - write:summary_output

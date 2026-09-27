@@ -86,7 +86,6 @@ def _sales_registry() -> Any:
     reg.register(_spec("message_sender", ["send:message"]))
     reg.register(_spec("catalog_search", ["read:catalog"]))
     reg.register(_spec("order_writer", ["write:orders", "write:order_items"]))
-    reg.register(_spec("session_state", []))
     reg.register(_spec("client_lookup", ["read:client_registry"]))
     reg.register(_spec("escalation_notifier", ["send:escalation"]))
     return reg
@@ -126,7 +125,6 @@ def test_build_runtime_grants_all_tools_when_permitted() -> None:
         "message_sender",
         "catalog_search",
         "order_writer",
-        "session_state",
         "client_lookup",
     }
     assert runtime.denied_tools == ()
@@ -135,8 +133,8 @@ def test_build_runtime_grants_all_tools_when_permitted() -> None:
 def test_build_runtime_denies_tools_missing_permissions() -> None:
     from agents_system.harness.factory import build_runtime
 
-    # Only read:catalog granted → catalog_search (needs read:catalog) and
-    # session_state (needs nothing) pass; the rest are denied.
+    # Only read:catalog granted → catalog_search (needs read:catalog)
+    # passes; the rest are denied.
     runtime = build_runtime(
         "sales-agent",
         _sales_registry(),
@@ -146,7 +144,7 @@ def test_build_runtime_denies_tools_missing_permissions() -> None:
     )
 
     granted_names = {t.name for t in runtime.tools}
-    assert granted_names == {"catalog_search", "session_state"}
+    assert granted_names == {"catalog_search"}
 
     denied_names = {name for name, _reason in runtime.denied_tools}
     assert denied_names == {"message_sender", "order_writer", "client_lookup"}
@@ -190,8 +188,8 @@ def test_build_runtime_deploy_grant_ceiling_accepts_mixed_class_and_name_grant()
     denied_names = {name for name, _reason in runtime.denied_tools}
     # order_writer requires write:orders + write:order_items, both covered
     # by the class-form Write grant (R3); message_sender requires
-    # send:message (granted by name); session_state requires nothing.
-    assert granted_names == {"order_writer", "message_sender", "session_state"}
+    # send:message (granted by name).
+    assert granted_names == {"order_writer", "message_sender"}
     # catalog_search (read:catalog) and client_lookup (read:client_registry)
     # are covered by neither granted entry. escalation_notifier is not part
     # of this role+client+roots combo's definition.tools at all (see
@@ -356,7 +354,6 @@ def test_build_runtime_deploy_grant_ceiling_does_not_affect_granted_tools() -> N
         "message_sender",
         "catalog_search",
         "order_writer",
-        "session_state",
         "client_lookup",
     }
     assert runtime.denied_tools == ()

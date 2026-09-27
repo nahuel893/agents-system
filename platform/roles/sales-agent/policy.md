@@ -1,6 +1,6 @@
 ---
 role: sales-agent
-version: "2.0"
+version: "3.0"
 autonomy: supervised
 untrusted_input: true
 escalation_rules:

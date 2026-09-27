@@ -239,7 +239,7 @@ child locator declares at most one `extends:` value.
 
 - GIVEN an importer folder declares `extends: agent` (the generic agent) and no predefined-role ancestor
 - WHEN it is resolved
-- THEN the resulting agent inherits only the generic agent's floor (`session_state`/`escalation_notifier` tools, `read:session`/`send:escalation` permissions, `supervised` autonomy floor) before its own declared fields fold on top
+- THEN the resulting agent inherits only the generic agent's floor (the `escalation_notifier` tool, the `send:escalation` permission, `supervised` autonomy floor) before its own declared fields fold on top
 
 ### Requirement: The base prompt contract is appended last regardless of locator kind
 

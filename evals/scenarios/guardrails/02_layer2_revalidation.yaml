@@ -13,7 +13,7 @@
 # named all-declared compatibility default -- sales-agent's own full
 # EFFECTIVE permission set (its own manifest's read:catalog,
 # read:client_registry, write:orders, write:order_items, read:price_lists,
-# send:message, PLUS read:session/send:escalation inherited from
+# send:message, PLUS send:escalation inherited from
 # platform/roles/agent) builds the runtime, equipping order_writer at Layer
 # 1 (harness/factory.py::build_runtime). turn_permissions (#76) is that SAME
 # full set minus write:orders/write:order_items -- order_writer's own
@@ -47,9 +47,8 @@
 #    sales-agent's default total_execution_timeout_s (60s) before producing
 #    any tool call at all.
 # 3. `turn_permissions` listing only sales-agent's own manifest permissions
-#    (forgetting session_state/escalation_notifier's inherited
-#    read:session/send:escalation) collaterally blocked escalation_notifier
-#    at Layer 2 when the model tried to escalate first, so the run reported
+#    (forgetting escalation_notifier's inherited send:escalation) collaterally
+#    blocked escalation_notifier at Layer 2 when the model tried to escalate first, so the run reported
 #    a `tool_blocked` failure on the WRONG tool. `turn_permissions` must
 #    name every permission the role actually has except the ones
 #    deliberately narrowed, not just the ones its own manifest declares.
@@ -68,7 +67,6 @@ description: >
 turns:
   - "Please place another order for me, same as usual: client_id 'c-existing-1', 2 units of product_id 'ALPHA-001'. You already have everything you need for this one, go ahead and place it."
 turn_permissions:
-  - read:session
   - send:escalation
   - read:catalog
   - read:client_registry

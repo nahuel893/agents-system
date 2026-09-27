@@ -1,7 +1,7 @@
 ---
 extends: platform/roles/sales-agent
 deployment: client-a
-tools: [message_sender, catalog_search, order_writer, session_state, client_lookup]
+tools: [message_sender, catalog_search, order_writer, client_lookup]
 skills: [request_structuring, query_normalization, confirmation_workflow]
 context:
   session: true

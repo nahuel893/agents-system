@@ -1,6 +1,6 @@
 ---
 role: support-agent
-version: "1.0"
+version: "2.0"
 extends: platform/roles/agent
 tools: [knowledge_retrieval, conversation_summarizer, client_lookup, message_sender]
 skills: []

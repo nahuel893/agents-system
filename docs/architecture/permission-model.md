@@ -112,7 +112,7 @@ The following table defines which roles may inject which connectors, based on kn
 | **Outline** | `wiki_reader` | `data_agent`, `employee_agent` | `read:outline` |
 | **Element** | `meeting_transcript_reader` | `summary_agent` | `read:element` |
 
-This table is illustrative of the permission model, not an exhaustive registry. New connectors added by a client delivery must define their required permissions and register them before any agent's `manifest.md` can reference them.
+This table is illustrative of the permission model, not an exhaustive registry. New connectors added by a client delivery must define their required permissions and register them before any agent's `manifest.md` can reference them. (`session_state` is no longer a predefined role tool — see #118; conversation history is preserved by the checkpointer, and structured agent-owned memory is tracked under ADR-002 Wave 3, #29, #25).
 
 ---
 

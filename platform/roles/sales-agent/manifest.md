@@ -1,8 +1,8 @@
 ---
 role: sales-agent
 extends: platform/roles/agent
-version: "2.0"
-tools: [message_sender, catalog_search, order_writer, session_state, client_lookup]
+version: "3.0"
+tools: [message_sender, catalog_search, order_writer, client_lookup]
 skills: []
 context:
   session: true

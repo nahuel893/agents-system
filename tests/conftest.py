@@ -114,14 +114,6 @@ def fake_message_sender(inputs: dict[str, Any]) -> dict[str, Any]:
     return {"status": "sent", "message_id": msg_id, "to": inputs.get("to")}
 
 
-def fake_session_state(inputs: dict[str, Any]) -> dict[str, Any]:
-    action = inputs.get("action", "get")
-    session_id = inputs.get("session_id", "s-test")
-    if action == "set":
-        return {"status": "ok", "session_id": session_id}
-    return {"session_id": session_id, "data": inputs.get("data", {})}
-
-
 def build_test_registry(
     settings: Any = None,
     embedder: Any = None,
@@ -212,27 +204,7 @@ def build_test_registry(
         )
     )
 
-    # 5. session_state
-    registry.register(
-        ToolSpec(
-            name="session_state",
-            description="Get or set session state data for the current conversation.",
-            required_permissions=(),
-            tier=Tier.T0,
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "enum": ["get", "set"]},
-                    "session_id": {"type": "string"},
-                    "data": {"type": "object"},
-                },
-                "required": ["action", "session_id"],
-            },
-            connector=fake_session_state,
-        )
-    )
-
-    # 6. run_report (public platform builder)
+    # 5. run_report (public platform builder)
     catalog = (
         report_catalog if report_catalog is not None else _get_neutral_report_catalog()
     )
