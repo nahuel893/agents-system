@@ -156,18 +156,21 @@ sobre `EVAL_RUNS` (3 por defecto). Ver la sección propia "Escenarios en
 vivo de la Fase 1" de `docs/platform_es/live-eval.md` para lo que
 `boot_live_harness` necesitó crecer para llegar ahí.
 
-Un hallazgo real de una corrida, documentado en vez de disimulado: el
-backend de referencia `catalog_search` reporta `classification:
-"ambiguous"` para cada resultado (nunca una coincidencia confiable,
-`similarity` siempre es `None`), y `sales-agent` correctamente, de forma
-segura, escala por `confidence_below_threshold` en vez de pedir la mayoría
-de las veces, incluso con un SKU exacto explícitamente descrito como ya
-confirmado -- se observaron 1/6 llamadas a `order_writer` en dos intentos
-reales de `EVAL_RUNS=3`. El modelo hace lo correcto dada la señal honesta
-de la herramienta; la corrección pertenece al backend de referencia, no a
-este escenario, y se rastrea en #117. El sub-escenario `order_writer` es un
-`xfail` documentado que referencia #117 (`_run_gated_xfail`) -- no bloquea
-los otros tres sub-escenarios de `sales-agent` en la misma corrida en vivo.
+Un hallazgo real de una corrida, documentado en vez de disimulado, y ya
+corregido: el backend de referencia `catalog_search` reportaba
+`classification: "ambiguous"` para cada resultado (nunca una coincidencia
+confiable, `similarity` siempre era `None`), y `sales-agent` correctamente,
+de forma segura, escalaba por `confidence_below_threshold` en vez de pedir
+la mayoría de las veces, incluso con un SKU exacto explícitamente descrito
+como ya confirmado -- se observaron 1/6 llamadas a `order_writer` en dos
+intentos reales de `EVAL_RUNS=3`. El modelo hacía lo correcto dada la señal
+honesta de la herramienta; la brecha estaba en el backend de referencia,
+rastreada y corregida en #117 (una coincidencia exacta de SKU o descripción
+ahora reporta `classification: "direct"` con `similarity: 1.0`). El
+sub-escenario `order_writer` era un `xfail` documentado que referenciaba
+#117 (`_run_gated_xfail`); re-verificado en vivo tras la corrección con 3/3
+(`EVAL_RUNS=3`) y promovido a un escenario compuertado ordinario
+(`_run_gated`).
 
 A través de la API y el webhook de WhatsApp, no del atajo directo al
 runtime:

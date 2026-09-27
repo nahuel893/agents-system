@@ -114,36 +114,6 @@ async def _run_gated(
     return rate
 
 
-async def _run_gated_xfail(
-    label: str,
-    attempt: Callable[[], Awaitable[None]],
-    *,
-    issue: str,
-    runs: int = _RUNS,
-    threshold: float = DEFAULT_HAPPY_PATH_THRESHOLD,
-) -> None:
-    """Like `_run_gated`, but a gate failure is a DOCUMENTED, known finding
-    (named by *issue*) rather than an unexpected test failure: printed
-    plainly, never silently converted into a pass, and never allowed to
-    abort the rest of the enclosing test's other scenarios. Never weakens
-    the assertion itself -- `attempt` and the gate are identical to
-    `_run_gated`'s; only what happens with a failing gate differs.
-
-    Real-run finding (#79): the reference `catalog_search` backend reports
-    `classification: "ambiguous"` for every hit (never a confident match --
-    see *issue*), and `sales-agent` correctly, safely escalates on
-    `confidence_below_threshold` instead of ordering most of the time, even
-    on an exact SKU explicitly described as already confirmed. That is the
-    model doing the right thing given the tool's own honest signal, not a
-    bug in the harness or this scenario -- the fix belongs in the reference
-    backend, tracked at *issue*, not here.
-    """
-    try:
-        await _run_gated(label, attempt, runs=runs, threshold=threshold)
-    except AssertionError as error:
-        print(f"{label}: XFAIL (documented, see {issue}) -- {error}")
-
-
 def _wrap_recorder(
     spec: ToolSpec, sink: list[tuple[dict[str, object], object]]
 ) -> ToolSpec:
@@ -325,13 +295,11 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
     ) as harness:
 
         async def places_an_order() -> None:
-            # Directive enough to route past the reference `catalog_search`
-            # backend's own honesty limit: it is a plain lexical match with
-            # no real similarity score, so it reports `classification:
-            # "ambiguous"` for every hit, confident or not. Telling the
-            # model the SKU is already confirmed, and that no catalog
-            # lookup is needed for this exact code, raises the pass rate
-            # but does not fully fix it -- see the xfail note below.
+            # Even directed not to, the model still calls catalog_search
+            # first -- the reference backend now reports a real confidence
+            # signal for the exact SKU (#117: `classification: "direct"`,
+            # `similarity: 1.0`), so this no longer routes the model into
+            # `confidence_below_threshold`.
             await _turn_text(
                 harness,
                 f"This is {_DEMO_CLIENT_PHONE}. I confirm I want to order 2 "
@@ -345,19 +313,13 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
                 harness, role="sales-agent", tool_name="order_writer"
             )
 
-        # Documented xfail, real-run finding (#79, tracked at #117): even
-        # directed not to, the model still calls catalog_search first, sees
-        # its constant `classification: "ambiguous"` (`similarity: None`
-        # for every hit, confident or not), and correctly, safely escalates
-        # on `confidence_below_threshold` instead of ordering -- observed
-        # 1/6 order_writer calls across two real EVAL_RUNS=3 attempts (0/3,
-        # then 1/3 after the prompt above was tightened). The model is
-        # doing the right thing given the tool's own honest signal; the gap
-        # is in the reference backend (#117), not this scenario or the
-        # harness -- see `_run_gated_xfail`'s own docstring.
-        await _run_gated_xfail(
-            "sales-agent.order_writer", places_an_order, issue="#117"
-        )
+        # #117 fixed the root cause (the reference `catalog_search` backend's
+        # constant `classification: "ambiguous"` / `similarity: None`, even
+        # for an exact SKU match). Re-verified live (EVAL_RUNS=3): 3/3
+        # `order_writer` calls, up from the earlier 1/6 across two real
+        # attempts -- no longer a documented xfail (formerly
+        # `_run_gated_xfail`, tracked at #79/#117).
+        await _run_gated("sales-agent.order_writer", places_an_order)
 
         async def sends_a_message() -> None:
             await _turn_text(

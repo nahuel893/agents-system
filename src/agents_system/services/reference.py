@@ -320,16 +320,39 @@ class ReferenceBackends:
                 _CATALOG_SEARCH_SQL,
                 {"query": query, "limit": max(1, min(limit, 50))},
             )
-            return {
-                "results": [
+            if not rows:
+                return {"results": [], "classification": "no_match"}
+
+            # #117: a plain substring match carries no real confidence signal
+            # on its own -- every hit reported `"ambiguous"` / `similarity:
+            # None` regardless of how confident it actually was, so
+            # `sales-agent`'s `confidence_below_threshold` escalation rule
+            # (correctly) never saw a match it could trust, even an exact
+            # SKU. An exact case-insensitive match on the SKU or description
+            # is the one signal a lexical backend CAN report honestly, so it
+            # reports `"direct"` (this platform's classification for a
+            # confident match, `docs/platform/tool.md`'s `catalog_search`
+            # contract) with `similarity: 1.0`. Anything short of that stays
+            # `"ambiguous"` with `similarity: None`, unchanged from before --
+            # a partial lexical match still has no real distance signal.
+            query_cf = query.casefold()
+            results: list[dict[str, Any]] = []
+            has_exact_match = False
+            for row in rows:
+                sku = str(row["sku"])
+                description = row["description"]
+                is_exact = query_cf in (sku.casefold(), str(description).casefold())
+                has_exact_match = has_exact_match or is_exact
+                results.append(
                     {
-                        "sku": str(row["sku"]),
-                        "description": row["description"],
-                        "similarity": None,
+                        "sku": sku,
+                        "description": description,
+                        "similarity": 1.0 if is_exact else None,
                     }
-                    for row in rows
-                ],
-                "classification": "ambiguous" if rows else "no_match",
+                )
+            return {
+                "results": results,
+                "classification": "direct" if has_exact_match else "ambiguous",
             }
 
         return ToolSpec(
