@@ -280,6 +280,129 @@ def test_data_agent_boots_with_knowledge_retrieval_denied() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Scenario 6 — Layer-1 grant-ceiling parity with the live *_boundary
+# scenarios (#156)
+#
+# Each `evals/scenarios/*_boundary.yaml` file used to assert this SAME fact
+# live: a caller's `granted_permissions` narrowed to omit one specific
+# permission excludes exactly the one tool that requires it from the
+# equipped surface, everything else staying equipped. That could never be a
+# meaningful LIVE assertion -- `tools_not_called` is only "exercised" (#81)
+# when the model ATTEMPTS the named tool, and a tool excluded at Layer 1 is
+# never offered to the model to attempt in the first place, so every run
+# failed the #81 gate with "never exercised ... proves nothing", regardless
+# of what the model did. The seven `(role, target_tool, granted_permissions)`
+# triples below are copied verbatim from each YAML file's OWN previous
+# `granted_permissions` (now each file's `docs/platform/live-eval.md`-linked
+# `turn_permissions`, converted to a Layer-2 revalidation scenario instead —
+# see each file's own header comment). Pinning them here, independent of the
+# YAML, means the deterministic Layer-1 fact and the live Layer-2 scenario
+# can drift apart in review without silently losing coverage of either.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "role,target_tool,narrowed_permissions,missing_permission",
+    [
+        (
+            "accountant-agent",
+            "knowledge_retrieval",
+            ["send:escalation", "read:reports"],
+            "read:knowledge_base",
+        ),
+        (
+            "data-agent",
+            "run_report",
+            [
+                "send:escalation",
+                "read:catalog",
+                "read:client_registry",
+                "read:knowledge_base",
+            ],
+            "read:reports",
+        ),
+        (
+            "developer-agent",
+            "use_term",
+            ["send:escalation", "read:files", "read:knowledge_base"],
+            "exec:command",
+        ),
+        (
+            "operator-agent",
+            "read_file",
+            ["send:escalation", "exec:command"],
+            "read:files",
+        ),
+        (
+            "orchestrator",
+            "client_lookup",
+            [
+                "send:escalation",
+                "write:session",
+                "spawn:sales-agent",
+                "spawn:data-agent",
+                "spawn:summary-agent",
+            ],
+            "read:client_registry",
+        ),
+        (
+            "summary-agent",
+            "knowledge_retrieval",
+            ["send:escalation", "read:conversation_logs", "write:summary_output"],
+            "read:knowledge_base",
+        ),
+        (
+            "support-agent",
+            "client_lookup",
+            [
+                "send:escalation",
+                "read:knowledge_base",
+                "read:conversation_logs",
+                "send:message",
+            ],
+            "read:client_registry",
+        ),
+    ],
+    ids=[
+        "accountant-agent",
+        "data-agent",
+        "developer-agent",
+        "operator-agent",
+        "orchestrator",
+        "summary-agent",
+        "support-agent",
+    ],
+)
+def test_boundary_scenario_permission_grant_excludes_target_tool(
+    role: str,
+    target_tool: str,
+    narrowed_permissions: list[str],
+    missing_permission: str,
+) -> None:
+    """#156 -- with exactly the boundary scenario's own `granted_permissions`,
+    *target_tool* never reaches the equipped surface (Layer 1), and the
+    denial names the missing permission -- the deterministic half of what
+    each `evals/scenarios/*_boundary.yaml` file now documents.
+    """
+    runtime = _build_runtime(role, narrowed_permissions)
+
+    equipped = {t.name for t in runtime.tools}
+    assert target_tool not in equipped, (
+        f"{role}: {target_tool!r} must be excluded from the equipped surface "
+        f"when {missing_permission!r} is not granted, got equipped={sorted(equipped)}"
+    )
+
+    denied = dict(runtime.denied_tools)
+    assert target_tool in denied, (
+        f"{role}: {target_tool!r} must appear in denied_tools, got {sorted(denied)}"
+    )
+    assert missing_permission in denied[target_tool], (
+        f"{role}: denial reason for {target_tool!r} must name "
+        f"{missing_permission!r}, got {denied[target_tool]!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # The taxonomy: abstract roles are excluded from boot guards, and must earn it
 # ---------------------------------------------------------------------------
 

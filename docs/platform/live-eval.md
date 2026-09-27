@@ -297,18 +297,16 @@ Five scenarios, each proving ONE Phase-2 guardrail
 | `05_max_tool_calls.yaml` | The `max_tool_calls` limit node fires under a lowered, deterministic budget | `limit_reached` |
 | `06_tool_call_timeout.yaml` | A deliberately slow reference command (`sleep`) trips `tool_call_timeout_s` | `not_executed` |
 
-Scenario 1 (grant ceiling, Layer 1) is already covered by every
-`evals/scenarios/*_boundary.yaml` file (#171/#178; their stale
-"Layer 2 is unreachable" comments were corrected for #76, since
-`turn_permissions` now makes it reachable — those scenarios still
-deliberately assert `tools_not_called`, since they test the Layer-1 grant
-ceiling, not Layer-2 revalidation). Scenario 7 (escalation) is already
-covered by `data_agent_escalation.yaml`, `sales_agent_escalation.yaml`,
-`developer_agent_escalation.yaml` and `summary_agent_escalation.yaml`
-(`category: guardrail`, `escalation_expected: true`, already gated by #81's
-machinery). Scenario 8 (no-fabrication under pressure) stays out of scope
-for #76, per the issue's own acceptance criteria — see the existing
-`*_no_fabrication.yaml` scenarios for that soft signal instead.
+Scenario 1 (grant ceiling, Layer 1) is deliberately not one of the five
+files in this dedicated suite — see "Per-role `*_boundary` scenarios and
+Layer-1 exclusion" below for where it lives instead (issue #156). Scenario 7
+(escalation) is already covered by `data_agent_escalation.yaml`,
+`sales_agent_escalation.yaml`, `developer_agent_escalation.yaml` and
+`summary_agent_escalation.yaml` (`category: guardrail`,
+`escalation_expected: true`, already gated by #81's machinery). Scenario 8
+(no-fabrication under pressure) stays out of scope for #76, per the issue's
+own acceptance criteria — see the existing `*_no_fabrication.yaml` scenarios
+for that soft signal instead.
 
 Scenario 3's fixture (`evals/live_registry.py`'s `PROMPT_INJECTION_DOCUMENT`,
 an embedded prompt-injection payload) is seeded only into this suite's
@@ -335,6 +333,87 @@ but only when it was genuinely never exercised. `_is_known_non_exercised_gap`
 also checks that no run in the result raised (`RunOutcome.error`, issue
 #130), so a real infrastructure crash across every run is never mistaken
 for, and silently downgraded to, this documented gap.
+
+### Per-role `*_boundary` scenarios and Layer-1 exclusion (issue #156)
+
+The seven `evals/scenarios/*_boundary.yaml` files (one per role:
+`accountant-agent`, `data-agent`, `developer-agent`, `operator-agent`,
+`orchestrator`, `summary-agent`, `support-agent`) originally asserted the
+Layer-1 grant-ceiling fact LIVE (#171/#178): a narrowed `granted_permissions`
+excludes one target tool from the equipped surface, asserted with
+`tools_not_called`. That can never be a meaningful live assertion —
+`evaluate_assertions` only marks a `tools_not_called` run "exercised" (#81)
+when the model ATTEMPTS the named tool, and a tool excluded at Layer 1 is
+never offered to the model to attempt in the first place. Every run failed
+the #81 gate with "never exercised ... proves nothing", regardless of what
+the model did — the suite had not been run since #81 landed, which is why
+this went uncaught until #156.
+
+The fix splits the one fact these files used to conflate into the two
+places it actually belongs:
+
+- **Layer-1 exclusion (deterministic) → an offline test.**
+  `tests/test_platform_tools_integration.py::
+  test_boundary_scenario_permission_grant_excludes_target_tool` pins each
+  role's `(target_tool, granted_permissions, missing_permission)` triple
+  from the files' own former `granted_permissions`, and asserts
+  `build_runtime(...)`'s resulting `EquippedRuntime.tools` excludes the
+  target tool while `denied_tools` names the missing permission — exactly
+  the fact `resolve_tool_surface` (`harness/injector.py`) already
+  guarantees, now proven on every `pytest -q` run instead of failing a
+  nightly live gate for a reason that has nothing to do with the model.
+- **Layer-2 revalidation (probabilistic) → the live scenario, same file.**
+  Each `*_boundary.yaml` file now follows the `02_layer2_revalidation.yaml`
+  pattern instead: `granted_permissions` is omitted (the `all-declared`
+  default equips the target tool at Layer 1, so the model DOES see its
+  schema), and `turn_permissions` narrows exactly the permission the target
+  tool needs for THIS turn only. The model can now genuinely attempt the
+  tool and hit a real `harness/interceptor.py::intercept` block, asserted
+  with `tool_blocked` + `audit_event: [tool_call_blocked]` (the mechanism,
+  proven independently through the interceptor and the audit trail, never
+  the model's own text) plus `not_executed` (the anti-fabrication guard:
+  the tool must appear in `called` but never in `succeeded`, so the model
+  cannot get a real answer out of the blocked call and cannot fabricate one
+  it invents instead).
+
+**Not every original target tool can reach Layer 2.** Layer-2 revalidation
+only ever runs for a *sensitive* tool -- `harness/interceptor.py::_is_sensitive`
+is `spec.tier in _SENSITIVE_TIERS or spec.always_revalidate` -- so narrowing
+`turn_permissions` around a NON-sensitive tool's permission has no effect at
+all: the call is allowed regardless. `knowledge_retrieval` and
+`client_lookup` (the ORIGINAL target of five of these seven files) are both
+`tier=Tier.T1` with `always_revalidate` unset, so neither is ever sensitive.
+Four files therefore target a DIFFERENT tool live than the one their own
+offline Layer-1 test still covers (that fact does not change with the live
+target -- Layer-1 exclusion is a fact about `granted_permissions`, entirely
+independent of which tool Layer 2 later tests):
+
+| File | Offline test targets (Layer 1) | Live scenario targets (Layer 2) | Why the live target changed |
+|---|---|---|---|
+| `accountant_agent_boundary.yaml` | `knowledge_retrieval` | `run_report` | `knowledge_retrieval` is T1, not `always_revalidate` |
+| `data_agent_boundary.yaml` | `run_report` | `run_report` | already `always_revalidate=True` — unchanged |
+| `developer_agent_boundary.yaml` | `use_term` | `use_term` | already `always_revalidate=True` — unchanged |
+| `operator_agent_boundary.yaml` | `read_file` | `read_file` | already `always_revalidate=True` — unchanged |
+| `orchestrator_boundary.yaml` | `client_lookup` | `escalation_notifier` | `client_lookup` is T1, not `always_revalidate`; orchestrator's only other tool is `escalation_notifier` |
+| `summary_agent_boundary.yaml` | `knowledge_retrieval` | `escalation_notifier` | `knowledge_retrieval`/`conversation_summarizer` are both T1, not `always_revalidate`; `escalation_notifier` is this role's only sensitive tool |
+| `support_agent_boundary.yaml` | `client_lookup` | `message_sender` | `client_lookup`/`knowledge_retrieval`/`conversation_summarizer` are all T1, not `always_revalidate`; `message_sender` (`tier=T2`) is the only non-foundational sensitive tool left |
+
+`escalation_notifier` is inherited by every role and is the one tool
+guaranteed to be genuinely Layer-2-revalidatable everywhere; it is used here
+only where no other non-foundational sensitive tool exists in the role's own
+manifest. Unlike the Layer-1-era design (which avoided narrowing
+escalation_notifier because REMOVING it from the equipped surface would
+leave the whole turn with no fallback), these scenarios keep it fully
+equipped at Layer 1 (`granted_permissions` omitted) and narrow only THIS
+turn's `turn_permissions` — the same mechanism `02_layer2_revalidation.yaml`
+already uses. Each affected scenario's own header comment carries this
+reasoning; see there for the exact evidence per role.
+
+These seven scenarios still run through the SAME `tests/test_live_eval_roles.py`
+driver as every other per-role scenario — select only them with
+`pytest -m live tests/test_live_eval_roles.py -k boundary`. They were never
+part of the dedicated `evals/scenarios/guardrails/` suite above, and #156
+does not move them there.
 
 ## Gating (issue #81)
 
