@@ -246,11 +246,21 @@ class FakeWhatsAppServer:
         raise RuntimeError("FakeWhatsAppServer did not start within 4s")
 
     async def stop(self) -> None:
+        """Never raises (#113 review): `boot_live_harness`'s teardown
+        `finally` calls this before `_delete_redis_threads`/`_drop_database`
+        -- an exception escaping here would abort that `finally` block
+        before the throwaway database is dropped, masking whatever error
+        actually failed the boot. Mirrors `_drop_database`'s/
+        `_delete_redis_threads`'s own never-raise teardown contract."""
         if self._server is not None:
             self._server.should_exit = True
         if self._task is not None:
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("live_harness.fake_whatsapp_server_stop_failed")
 
     @property
     def base_url(self) -> str:
