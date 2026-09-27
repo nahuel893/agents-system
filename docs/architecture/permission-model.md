@@ -123,3 +123,4 @@ This table is illustrative of the permission model, not an exhaustive registry. 
 - Injection pipeline: `docs/platform/harness.md`
 - Delegation permission constraints: `docs/architecture/delegation-policy.md`
 - Shipped permission hierarchy: `docs/architecture/adr-003-permission-hierarchy.md`
+- Proposed MCP support and its new `Mcp` permission family: `docs/architecture/adr-008-mcp-support.md`

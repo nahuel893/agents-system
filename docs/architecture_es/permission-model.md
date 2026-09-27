@@ -117,3 +117,4 @@ La siguiente tabla detalla qué roles de agente tienen permitido declarar e inye
 - Pipeline de inyección de capacidades en el harness: `docs/platform_es/harness.md`
 - Restricciones en delegaciones jerárquicas: `docs/architecture_es/delegation-policy.md`
 - Jerarquía de permisos entregada: `docs/architecture_es/adr-003-permission-hierarchy.md`
+- Propuesta de soporte MCP y su nueva familia de permisos `Mcp`: `docs/architecture_es/adr-008-mcp-support.md`

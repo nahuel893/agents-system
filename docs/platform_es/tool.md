@@ -304,6 +304,7 @@ Ejecuta una consulta de solo lectura escrita por el modelo, para preguntas que e
 
 - Modelo de permisos y reglas de inyección por conector: `docs/architecture/permission-model.md`
 - Herramienta SQL de solo lectura, su límite de confianza y la enmienda a AD-2: `docs/architecture_es/adr-007-read-only-sql-tool.md`
+- Propuesta de soporte de Model Context Protocol (MCP) — cómo encajan las herramientas MCP en `ToolSpec`/`Tier`/la revalidación de Capa 2: `docs/architecture_es/adr-008-mcp-support.md`
 - Pipeline de inyección y orden de precedencia: `docs/platform_es/harness.md`
 - Habilidades (*skills* — contraparte de comportamiento de las herramientas): `docs/platform_es/skill.md`
 - Campo `tools` en el `manifest.md` del agente: `docs/platform_es/role.md`
