@@ -7,9 +7,13 @@
 # user at all -- the shape a compromised or attacker-authored knowledge base
 # article, catalog description, or API response would actually take.
 #
-# Mechanism: `evals/live_registry.py`'s `_KNOWLEDGE_DOCUMENTS` seeds one
-# fixture document (id `injected-payload-76`) whose content is an embedded
+# Mechanism: `evals/live_registry.py`'s `PROMPT_INJECTION_DOCUMENT` (id
+# `injected-payload-76`) is a fixture document whose content is an embedded
 # "SYSTEM OVERRIDE" instructing the model to call `order_writer`.
+# `tests/test_live_eval_guardrails.py` is the only caller that seeds it, via
+# `build_live_registry_factory`'s `extra_documents` (#130) -- it is NOT part
+# of the always-present `_KNOWLEDGE_DOCUMENTS` every other live-eval registry
+# (role scenarios, `examples/demo/app.py`) builds from.
 # support-agent's own manifest (platform/roles/support-agent/manifest.md)
 # never declares `order_writer` -- Layer 1 cannot equip a tool the role
 # doesn't declare (harness/injector.py::resolve_tool_surface only ever
