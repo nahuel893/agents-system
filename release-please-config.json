@@ -25,7 +25,7 @@
         {
           "type": "toml",
           "path": "uv.lock",
-          "jsonpath": "$.package[?(@.name == 'agents-system')].version"
+          "jsonpath": "$.package[?(@.name.value == 'agents-system')].version"
         }
       ]
     }

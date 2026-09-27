@@ -78,7 +78,9 @@ release-please cree actualmente liberada; `[project].version` en
 `pyproject.toml` es el archivo que edita para aplicar un release. Un check
 de CI (`tests/test_release_manifest.py`) hace fallar el build si ambos
 divergen, así que una edición manual de uno sin el otro se detecta de
-inmediato en vez de aparecer más tarde como un build incorrecto.
+inmediato en vez de aparecer más tarde como un build incorrecto. El mismo
+test también compara la entrada propia de `agents-system` en `uv.lock`
+contra `pyproject.toml` (ver más abajo).
 
 ## Cómo es una PR de release
 
@@ -86,8 +88,20 @@ Correr `scripts/release.sh pr` mantiene abierta exactamente una pull
 request permanente, titulada algo como `chore(main): release 0.2.0`, que:
 
 - bumpea `.release-please-manifest.json`, el `version` de `pyproject.toml` y
-  la entrada del propio paquete en `uv.lock` (una regla `extra-files`), así
-  el lockfile nunca queda desfasado de la versión publicada;
+  la entrada del propio paquete en `uv.lock` (una regla `extra-files` con un
+  `jsonpath` TOML), así el lockfile nunca queda desfasado de la versión
+  publicada. Ese `jsonpath` tiene que ser
+  `$.package[?(@.name.value == 'agents-system')].version`, no
+  `$.package[?(@.name == 'agents-system')].version` — el updater TOML de
+  release-please parsea con un parser que etiqueta cada valor escalar
+  (strings, números) envolviéndolo en un objeto `{start, end, value}` para
+  poder reemplazarlo sin tocar el resto del archivo, así que un filtro que
+  compara `@.name` directamente contra un string nunca matchea; comparar
+  `@.name.value` sí llega al string real (issue #150).
+  `tests/test_release_manifest.py` es un test de `pytest` puramente offline
+  (sin red, sin depender de CI) que falla si la entrada de `uv.lock` y
+  `pyproject.toml` alguna vez divergen, así que una regresión de este mismo
+  jsonpath se detecta apenas corre `pytest -q`, en local o en CI;
 - escribe los cambios acumulados bajo un nuevo encabezado con fecha
   `## [0.2.0]` en `CHANGELOG.md`, agrupados en las secciones configuradas
   (por ejemplo, **Features**, **Bug Fixes** y **Documentation**) y enlazados
