@@ -193,7 +193,7 @@ model:
 | `provider` | sí | Uno de los cuatro valores que acepta `ADAPTER_PROVIDER`. |
 | `model` | sí | El id de modelo propio del proveedor (string no vacío). |
 | `temperature` | no | Un número finito entre 0 y 2. |
-| `max_tokens` | no | Un entero positivo. |
+| `max_tokens` | no | Un entero positivo, como máximo 1.000.000 (un techo de sanidad que detecta un typo de decimal mal ubicado o de mezcla de unidades, no un límite real de ningún proveedor). |
 
 No se acepta ninguna otra clave. Esto es deliberadamente cerrado:
 `provider`+`model` seleccionan QUÉ proveedor/modelo ya configurado usar,

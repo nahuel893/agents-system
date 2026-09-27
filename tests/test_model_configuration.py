@@ -285,6 +285,16 @@ def test_non_positive_max_tokens_rejected(tmp_path: pathlib.Path) -> None:
         resolve("bad-max-tokens", roots=roots)
 
 
+def test_max_tokens_has_an_upper_bound() -> None:
+    """PR #141 review: `temperature` has an explicit upper bound to catch a
+    typo (`_MAX_MODEL_TEMPERATURE`), but `max_tokens` had none at all, so an
+    absurd value (a misplaced decimal, a unit mixup) passed silently."""
+    with pytest.raises(DefinitionError, match="max_tokens"):
+        _validate_model_config(
+            {"provider": "ollama", "model": "x", "max_tokens": 10**9}, who="probe"
+        )
+
+
 def test_credential_like_key_rejected(tmp_path: pathlib.Path) -> None:
     """Credentials never come from a versioned manifest -- an attempted
     `api_key` (or any key outside the closed set) is rejected structurally,
@@ -314,6 +324,68 @@ def test_validate_model_config_accepts_minimal_valid_shape() -> None:
     _validate_model_config(
         {"provider": "ollama", "model": "qwen2.5:3b"}, who="unit test"
     )
+
+
+def test_malformed_role_model_still_validated_through_a_deployment_with_no_model(
+    tmp_path: pathlib.Path,
+) -> None:
+    """PR #141 review: `_merge_validated`'s "override declares no model:"
+    branch took `generic.model` straight from the role without ever calling
+    `_validate_model_config` on it -- so a malformed role `model:` was only
+    ever checked on the no-deployment path. A deployment override that does
+    not itself touch `model:` (the common case) must not bypass validation
+    of the role's own declaration."""
+    roots = _deployment_roots(tmp_path)
+    _write_platform_role(
+        roots.platform_root,
+        "bad-role-with-deployment",
+        policy_extra="model:\n  provider: made-up-vendor\n  model: x\n",
+    )
+    _write_deployment(roots.deployments_root, "acme", "bad-role-with-deployment")
+
+    # No client: already correctly raises -- confirms the role model really
+    # is malformed, isolating the deployment path as what is under test.
+    with pytest.raises(DefinitionError):
+        resolve("bad-role-with-deployment", roots=roots)
+
+    with pytest.raises(DefinitionError) as exc_info:
+        resolve("bad-role-with-deployment", client="acme", roots=roots)
+
+    assert "made-up-vendor" in str(exc_info.value)
+
+
+def test_role_own_non_mapping_model_rejected(tmp_path: pathlib.Path) -> None:
+    """PR #141 review: a non-mapping, non-None, non-'inherit' `model:` value
+    (a bare scalar -- the single most likely authoring typo, writing
+    `model: claude-3-5-sonnet-latest` instead of the documented
+    `provider:`/`model:` mapping) silently resolved to `None` instead of
+    raising, discarding the author's intent with no error at all."""
+    roots = _platform_roots(tmp_path)
+    _write_platform_role(
+        roots.platform_root,
+        "typo-model",
+        policy_extra="model: not-a-real-declaration\n",
+    )
+
+    with pytest.raises(DefinitionError, match="model"):
+        resolve("typo-model", roots=roots)
+
+
+def test_deployment_non_mapping_model_rejected(tmp_path: pathlib.Path) -> None:
+    """Same defect, at the deployment-override boundary: a bare scalar
+    `model:` on the override's own policy.md silently resolved to `None`
+    (discarding the role's valid model) instead of raising."""
+    roots = _deployment_roots(tmp_path)
+    _write_platform_role(roots.platform_root, "sales-like3", policy_extra=_MODEL_BLOCK)
+    _write_deployment(
+        roots.deployments_root,
+        "acme",
+        "sales-like3",
+        policy_extra="model: 5\n",
+    )
+
+    with pytest.raises(DefinitionError, match="model"):
+        resolve("sales-like3", client="acme", roots=roots)
 
 
 def test_supported_providers_are_exactly_the_adapter_provider_literal() -> None:

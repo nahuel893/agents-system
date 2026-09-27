@@ -3083,6 +3083,13 @@ _MODEL_CONFIG_KEYS = frozenset({"provider", "model", "temperature", "max_tokens"
 #: unit-mixup typo at boot, not to model any one provider's exact range.
 _MAX_MODEL_TEMPERATURE = 2.0
 
+#: Same "reject nonsense, not tune to the provider" spirit as
+#: `_MAX_MODEL_TEMPERATURE` above, for `max_tokens` (PR #141 review): no
+#: shipped provider documents an output-token limit anywhere near this, so
+#: it exists only to catch a misplaced-decimal or unit-mixup typo
+#: (`max_tokens: 1000000000` for `1000`) at boot, never to bound a real one.
+_MAX_MODEL_MAX_TOKENS = 1_000_000
+
 
 def _validate_model_config(value: Mapping[str, Any], *, who: str) -> None:
     """Validate a resolved `model:` declaration (D-037, ADR-004).
@@ -3146,6 +3153,48 @@ def _validate_model_config(value: Mapping[str, Any], *, who: str) -> None:
                 f"Invariant violation — model: {who} declares "
                 f"max_tokens={max_tokens!r}, which must be a positive integer."
             )
+        if max_tokens > _MAX_MODEL_MAX_TOKENS:
+            raise DefinitionError(
+                f"Invariant violation — model: {who} declares "
+                f"max_tokens={max_tokens!r}, which exceeds the sanity ceiling "
+                f"of {_MAX_MODEL_MAX_TOKENS} (catches a misplaced-decimal or "
+                "unit-mixup typo, not any one provider's real limit)."
+            )
+
+
+def _resolve_model_declaration(
+    value: Mapping[str, Any] | str | None, *, who: str
+) -> Mapping[str, Any] | None:
+    """Resolve one already-folded `model:` declaration to either `None`
+    ("not declared here") or a validated dict (PR #141 review).
+
+    `None` and the literal string `"inherit"` both mean "not declared" --
+    the vocabulary `_merge_validated` already used for a deployment
+    override that says nothing, reused here for EVERY site that reads a
+    `model:` value so a malformed one (a bare scalar, a list, a typo'd
+    string -- anything that is not a mapping) can no longer slip past as
+    one of those two meanings. Before this helper existed, a non-dict value
+    other than `None` was silently coerced to `None` at three separate call
+    sites (a role's own declaration on the no-deployment-override path in
+    `resolve()`, a deployment override's own declaration in
+    `_merge_validated`, and -- because `_merge_validated`'s "override says
+    nothing" branch took `generic.model` straight from the role without
+    ever validating it -- a role's malformed declaration read through ANY
+    deployment override that itself did not touch `model:`, silently
+    passing every `_validate_model_config` invariant (allowlisted
+    providers, a required model id, the closed credential-shaped key set,
+    numeric temperature/max_tokens bounds) for that common case.
+    """
+    if value is None or value == "inherit":
+        return None
+    if isinstance(value, dict):
+        _validate_model_config(value, who=who)
+        return dict(value)
+    raise DefinitionError(
+        f"Invariant violation — model: {who} declares a malformed model: "
+        f"value {value!r}; expected a mapping with 'provider'/'model' keys "
+        "(or omit the key, or set it to 'inherit', to inherit)."
+    )
 
 
 def _validate_audit_redaction(
@@ -3573,17 +3622,18 @@ def _merge_validated(
     # operator choice, not a partial tweak, and there is no ceiling to
     # measure it against (model/provider selection is not a capability or
     # safety escalation).
-    resolved_model: Mapping[str, Any] | None
     ov_model = override.model
     if ov_model is None or ov_model == "inherit":
-        resolved_model = (
-            dict(generic.model) if isinstance(generic.model, dict) else None
+        # PR #141 review: this used to take `generic.model` straight, never
+        # validating it -- so a malformed role `model:` passed silently
+        # through any deployment override that itself said nothing about
+        # `model:` (the common case). `_resolve_model_declaration` validates
+        # it exactly like the no-override path in `resolve()` does.
+        resolved_model = _resolve_model_declaration(
+            generic.model, who=f"role '{generic.role_name}'"
         )
-    elif isinstance(ov_model, dict):
-        _validate_model_config(ov_model, who=who)
-        resolved_model = dict(ov_model)
     else:
-        resolved_model = None
+        resolved_model = _resolve_model_declaration(ov_model, who=who)
 
     # --- Resolve context ---
     resolved_context: dict[str, Any]
@@ -3725,12 +3775,12 @@ def resolve(
     # path, so this is the ONLY validation a role's own `model:` gets when
     # resolved without one -- the same depth `execution_limits` gets here
     # (shape-coerced, not ceiling-checked; the fold already happened in
-    # `_resolve_role_chain`/`_fold_parent_into_child`).
-    resolved_model: Mapping[str, Any] | None = (
-        dict(generic.model) if isinstance(generic.model, dict) else None
+    # `_resolve_role_chain`/`_fold_parent_into_child`). PR #141 review:
+    # `_resolve_model_declaration` also raises on a malformed non-mapping
+    # value instead of silently discarding it as `None`.
+    resolved_model = _resolve_model_declaration(
+        generic.model, who=f"role '{generic.role_name}'"
     )
-    if resolved_model is not None:
-        _validate_model_config(resolved_model, who=f"role '{generic.role_name}'")
 
     # --- ADR-002 C.11: untrusted_input ⊥ exec:*, the no-override branch ---
     # `merge()` is never called on this path, so nothing above has validated

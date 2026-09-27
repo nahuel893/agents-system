@@ -191,7 +191,7 @@ model:
 | `provider` | yes | One of the four values `ADAPTER_PROVIDER` accepts. |
 | `model` | yes | The provider's own model id (non-empty string). |
 | `temperature` | no | A finite number between 0 and 2. |
-| `max_tokens` | no | A positive integer. |
+| `max_tokens` | no | A positive integer, at most 1,000,000 (a sanity ceiling that catches a misplaced-decimal or unit-mixup typo, not a real provider limit). |
 
 No other key is accepted. This is closed deliberately: `provider`+`model`
 select WHICH already-configured provider/model to use, never a credential
