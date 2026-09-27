@@ -233,6 +233,48 @@ def test_audit_rows_statement_combines_every_filter() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _run_migrations -- minimal subprocess env, no secret leakage (#113 review
+# follow-up)
+# ---------------------------------------------------------------------------
+
+
+def test_run_migrations_does_not_copy_unrelated_secrets_into_subprocess_env(
+    monkeypatch,
+) -> None:
+    """`_run_migrations` used to build its subprocess `env` as
+    `{**os.environ, "DATABASE_URL": ...}` -- a full copy of the process
+    environment, including any real model-provider secret a developer
+    exported to run the live harness against a real model. It only needs
+    `DATABASE_URL` (`alembic/env.py` reads that directly) plus `PATH` to
+    locate the interpreter; nothing else should ever reach the child
+    process's environment."""
+    import subprocess
+    from pathlib import Path
+
+    from agents_system.evals import live_harness
+
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "sk-TOTALLY-REAL-LOOKING-SECRET")
+
+    captured_env: dict[str, str] = {}
+
+    def fake_run(*args: object, **kwargs: object) -> None:
+        captured_env.update(kwargs["env"])  # type: ignore[arg-type]
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    live_harness._run_migrations(
+        "postgresql+asyncpg://user:pass@localhost/live_harness_test",
+        repo_root=Path("/repo"),
+    )
+
+    assert "OPENAI_COMPATIBLE_API_KEY" not in captured_env
+    assert captured_env["DATABASE_URL"] == (
+        "postgresql+asyncpg://user:pass@localhost/live_harness_test"
+    )
+    assert "PATH" in captured_env
+
+
+# ---------------------------------------------------------------------------
 # AcceptAllParticipantDirectory
 # ---------------------------------------------------------------------------
 
@@ -321,6 +363,33 @@ async def test_deliver_webhook_accumulates_every_distinct_phone() -> None:
         await harness.deliver_webhook(phone="+15550001111", text="one-again")
 
         assert harness.used_thread_ids == {"+15550001111", "+15550002222"}
+
+
+async def test_deliver_webhook_tracks_the_normalized_phone_as_the_thread_id() -> None:
+    """`DeferredWebhookWorker` checkpoints under
+    `AcceptAllParticipantDirectory.normalize_address(turn.phone_number)`
+    (`services/webhook_worker.py`), which adds a leading `+` when the raw
+    phone number is missing one. `used_thread_ids` must track that same
+    normalized key -- not the raw `phone` argument -- or teardown deletes
+    the wrong Redis key and leaks the real checkpoint (#113 review
+    follow-up)."""
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def webhook(request):
+        return JSONResponse({"status": "ok"})
+
+    app = Starlette(routes=[Route("/webhook", webhook, methods=["POST"])])
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://live-harness.test"
+    ) as client:
+        harness = _build_webhook_only_harness(client)
+
+        await harness.deliver_webhook(phone="15550009999", text="hola")
+
+        assert harness.used_thread_ids == {"+15550009999"}
 
 
 # ---------------------------------------------------------------------------
