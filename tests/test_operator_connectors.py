@@ -14,7 +14,10 @@ the tool works; only these prove it is safe to have.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import pathlib
+import signal
 import sys
 
 import pytest
@@ -487,6 +490,154 @@ async def test_cancelling_the_call_kills_and_reaps_the_process(
         await task
 
     await _assert_dead_and_reaped(spawned, marker)
+
+
+async def test_a_call_cancelled_while_it_is_still_spawning_kills_the_whole_group(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancellation that lands inside `create_subprocess_exec`, after the
+    child started but before its pipes were connected. asyncio's own
+    cleanup for that case kills only the direct child. The rest of its
+    group kept running and holding the pipes, and asyncio waits for those
+    pipes to close, so the cancelled call hung for as long as that process
+    lived. Under bwrap that process is the sandbox's namespace init, when
+    the cancellation lands before bwrap arms `--die-with-parent` on it.
+
+    bwrap is stubbed out here so a plain background process stands in for
+    that init every time, and the pipe connection is slowed down so the
+    cancellation always lands inside the spawn."""
+    import os
+    import signal
+    import uuid
+
+    import agents_system.connectors.operator as operator_module
+
+    monkeypatch.setattr(
+        operator_module, "_bwrap_argv", lambda argv, *, policy, bwrap: list(argv)
+    )
+    marker = f"mid-spawn-{uuid.uuid4().hex}"
+    spawned = _spy_on_spawns(monkeypatch)
+    loop = asyncio.get_running_loop()
+    connect_read_pipe = loop.connect_read_pipe
+
+    async def slow_connect_read_pipe(*args: object, **kwargs: object) -> object:
+        await asyncio.sleep(2.0)
+        return await connect_read_pipe(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(loop, "connect_read_pipe", slow_connect_read_pipe)
+    sleeper = f"import time; time.sleep(30)  # {marker}"
+    parent = (
+        "import subprocess, sys, time\n"
+        f"subprocess.Popen([sys.executable, '-c', {sleeper!r}])\n"
+        f"time.sleep(30)  # {marker}\n"
+    )
+    connector = build_terminal_connector(_policy(tmp_path, timeout_s=30.0))
+    task = asyncio.create_task(connector({"argv": [sys.executable, "-c", parent]}))
+    for _ in range(75):
+        if len(_pids_whose_cmdline_contains(marker)) >= 2:
+            break
+        await asyncio.sleep(0.02)
+    assert len(_pids_whose_cmdline_contains(marker)) >= 2, "no background child"
+    assert not spawned, "the spawn finished before the cancellation could land"
+
+    task.cancel()
+    done, _ = await asyncio.wait({task}, timeout=5.0)
+    if not done:
+        for pid in _pids_whose_cmdline_contains(marker):
+            os.kill(int(pid), signal.SIGKILL)  # let the hung call finish
+        await asyncio.wait({task}, timeout=5.0)
+
+    assert done, "the cancelled call hung inside the spawn"
+    assert task.cancelled(), "the cancellation was swallowed"
+    await _assert_dead_and_reaped(spawned, marker)
+
+
+async def test_a_spawn_that_never_finishes_still_ends_the_call(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The spawn is shielded, so the call's own timeout no longer cuts it
+    short. Waiting for it is bounded like the reap instead: a spawn that
+    never finishes still ends the call, with the timeout refusal, and is
+    logged."""
+    import time
+
+    from structlog.testing import capture_logs
+
+    import agents_system.connectors.operator as operator_module
+
+    async def never_spawns(*args: object, **kwargs: object) -> object:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", never_spawns)
+    monkeypatch.setattr(operator_module, "_REAP_TIMEOUT_S", 0.2)
+    connector = build_terminal_connector(_policy(tmp_path, timeout_s=0.3))
+
+    started = time.monotonic()
+    with capture_logs() as logs:
+        result = await connector({"argv": [sys.executable, "-c", "pass"]})
+    elapsed = time.monotonic() - started
+
+    assert result["error_kind"] == "timeout"
+    assert elapsed < 2.0, f"the call waited {elapsed:.1f}s on a hung spawn"
+    assert any(log["event"] == "operator.spawn_incomplete" for log in logs), logs
+
+
+async def test_a_second_cancellation_during_the_spawn_still_kills_the_group(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first cancellation leaves the call waiting for the spawn so it
+    can kill what it started. A second one, say `total_execution_timeout_s`
+    landing just after `tool_call_timeout_s`, interrupts that wait, and the
+    call ends before it holds the process. The spawn still finishes on its
+    own; nothing may be left running when it does.
+
+    The pipe connection is slowed down so both cancellations always land
+    inside the spawn. bwrap is real here, as in production."""
+    import uuid
+
+    marker = f"double-cancel-{uuid.uuid4().hex}"
+    spawned = _spy_on_spawns(monkeypatch)
+    loop = asyncio.get_running_loop()
+    connect_read_pipe = loop.connect_read_pipe
+
+    async def slow_connect_read_pipe(*args: object, **kwargs: object) -> object:
+        await asyncio.sleep(1.0)
+        return await connect_read_pipe(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(loop, "connect_read_pipe", slow_connect_read_pipe)
+    task = asyncio.create_task(_hanging_use_term(tmp_path, marker)())
+    for _ in range(50):
+        if _pids_whose_cmdline_contains(marker):
+            break
+        await asyncio.sleep(0.02)
+    assert _pids_whose_cmdline_contains(marker), "the launcher never started"
+    assert not spawned, "the spawn finished before the cancellations could land"
+
+    task.cancel()
+    await asyncio.sleep(0.05)  # the call is now waiting for the spawn
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    for _ in range(100):
+        if spawned:
+            break
+        await asyncio.sleep(0.05)
+    [process] = spawned
+    # The call is gone, so nothing awaits the reap: allow asyncio a moment.
+    survivors = _pids_whose_cmdline_contains(marker)
+    for _ in range(50):
+        if process.returncode is not None and not survivors:
+            break
+        await asyncio.sleep(0.1)
+        survivors = _pids_whose_cmdline_contains(marker)
+    for pid in survivors:
+        with contextlib.suppress(OSError):
+            os.kill(int(pid), signal.SIGKILL)  # never leave one behind
+
+    assert not survivors, f"the sandbox outlived the call: {survivors}"
+    assert process.returncode is not None, "the launcher was never reaped"
 
 
 async def test_a_cancelled_call_with_output_still_in_flight_is_reaped_promptly(

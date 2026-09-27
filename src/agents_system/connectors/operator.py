@@ -321,10 +321,20 @@ def _bwrap_argv(argv: list[str], *, policy: TerminalPolicy, bwrap: str) -> list[
     allowlist, or a `command_tools` declaration resolved at load time), so
     making it executable does not expand what can run. A bare (non-absolute)
     `argv[0]` relies on the fixed system paths above instead.
+
+    No `--new-session`, deliberately (#105 follow-up). It made bwrap's
+    namespace init call `setsid()`, which took it and the command out of
+    the process group `_run_argv` kills. Their death then rested on
+    `--die-with-parent`, which bwrap arms on that init only AFTER the
+    `setsid()`, so a kill landing in between orphaned the whole sandbox on
+    the host. What `--new-session` guarded against, a sandbox reaching the
+    caller's terminal (`TIOCSTI`, CVE-2017-5226), stays closed: `_run_argv`
+    spawns the launcher with `start_new_session=True`, a session with no
+    controlling terminal that everything inside inherits.
     """
     sandbox = policy.sandbox
     root = str(policy.root)
-    wrapped = [bwrap, "--unshare-all", "--die-with-parent", "--new-session"]
+    wrapped = [bwrap, "--unshare-all", "--die-with-parent"]
     if sandbox.network:
         wrapped.append("--share-net")
 
@@ -493,7 +503,11 @@ async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutp
     cancellation from outside it (the interceptor's `tool_call_timeout_s`,
     `task.cancel()`, shutdown) -- kills the whole process group and reaps
     the child before the result or the exception leaves this function
-    (#105). A cancellation is always re-raised, never turned into a result.
+    (#105), even when it lands while the child is still being spawned. A
+    second cancellation during that spawn ends the call before the child
+    is reaped, but not before the kill is armed: the group dies the moment
+    the spawn completes (`_kill_group_once_spawned`). A cancellation is
+    always re-raised, never turned into a result.
 
     Fails closed: if `bwrap` OR `prlimit` is not on the host, this refuses
     and never falls back to running *argv* unsandboxed, or sandboxed but
@@ -532,21 +546,30 @@ async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutp
     # LATER call's event loop has replaced this one (that WAS observed as a
     # spurious "Event loop is closed" warning from an earlier, more
     # convoluted version of this function during this same review round).
+    #
+    # The spawn itself runs as a task of its own, awaited through `shield`,
+    # so a cancellation that lands while it is still starting the child
+    # never cancels `create_subprocess_exec` itself (see `_finish_spawning`).
     process: asyncio.subprocess.Process | None = None
+    spawning = asyncio.ensure_future(
+        asyncio.create_subprocess_exec(
+            *sandboxed_argv,
+            cwd=str(policy.root),
+            env=_child_env(policy),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            # Its own process group, so a timeout can kill the whole tree
+            # (prlimit, bwrap, and everything bwrap sandboxes) rather than
+            # only the direct child. Its own session too, with no
+            # controlling terminal, which is what keeps the sandbox off the
+            # caller's terminal (see `_bwrap_argv`).
+            start_new_session=True,
+        )
+    )
     try:
         async with asyncio.timeout(policy.timeout_s):
-            process = await asyncio.create_subprocess_exec(
-                *sandboxed_argv,
-                cwd=str(policy.root),
-                env=_child_env(policy),
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                # Its own process group, so a timeout can kill the whole
-                # tree (prlimit, bwrap, and everything bwrap sandboxes)
-                # rather than only the direct child.
-                start_new_session=True,
-            )
+            process = await asyncio.shield(spawning)
             (stdout_bytes, out_cut), (stderr_bytes, err_cut) = await asyncio.gather(
                 _read_capped(process.stdout, policy.max_output_bytes),
                 _read_capped(process.stderr, policy.max_output_bytes),
@@ -579,6 +602,11 @@ async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutp
         # outlived the timeout the agent had already been told about.
         # `task.cancel()` and shutdown arrive the same way. A `finally`
         # cannot swallow the cancellation: it propagates once this is done.
+        if process is None:
+            # Before the first await here, so a second cancellation that
+            # ends this wait early cannot stop the kill.
+            spawning.add_done_callback(_kill_group_once_spawned)
+            process = await _finish_spawning(spawning)
         if process is not None and process.returncode is None:
             await _kill_and_reap(process)
 
@@ -649,6 +677,65 @@ def _kill_group(process: Any) -> None:
 _REAP_TIMEOUT_S = 5.0
 
 
+async def _finish_spawning(
+    spawning: asyncio.Future[asyncio.subprocess.Process],
+) -> asyncio.subprocess.Process | None:
+    """The process a call that ended early had started, once its spawn is
+    done, so `_run_argv` can kill the whole group (#105).
+
+    Cancelling `create_subprocess_exec` itself is what this avoids. When a
+    cancellation lands after the child has started but before its pipes
+    are connected, asyncio's own cleanup kills only the direct child, not
+    its group, and then waits for the pipes to close. Under bwrap the rest
+    of the group is the sandbox's namespace init, which outlives that kill
+    if bwrap has not yet armed `--die-with-parent` on it, and it holds the
+    pipes open: the call hung for as long as the sandbox ran, and the
+    sandbox kept running. `_run_argv` awaits the spawn through `shield`
+    instead, and this lets it finish.
+
+    Bounded by `_REAP_TIMEOUT_S`, like the reap. A spawn still unfinished
+    by then is cancelled and logged, which leaves only asyncio's own
+    cleanup. Returns None if the spawn failed or never finished.
+
+    A second cancellation can end this wait before the spawn is done, and
+    the spawn then finishes with no one holding the process: the kill for
+    that case is `_kill_group_once_spawned`, not this.
+    """
+    done, _ = await asyncio.wait({spawning}, timeout=_REAP_TIMEOUT_S)
+    if not done:
+        spawning.cancel()
+        _logger.error("operator.spawn_incomplete", timeout_s=_REAP_TIMEOUT_S)
+        return None
+    if spawning.cancelled() or spawning.exception() is not None:
+        return None
+    return spawning.result()
+
+
+def _kill_group_once_spawned(
+    spawning: asyncio.Future[asyncio.subprocess.Process],
+) -> None:
+    """Kill the group a call that ended early had started, the moment its
+    spawn completes (#105).
+
+    A done-callback on the spawn, not a step of `_run_argv`'s cleanup, and
+    synchronous, so no cancellation can stop it. The cleanup waits for the
+    spawn before it can kill anything, and a second cancellation landing in
+    that wait (`total_execution_timeout_s` just after `tool_call_timeout_s`,
+    say) ended the call there: the spawn finished on its own, and the
+    launcher, bwrap's namespace init and the command ran with no time limit.
+    Nothing awaits the reap in that case; asyncio's child watcher collects
+    the exit status, and the transport closes once the pipes do.
+
+    When the cleanup does get the process, `_kill_and_reap` kills it too,
+    and a second `killpg` on the same, not yet reaped group is harmless.
+    """
+    if spawning.cancelled() or spawning.exception() is not None:
+        return
+    process = spawning.result()
+    if process.returncode is None:
+        _kill_group(process)
+
+
 async def _kill_and_reap(process: asyncio.subprocess.Process) -> None:
     """Kill the child's process group, then wait until the child is reaped.
 
@@ -659,11 +746,12 @@ async def _kill_and_reap(process: asyncio.subprocess.Process) -> None:
     pipes to close, and a reader cancelled mid-drain stops reading them, so
     the rest of the output is drained to EOF and discarded first.
 
-    What `bwrap` runs inside its own PID namespace is not in this group
-    (`--new-session` gives it a session of its own), but it dies anyway:
-    killing the outer `bwrap` fires `--die-with-parent` on the namespace's
-    init, and the kernel kills everything in a PID namespace once its init
-    is gone.
+    The group holds the launcher, bwrap's namespace init and the command,
+    so this one kill reaches all three at any point of bwrap's start-up,
+    without waiting on `--die-with-parent` (see `_bwrap_argv`). A process
+    the command moves into a session of its own leaves the group but not
+    the PID namespace, and the kernel kills everything in a PID namespace
+    once its init is gone.
 
     Bounded by `_REAP_TIMEOUT_S`, which after that kill only runs out if a
     process that escaped it still holds a pipe open; a pipe read failing

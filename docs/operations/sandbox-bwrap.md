@@ -58,7 +58,7 @@ requirement alongside `bwrap`, not an optional extra.
 ```bash
 which bwrap prlimit
 prlimit --as=536870912 --cpu=10 -- \
-  bwrap --unshare-all --die-with-parent --new-session \
+  bwrap --unshare-all --die-with-parent \
     --ro-bind /usr /usr --proc /proc --dev /dev -- /usr/bin/true \
   && echo "sandbox OK"
 ```
@@ -77,16 +77,63 @@ same way the outer timeout does.
 Whichever comes first, `_run_argv` kills the command's whole process group
 with `SIGKILL` and reaps it before the call returns or the cancellation
 propagates. A cancellation is always re-raised, never turned into a
-result. The command `bwrap` runs inside its PID namespace dies with it:
-killing the outer `bwrap` fires `--die-with-parent`, and the kernel kills
-everything left in the namespace. Before #105 the kill ran only in
-`_run_argv`'s own timeout handler, so when `tool_call_timeout_s` fired
-first the command kept running on the host after the agent had already
-been told it timed out.
+result. That group holds everything the sandbox runs: the launcher
+(`prlimit`, which then becomes the outer `bwrap`), bwrap's PID-namespace
+init, and the command. So one kill reaches all of them at any moment,
+including while bwrap is still starting the sandbox. A process the
+command moves into a session of its own leaves the group but not the PID
+namespace, and the kernel kills everything in the namespace once its init
+is gone. Before #105 the kill ran only in `_run_argv`'s own timeout
+handler, so when `tool_call_timeout_s` fired first the command kept
+running on the host after the agent had already been told it timed out.
 
 Reaping drains any output still in the pipes and is capped at 5 seconds.
 If that runs out, `operator.reap_incomplete` is logged at error level and
 the call ends anyway.
+
+A cancellation can also land while the command is still being spawned,
+after the child has started but before its pipes are connected. asyncio's
+own cleanup for that moment kills only the direct child and then waits for
+the pipes to close, which the rest of the group can hold open for as long
+as it runs. So `_run_argv` never lets a cancellation reach the spawn: it
+awaits the spawn through `asyncio.shield`, lets it finish, and then kills
+the group as it would at any other moment. That wait is capped at 5
+seconds as well. A spawn still unfinished by then is cancelled and
+`operator.spawn_incomplete` is logged at error level.
+
+A second cancellation can land during that wait, for example
+`total_execution_timeout_s` expiring a few milliseconds after
+`tool_call_timeout_s`. It ends the call at once, before the spawn is done,
+so the call never holds the process. The kill does not depend on the call
+for this: before it starts waiting, `_run_argv` attaches a callback to the
+spawn, and that callback kills the group the moment the spawn completes,
+however the call ended. Only the reap is left to asyncio, which collects
+the exit status on its own. Without the callback, the whole sandbox kept
+running with no time limit.
+
+### Why the sandbox runs without `--new-session`
+
+`--new-session` made bwrap's namespace init call `setsid()`, which moved
+the init and the command out of the group `_run_argv` kills. They then
+died only through `--die-with-parent`, and bwrap arms that on the init
+only after the `setsid()`. A kill that landed between the two orphaned
+the whole sandbox, command included, and the reap then waited out its
+5-second cap on the pipes the orphans still held open. A test that kills
+at that moment leaked the sandbox in about 4 of 10 attempts before the
+flag was removed.
+
+What `--new-session` protected against stays closed. `_run_argv` starts
+the launcher with `start_new_session=True`, a new session with no
+controlling terminal that everything in the sandbox inherits. A sandboxed
+command therefore cannot open the caller's terminal to push input into it
+with `TIOCSTI` (CVE-2017-5226).
+`test_a_sandboxed_command_cannot_open_the_callers_terminal` proves this
+from a caller that does have a terminal.
+
+The trade-off is that the sandbox now shares a process group with its own
+launcher, so it can signal that launcher, for example with `kill(0, …)`.
+That can only end or stall its own call: the timeouts still kill the
+group, and the platform process is not in it.
 
 ## What `sandbox_unavailable` means
 

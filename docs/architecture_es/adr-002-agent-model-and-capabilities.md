@@ -1170,8 +1170,10 @@ sistema, en vez de que el sandbox lo adivine.
 
 `_run_argv` — el único mecanismo compartido que C.12 ya había extraído,
 usado tanto por `use_term` como por `command_tools` — ahora envuelve cada
-comando en `bwrap --unshare-all --die-with-parent --new-session`: cada
-espacio de nombres que soporta bubblewrap (usuario, ipc, pid, red, uts,
+comando en `bwrap --unshare-all --die-with-parent` (también pasaba
+`--new-session` hasta que un seguimiento de #105 lo quitó;
+`docs/operations_es/sandbox-bwrap.md` explica por qué): cada espacio de
+nombres que soporta bubblewrap (usuario, ipc, pid, red, uts,
 cgroup) se separa por defecto, y `--share-net` reincorpora la red solo
 cuando `sandbox.network=True`. Las rutas fijas del sistema (`/usr`, `/bin`,
 `/sbin`, `/lib`, `/lib64`, `/etc`, cada una probada vía `--ro-bind-try` para
