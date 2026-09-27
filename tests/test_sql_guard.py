@@ -422,6 +422,15 @@ def test_end_as_a_label_a_quoted_end_and_case_in_brackets_stay_accepted() -> Non
         assert guard_query(sql, _SINGLE_SCHEMA_POLICY, row_limit=5).sql
 
 
+def test_a_qualified_end_column_reference_is_accepted() -> None:
+    # `end` is a reserved word, but PostgreSQL parses whatever follows a dot
+    # as a column label regardless (`s.end`, valid Postgres) - only the
+    # guard's own bracket/CASE pre-scan refused it, since it exempted an END
+    # right after AS (a label) but not right after a DOT (issue #131).
+    for sql in ("SELECT s.end FROM sales_v s", "SELECT sales_v.end FROM sales_v"):
+        assert guard_query(sql, _SINGLE_SCHEMA_POLICY, row_limit=5).sql
+
+
 def test_a_tree_nested_without_brackets_is_capped() -> None:
     # `- - - 1` and `1::int::int` nest in the tree, not in the text; the
     # tree's depth is checked before anything walks it recursively.
@@ -898,6 +907,67 @@ def test_an_unqualified_table_function_stays_accepted() -> None:
         "SELECT g FROM generate_series(1, 3) AS g", _SINGLE_SCHEMA_POLICY, row_limit=5
     )
     assert "GENERATE_SERIES(1, 3)" in guarded.sql.upper()
+
+
+def test_div_is_not_advertised_and_is_cleanly_rejected() -> None:
+    """`div(a, b)` is rewritten by sqlglot into a synthetic
+    `CAST(CAST(a / b AS int) AS decimal)` with no `div`-named node in the
+    tree at all - so keeping `div` on the allowlist checked a name the tree
+    never carries, and the call was refused as unparseable (tripping the
+    renderer's fail-closed check on the un-checked outer DECIMAL cast)
+    instead of the honest `function_not_allowed` a caller gets for any other
+    disallowed function (issue #131).
+    """
+    assert "div" not in DEFAULT_ALLOWED_FUNCTIONS
+    assert _reject_code("SELECT div(10, 3) FROM sales_v") == "function_not_allowed"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT amount FROM sales_v WHERE amount < ALL(ARRAY[1, 2, 3])",
+        "SELECT amount FROM sales_v WHERE amount = SOME(ARRAY[1, 2, 3])",
+        "SELECT amount FROM sales_v WHERE amount = ANY(ARRAY[1, 2, 3])",
+    ],
+)
+def test_all_and_some_against_an_array_are_accepted_like_any(sql: str) -> None:
+    # sqlglot gives `x = ANY(...)` its own syntax node even outside a
+    # subquery, so it was already exempt from the function-name check; `ALL`
+    # and `SOME` get no such dedicated node for a non-subquery argument and
+    # arrived here as an anonymous "function" call instead, refused as
+    # `all`/`some` not being on the allowlist (issue #131).
+    assert guard_query(sql, _SINGLE_SCHEMA_POLICY, row_limit=5).sql
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT amount FROM sales_v WHERE amount < ALL(ARRAY[pg_sleep(1)])",
+        "SELECT amount FROM sales_v WHERE amount = SOME(ARRAY[pg_sleep(1)])",
+    ],
+)
+def test_all_and_some_still_check_a_disallowed_function_nested_inside(sql: str) -> None:
+    # Exempting the ALL/SOME wrapper itself must not exempt what it wraps.
+    assert _reject_code(sql) == "function_not_allowed"
+
+
+def test_all_against_a_subquery_is_unaffected() -> None:
+    # `ALL (subquery)` already parses to sqlglot's own `exp.All` predicate
+    # node (not `Func`), so it never reached the function-name check in the
+    # first place; the fix above only widens the non-subquery,
+    # `Anonymous`-shaped form.
+    #
+    # `SOME (subquery)` is deliberately not asserted here: sqlglot's postgres
+    # generator round-trips it to a differently-spaced `ANY (...)` on the
+    # guard's own re-validation pass ("ANY(" vs "ANY ("), which the guard's
+    # fixed-point check then refuses as unparseable - a separate, pre-existing
+    # sqlglot rendering quirk unrelated to the function-allowlist gap issue
+    # #131 reports, and out of this issue's scope.
+    sql = "SELECT amount FROM sales_v WHERE amount < ALL(SELECT amount FROM clients_v)"
+    assert (
+        "reporting.clients_v"
+        in guard_query(sql, _SINGLE_SCHEMA_POLICY, row_limit=5).relations
+    )
 
 
 @pytest.mark.parametrize(

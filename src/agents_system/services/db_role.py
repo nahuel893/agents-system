@@ -71,7 +71,12 @@ async def role_is_read_only(
         async with engine.connect() as conn:
             result = await conn.execute(text("SHOW default_transaction_read_only"))
             return str(result.scalar()).strip().lower() == "on"
-    except SQLAlchemyError:
+    except DATABASE_UNAVAILABLE_ERRORS:
+        # On the asyncpg connect path SQLAlchemy does not wrap the driver's
+        # or the OS's own exception (see `UNWRAPPED_CONNECT_ERRORS` above):
+        # catching only `SQLAlchemyError` let a closed port, an unknown
+        # host, a rejected password or a connect timeout escape uncaught and
+        # abort whichever caller was asking this question (issue #131).
         structlog.get_logger().warning(log_event, exc_info=True)
         return None
 
@@ -115,6 +120,8 @@ _QUERY_ROLE_FINDINGS = text(
                c.relkind::text AS relkind,
                CASE WHEN c.relkind IN ('r', 'p', 'v', 'm', 'f')
                     THEN pg_catalog.has_any_column_privilege(c.oid, 'SELECT')
+                    WHEN c.relkind = 'S'
+                    THEN pg_catalog.has_sequence_privilege(c.oid, 'SELECT')
                     ELSE false
                END AS can_select,
                CASE WHEN c.relkind = 'v'
@@ -223,9 +230,10 @@ def evaluate_query_role(
     `MAX_TEMP_FILE_LIMIT_KB`); it
     can create no schema and write no relation, sequence or schema; it can
     execute no SECURITY DEFINER function outside the system schemas; it can
-    SELECT from no relation outside *allowed*; and every allowlisted
-    relation it can read is a materialized view or a `security_barrier`
-    view.
+    SELECT from no relation and no sequence outside *allowed* (a sequence is
+    never allowlisted, so any readable one is a problem - a sequence's
+    `last_value` can leak a row count); and every allowlisted relation it
+    can read is a materialized view or a `security_barrier` view.
 
     Why `security_barrier`: a view's own WHERE or JOIN is what hides rows
     from this role, and without the option the planner may evaluate the
@@ -272,7 +280,12 @@ def evaluate_query_role(
             continue
         if finding.get("can_write"):
             problems.append(f"role can write {kind} {shown}")
-        if kind != "relation" or not finding.get("can_select"):
+        # A sequence is never on the allowlist (it only ever holds views),
+        # so a readable one always falls into the `key not in allowed`
+        # branch below - but only once "sequence" is let through this
+        # filter, which used to require `kind == "relation"` and so never
+        # even looked at a sequence's `can_select` (issue #131).
+        if kind not in ("relation", "sequence") or not finding.get("can_select"):
             continue
         key = (schema, str(name))
         if key not in allowed:

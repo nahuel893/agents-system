@@ -185,7 +185,6 @@ DEFAULT_ALLOWED_FUNCTIONS: frozenset[str] = frozenset(
         "exp",
         "ln",
         "log",
-        "div",
         "width_bucket",
         # Strings.
         "length",
@@ -266,6 +265,16 @@ query got a database in a 1 GB container OOM-killed, and the whole cluster
 restarted. Leaving them out does not bound memory - plain `||` through
 chained subqueries doubles a value per level - it only stops one short call
 from asking for gigabytes; the bound is the database host's (ADR-007).
+
+Also left out: `div`. sqlglot parses `div(a, b)` into a synthetic
+`CAST(CAST(a / b AS int) AS decimal)` tree with no `div`-named node anywhere
+in it, and its own postgres generator renders that exact shape back as
+`DIV(a, b)` - so `div` on this allowlist checked a name the tree itself
+never carries, and a call to it was refused as unparseable regardless
+(issue #131), tripping the renderer's fail-closed check on the outer
+DECIMAL cast the allowlist check never reached. Leaving `div` off gives the
+same call a plain, honest `function_not_allowed` instead; write `a / b`
+with an explicit `::int`/`::numeric` cast for the same result.
 
 A deployment may pass a larger set; it then owns the review of what it adds.
 """
@@ -517,8 +526,9 @@ def _check_tokens(tokens: list[Token], limits: _Limits) -> None:
     `ARRAY[end, ...` or `(end + ...` open levels the scan forgot at once,
     undercounting every cap here. PostgreSQL reserves `end`: outside a CASE
     it is only valid as a column label, so an END that closes no CASE is
-    refused, except right after AS (`max(x) AS end`), where it is a label
-    and closes nothing.
+    refused, except right after AS (`max(x) AS end`) or a DOT
+    (`s.end`, PostgreSQL's own attribute-name grammar - issue #131), where
+    it is a label and closes nothing either way.
     """
     if len(tokens) > limits.tokens:
         raise _too_complex()
@@ -551,7 +561,7 @@ def _check_tokens(tokens: list[Token], limits: _Limits) -> None:
             ):
                 raise _too_complex()
         elif kind in _LEVEL_CLOSERS and not (
-            kind == TokenType.END and previous == TokenType.ALIAS
+            kind == TokenType.END and previous in (TokenType.ALIAS, TokenType.DOT)
         ):
             if not open_levels or _CLOSES[open_levels[-1][0]] != kind:
                 raise _reject("unparseable")
@@ -689,9 +699,28 @@ def _is_qualified_table(node: exp.Expr | None) -> bool:
     )
 
 
+#: `x < ALL(...)` / `x = SOME(...)` against a subquery already parse to
+#: sqlglot's own `exp.All`/`exp.Any` predicate nodes (not `Func`, so they
+#: never reach this function at all); against anything else (an array, a
+#: literal list) sqlglot has no such dedicated node for `ALL`/`SOME` the way
+#: it does for `ANY` (`exp.Any` even outside a subquery, in `_SYNTAX_NODES`
+#: below) and parses them as a generic `exp.Anonymous` call instead, refused
+#: here as `all`/`some` not being on the function allowlist (issue #131).
+#: Neither keyword can name a real PostgreSQL function (both are reserved),
+#: so recognizing them by name is unambiguous; whatever they wrap is still
+#: checked normally as that argument's own node.
+_ARRAY_QUANTIFIER_NAMES = frozenset({"ALL", "SOME"})
+
+
 def _check_function(node: exp.Func, rendered: str, policy: QueryPolicy) -> None:
     """Check the name *node* reaches the database with, read from *rendered*."""
     if isinstance(node, _SYNTAX_NODES):
+        return
+    if (
+        isinstance(node, exp.Anonymous)
+        and isinstance(node.this, str)
+        and node.this.upper() in _ARRAY_QUANTIFIER_NAMES
+    ):
         return
     match = _CALL_NAME.match(rendered)
     if match is None:
