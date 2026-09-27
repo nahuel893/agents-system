@@ -63,7 +63,7 @@ requisito obligatorio junto a `bwrap`, no un extra opcional.
 ```bash
 which bwrap prlimit
 prlimit --as=536870912 --cpu=10 -- \
-  bwrap --unshare-all --die-with-parent --new-session \
+  bwrap --unshare-all --die-with-parent \
     --ro-bind /usr /usr --proc /proc --dev /dev -- /usr/bin/true \
   && echo "sandbox OK"
 ```
@@ -84,17 +84,70 @@ de la misma forma que el timeout externo.
 Sea cual sea el primero, `_run_argv` mata todo el grupo de procesos del
 comando con `SIGKILL` y lo cosecha (reap) antes de que la llamada devuelva
 su resultado o de que la cancelación se propague. Una cancelación siempre
-se vuelve a lanzar, nunca se convierte en un resultado. El comando que
-`bwrap` ejecuta dentro de su espacio de nombres de PID muere con él: matar
-el `bwrap` externo dispara `--die-with-parent`, y el kernel mata todo lo
-que quede en el espacio de nombres. Antes de #105 la terminación solo
-corría en el manejador de timeout propio de `_run_argv`, así que cuando
-`tool_call_timeout_s` se disparaba primero el comando seguía corriendo en
-el host después de que al agente ya se le había informado el timeout.
+se vuelve a lanzar, nunca se convierte en un resultado. Ese grupo
+contiene todo lo que ejecuta el sandbox: el lanzador (`prlimit`, que
+luego pasa a ser el `bwrap` externo), el init del espacio de nombres de
+PID de bwrap y el comando. Así, una sola terminación los alcanza a todos
+en cualquier momento, incluso mientras bwrap todavía está levantando el
+sandbox. Un proceso que el comando pase a una sesión propia sale del
+grupo pero no del espacio de nombres de PID, y el kernel mata todo lo que
+haya en el espacio de nombres cuando su init desaparece. Antes de #105 la
+terminación solo corría en el manejador de timeout propio de
+`_run_argv`, así que cuando `tool_call_timeout_s` se disparaba primero el
+comando seguía corriendo en el host después de que al agente ya se le
+había informado el timeout.
 
 La cosecha drena la salida que todavía quede en los pipes y tiene un tope
 de 5 segundos. Si se agota, se registra `operator.reap_incomplete` con
 nivel error y la llamada termina igual.
+
+Una cancelación también puede llegar mientras el comando todavía se está
+lanzando, después de que el proceso hijo arrancó pero antes de que sus
+pipes estén conectados. La limpieza propia de asyncio para ese momento
+mata solo al hijo directo y después espera a que se cierren los pipes, que
+el resto del grupo puede mantener abiertos mientras siga corriendo. Por
+eso `_run_argv` nunca deja que una cancelación llegue al lanzamiento: lo
+espera a través de `asyncio.shield`, lo deja terminar y después mata al
+grupo como en cualquier otro momento. Esa espera también tiene un tope de
+5 segundos. Si el lanzamiento no terminó para entonces, se cancela y se
+registra `operator.spawn_incomplete` con nivel error.
+
+Durante esa espera puede llegar una segunda cancelación, por ejemplo
+`total_execution_timeout_s` venciendo unos milisegundos después de
+`tool_call_timeout_s`. Termina la llamada en el acto, antes de que el
+lanzamiento concluya, así que la llamada nunca llega a tener el proceso.
+La terminación no depende de la llamada para esto: antes de empezar a
+esperar, `_run_argv` le engancha al lanzamiento un callback que mata al
+grupo en cuanto el lanzamiento se completa, sin importar cómo terminó la
+llamada. Solo la cosecha queda a cargo de asyncio, que recoge el estado de
+salida por su cuenta. Sin ese callback, todo el sandbox seguía corriendo
+sin límite de tiempo.
+
+### Por qué el sandbox corre sin `--new-session`
+
+`--new-session` hacía que el init del espacio de nombres de bwrap llamara
+a `setsid()`, lo que sacaba al init y al comando del grupo que mata
+`_run_argv`. A partir de ahí solo morían mediante `--die-with-parent`, y
+bwrap lo activa en ese init recién después del `setsid()`. Una
+terminación que caía entre ambos dejaba huérfano todo el sandbox,
+comando incluido, y la cosecha agotaba su tope de 5 segundos esperando
+los pipes que los huérfanos seguían teniendo abiertos. Un test que mata en
+ese momento filtraba el sandbox en unos 4 de cada 10 intentos antes de
+quitar la opción.
+
+Lo que `--new-session` evitaba sigue cerrado. `_run_argv` inicia el
+lanzador con `start_new_session=True`, una sesión nueva sin terminal de
+control que hereda todo lo que corre en el sandbox. Por eso un comando
+sandboxeado no puede abrir la terminal de quien lo llama para inyectarle
+entrada con `TIOCSTI` (CVE-2017-5226).
+`test_a_sandboxed_command_cannot_open_the_callers_terminal` lo prueba
+desde un llamador que sí tiene terminal.
+
+La contrapartida es que ahora el sandbox comparte grupo de procesos con
+su propio lanzador, así que puede enviarle señales, por ejemplo con
+`kill(0, …)`. Eso solo puede terminar o frenar su propia llamada: los
+timeouts siguen matando al grupo, y el proceso de la plataforma no está
+en él.
 
 ## Qué significa `sandbox_unavailable`
 

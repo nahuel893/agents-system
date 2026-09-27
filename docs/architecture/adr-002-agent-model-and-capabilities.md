@@ -1047,8 +1047,9 @@ image, rather than the sandbox guessing.
 
 `_run_argv` — the single seam C.12 already extracted, shared by `use_term`
 and `command_tools` — now wraps every command in
-`bwrap --unshare-all --die-with-parent --new-session`: every namespace
-bubblewrap supports (user, ipc, pid, net, uts, cgroup) is unshared by
+`bwrap --unshare-all --die-with-parent` (it also passed `--new-session`
+until a #105 follow-up removed it; `docs/operations/sandbox-bwrap.md`
+explains why): every namespace bubblewrap supports (user, ipc, pid, net, uts, cgroup) is unshared by
 default, and `--share-net` opts back into network only when
 `sandbox.network=True`. Fixed system paths (`/usr`, `/bin`, `/sbin`, `/lib`,
 `/lib64`, `/etc`, each tried via `--ro-bind-try` so both a merged-`/usr` host

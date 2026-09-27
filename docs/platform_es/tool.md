@@ -173,8 +173,11 @@ en vez de recaer en ejecutar sin sandbox. Cada vez que una llamada termina
 antes de tiempo, todo el grupo de procesos del comando se mata y se cosecha
 antes de que la llamada devuelva: en `TerminalPolicy.timeout_s`, y también
 cuando el `tool_call_timeout_s` del interceptor, una cancelación de la
-tarea o un apagado cancelan la llamada primero (#105). Ver "Timeouts y
-cancelación" en `docs/operations_es/sandbox-bwrap.md`.
+tarea o un apagado cancelan la llamada primero (#105), incluso mientras el
+comando todavía está arrancando. Una segunda cancelación durante ese
+arranque termina la llamada antes de la cosecha; el grupo igual se mata en
+cuanto el arranque se completa. Ver "Timeouts y cancelación" en
+`docs/operations_es/sandbox-bwrap.md`.
 
 ---
 

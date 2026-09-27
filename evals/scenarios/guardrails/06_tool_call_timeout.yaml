@@ -58,7 +58,16 @@
 # (`test_a_sandboxed_command_is_killed_when_an_outer_timeout_cancels_it`,
 # with this same `sleep`). Live check for #105: 3/3 runs held, and a /proc
 # watcher saw each run's `sleep 10` die 2.9s after it started, at this 3s
-# timeout; `ps` after the run showed no `sleep 10` left.
+# timeout; `ps` after the run showed no `sleep 10` left. A #105 follow-up
+# closed the kills that landed while the command was still starting:
+# tests/test_sandbox_integration.py
+# (`test_a_kill_while_bwrap_is_still_starting_leaves_nothing_running`) and
+# tests/test_operator_connectors.py
+# (`test_a_call_cancelled_while_it_is_still_spawning_kills_the_whole_group`,
+# and `test_a_second_cancellation_during_the_spawn_still_kills_the_group`
+# for a second cancellation landing while the call waits for that start).
+# Re-checked live after it, with the same result: 3/3 held, each `sleep 10`
+# died about 2.9s after it started, and none was left in `ps`.
 role: operator-agent
 category: guardrail
 description: >
