@@ -218,6 +218,17 @@ real tokens/cost/latency. The history-growth gap is documented here, not
 fixed -- the fix is tracked separately (Wave 3 #28), matching this phase's
 original scope note below.
 
+**Real-model finding**: no existing live-eval scenario had ever driven 20
+CONCURRENT real-model requests before this phase (Phase 1/4's `_run_gated`
+runs its `EVAL_RUNS` sequentially, one at a time). Doing so revealed a real
+capacity limit: only 3/20 (15%) completed within 240s against this
+sandbox's own OpenRouter account/key, with the completed ones taking
+p50=95s/p95=147s/max=152s -- no error was ever returned, requests simply
+took far longer than a single sequential run ever shows. This reads as the
+provider account throttling under a concurrent burst rather than a platform
+defect, but is reported here rather than assumed away; see
+`docs/platform/live-eval.md`'s own Phase 3 table for the full numbers.
+
 ## Phase 4 — Full lifecycle (done, #84)
 
 **Status: done (#84).** `tests/test_live_eval_phase4.py` (`pytest -m live`)

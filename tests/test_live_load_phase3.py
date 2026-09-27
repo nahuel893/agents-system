@@ -401,17 +401,18 @@ async def test_per_conversation_ordering_holds_under_concurrent_load() -> None:
         for response in responses:
             assert response.status_code == 200, response.text
 
-        await harness.wait_until(
-            lambda: (
-                sum(
-                    1
-                    for item in harness.outbound.sent
-                    if item.get("to") == ordered_phone
-                )
-                >= message_count
-            ),
-            timeout=90.0,
-        )
+        # Polls the outbox rows' own `completed_at` directly, not
+        # `outbound.sent`'s membership -- `process_claimed_work` appends to
+        # `sent` (the WhatsApp send) BEFORE committing `complete_outbox_work`
+        # (which sets `completed_at`), so waiting on `sent` alone races the
+        # LAST message's commit under load.
+        async def _all_ordered_messages_completed() -> bool:
+            rows = await harness.outbox_rows(ordered_phone)
+            return len(rows) == message_count and all(
+                row.completed_at is not None for row in rows
+            )
+
+        await harness.wait_until(_all_ordered_messages_completed, timeout=90.0)
 
         rows = await harness.outbox_rows(ordered_phone)
         assert len(rows) == message_count
@@ -463,13 +464,17 @@ async def test_retries_and_terminal_outbox_failure_observed_under_load() -> None
             ),
         )
 
-        # Retry path: 2 induced failures, then a real success.
-        await harness.wait_until(
-            lambda: any(
-                item.get("to") == retry_phone for item in harness.outbound.sent
-            ),
-            timeout=90.0,
-        )
+        # Retry path: 2 induced failures, then a real success. Polls the
+        # outbox row's own `completed_at` directly, not `outbound.sent`'s
+        # membership -- `process_claimed_work` appends to `sent` (the
+        # WhatsApp send) BEFORE committing `complete_outbox_work` (which sets
+        # `completed_at`), so waiting on `sent` alone races the commit under
+        # load.
+        async def _retry_row_is_completed() -> bool:
+            rows = await harness.outbox_rows(retry_phone)
+            return bool(rows) and rows[0].completed_at is not None
+
+        await harness.wait_until(_retry_row_is_completed, timeout=90.0)
         retry_rows = await harness.outbox_rows(retry_phone)
         assert len(retry_rows) == 1
         assert retry_rows[0].attempt_count >= 3, (

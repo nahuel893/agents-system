@@ -248,6 +248,18 @@ brecha del crecimiento del historial queda documentada aquí, no corregida
 -- la corrección se rastrea por separado (Wave 3 #28), coincidiendo con la
 nota de alcance original de esta fase abajo.
 
+**Hallazgo con modelo real**: ningún escenario de live-eval existente había
+disparado antes 20 solicitudes CONCURRENTES con modelo real (el `_run_gated`
+de la Fase 1/4 corre su `EVAL_RUNS` secuencialmente, una a la vez). Hacerlo
+reveló un límite de capacidad real: solo 3/20 (15%) se completaron dentro de
+240s con la cuenta/clave propia de OpenRouter de este sandbox, y las que se
+completaron tardaron p50=95s/p95=147s/max=152s -- nunca se devolvió un
+error, las solicitudes simplemente tardaron mucho más de lo que muestra
+cualquier corrida secuencial. Esto se lee como el throttling propio de la
+cuenta del proveedor bajo una ráfaga concurrente, no como un defecto de la
+plataforma, pero se reporta aquí en lugar de asumirlo; ver la propia tabla
+de la Fase 3 en `docs/platform/live-eval.md` para los números completos.
+
 ## Fase 4 — Ciclo de vida completo (terminada, #84)
 
 **Estado: terminada (#84).** `tests/test_live_eval_phase4.py` (`pytest -m live`)
