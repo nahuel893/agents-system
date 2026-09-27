@@ -678,6 +678,65 @@ registered agent at real boot. It reuses the same `restock-helper` fixture
 and needs neither a live model nor a reachable Postgres/Redis, so it runs in
 the default suite, not behind `pytest -m live`.
 
+## Phase 3 load scenarios (issue #83)
+
+`tests/test_live_load_phase3.py` proves the platform's behavior under
+concurrent load, through the real webhook -> `DeferredWebhookWorker` path
+(never `AgentRuntime.run_turn` directly) via `boot_live_harness`. Two
+layers, gated by a NEW `load` pytest marker (opt-in and deselected by
+default, exactly like `live`/`integration` -- see `pyproject.toml`):
+
+- **Deterministic** (`pytest -m load`): drives 20-100 concurrent
+  conversations against a fast, in-process fake model
+  (`_LoadTestFakeModel`) instead of a real provider. Needs only a reachable
+  Postgres/Redis, no model reachability, no cost, no rate limits, no
+  non-determinism -- every assertion is a hard pass/fail.
+- **Small real-model run** (`pytest -m 'load and live'`): 20 concurrent
+  conversations through a real provider (`EVAL_PROVIDER`), reporting real
+  tokens/cost/latency with a real model actually in the loop. Recommended
+  `EVAL_RUNS=1` -- this is a load/reporting scenario, not a gated
+  happy-path one; there is no pass/fail threshold on the model's own
+  answers.
+
+```bash
+pytest -m load tests/test_live_load_phase3.py -v -s                        # fake model, fast
+EVAL_PROVIDER=openai_compatible pytest -m 'load and live' \
+  tests/test_live_load_phase3.py -v -s                                     # real model
+```
+
+### A new injection seam: `create_app(chat_model=...)`
+
+Before this issue, `boot_live_harness`'s own `build_eval_model()` result
+only ever reached the registry factory's reference-backend connectors
+(`evals.live_registry.build_live_registry_factory`) -- the actual per-turn
+`AgentRuntime` was always built from `_build_chat_model(settings.
+adapter_provider)` inside `main.py`'s lifespan, with no override seam. A
+deterministic load scenario needs the SAME fake model driving both, so
+`create_app` gained an explicit `chat_model` parameter: `None` (the
+default) keeps every existing caller's behavior byte-for-byte unchanged;
+given, it replaces `_build_chat_model(...)` for every registered runtime.
+`boot_live_harness(model=..., model_name=...)` passes its own resolved
+model through this seam only when a caller explicitly injects one -- see
+`_resolve_eval_model`'s and `boot_live_harness`'s own docstrings in
+`evals/live_harness.py`.
+
+### What each scenario checks, and what a real run reported
+
+Numbers below are from one real run against this repository's own
+docker-compose Postgres/Redis (2026-09-27); a different machine or model
+will report different absolute numbers, but the SHAPE of each guarantee
+should hold.
+
+| Scenario | Assertion | Observed |
+|---|---|---|
+| Admission backpressure (5/10/20 concurrent, under/at/over the ceiling) | `in_flight` never exceeds `max_concurrent_turns` (10); the over-ceiling round measurably needs a second poll cycle | Peak `in_flight` was exactly 10 in every round; the 20-conversation round (2.5s) took longer than the 10-conversation round, consistent with a real second `webhook_worker_poll_interval_s` (1.0s) cycle admitting the remainder |
+| Shared admission (10 via the webhook + 10 via `POST /v1/chat/completions`, fired concurrently) | The SAME limiter caps the combined total, not 10 per channel (`services/admission.py`'s "process-wide" claim) | Peak `in_flight` across both channels combined was exactly 10, never 20 |
+| 20 / 50 / 100 concurrent conversations | Latency percentiles, memory, and pool usage stay within #107's sizing rule (`database_pool_size + database_max_overflow >= max_concurrent_turns + 2`) | p50/p95/p99 = 2.5s/3.1s/3.2s (20), 4.5s/7.0s/7.0s (50), 7.7s/13.8s/14.0s (100); resident memory grew only a few MB per round; peak checked-out connections reached the full pool ceiling (15) at every concurrency, never beyond it |
+| Per-conversation ordering (8 messages, one conversation, fired concurrently alongside 24 others) | Completion order (`outbox_work.completed_at`) matches enqueue order | Held exactly; the outbox's own sibling-exclusion rule (`pending_outbox_statement`) serializes one conversation's messages roughly one per poll cycle (~1s apart) even under concurrent load from other conversations |
+| Retries and terminal outbox failures, under a load of 15 other conversations | A bounded number of induced failures still succeeds via retry; a permanent failure terminalizes at `MAX_OUTBOX_ATTEMPTS` with its own audit event | Retry succeeded on its 3rd attempt (2 induced failures + 1 success); the permanent failure terminalized at exactly 5 attempts, recording a `webhook_delivery_terminal_failure` audit row, and was never recorded as sent |
+| Conversation-history growth (15 sequential turns, one conversation) | Documented, not fixed (Wave 3 #28 owns the fix) | Strictly linear growth, 2 messages added per turn: `[2, 3, 4, ..., 16]` -- confirms `agent/state.py`'s `add_messages` reducer never trims |
+| Small real-model run (20 concurrent, `deepseek/deepseek-v4-flash-0731` over OpenRouter) | Reports real tokens/cost/latency; no message lost or duplicated | Every conversation called `catalog_search` and received exactly one reply; per-turn token usage and latency varied with real provider response time (see the test's own printed report for the exact run) |
+
 ## Running it as a role's own pipeline
 
 `agents_system.evals.runner.run_scenario(scenario, *, model, model_name,

@@ -105,6 +105,7 @@ pythonpath = ["."]
 markers = [
     "integration: requires real models / external services (slow, opt-in)",
     "live: live-eval pipeline against a real local model (#169, ADR-002 E.18; manual/nightly, opt-in)",
+    "load: concurrent-load scenarios against the real app (#83, live-test plan Phase 3; needs a live Postgres/Redis, slow, opt-in)",
 ]
 # Skip integration and live tests by default (they need models, a GPU, or a
 # live DB). Run them explicitly with: pytest -m integration / pytest -m live
@@ -121,7 +122,12 @@ markers = [
 # `live` is deliberately never added to a CI job (ADR-002 E.18): it calls a
 # real local Ollama model, which is slow, non-deterministic, and unavailable
 # in CI — it runs manually or nightly against a developer's own Ollama.
-addopts = "-m 'not integration and not live'"
+#
+# `load` (#83, Phase 3) is deselected for the same reason `live` is: it drives
+# 20-100 concurrent conversations through a real Postgres/Redis over tens of
+# seconds, and one of its scenarios (retries/terminal outbox failures) waits
+# out real exponential-backoff windows. It runs manually, never in CI.
+addopts = "-m 'not integration and not live and not load'"
 
 [tool.mypy]
 python_version = "3.12"

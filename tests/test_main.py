@@ -1377,6 +1377,73 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
 
 
 # ---------------------------------------------------------------------------
+# create_app(chat_model=...) overrides the configured-provider chat model
+# (#83, Phase 3) -- lets a load scenario inject a fast, deterministic,
+# zero-network fake model for the actual per-turn AgentRuntime, not just the
+# registry factory's own model argument (`evals.live_registry`).
+# ---------------------------------------------------------------------------
+
+
+async def test_create_app_chat_model_override_is_used_instead_of_the_configured_provider() -> (
+    None
+):
+    """`_build_chat_model` (which reads `Settings.adapter_provider`) must
+    never even be called when `chat_model` is given, and the model every
+    registered `AgentRuntime` is actually built with must be the injected
+    one -- proven by `bind_tools` being called on it (sales-agent has
+    tools), never on anything `_build_chat_model` would have returned."""
+    from conftest import build_test_registry
+
+    from agents_system.main import create_app, lifespan
+
+    fake_model = MagicMock(name="fake-chat-model")
+    fake_model.bind_tools.return_value = fake_model
+
+    application = create_app(
+        registry_factory=lambda *a, **k: build_test_registry(), chat_model=fake_model
+    )
+
+    test_settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        allow_insecure=True,
+        agent_registrations={"sales": "sales-agent"},
+        adapter_runtimes=["sales"],
+        deploy_grants={"sales": ["read:catalog"]},
+        # Reaching the runtime-building loop (where bind_tools is called)
+        # needs no real Redis -- every other test that reaches that far
+        # disables the checkpointer the same way.
+        whatsapp_checkpointer_enabled=False,
+    )
+
+    with (
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=MagicMock()),
+        patch("agents_system.audit.sink.AuditSink") as sink_cls,
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch(
+            "agents_system.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agents_system.main._build_chat_model") as build_chat_model,
+    ):
+        sink_cls.return_value.start = AsyncMock()
+        sink_cls.return_value.stop = AsyncMock()
+        try:
+            async with lifespan(application):
+                pass
+        except Exception as exc:
+            lifespan_error: Exception | None = exc
+        else:
+            lifespan_error = None
+
+    assert fake_model.bind_tools.called, (
+        "the injected chat_model was never bound to any runtime's tools"
+        + (f" (lifespan died first: {lifespan_error!r})" if lifespan_error else "")
+    )
+    build_chat_model.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # The runtime cache serves every channel, not just the OpenAI adapter
 # ---------------------------------------------------------------------------
 

@@ -189,6 +189,15 @@ was exercised, and it was exercised at least once.
 
 ## Phase 3 — Operation under load
 
+**Status: done (#83).** `tests/test_live_load_phase3.py` covers every bullet
+below through `boot_live_harness`, behind a NEW `load` pytest marker
+(opt-in, deselected by default like `live`/`integration`) -- see
+`docs/platform/live-eval.md`'s own "Phase 3 load scenarios" section for the
+full design (including the `create_app(chat_model=...)` seam this phase
+added so a deterministic load scenario can drive the actual `AgentRuntime`
+with a fake model, not just the reference-backend connectors) and the
+numbers a real run reported.
+
 - 20–100 concurrent conversations.
 - Backpressure at the admission limiter's default of 10 in-flight turns
   (`services/admission.py:DEFAULT_MAX_CONCURRENT_TURNS`, `Settings.max_concurrent_turns`).
@@ -197,6 +206,17 @@ was exercised, and it was exercised at least once.
 - Memory, tokens, and latency monitored during load (built in Phase 0).
 - History growth in long-running conversations (unbounded `add_messages`
   reducer, above).
+
+Two layers, both through the real webhook -> `DeferredWebhookWorker` path:
+a deterministic layer against a fast in-process fake model
+(20/50/100 concurrent conversations, backpressure under/at/over the
+ceiling, per-conversation ordering, induced retries and a terminal outbox
+failure, and 15 sequential turns of one conversation's unbounded history
+growth), and a small real-model layer (20 concurrent conversations,
+`deepseek/deepseek-v4-flash-0731` over OpenRouter, `EVAL_RUNS=1`) reporting
+real tokens/cost/latency. The history-growth gap is documented here, not
+fixed -- the fix is tracked separately (Wave 3 #28), matching this phase's
+original scope note below.
 
 ## Phase 4 — Full lifecycle (done, #84)
 
