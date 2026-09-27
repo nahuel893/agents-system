@@ -15,8 +15,16 @@ kill at timeout.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import os
 import pathlib
+import random
+import signal
+import subprocess
 import sys
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +32,7 @@ from agents_system.connectors.command_tools import build_command_tool_connector
 from agents_system.connectors.operator import (
     SandboxPolicy,
     TerminalPolicy,
+    _kill_group,
     build_terminal_connector,
 )
 from agents_system.harness.loader import CommandToolDeclaration, Tier
@@ -203,6 +212,218 @@ async def test_a_sandboxed_command_is_killed_when_an_outer_timeout_cancels_it(
         await asyncio.sleep(0.1)
         survivors = _sleeps_still_running(duration)
     assert not survivors, f"`sleep {duration}` outlived the timeout: {survivors}"
+
+
+# ---------------------------------------------------------------------------
+# #105 follow-up — the kill must reach the sandbox during bwrap's start-up
+# ---------------------------------------------------------------------------
+#
+# `_run_argv` kills the launcher's process group. `bwrap --new-session` used
+# to move the namespace init, and the command it forks, into a session and
+# group of their own, so they died only through `--die-with-parent`. bwrap
+# arms that on the namespace init after its `setsid()`, and a kill landing
+# in between orphaned the whole sandbox, command included, on the host.
+
+
+def _proc_stat(pid: int) -> tuple[int, int, int] | None:
+    """`(ppid, pgid, sid)` of *pid* as the host sees it, or None once gone."""
+    try:
+        raw = pathlib.Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return None
+    ppid, pgid, sid = raw.rsplit(")", 1)[1].split()[1:4]
+    return int(ppid), int(pgid), int(sid)
+
+
+def _children(pid: int) -> list[int]:
+    try:
+        text = pathlib.Path(f"/proc/{pid}/task/{pid}/children").read_text()
+    except OSError:
+        return []
+    return [int(child) for child in text.split()]
+
+
+def _holds(pid: int, marker: str) -> bool:
+    try:
+        argv = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return False
+    return marker.encode() in argv
+
+
+def _carrying(marker: str) -> list[int]:
+    """Host pids whose argv holds *marker*: the launcher, bwrap's namespace
+    init (bwrap forks it without an exec) and the command itself."""
+    pids = (int(d.name) for d in pathlib.Path("/proc").iterdir() if d.name.isdigit())
+    return [pid for pid in pids if _holds(pid, marker)]
+
+
+def _unique_duration() -> str:
+    return f"30.{random.randrange(10**8):08d}"
+
+
+async def test_every_process_the_sandbox_runs_is_in_the_group_the_kill_targets(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The invariant that makes the kill independent of bwrap's timing: the
+    launcher leads its own group, and the namespace init and the command
+    are in it, so one `killpg` reaches all of them at any moment."""
+    duration = _unique_duration()
+    use_term = build_terminal_connector(
+        _policy(tmp_path, allowed_commands=frozenset({"sleep"}))
+    )
+    call = asyncio.create_task(use_term({"argv": ["sleep", duration]}))
+    try:
+        for _ in range(100):
+            sleeps = _sleeps_still_running(duration)
+            if sleeps:
+                break
+            await asyncio.sleep(0.05)
+        assert sleeps, f"`sleep {duration}` never started"
+
+        chain = [int(sleeps[0])]
+        while (stat := _proc_stat(chain[-1])) is not None and stat[0] != os.getpid():
+            chain.append(stat[0])
+        launcher = chain[-1]
+        seen = {pid: _proc_stat(pid) for pid in chain}
+
+        assert len(chain) == 3, f"expected launcher, namespace init, command: {seen}"
+        outside = {
+            pid: stat
+            for pid, stat in seen.items()
+            if stat is None or stat[1] != launcher
+        }
+        assert not outside, (
+            f"outside the launcher's group {launcher}, as (ppid, pgid, sid): {outside}"
+        )
+    finally:
+        call.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await call
+
+
+async def _launcher_of(marker: str) -> int:
+    """The spawned launcher: this process's child whose argv holds *marker*."""
+    for _ in range(100_000):
+        for child in _children(os.getpid()):
+            if _holds(child, marker):
+                return child
+        await asyncio.sleep(0)
+    raise AssertionError(f"no launcher for {marker} appeared")
+
+
+def _spin_until_start_up_milestone(launcher: int) -> None:
+    """Return at the first sign of either: a child of the launcher outside
+    its group, the moment the old kill missed, or that child having forked
+    the command. Spins without yielding, because the gap is microseconds."""
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        for init in _children(launcher):
+            stat = _proc_stat(init)
+            if stat is not None and stat[1] != launcher:
+                return
+            if _children(init):
+                return
+
+
+async def test_a_kill_while_bwrap_is_still_starting_leaves_nothing_running(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Delivers `_run_argv`'s own kill, `_kill_group`, at the start-up
+    moment it used to miss. Cancelling the call takes a few hundred
+    microseconds to reach that kill, longer than the gap, so the test
+    delivers it directly. Repeated because the gap is short: with
+    `--new-session`, a kill there leaked the sandbox in about 4 of 10
+    attempts on a developer laptop."""
+    use_term = build_terminal_connector(
+        _policy(tmp_path, allowed_commands=frozenset({"sleep"}), timeout_s=3.0)
+    )
+    leaked: dict[str, list[int]] = {}
+    for _ in range(10):
+        duration = _unique_duration()
+        call = asyncio.create_task(use_term({"argv": ["sleep", duration]}))
+        launcher = await _launcher_of(duration)
+        _spin_until_start_up_milestone(launcher)
+        _kill_group(SimpleNamespace(pid=launcher))
+        await call
+
+        survivors = _carrying(duration)
+        for _ in range(20):
+            if not survivors:
+                break
+            await asyncio.sleep(0.1)
+            survivors = _carrying(duration)
+        if survivors:
+            leaked[duration] = survivors
+            for pid in survivors:
+                with contextlib.suppress(OSError):
+                    os.kill(pid, signal.SIGKILL)
+
+    assert not leaked, f"sandboxes outlived the kill, by marker: {leaked}"
+
+
+_TERMINAL_PROBE = (
+    "import os\n"
+    "try:\n"
+    "    os.open('/dev/tty', os.O_RDWR)\n"
+    "    print('TERMINAL_OPENED')\n"
+    "except OSError as error:\n"
+    "    print('NO_TERMINAL', error.errno)\n"
+)
+
+_TERMINAL_HELPER = """\
+import asyncio, os, pathlib, sys
+os.setsid()
+os.open(sys.argv[1], os.O_RDWR)  # a session leader's first tty: its terminal
+os.close(os.open("/dev/tty", os.O_RDWR))  # so this helper does have one
+from agents_system.connectors.operator import (
+    SandboxPolicy, TerminalPolicy, build_terminal_connector)
+use_term = build_terminal_connector(TerminalPolicy(
+    root=pathlib.Path(sys.argv[2]),
+    allowed_commands=frozenset({sys.executable}),
+    sandbox=SandboxPolicy(),
+))
+result = asyncio.run(use_term({"argv": [sys.executable, "-c", sys.argv[3]]}))
+print(result)
+"""
+
+
+def test_a_sandboxed_command_cannot_open_the_callers_terminal(
+    tmp_path: pathlib.Path,
+) -> None:
+    """What `--new-session` guarded against, kept without it: the launcher
+    starts a session of its own, so the sandbox has no controlling terminal
+    and cannot open the caller's to push input into it with `TIOCSTI`
+    (CVE-2017-5226). The call runs from a helper that does have one, a pty,
+    so this fails if the sandbox ever inherits it."""
+    import agents_system
+
+    master, slave = os.openpty()
+    try:
+        terminal = os.ttyname(slave)
+        os.close(slave)
+        src = pathlib.Path(agents_system.__file__).resolve().parents[1]
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                _TERMINAL_HELPER,
+                terminal,
+                str(tmp_path),
+                _TERMINAL_PROBE,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, "PYTHONPATH": str(src)},
+            check=False,
+        )
+    finally:
+        os.close(master)
+
+    assert completed.returncode == 0, completed.stderr
+    assert "NO_TERMINAL" in completed.stdout, completed.stdout
+    assert "TERMINAL_OPENED" not in completed.stdout
 
 
 async def test_a_sandboxed_command_hitting_the_memory_limit_is_stopped(

@@ -321,10 +321,20 @@ def _bwrap_argv(argv: list[str], *, policy: TerminalPolicy, bwrap: str) -> list[
     allowlist, or a `command_tools` declaration resolved at load time), so
     making it executable does not expand what can run. A bare (non-absolute)
     `argv[0]` relies on the fixed system paths above instead.
+
+    No `--new-session`, deliberately (#105 follow-up). It made bwrap's
+    namespace init call `setsid()`, which took it and the command out of
+    the process group `_run_argv` kills. Their death then rested on
+    `--die-with-parent`, which bwrap arms on that init only AFTER the
+    `setsid()`, so a kill landing in between orphaned the whole sandbox on
+    the host. What `--new-session` guarded against, a sandbox reaching the
+    caller's terminal (`TIOCSTI`, CVE-2017-5226), stays closed: `_run_argv`
+    spawns the launcher with `start_new_session=True`, a session with no
+    controlling terminal that everything inside inherits.
     """
     sandbox = policy.sandbox
     root = str(policy.root)
-    wrapped = [bwrap, "--unshare-all", "--die-with-parent", "--new-session"]
+    wrapped = [bwrap, "--unshare-all", "--die-with-parent"]
     if sandbox.network:
         wrapped.append("--share-net")
 
@@ -544,7 +554,9 @@ async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutp
                 stderr=asyncio.subprocess.PIPE,
                 # Its own process group, so a timeout can kill the whole
                 # tree (prlimit, bwrap, and everything bwrap sandboxes)
-                # rather than only the direct child.
+                # rather than only the direct child. Its own session too,
+                # with no controlling terminal, which is what keeps the
+                # sandbox off the caller's terminal (see `_bwrap_argv`).
                 start_new_session=True,
             )
             (stdout_bytes, out_cut), (stderr_bytes, err_cut) = await asyncio.gather(
@@ -659,11 +671,12 @@ async def _kill_and_reap(process: asyncio.subprocess.Process) -> None:
     pipes to close, and a reader cancelled mid-drain stops reading them, so
     the rest of the output is drained to EOF and discarded first.
 
-    What `bwrap` runs inside its own PID namespace is not in this group
-    (`--new-session` gives it a session of its own), but it dies anyway:
-    killing the outer `bwrap` fires `--die-with-parent` on the namespace's
-    init, and the kernel kills everything in a PID namespace once its init
-    is gone.
+    The group holds the launcher, bwrap's namespace init and the command,
+    so this one kill reaches all three at any point of bwrap's start-up,
+    without waiting on `--die-with-parent` (see `_bwrap_argv`). A process
+    the command moves into a session of its own leaves the group but not
+    the PID namespace, and the kernel kills everything in a PID namespace
+    once its init is gone.
 
     Bounded by `_REAP_TIMEOUT_S`, which after that kill only runs out if a
     process that escaped it still holds a pipe open; a pipe read failing
