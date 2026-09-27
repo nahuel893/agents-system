@@ -141,3 +141,48 @@ def test_parse_does_not_echo_an_oversized_value() -> None:
         _parse_agent_registration(value)
 
     assert len(str(exc_info.value)) < 500
+
+
+# ---------------------------------------------------------------------------
+# issue #128 item 6 -- a role/client segment with no `@`, and made only of
+# `_SAFE_SEGMENT`-legal characters, previously passed straight through with
+# no length bound at all: `_SAFE_SEGMENT` checks the character class, never
+# the length. That oversized, but otherwise "valid", segment then reaches a
+# real filesystem join (`loader._role_folder`/`_deployment_folder`) and can
+# overflow into a raw `OSError` (`ENAMETOOLONG`) instead of the bounded
+# `DefinitionError` every other malformed value gets here.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_rejects_an_oversized_role_segment_with_legal_characters() -> None:
+    from agents_system.main import _MAX_RUNTIME_ID_LENGTH
+
+    oversized_role = "a" * (_MAX_RUNTIME_ID_LENGTH + 1)
+
+    with pytest.raises(DefinitionError) as exc_info:
+        _parse_agent_registration(oversized_role)
+
+    message = str(exc_info.value)
+    assert len(message) < 500
+    assert oversized_role not in message
+
+
+def test_parse_rejects_an_oversized_client_segment_with_legal_characters() -> None:
+    from agents_system.main import _MAX_RUNTIME_ID_LENGTH
+
+    oversized_client = "c" * (_MAX_RUNTIME_ID_LENGTH + 1)
+
+    with pytest.raises(DefinitionError) as exc_info:
+        _parse_agent_registration(f"sales-agent@{oversized_client}")
+
+    message = str(exc_info.value)
+    assert len(message) < 500
+    assert oversized_client not in message
+
+
+def test_parse_accepts_a_role_segment_at_exactly_the_max_length() -> None:
+    from agents_system.main import _MAX_RUNTIME_ID_LENGTH
+
+    role = "a" * _MAX_RUNTIME_ID_LENGTH
+
+    assert _parse_agent_registration(role) == (role, None)

@@ -140,7 +140,7 @@ function build_runtime(client, role_type, user_identity):
   return AgentFactory.build(definition, user_identity)
 ```
 
-If no deployment override exists for a given client and role, the platform uses the predefined definition as-is. This allows gradual specialization — a client can start with the predefined role and add overrides incrementally.
+If no deployment override exists for a given client and role, the platform uses the predefined definition as-is. This allows gradual specialization — a client can start with the predefined role and add overrides incrementally. This is `resolve()`/`load_override()`'s own behavior when called directly (a library caller with no client of its own); `create_app`'s boot path is stricter whenever a client is named explicitly — see the `clients` bullet below.
 
 ---
 
@@ -198,8 +198,8 @@ app = create_app(
 
 - **Every registered id is built at boot.** One entry that fails to resolve or equip fails the whole boot; no runtime is served while another is dropped.
 - **An id** is 1-64 letters, digits, `_` or `-`, starting with a letter or digit.
-- **`clients`** is valid only for a predefined role registered by name. It fails boot for an `Agent` entry, for an id `agents` does not register, without `agents`, and for a value that is not a client name (a `str` of letters, digits, `_` or `-`, starting with a letter or digit): a client names a subtractive override, and a silently ignored one would serve the agent without its narrowing. A `None` value, such as an unset environment variable, is not "no client"; leave the id out of `clients` instead. A client override needs an explicit `RootConfig(deployments_root=...)`.
-- **`grants`** is the explicit deploy-time grant, one list per registered id. Nothing is granted automatically: an id with no entry fails boot, and so does a bare string in place of a list. Without `grants=`, `DEPLOY_GRANTS` is the source, keyed by the same ids. See `docs/architecture/permission-model.md`.
+- **`clients`** is valid only for a predefined role registered by name. It fails boot for an `Agent` entry, for an id `agents` does not register, without `agents`, and for a value that is not a client name (a `str` of letters, digits, `_` or `-`, starting with a letter or digit): a client names a subtractive override, and a silently ignored one would serve the agent without its narrowing. A `None` value, such as an unset environment variable, is not "no client"; leave the id out of `clients` instead. A client override needs an explicit `RootConfig(deployments_root=...)`. **A named client whose deployment override folder does not exist also fails boot** — `deployments/{client}/{role_type}/` must exist once `clients` names it; a typo'd or removed folder would otherwise silently serve the role WITHOUT its narrowing, the same widening risk a missing grant entry guards against below.
+- **`grants`** is the explicit deploy-time grant, one list per registered id, and it needs `agents=` to key it against — like `clients`, it fails boot without `agents=`. Nothing is granted automatically: a registered id with no entry fails boot, and so does a bare string in place of a list or a `grants` id that `agents` does not register. Without `grants=`, `DEPLOY_GRANTS` is the source, keyed by the same ids. See `docs/architecture/permission-model.md`.
 - **Channels look ids up.** `WHATSAPP_RUNTIME_ID` and every `ADAPTER_RUNTIMES` id must be a registered id, or boot fails naming it. `/v1/models` lists only the `ADAPTER_RUNTIMES` ids, never every registered one.
 
 ### Without `agents=`: `AGENT_REGISTRATIONS`

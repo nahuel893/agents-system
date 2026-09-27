@@ -148,3 +148,141 @@ async def test_lifespan_rejects_a_grants_value_that_is_not_a_list(
     assert "'acme-sales'" in str(exc_info.value)
     assert "grants" in str(exc_info.value)
     get_engine.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# issue #128 item 4 -- `create_app(grants=...)` keys were never cross-checked
+# against `agents`, unlike `clients` (`_build_registrations` already refuses
+# an unknown `clients` key). A grants key naming no registration was silently
+# ignored instead of failing boot the same way.
+# ---------------------------------------------------------------------------
+
+
+def test_boot_plan_rejects_a_grants_key_that_agents_does_not_register() -> None:
+    from agents_system.main import _boot_plan
+
+    app = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": ["read:catalog"], "typo-id": ["read:catalog"]},
+    )
+    settings = Settings(_env_file=None, allow_insecure=True)  # type: ignore[call-arg]
+
+    with pytest.raises(DefinitionError) as exc_info:
+        _boot_plan(app, settings)
+
+    message = str(exc_info.value)
+    assert "'typo-id'" in message
+    assert "grants" in message
+
+
+def test_boot_plan_accepts_a_grants_key_that_matches_a_registration() -> None:
+    from agents_system.main import _boot_plan
+
+    app = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": ["read:catalog"]},
+    )
+    settings = Settings(_env_file=None, allow_insecure=True)  # type: ignore[call-arg]
+
+    plan = _boot_plan(app, settings)
+
+    assert plan.grants == {"acme-sales": ["read:catalog"]}
+
+
+# ---------------------------------------------------------------------------
+# issue #128 item 5 -- `clients=` without `agents=` is refused (see
+# `_build_registrations`'s own check below), but `grants=` without `agents=`
+# was silently accepted, contradicting `create_app`'s own docstring ("grants:
+# ... keyed by the same ids as agents").
+# ---------------------------------------------------------------------------
+
+
+def test_boot_plan_rejects_grants_without_agents() -> None:
+    from agents_system.main import _boot_plan
+
+    app = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        grants={"acme-sales": ["read:catalog"]},
+    )
+    settings = Settings(_env_file=None, allow_insecure=True)  # type: ignore[call-arg]
+
+    with pytest.raises(DefinitionError) as exc_info:
+        _boot_plan(app, settings)
+
+    message = str(exc_info.value)
+    assert "grants" in message
+    assert "agents" in message
+
+
+# ---------------------------------------------------------------------------
+# issue #128 item 2 -- every boot error that echoes a caller-supplied,
+# not-yet-validated id must bound it, the same way `_validate_runtime_id`
+# already bounds an oversized runtime id.
+# ---------------------------------------------------------------------------
+
+
+def test_boot_plan_unknown_clients_key_error_does_not_echo_an_unbounded_id() -> None:
+    from agents_system.main import _boot_plan
+
+    oversized = "x" * 10_000
+    app = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        agents={"acme-sales": "sales-agent"},
+        clients={oversized: "acme"},
+    )
+    settings = Settings(_env_file=None, allow_insecure=True)  # type: ignore[call-arg]
+
+    with pytest.raises(DefinitionError) as exc_info:
+        _boot_plan(app, settings)
+
+    message = str(exc_info.value)
+    assert len(message) < 500
+    assert oversized not in message
+
+
+def test_boot_plan_unregistered_grants_key_error_does_not_echo_an_unbounded_id() -> (
+    None
+):
+    from agents_system.main import _boot_plan
+
+    oversized = "y" * 10_000
+    app = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": ["read:catalog"], oversized: ["read:catalog"]},
+    )
+    settings = Settings(_env_file=None, allow_insecure=True)  # type: ignore[call-arg]
+
+    with pytest.raises(DefinitionError) as exc_info:
+        _boot_plan(app, settings)
+
+    message = str(exc_info.value)
+    assert len(message) < 500
+    assert oversized not in message
+
+
+def test_boot_plan_unmatched_whatsapp_runtime_id_error_does_not_echo_an_unbounded_id() -> (
+    None
+):
+    from agents_system.main import _boot_plan
+
+    oversized = "z" * 10_000
+    app = create_app(
+        registry_factory=lambda *a, **k: ToolRegistry(),
+        agents={"acme-sales": "sales-agent"},
+        grants={"acme-sales": ["read:catalog"]},
+    )
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        allow_insecure=True,
+        whatsapp_runtime_id=oversized,
+    )
+
+    with pytest.raises(DefinitionError) as exc_info:
+        _boot_plan(app, settings)
+
+    message = str(exc_info.value)
+    assert len(message) < 2000
+    assert oversized not in message
