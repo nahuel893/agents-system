@@ -87,6 +87,7 @@ import httpx
 import structlog
 import uvicorn
 from fastapi import FastAPI
+from langchain_core.language_models import BaseChatModel
 from prometheus_client.parser import text_string_to_metric_families
 from sqlalchemy import Select, select, text
 from sqlalchemy.engine import make_url
@@ -102,6 +103,7 @@ from agents_system.integration.meta_signature import sign_payload
 from agents_system.main import create_app
 from agents_system.models.audit_event import AuditEvent
 from agents_system.models.base import get_session_factory
+from agents_system.models.outbox import OutboxWork
 
 logger = structlog.get_logger()
 
@@ -226,6 +228,28 @@ class FakeWhatsAppServer:
     _server: uvicorn.Server | None = field(default=None, repr=False)
     _task: asyncio.Task[None] | None = field(default=None, repr=False)
     port: int = 0
+    #: Recipient phone -> remaining failed sends owed before it starts
+    #: succeeding (#83, Phase 3). Lets a load scenario deterministically
+    #: induce a bounded number of outbox retries for one recipient (a small
+    #: count) or drive it past `MAX_OUTBOX_ATTEMPTS` into a terminal failure
+    #: (a count at or above it), without affecting any other concurrent
+    #: conversation's sends. Empty (the default) never fails anything --
+    #: #78's original always-succeeds behaviour.
+    fail_remaining: dict[str, int] = field(default_factory=dict)
+
+    def _consume_failure(self, to: str) -> bool:
+        """True (and decrements) exactly when *to* still owes a failed send.
+
+        A pure, synchronous method -- no server, no I/O -- so it is unit-
+        testable offline (`tests/test_live_harness.py`) independently of
+        `_build_app`'s Starlette route below, which is the only caller in a
+        real run.
+        """
+        remaining = self.fail_remaining.get(to, 0)
+        if remaining <= 0:
+            return False
+        self.fail_remaining[to] = remaining - 1
+        return True
 
     def _build_app(self) -> Any:
         from starlette.applications import Starlette
@@ -235,6 +259,18 @@ class FakeWhatsAppServer:
 
         async def send_message(request: StarletteRequest) -> JSONResponse:
             payload = await request.json()
+            to = payload.get("to")
+            if isinstance(to, str) and self._consume_failure(to):
+                # Mirrors a real Meta Graph API error envelope closely enough
+                # for `WhatsAppClient.send_text`'s `raise_for_status()` to
+                # raise `httpx.HTTPStatusError` -- the same exception path a
+                # real outage would take, so `webhook_worker.py`'s
+                # `_record_failure` -> `record_outbox_failure` retry/terminal
+                # logic is exercised for real, not simulated (#83).
+                return JSONResponse(
+                    {"error": {"message": "induced failure (#83 load test)"}},
+                    status_code=500,
+                )
             self.sent.append(payload)
             return JSONResponse(
                 {
@@ -406,6 +442,26 @@ def audit_rows_statement(
     if occurred_after is not None:
         stmt = stmt.where(AuditEvent.occurred_at > occurred_after)
     return stmt
+
+
+def outbox_rows_statement(conversation_key: str) -> Select[tuple[OutboxWork]]:
+    """Build the `SELECT` `LiveHarness.outbox_rows` executes -- every
+    `outbox_work` row for *conversation_key*, oldest enqueued first (#83,
+    Phase 3).
+
+    Lets a load scenario check per-conversation ordering directly against the
+    durable rows a real run left behind, rather than against reply content
+    (the fake model used by the deterministic load scenarios never varies
+    it): the same `(enqueued_at, id)` order `pending_outbox_statement` itself
+    enforces at claim time. A pure function so it is unit-testable (by
+    compiling it) without a real database, mirroring `audit_rows_statement`
+    above; see `tests/test_live_harness.py`.
+    """
+    return (
+        select(OutboxWork)
+        .where(OutboxWork.conversation_key == conversation_key)
+        .order_by(OutboxWork.enqueued_at, OutboxWork.id)
+    )
 
 
 def metric_value(metrics_text: str, metric_name: str, **labels: str) -> float | None:
@@ -807,6 +863,15 @@ class LiveHarness:
             result = await session.scalars(audit_rows_statement(**filters))
             return list(result)
 
+    async def outbox_rows(self, conversation_key: str) -> list[OutboxWork]:
+        """Read every `outbox_work` row for *conversation_key*, oldest
+        enqueued first. See `outbox_rows_statement`'s docstring for why (#83,
+        Phase 3's per-conversation ordering check)."""
+        session_factory = get_session_factory(self.engine)
+        async with session_factory() as session:
+            result = await session.scalars(outbox_rows_statement(conversation_key))
+            return list(result)
+
     async def scrape_metrics(self) -> str:
         """`GET /metrics`, Bearer-authenticated with this harness's own
         `metrics_api_key`. Returns the raw Prometheus text body; see
@@ -829,6 +894,36 @@ class LiveHarness:
             return await saver.aget_tuple({"configurable": {"thread_id": thread_id}})
 
 
+def _resolve_eval_model(
+    model: BaseChatModel | None, model_name: str | None
+) -> tuple[BaseChatModel, str]:
+    """Return the `(model, model_name)` `boot_live_harness` should boot with.
+
+    *model* overrides #78's original `build_eval_model()` selection (#83,
+    Phase 3): a load scenario injects a fast, deterministic, zero-network
+    fake model instead of depending on `EVAL_PROVIDER`/a real provider
+    staying reachable under concurrent load. *model_name* is required
+    whenever *model* is given -- falling back to e.g. `type(model).__name__`
+    would silently mislabel `/metrics`' `runtime_id`-keyed series and audit
+    rows with a name nobody chose. Leaving both unset keeps #78's original
+    behaviour byte-for-byte: `build_eval_model()` is called exactly as
+    before.
+
+    A pure function so it is unit-testable (`tests/test_live_harness.py`)
+    without booting anything, mirroring `audit_rows_statement`'s own
+    pure-function-for-testability shape above.
+    """
+    if model is not None:
+        if not model_name:
+            raise ValueError(
+                "boot_live_harness(): model_name must be given (non-empty) "
+                "when model is -- otherwise metrics and audit rows would be "
+                "labelled with a name nobody chose"
+            )
+        return model, model_name
+    return build_eval_model()
+
+
 @contextlib.asynccontextmanager
 async def boot_live_harness(
     *,
@@ -840,6 +935,8 @@ async def boot_live_harness(
     extra_tool_specs: Sequence[ToolSpec] = (),
     tool_wrappers: Mapping[str, Callable[[ToolSpec], ToolSpec]] | None = None,
     bind_webhook_to_role: bool = True,
+    model: BaseChatModel | None = None,
+    model_name: str | None = None,
 ) -> AsyncIterator[LiveHarness]:
     """Boot the real application against a fresh throwaway database and
     yield a `LiveHarness`. See this module's docstring for the full design.
@@ -890,6 +987,12 @@ async def boot_live_harness(
     calls `deliver_webhook`, which instead binds WHATSAPP_RUNTIME_ID to a
     separate, minimal, always-`untrusted_input: true` placeholder agent that
     nothing in the scenario ever talks to.
+
+    *model*/*model_name* (#83, Phase 3): override `build_eval_model()`'s own
+    `EVAL_PROVIDER`-driven selection -- see `_resolve_eval_model`'s docstring
+    for why *model_name* is required whenever *model* is. Both default to
+    unset, keeping #78's original behaviour unchanged for every existing
+    caller.
     """
     admin_url = os.environ.get(_ADMIN_DATABASE_URL_ENV, DEFAULT_ADMIN_DATABASE_URL)
     redis_url = os.environ.get(_REDIS_URL_ENV, DEFAULT_REDIS_URL)
@@ -978,7 +1081,9 @@ async def boot_live_harness(
             get_settings.cache_clear()
             try:
                 settings = get_settings()
-                model, model_name = build_eval_model()
+                resolved_model, resolved_model_name = _resolve_eval_model(
+                    model, model_name
+                )
                 registry_engine = create_async_engine(demo_database_url or database_url)
 
                 app = create_app(
@@ -986,13 +1091,22 @@ async def boot_live_harness(
                     grants=grants,
                     registry_factory=live_registry_factory_adapter(
                         registry_engine,
-                        model,
+                        resolved_model,
                         terminal_policy=terminal_policy,
                         extra_tool_specs=extra_tool_specs,
                         tool_wrappers=tool_wrappers,
                     ),
                     participant_directory=AcceptAllParticipantDirectory(),
                     title="agents_system live harness",
+                    # #83, Phase 3: only when *model* was explicitly injected
+                    # does the SAME instance also drive every registered
+                    # AgentRuntime's actual turns (`create_app`'s own
+                    # `chat_model` override) -- not just the registry
+                    # factory's reference-backend connectors above. `None`
+                    # (the overwhelming majority of existing callers) keeps
+                    # #78's original behaviour byte-for-byte: the lifespan's
+                    # own `_build_chat_model(settings.adapter_provider)`.
+                    chat_model=resolved_model if model is not None else None,
                 )
 
                 async with app.router.lifespan_context(app):
@@ -1010,7 +1124,7 @@ async def boot_live_harness(
                             redis_url=redis_url,
                             outbound=outbound,
                             runtime_id=runtime_id,
-                            model_name=model_name,
+                            model_name=resolved_model_name,
                             meta_webhook_secret=settings.meta_webhook_secret,
                             metrics_api_key=metrics_api_key,
                             database_url=database_url,
