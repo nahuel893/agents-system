@@ -551,6 +551,89 @@ vuelta del sobre/firma, el servidor de salida falso, el lector de muestras
 de `/metrics`, el constructor de la consulta de auditoría) viven en
 `tests/test_live_harness.py` y no necesitan modelo, Postgres ni Redis.
 
+## Escenarios en vivo de la Fase 1 (issue #79)
+
+`tests/test_live_eval_phase1.py` (`pytest -m live`) prueba que las
+funciones de la plataforma funcionan de punta a punta a través de
+`boot_live_harness` -- la API HTTP real o el webhook real de WhatsApp,
+nunca `AgentRuntime.run_turn` directamente. Cada aserción apunta a lo que
+hizo el SISTEMA (una fila ejecutada en la tabla real `audit_event`, los
+argumentos/resultado propios de una herramienta, el estado del hilo del
+checkpointer real de Redis, los envíos que registró el servidor falso de
+WhatsApp) -- la redacción final del modelo es a lo sumo una señal blanda,
+según el Principio de este documento. Cada escenario corre `EVAL_RUNS`
+veces (3 por defecto) y aprueba cuando al menos `DEFAULT_HAPPY_PATH_THRESHOLD`
+(80%, #81) de las corridas tiene éxito.
+
+Llegar ahí necesitó cuatro agregados a `boot_live_harness` más allá de la
+forma propia de #78, todos opt-in (cada llamada de #78 sigue funcionando
+sin cambios):
+
+- **`role: Agent | str`, `permissions`** -- cualquier rol predefinido (no
+  solo `sales-agent`) o un `Agent` construido en Python (`agent.spec.Agent`,
+  `Agent.from_folder(...)` incluido), con su propio grant de tiempo de
+  despliegue. Omitir `permissions` conserva el default original de #78
+  (`SALES_AGENT_PERMISSIONS`) SOLO cuando `role` queda en su propio default
+  `"sales-agent"`; para cualquier otro rol, omitir `permissions` lanza
+  `ValueError` (revisión #119) -- todo caller no-default debe declarar su
+  propio grant explícitamente, nunca heredar el de `sales-agent`.
+- **`seed_demo=True`** -- carga los datos de fixture de
+  `demo/load_demo_company.py` (catálogo, clientes, ventas) para que
+  `catalog_search`/`client_lookup`/`run_report` tengan filas reales para
+  consultar. Los siembra en una SEGUNDA base de datos descartable, nunca en
+  *database_url* misma: `_run_migrations` hace de esa el esquema
+  operacional propio de la app administrado por alembic, y la propia
+  salvaguarda del cargador de demo (`classify_target`) se niega a cargar en
+  una base de datos que ya tiene objetos que no reconoce -- lo que esas
+  tablas de alembic siempre son. `registry_engine` (la conexión de los
+  backends de referencia) apunta a la base de datos que
+  `catalog_search`/`client_lookup`/`run_report` realmente necesitan,
+  reflejando la propia separación de producción entre `DATABASE_URL` y
+  `BI_DATABASE_URL`.
+- **`terminal_policy`** -- se reenvía al registro en vivo para que
+  `use_term`/`read_file` se conecten a un sandbox real en vez del rechazo
+  perpetuo por defecto de #78.
+- **`extra_tool_specs`, `tool_wrappers`** -- registran una herramienta
+  genuinamente nueva (p. ej. la herramienta SQL de solo lectura, #80) junto
+  a los backends de referencia, o reemplazan una herramienta base (p. ej.
+  `run_report`) por un envoltorio que registra la llamada sobre el MISMO
+  conector. El envoltorio existe porque `ToolCallAttempted.payload` (el
+  rastro de auditoría) nunca lleva los argumentos ni el valor de retorno de
+  una herramienta, solo nombre/tiempo/resultado -- probar que "el agente de
+  reportes pidió `order_by='units'`, y las filas volvieron ordenadas por
+  unidades" necesita el resultado propio de la herramienta, que solo un
+  envoltorio construido DESPUÉS del registro base (conectado a la base de
+  datos descartable de ESTA corrida) puede dar; `extra_tool_specs` sola no
+  puede pre-construir uno, ya que el nombre de esa base de datos solo se
+  conoce una vez que `boot_live_harness` ya arrancó. Esto NO alcanza una
+  declaración `command_tools:` (p. ej. el propio escenario de fixture
+  `check_stock` de #79): esas se inyectan directamente desde la definición
+  de rol resuelta, nunca a través del `ToolRegistry` sobre el que operan
+  estos dos.
+- **`bind_webhook_to_role=False`** -- la mayoría de los roles predefinidos
+  (y el valor heredado por defecto de un `Agent(...)` a secas) resuelven
+  `untrusted_input: false`, y `create_app` se niega a arrancar CUALQUIER rol
+  conectado a `WHATSAPP_RUNTIME_ID` que no lo declare (ADR-002 C.11/C.13: el
+  canal entrega entrada externa no confiable). `False` conecta el webhook en
+  cambio a un agente placeholder separado, mínimo y siempre seguro, con el
+  que el escenario nunca habla -- solo el único escenario que realmente
+  llama a `deliver_webhook` (memoria de conversación, sobre `sales-agent`,
+  que ya declara `untrusted_input: true`) necesita el valor por defecto
+  `True`.
+
+El rol de la herramienta SQL de solo lectura (`sql_readonly`, #80/ADR-007)
+se provisiona contra SU PROPIA base de datos descartable -- independiente
+de cualquier base de datos de `boot_live_harness`, y creada/eliminada por el
+propio test -- con
+`agents_system.evals.live_harness.provision_sql_readonly_fixture`, que
+carga `tests/fixtures/sql_query_fixture.sql` y renderiza el script YA
+existente `scripts/provision_sql_readonly.sql` a SQL plano (sustituyendo sus
+variables de psql), ejecutado sobre una conexión asyncpg cruda. Renderizar
+el script real (`render_provision_sql_readonly`, probado unitariamente en
+`tests/test_live_harness.py`) mantiene que una corrida en vivo provisione el
+rol de la herramienta a través del mismo instructivo que sigue un operador a
+mano, en vez de una reimplementación paralela que podría desalinearse de él.
+
 ## Correrlo como pipeline propio de un rol
 
 `agents_system.evals.runner.run_scenario(scenario, *, model, model_name,
@@ -613,3 +696,9 @@ de humo.
   `SQL_DATABASE_URL`) y se omite sin ella; su escenario de pedido de borrado
   exige en cada corrida que los datos queden intactos, porque lo garantiza el
   rol de base de datos, sin depender del modelo
+- Fase 1 (#79), a través del harness (API/webhook), nunca del atajo de
+  runtime directo: `tests/test_live_eval_phase1.py` — no necesita
+  configuración de PostgreSQL aparte de una conexión de administrador
+  alcanzable (`boot_live_harness` provisiona sus propias bases de datos
+  descartables y, para el escenario de la herramienta SQL, su propio rol de
+  fixture `sql_readonly`)
