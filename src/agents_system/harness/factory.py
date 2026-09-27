@@ -366,9 +366,35 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     # render -- exactly the failure mode issue #88 exists to eliminate.
     # This restores the exact-string-lookup invariant: both sides of the
     # comparison go through the identical whitespace-collapsing rule.
-    normalized_descriptions = {
-        " ".join(str(key).split()): value for key, value in descriptions.items()
-    }
+    #
+    # Issue #129 (PR #99 review follow-up): a plain dict comprehension here
+    # would let two DISTINCT raw keys that normalize to the same string (a
+    # stray extra space in one of two otherwise-identical declarations)
+    # silently resolve to whichever the comprehension iterated last, with no
+    # error -- unlike the sibling duplicate-bullet check
+    # `loader._parse_escalation_descriptions` already raises for the same
+    # shape of authoring mistake. Building the mapping key by key, tracking
+    # each normalized key's first raw key, lets the collision be detected and
+    # both raw keys named, mirroring that "fail loud, don't silently drop"
+    # pattern.
+    normalized_descriptions: dict[str, Any] = {}
+    _normalized_description_raw_keys: dict[str, str] = {}
+    for _raw_key, _value in descriptions.items():
+        _normalized_key = " ".join(str(_raw_key).split())
+        _colliding_raw_key = _normalized_description_raw_keys.get(_normalized_key)
+        if _colliding_raw_key is not None:
+            raise FactoryError(
+                f"Invariant violation — escalation_rules.descriptions: keys "
+                f"{_colliding_raw_key!r} and {_raw_key!r} both normalize to "
+                f"{_normalized_key!r}. Two distinct raw description keys "
+                f"colliding after whitespace normalization would silently "
+                f"keep whichever one happened to be declared last. Fix the "
+                f"source that declared them (a role's frontmatter, a "
+                f"deployment override, or an importer locator) so each "
+                f"condition has exactly one description key."
+            )
+        _normalized_description_raw_keys[_normalized_key] = str(_raw_key)
+        normalized_descriptions[_normalized_key] = _value
 
     if not escalate_to and not conditions:
         return ""
