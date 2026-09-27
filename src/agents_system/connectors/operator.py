@@ -504,7 +504,10 @@ async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutp
     `task.cancel()`, shutdown) -- kills the whole process group and reaps
     the child before the result or the exception leaves this function
     (#105), even when it lands while the child is still being spawned. A
-    cancellation is always re-raised, never turned into a result.
+    second cancellation during that spawn ends the call before the child
+    is reaped, but not before the kill is armed: the group dies the moment
+    the spawn completes (`_kill_group_once_spawned`). A cancellation is
+    always re-raised, never turned into a result.
 
     Fails closed: if `bwrap` OR `prlimit` is not on the host, this refuses
     and never falls back to running *argv* unsandboxed, or sandboxed but
@@ -600,6 +603,9 @@ async def _run_argv(argv: list[str], *, policy: TerminalPolicy) -> ConnectorOutp
         # `task.cancel()` and shutdown arrive the same way. A `finally`
         # cannot swallow the cancellation: it propagates once this is done.
         if process is None:
+            # Before the first await here, so a second cancellation that
+            # ends this wait early cannot stop the kill.
+            spawning.add_done_callback(_kill_group_once_spawned)
             process = await _finish_spawning(spawning)
         if process is not None and process.returncode is None:
             await _kill_and_reap(process)
@@ -690,6 +696,10 @@ async def _finish_spawning(
     Bounded by `_REAP_TIMEOUT_S`, like the reap. A spawn still unfinished
     by then is cancelled and logged, which leaves only asyncio's own
     cleanup. Returns None if the spawn failed or never finished.
+
+    A second cancellation can end this wait before the spawn is done, and
+    the spawn then finishes with no one holding the process: the kill for
+    that case is `_kill_group_once_spawned`, not this.
     """
     done, _ = await asyncio.wait({spawning}, timeout=_REAP_TIMEOUT_S)
     if not done:
@@ -699,6 +709,31 @@ async def _finish_spawning(
     if spawning.cancelled() or spawning.exception() is not None:
         return None
     return spawning.result()
+
+
+def _kill_group_once_spawned(
+    spawning: asyncio.Future[asyncio.subprocess.Process],
+) -> None:
+    """Kill the group a call that ended early had started, the moment its
+    spawn completes (#105).
+
+    A done-callback on the spawn, not a step of `_run_argv`'s cleanup, and
+    synchronous, so no cancellation can stop it. The cleanup waits for the
+    spawn before it can kill anything, and a second cancellation landing in
+    that wait (`total_execution_timeout_s` just after `tool_call_timeout_s`,
+    say) ended the call there: the spawn finished on its own, and the
+    launcher, bwrap's namespace init and the command ran with no time limit.
+    Nothing awaits the reap in that case; asyncio's child watcher collects
+    the exit status, and the transport closes once the pipes do.
+
+    When the cleanup does get the process, `_kill_and_reap` kills it too,
+    and a second `killpg` on the same, not yet reaped group is harmless.
+    """
+    if spawning.cancelled() or spawning.exception() is not None:
+        return
+    process = spawning.result()
+    if process.returncode is None:
+        _kill_group(process)
 
 
 async def _kill_and_reap(process: asyncio.subprocess.Process) -> None:

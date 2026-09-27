@@ -101,6 +101,16 @@ the group as it would at any other moment. That wait is capped at 5
 seconds as well. A spawn still unfinished by then is cancelled and
 `operator.spawn_incomplete` is logged at error level.
 
+A second cancellation can land during that wait, for example
+`total_execution_timeout_s` expiring a few milliseconds after
+`tool_call_timeout_s`. It ends the call at once, before the spawn is done,
+so the call never holds the process. The kill does not depend on the call
+for this: before it starts waiting, `_run_argv` attaches a callback to the
+spawn, and that callback kills the group the moment the spawn completes,
+however the call ended. Only the reap is left to asyncio, which collects
+the exit status on its own. Without the callback, the whole sandbox kept
+running with no time limit.
+
 ### Why the sandbox runs without `--new-session`
 
 `--new-session` made bwrap's namespace init call `setsid()`, which moved

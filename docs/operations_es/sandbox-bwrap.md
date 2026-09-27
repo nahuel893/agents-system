@@ -112,6 +112,17 @@ grupo como en cualquier otro momento. Esa espera también tiene un tope de
 5 segundos. Si el lanzamiento no terminó para entonces, se cancela y se
 registra `operator.spawn_incomplete` con nivel error.
 
+Durante esa espera puede llegar una segunda cancelación, por ejemplo
+`total_execution_timeout_s` venciendo unos milisegundos después de
+`tool_call_timeout_s`. Termina la llamada en el acto, antes de que el
+lanzamiento concluya, así que la llamada nunca llega a tener el proceso.
+La terminación no depende de la llamada para esto: antes de empezar a
+esperar, `_run_argv` le engancha al lanzamiento un callback que mata al
+grupo en cuanto el lanzamiento se completa, sin importar cómo terminó la
+llamada. Solo la cosecha queda a cargo de asyncio, que recoge el estado de
+salida por su cuenta. Sin ese callback, todo el sandbox seguía corriendo
+sin límite de tiempo.
+
 ### Por qué el sandbox corre sin `--new-session`
 
 `--new-session` hacía que el init del espacio de nombres de bwrap llamara
