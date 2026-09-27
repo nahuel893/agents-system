@@ -968,3 +968,36 @@ def test_compose_prompt_rejects_condition_name_containing_a_newline() -> None:
 
     with pytest.raises(FactoryError, match="newline"):
         _compose_prompt(definition, ())
+
+
+def test_compose_prompt_rejects_description_keys_colliding_after_normalization() -> (
+    None
+):
+    """Issue #129 (PR #99 review follow-up): `_render_escalation_block`
+    normalizes `escalation_rules.descriptions`' own keys the same way it
+    normalizes a condition NAME (`_normalize_condition_name`) so a raw key
+    needing whitespace collapsing still finds its condition -- but two
+    DISTINCT raw keys that collapse to the SAME normalized string used to be
+    silently resolved by whichever the dict comprehension iterated last, with
+    no error. `loader._parse_escalation_descriptions`'s sibling duplicate-
+    bullet check (same PR #99 commit) already fails loud for this exact shape
+    of mistake; this must too, naming both colliding raw keys."""
+    from agents_system.harness.factory import FactoryError, _compose_prompt
+
+    definition = _fx_definition(
+        {
+            "escalate_to": "human",
+            "conditions": ["two spaces condition"],
+            "descriptions": {
+                "two  spaces condition": "first description.",
+                "two spaces condition": "second description.",
+            },
+        }
+    )
+
+    with pytest.raises(FactoryError, match="descriptions") as excinfo:
+        _compose_prompt(definition, ())
+
+    message = str(excinfo.value)
+    assert "two  spaces condition" in message
+    assert "two spaces condition" in message
