@@ -251,6 +251,70 @@ async def test_reference_backends_catalog_searches_demo_articulos_lexically() ->
     assert engine.calls[3][1]["limit"] == 10
 
 
+async def test_reference_backends_catalog_search_reports_direct_for_an_exact_match() -> (
+    None
+):
+    """#117: an exact SKU or description match (case-insensitive) must report
+    a real confidence signal instead of the constant `"ambiguous"` /
+    `similarity: None` every hit got before, regardless of how confident it
+    actually was. `sales-agent`'s policy treats anything other than a
+    confident classification as `confidence_below_threshold` and escalates
+    instead of ordering -- see #117 and `tests/test_live_eval_phase1.py`."""
+    engine = _ReadOnlyEngine(
+        row_batches=[
+            [{"sku": "ART-001", "description": "Yerba mate 1kg"}],
+            [{"sku": "ART-002", "description": "yerba mate 1kg"}],
+        ]
+    )
+    backends = ReferenceBackends(engine)
+    spec = backends.catalog_search_tool_spec()
+
+    exact_sku = await spec.connector({"q": "ART-001"})
+    exact_description_case_insensitive = await spec.connector({"q": "Yerba Mate 1KG"})
+
+    assert exact_sku == {
+        "results": [
+            {"sku": "ART-001", "description": "Yerba mate 1kg", "similarity": 1.0}
+        ],
+        "classification": "direct",
+    }
+    assert exact_description_case_insensitive == {
+        "results": [
+            {"sku": "ART-002", "description": "yerba mate 1kg", "similarity": 1.0}
+        ],
+        "classification": "direct",
+    }
+
+
+async def test_reference_backends_catalog_search_stays_ambiguous_for_partial_matches() -> (
+    None
+):
+    """#117 acceptance criterion: a genuinely ambiguous query (several
+    partial, non-exact matches) must still report `"ambiguous"` -- the fix is
+    a real signal for a confident hit, not a change that inflates every
+    result's confidence."""
+    engine = _ReadOnlyEngine(
+        row_batches=[
+            [
+                {"sku": "ART-001", "description": "Yerba mate 1kg"},
+                {"sku": "ART-002", "description": "Yerba mate 500g"},
+            ]
+        ]
+    )
+    backends = ReferenceBackends(engine)
+    spec = backends.catalog_search_tool_spec()
+
+    result = await spec.connector({"q": "yerba mate"})
+
+    assert result == {
+        "results": [
+            {"sku": "ART-001", "description": "Yerba mate 1kg", "similarity": None},
+            {"sku": "ART-002", "description": "Yerba mate 500g", "similarity": None},
+        ],
+        "classification": "ambiguous",
+    }
+
+
 async def test_reference_backends_lookup_existing_demo_client_or_returns_no_hit() -> (
     None
 ):

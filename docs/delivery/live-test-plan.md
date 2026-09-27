@@ -140,17 +140,19 @@ by default). See `docs/platform/live-eval.md`'s own "Phase 1 live
 scenarios" section for what `boot_live_harness` needed to grow to get
 there.
 
-One real-run finding, documented rather than papered over: the reference
-`catalog_search` backend reports `classification: "ambiguous"` for every
-hit (never a confident match, `similarity` is always `None`), and
-`sales-agent` correctly, safely escalates on `confidence_below_threshold`
-instead of ordering most of the time, even on an exact SKU explicitly
-described as already confirmed -- observed 1/6 `order_writer` calls across
-two real `EVAL_RUNS=3` attempts. The model is doing the right thing given
-the tool's own honest signal; the fix belongs in the reference backend, not
-this scenario, and is tracked at #117. The `order_writer` sub-scenario is a
-documented `xfail` referencing #117 (`_run_gated_xfail`) -- it does not
-block the other three `sales-agent` sub-scenarios in the same live run.
+One real-run finding, documented rather than papered over, and since fixed:
+the reference `catalog_search` backend used to report `classification:
+"ambiguous"` for every hit (never a confident match, `similarity` was always
+`None`), and `sales-agent` correctly, safely escalated on
+`confidence_below_threshold` instead of ordering most of the time, even on
+an exact SKU explicitly described as already confirmed -- observed 1/6
+`order_writer` calls across two real `EVAL_RUNS=3` attempts. The model was
+doing the right thing given the tool's own honest signal; the gap was in the
+reference backend, tracked and fixed at #117 (an exact SKU or description
+match now reports `classification: "direct"` with `similarity: 1.0`). The
+`order_writer` sub-scenario was a documented `xfail` referencing #117
+(`_run_gated_xfail`); re-verified live post-fix at 3/3 (`EVAL_RUNS=3`) and
+promoted to an ordinary gated scenario (`_run_gated`).
 
 Through the API and the WhatsApp webhook, not the direct-runtime shortcut:
 
