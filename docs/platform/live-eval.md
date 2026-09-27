@@ -40,6 +40,30 @@ pytest -m live
 Both default to what was hardcoded before #169 (`qwen2.5:3b`,
 ChatOllama's own host resolution) — an unconfigured run is unchanged.
 
+### The whole suite in one command
+
+`scripts/run-live-suite.sh` runs every live suite in order: smoke, roles,
+guardrails, the read-only SQL tool, Phase 1, Phase 4, and both Phase 3 load
+layers. A failing suite does not stop the rest, and a PASS/FAIL summary is
+printed at the end.
+
+```bash
+scripts/run-live-suite.sh           # EVAL_RUNS=3 per scenario (about an hour)
+scripts/run-live-suite.sh --quick   # EVAL_RUNS=1, a cheap first pass
+```
+
+It needs Postgres on `127.0.0.1:5432` and Redis on `127.0.0.1:6379` (the
+`docker compose` services), the `agents_system_demo` database, `bwrap`, and
+provider keys in `.env`. It loads `.env` without printing it, and it uses
+`EVAL_PROVIDER=openai_compatible` unless `EVAL_PROVIDER_OVERRIDE` names
+another provider.
+
+For the SQL tool suite, it creates a throwaway database with the fixture views
+and the `sql_readonly` role, the same setup as CI's SQL integration job, and
+drops it on exit. Logs and `SUMMARY.txt` go to
+`evals/results/live-suite-<timestamp>/`. Per-scenario rates, tokens and cost
+stay in the usual `evals/results/` reports.
+
 ## Switching providers (EVAL_PROVIDER)
 
 The eval's own provider is a separate switch from the running application's
