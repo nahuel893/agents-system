@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 
 import pytest
 
@@ -33,25 +34,69 @@ _SEPARATOR = "__"
 _SENTINEL = "_generic"
 _SPLITTERS = frozenset({"split", "rsplit", "partition", "rpartition"})
 _SCHEME = "{deployment}__{role}"
+#: A dunder name (`__init__`, `__tablename__`, ...): legitimate Python
+#: identifier convention, never a `{deployment}__{role}`-style separator use.
+_DUNDER_NAME = re.compile(r"^__\w+__$")
 
 
 def _is_separator(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value == _SEPARATOR
 
 
+def _docstring_ids(tree: ast.AST) -> set[int]:
+    """``id()`` of every `Constant` node that is a module/class/function
+    docstring: its own scope's first statement, a bare string expression."""
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            ids.add(id(first.value))
+    return ids
+
+
 def _runtime_id_parsing(source: str) -> list[str]:
-    """Every place in *source* that treats `"__"` as a separator, or names the
-    `"_generic"` sentinel, as `"<line>: <what>"`."""
+    """Every place in *source* that treats `"__"` as a separator, names the
+    `"_generic"` sentinel, or otherwise embeds `"__"` in a string constant
+    that is not a docstring, a dunder name, or the allow-listed migration
+    hint (`_SCHEME`) -- as `"<line>: <what>"` (issue #128 item 7).
+
+    The specific shapes below (a splitter call, a `.join()` call, an `in`/
+    `not in` comparison, an f-string segment, the `_generic` sentinel) give a
+    readable message for the exact patterns this scheme's removal (ADR-004
+    PR4b) actually used. The final, generic check is the real regression
+    gate: ANY other non-dunder, non-docstring string constant containing
+    `"__"` -- a `str.split(x, "__")` with the separator past `args[0]`, a
+    `"__".join(...)` (the separator is the call's RECEIVER, never an
+    argument), an f-string segment that merely CONTAINS `"__"` rather than
+    being exactly `"__"`, a `re.fullmatch`/`re.compile` pattern, or any other
+    shape a reintroduced parser could take -- is still flagged even when it
+    matches none of the specific shapes above.
+    """
     found: list[str] = []
-    for node in ast.walk(ast.parse(source)):
+    tree = ast.parse(source)
+    docstring_ids = _docstring_ids(tree)
+    for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr in _SPLITTERS
-            and node.args
-            and _is_separator(node.args[0])
+            and any(_is_separator(arg) for arg in node.args)
         ):
             found.append(f"{node.lineno}: .{node.func.attr}({_SEPARATOR!r})")
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "join"
+            and _is_separator(node.func.value)
+        ):
+            found.append(f"{node.lineno}: {_SEPARATOR!r}.join(...)")
         elif (
             isinstance(node, ast.Compare)
             and _is_separator(node.left)
@@ -64,6 +109,18 @@ def _runtime_id_parsing(source: str) -> list[str]:
             found.append(f'{node.lineno}: f"{{...}}{_SEPARATOR}{{...}}"')
         elif isinstance(node, ast.Constant) and node.value == _SENTINEL:
             found.append(f"{node.lineno}: {_SENTINEL!r}")
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and _SEPARATOR in node.value
+            and not _DUNDER_NAME.fullmatch(node.value)
+            and id(node) not in docstring_ids
+            and _SCHEME not in node.value
+        ):
+            found.append(
+                f"{node.lineno}: string constant containing "
+                f"{_SEPARATOR!r}: {node.value!r}"
+            )
     return found
 
 
@@ -99,9 +156,62 @@ def test_the_scan_flags_every_move_of_the_removed_scheme() -> None:
         'deployment, _, role = model_id.partition("__")',
         'role = model_id.rsplit("__", 1)[-1]',
         'is_legacy = "__" in model_id',
+        # issue #128 item 7 -- these previously passed undetected: the scan
+        # only checked a splitter call's FIRST argument, only a `.join()`
+        # call's ARGUMENT (never its receiver), and only an f-string segment
+        # that was EXACTLY "__" (never one merely containing it).
+        'role = str.split(model_id, "__")[0]',  # separator not args[0]
+        'model_id = "__".join([deployment, role])',  # "__" is the receiver
+        'model_id = f"{deployment}__{role}"',  # same shape, unbound var names
+        'legacy_id = f"prefix__{role}"',  # "__" embedded in a larger literal
+        'PATTERN = re.compile(r"(?P<deployment>.+)__(?P<role>.+)")',  # regex
     ],
 )
 def test_the_scan_flags_a_renamed_successor(source: str) -> None:
+    assert _runtime_id_parsing(source)
+
+
+# ---------------------------------------------------------------------------
+# issue #128 item 7 -- the broadened generic-constant check must not flag a
+# docstring, a real dunder name, or the one allow-listed migration-hint
+# string (`_SCHEME`, used verbatim in `main.py`'s unregistered-channel error
+# to tell an operator what the OLD scheme looked like).
+# ---------------------------------------------------------------------------
+
+
+def test_the_scan_does_not_flag_a_module_docstring_mentioning_the_separator() -> None:
+    source = '"""Explains the old `{deployment}__{role}` scheme, historically."""\n'
+    assert _runtime_id_parsing(source) == []
+
+
+def test_the_scan_does_not_flag_a_function_docstring_mentioning_the_separator() -> None:
+    source = (
+        "def f():\n"
+        '    """Uses `__` as a separator, historically -- see module docs."""\n'
+        "    return 1\n"
+    )
+    assert _runtime_id_parsing(source) == []
+
+
+def test_the_scan_does_not_flag_a_real_dunder_name() -> None:
+    source = 'name = "__tablename__"\n'
+    assert _runtime_id_parsing(source) == []
+
+
+def test_the_scan_does_not_flag_the_allow_listed_migration_hint() -> None:
+    source = (
+        "hint = \" is no longer read as '{deployment}__{role}': map it in "
+        'AGENT_REGISTRATIONS"\n'
+    )
+    assert _runtime_id_parsing(source) == []
+
+
+def test_the_scan_flags_an_arbitrary_non_docstring_constant_containing_the_separator() -> (
+    None
+):
+    """The generic catch-all: any other non-dunder, non-docstring string
+    constant containing `__` -- not just the four specific shapes above."""
+    source = 'DEBUG_LABEL = "role__client debug label"\n'
     assert _runtime_id_parsing(source)
 
 
