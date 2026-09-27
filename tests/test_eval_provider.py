@@ -9,6 +9,8 @@ this file mirrors for the eval-specific wrapper).
 
 from __future__ import annotations
 
+import ast
+import pathlib
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -107,3 +109,41 @@ def test_model_display_name_ignores_an_empty_model_name() -> None:
     fake = SimpleNamespace(model_name="", model="qwen2.5:3b")
 
     assert model_display_name(fake) == "qwen2.5:3b"  # type: ignore[arg-type]
+
+
+def _fixture_scope(decorator: ast.expr) -> str | None:
+    """The `scope=` a `@pytest.fixture(...)` decorator declares, `"function"`
+    when it declares none, or None when `decorator` is not a fixture."""
+    call = decorator if isinstance(decorator, ast.Call) else None
+    target = call.func if call is not None else decorator
+    if not (isinstance(target, ast.Attribute) and target.attr == "fixture"):
+        return None
+    for keyword in call.keywords if call is not None else ():
+        if keyword.arg == "scope" and isinstance(keyword.value, ast.Constant):
+            return str(keyword.value.value)
+    return "function"
+
+
+def test_live_suites_build_the_eval_model_once_per_test() -> None:
+    """The openai_compatible model owns an `httpx.AsyncClient` (#145), and
+    its pooled connections are bound to the event loop of the first test
+    that uses them. A module-scoped `eval_model` fixture hands every later
+    test a client whose loop is already closed, so the first run of each of
+    those scenarios crashed with "Event loop is closed" and failed its gate.
+    """
+    tests_dir = pathlib.Path(__file__).parent
+    shared: list[str] = []
+    for module in sorted(tests_dir.glob("test_live_*.py")):
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                and node.name == "eval_model"
+            ):
+                continue
+            for decorator in node.decorator_list:
+                scope = _fixture_scope(decorator)
+                if scope not in (None, "function"):
+                    shared.append(f"{module.name}: scope={scope!r}")
+
+    assert shared == [], f"eval_model must be function-scoped: {shared}"
