@@ -581,6 +581,77 @@ keeps a live run provisioning the tool's role through the exact same runbook
 an operator follows by hand, rather than a parallel reimplementation that
 could drift from it.
 
+## Phase 4 live scenario (issue #84)
+
+`tests/test_live_eval_phase4.py` (`pytest -m live`) proves the full
+custom-agent lifecycle -- define, register, serve, converse, audit, update --
+as ONE live scenario through `boot_live_harness`, gated the same way as Phase
+1 (`EVAL_RUNS`, `DEFAULT_HAPPY_PATH_THRESHOLD`).
+
+The custom agent
+(`tests/fixtures/agents/phase4_lifecycle/roles/restock-helper`) is built with
+the public `Agent` API (`Agent.from_folder`), never a predefined platform
+role:
+
+- **Define.** It `extends: platform/roles/sales-agent` (additive for
+  capability, `harness/loader.py::_fold_parent_into_child`), adds its own
+  `restock_alert` skill (`skills/restock_alert.md` in the same fixture
+  folder) and a declarative `command_tools` entry (`check_stock`, ADR-002
+  C.12, over `/usr/bin/echo` -- the same shape
+  `tests/fixtures/agents/command_tools/roles/cmdtool-role` already
+  validates), and tightens `execution_limits.max_tool_calls` to 5 in its own
+  `policy.md`.
+- **Register + serve.** `boot_live_harness(role=<the Agent>, runtime_id=...,
+  permissions=...)` is exactly `create_app(agents={runtime_id: agent},
+  grants={runtime_id: permissions})` under the hood; `GET /v1/models` lists
+  the chosen runtime id.
+- **Converse.** Both `LiveHarness.send_chat_completion` (the HTTP API) and
+  `LiveHarness.deliver_webhook` (the WhatsApp webhook) drive the SAME
+  runtime, since `restock-helper` inherits `sales-agent`'s own
+  `untrusted_input: true` unchanged (`bind_webhook_to_role=True` is safe).
+- **Audit.** `check_stock`'s executed calls land in the real `audit_event`
+  table under the role name `restock-helper` (`AuditEvent.role`, not the
+  deploy-time runtime id) -- the same `tool_call_attempted` taxonomy and the
+  same redaction pipeline a predefined role's rows go through, since
+  `restock-helper` inherits `sales-agent`'s own `audit_policy` unchanged.
+- **Update.** A second `Agent.from_folder(path, skill_contents={...},
+  permissions={"inherit": True, "remove": ["run:check_stock"]})` -- a
+  changed skill and one fewer permission than the original -- is
+  re-registered under the SAME runtime id through a SECOND, independent
+  `boot_live_harness` call (a fresh application process: the "app restart").
+  Two things are proven, deterministically, never only through the model's
+  wording (this document's own Principle):
+  - the skill change took effect: skill CONTENT is composed into the final
+    prompt only once the runtime is fully equipped
+    (`harness/factory.py::_compose_prompt`) -- `resolve()`'s bare
+    `AgentDefinition.system_prompt` never carries it, so the test calls
+    `build_runtime()` itself (offline, against `conftest.build_test_registry()`)
+    and asserts the new skill text is in the composed prompt and the old one
+    is not;
+  - the removed permission blocks the tool: `harness/injector.py::resolve_command_tool_surface`
+    denies `check_stock` while building the equipped runtime at BOOT time --
+    before any conversation happens -- and records a `tool_denied` audit row
+    naming the missing permission. The test polls for that row (`record_tool_denied`
+    is a fire-and-forget `asyncio` task onto the real `AuditSink`,
+    `audit/sink.py`, which batches up to 50 events per 100ms tick) rather
+    than racing a single query right after boot. A live turn that still asks
+    the model to call `check_stock` afterwards is a single deterministic
+    check, not gated (mirroring `test_sql_readonly_role_cannot_change_the_fixture_data`'s
+    own pattern): whatever the model does, no further `check_stock` row can
+    ever execute, because the tool is no longer bound to the runtime at all.
+    In practice the model recognises this and escalates on
+    `required_tool_missing` (inherited from the base `agent` role) instead
+    of fabricating a result.
+
+The one lifecycle assertion that needs no model -- registering a variant
+that raises a limit above its role hierarchy's ceiling, or loosens
+`untrusted_input`, must fail at boot with a clear `DefinitionError` -- lives
+instead in `tests/test_agent_lifecycle_safety_ceiling.py`, offline, through
+the exact `build_runtime()` call `create_app`'s lifespan makes for every
+registered agent at real boot. It reuses the same `restock-helper` fixture
+and needs neither a live model nor a reachable Postgres/Redis, so it runs in
+the default suite, not behind `pytest -m live`.
+
 ## Running it as a role's own pipeline
 
 `agents_system.evals.runner.run_scenario(scenario, *, model, model_name,
@@ -641,3 +712,7 @@ is what keeps this documented floor case from failing its own smoke test.
   setup beyond a reachable admin connection (`boot_live_harness` provisions
   its own throwaway databases and, for the SQL-tool scenario, its own
   `sql_readonly` fixture role)
+- Phase 4 (#84), the full custom-agent lifecycle: `tests/test_live_eval_phase4.py`
+  — same infra needs as Phase 1; its one model-free assertion (the safety
+  ceiling at boot) lives instead in `tests/test_agent_lifecycle_safety_ceiling.py`,
+  in the default offline suite
