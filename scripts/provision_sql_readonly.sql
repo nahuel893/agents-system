@@ -292,8 +292,25 @@ BEGIN
               OR (
                   c.relkind <> 'S'
                   AND (
-                      pg_catalog.has_any_column_privilege(
-                          'sql_readonly', c.oid, 'SELECT'
+                      (
+                          pg_catalog.has_any_column_privilege(
+                              'sql_readonly', c.oid, 'SELECT'
+                          )
+                          -- Exempt exactly the views this run just granted
+                          -- SELECT on. Scoped to THIS match only: a write
+                          -- privilege below is never exempted, even on a
+                          -- listed view (issue #131 review).
+                          AND NOT (
+                              c.relkind IN ('v', 'm')
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM unnest(
+                                      string_to_array(current_setting('sql_readonly.views'), ',')
+                                  ) AS granted_entry(name)
+                                  WHERE parse_ident(btrim(granted_entry.name))
+                                        = ARRAY[n.nspname::text, c.relname::text]
+                              )
+                          )
                       )
                       OR pg_catalog.has_any_column_privilege(
                           'sql_readonly', c.oid, 'INSERT, UPDATE, REFERENCES'
@@ -302,18 +319,6 @@ BEGIN
                           'sql_readonly', c.oid, 'DELETE, TRUNCATE, TRIGGER'
                       )
                   )
-              )
-          )
-          -- Exempt exactly the views this run just granted SELECT on.
-          AND NOT (
-              c.relkind IN ('v', 'm')
-              AND EXISTS (
-                  SELECT 1
-                  FROM unnest(
-                      string_to_array(current_setting('sql_readonly.views'), ',')
-                  ) AS granted_entry(name)
-                  WHERE parse_ident(btrim(granted_entry.name))
-                        = ARRAY[n.nspname::text, c.relname::text]
               )
           )
     LOOP

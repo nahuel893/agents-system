@@ -10,6 +10,7 @@ against a real PostgreSQL and a real read-only role.
 
 from __future__ import annotations
 
+import io
 import json
 import pathlib
 import socket
@@ -22,6 +23,7 @@ from typing import Any, Self
 
 import asyncpg
 import pytest
+import structlog
 import structlog.testing
 from sqlalchemy.exc import DBAPIError, OperationalError
 
@@ -614,12 +616,17 @@ async def test_the_timeout_text_states_the_configured_limit() -> None:
     assert "1.5" in result["error"]
 
 
-async def test_a_lost_connection_logs_the_traceback_but_no_query_detail() -> None:
+async def test_a_lost_connection_never_logs_a_traceback_or_query_detail() -> None:
     """`connection_invalidated` is SQLAlchemy's own verdict (from the
-    dialect's `is_disconnect` check) that the connection was actually lost -
-    the real connect-phase-shaped failure worth a full traceback (issue
-    #131). Nothing about the failing statement is safe to log here, so this
-    branch logs only the traceback, never `sqlstate`/`error_class`.
+    dialect's `is_disconnect` check) that the connection was actually lost.
+    It is NOT the same thing as "safe to render with a traceback": the
+    guard bakes the model's literal values into the SQL text (bind
+    parameters are disallowed), so `DBAPIError`'s own text still quotes the
+    failing statement, and `connection_invalidated` fires on ANY
+    disconnect-shaped error, including one raised while that statement was
+    executing - not only at connect time (issue #131 review). So this
+    branch never attaches the exception itself as `exc_info`; it logs only
+    fixed, known-safe fields, same as every other branch.
     """
     orig = Exception(_DRIVER_SECRET)
     error = DBAPIError(
@@ -631,9 +638,69 @@ async def test_a_lost_connection_logs_the_traceback_but_no_query_detail() -> Non
         result = await _run(engine, "SELECT product FROM sales_v")
 
     assert result["error_kind"] == "database_unavailable"
-    assert [log.get("exc_info") for log in logs] == [True]
-    assert "sqlstate" not in logs[0]
-    assert "error_class" not in logs[0]
+    assert not any(log.get("exc_info") for log in logs)
+    assert logs[0]["error_class"] == "DBAPIError"
+    dumped = json.dumps(logs[0])
+    assert _DRIVER_SECRET not in dumped
+
+
+async def test_a_lost_connection_is_never_rendered_with_the_statement_by_a_real_pipeline() -> (
+    None
+):
+    """`structlog.testing.capture_logs()` intercepts the event dict BEFORE
+    any exception-formatting processor runs, so the test above cannot see
+    whether `exc_info=True` on the *wrapping* `DBAPIError` would still
+    render `[SQL: ...]` (with the model's literal values baked in) once a
+    real structlog pipeline (`format_exc_info` + `JSONRenderer`) formats
+    the log line - unlike every sibling test in this file, this is the one
+    that actually runs that pipeline (issue #131 review).
+    """
+    orig = Exception("server closed the connection unexpectedly")
+    error = DBAPIError(
+        f"SELECT * FROM sales_v WHERE ssn = '{_DRIVER_SECRET}'",
+        {},
+        orig,
+        connection_invalidated=True,
+    )
+    engine = _Engine(query_error=error)
+
+    stream = io.StringIO()
+    structlog.configure(
+        processors=[
+            structlog.processors.StackInfoRenderer(),
+            structlog.dev.set_exc_info,
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),
+        ],
+        logger_factory=structlog.PrintLoggerFactory(file=stream),
+        cache_logger_on_first_use=False,
+    )
+    try:
+        result = await _run(engine, "SELECT product FROM sales_v")
+    finally:
+        structlog.reset_defaults()
+
+    rendered = stream.getvalue()
+    assert result["error_kind"] == "database_unavailable"
+    assert _DRIVER_SECRET not in rendered
+
+
+async def test_a_class_08_sqlstate_is_unavailable_even_without_connection_invalidated() -> (
+    None
+):
+    """`connection_invalidated` is set by the dialect's `is_disconnect`
+    check, which not every driver/error shape reaches. SQLSTATE class 08
+    (`connection_exception`) is PostgreSQL's own, independent signal for a
+    lost connection, and must still classify as `database_unavailable` -
+    not fall through to the generic `query_failed` text - even when
+    `connection_invalidated` was never set (issue #131 review).
+    """
+    error = _db_error("08006")  # connection_invalidated defaults to False
+    engine = _Engine(query_error=error)
+
+    result = await _run(engine, "SELECT product FROM sales_v")
+
+    assert result["error_kind"] == "database_unavailable"
 
 
 async def test_a_query_phase_failure_with_no_sqlstate_never_logs_a_traceback() -> None:

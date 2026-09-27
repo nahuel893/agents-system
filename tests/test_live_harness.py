@@ -827,6 +827,37 @@ def test_render_provision_sql_readonly_raises_if_anything_remains() -> None:
     assert "can still access" in rendered
 
 
+def test_render_provision_sql_readonly_never_exempts_a_write_privilege_on_a_listed_view() -> (
+    None
+):
+    """The final drift-repair check's leftover-access scan exempts exactly
+    the views this run just granted SELECT on, so a normal, intended SELECT
+    grant does not trip its own check. That exemption must be scoped to the
+    SELECT-privilege match only: a residual WRITE privilege (INSERT/UPDATE/
+    DELETE/TRUNCATE/TRIGGER/REFERENCES) surviving on the same listed view is
+    exactly the kind of leftover drift this check exists to catch, and must
+    never be waved through just because the view is allowlisted (issue #131
+    review). In the rendered SQL, that means the exemption clause has to sit
+    inside the SELECT-privilege branch - textually BEFORE the write-privilege
+    checks - not after the whole three-way OR closes, which would exempt
+    every branch unconditionally.
+    """
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("a.b",)
+    )
+
+    exemption_at = rendered.index("Exempt exactly the views")
+    write_check_at = rendered.index("INSERT, UPDATE, REFERENCES")
+    assert exemption_at < write_check_at, (
+        "the view exemption must be nested inside the SELECT-privilege "
+        "match only; finding it after the write-privilege checks means it "
+        "exempts the whole OR, including a residual write grant on a "
+        "listed view"
+    )
+
+
 # ---------------------------------------------------------------------------
 # live_registry_factory_adapter -- `extra_tool_specs` (#79, Phase 1)
 # ---------------------------------------------------------------------------

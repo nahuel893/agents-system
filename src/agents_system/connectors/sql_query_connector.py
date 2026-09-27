@@ -218,15 +218,27 @@ def _database_error(error: SQLAlchemyError, config: SqlQueryConfig) -> Connector
     sqlstate = str(sqlstate) if sqlstate else None
     # `connection_invalidated` is SQLAlchemy's own verdict - from the
     # dialect's `is_disconnect` check on the real driver exception, not a
-    # guess of ours - that the connection was actually lost. `sqlstate is
-    # None` is NOT the same signal: a query-phase DBAPI error can carry no
-    # sqlstate too, and its text still quotes the failing statement and its
-    # literal values (possibly PII), so only a connection SQLAlchemy itself
-    # marked invalidated gets its traceback logged (issue #131).
+    # guess of ours - that the connection was actually lost. `sqlstate`
+    # starting with class 08 (connection_exception) is a second, independent
+    # signal: some connect-shaped failures never set `connection_invalidated`
+    # but do carry that sqlstate, and dropping this check would silently
+    # reclassify them as an ordinary query failure (issue #131 review).
+    # Neither signal makes a traceback safe to log, though: the guard bakes
+    # the model's literal values into the SQL text (bind parameters are
+    # disallowed), so `DBAPIError`'s own text/`exc_info` rendering still
+    # quotes the failing statement regardless of which branch fired -
+    # `connection_invalidated` can be true for a disconnect raised mid-query,
+    # not only at connect time. So this branch never attaches the exception
+    # itself as `exc_info`; it logs only fixed, known-safe fields, exactly
+    # like every other branch.
     connection_lost = bool(getattr(error, "connection_invalidated", False))
-    unavailable = connection_lost or sqlstate is None
+    unavailable = connection_lost or sqlstate is None or sqlstate.startswith("08")
     if connection_lost:
-        _logger.warning("sql_query.failed", exc_info=connection_lost)
+        _logger.warning(
+            "sql_query.failed",
+            error_class=type(error).__name__,
+            orig_class=type(getattr(error, "orig", None)).__name__,
+        )
     else:
         _logger.warning(
             "sql_query.failed", sqlstate=sqlstate, error_class=type(error).__name__
