@@ -39,7 +39,9 @@ from agents_system.services.outbox import (
     record_outbox_failure,
 )
 from agents_system.services.participants import (
+    ChannelParticipantDirectory,
     ConversationRecorder,
+    Participant,
     ParticipantDirectory,
 )
 
@@ -74,6 +76,49 @@ class ChannelBinding:
     checkpointer_enabled: bool = True
 
 
+class _WhatsAppOnlyDirectory:
+    """A channel-blind ``ParticipantDirectory`` behind the channel-aware
+    calls, for a worker that serves the WhatsApp channel alone -- the one
+    address space such a directory was written for, so dropping the
+    channel loses nothing."""
+
+    def __init__(self, directory: ParticipantDirectory) -> None:
+        self._directory = directory
+
+    def normalize_channel_address(self, raw: str, *, channel: str) -> str:
+        return self._directory.normalize_address(raw)
+
+    async def resolve_channel_address(
+        self, session: Any, address: str, *, channel: str
+    ) -> Participant | None:
+        return await self._directory.resolve(session, address)
+
+
+def _channel_directory(
+    directory: ParticipantDirectory | ChannelParticipantDirectory | None,
+    channels: Mapping[str, ChannelBinding],
+) -> ChannelParticipantDirectory | None:
+    """The directory the worker asks, always told the row's channel.
+
+    A channel-blind directory would resolve a second channel's sender in
+    WhatsApp's identity space, so a worker bound to any other channel
+    refuses one outright instead of conflating the two (#22).
+    """
+    if directory is None or isinstance(directory, ChannelParticipantDirectory):
+        return directory
+    others = sorted(name for name in channels if name != WHATSAPP_CHANNEL)
+    if others:
+        raise ValueError(
+            f"channels {others} need a ChannelParticipantDirectory: the "
+            f"{type(directory).__name__} directory is never told which channel "
+            "an address arrived on, so it would resolve those channels' "
+            "senders as WhatsApp participants. Implement "
+            "normalize_channel_address/resolve_channel_address and decide "
+            "per channel which identity an address belongs to."
+        )
+    return _WhatsAppOnlyDirectory(directory)
+
+
 class DeferredWebhookWorker:
     """Process durable claims with explicit at-least-once send semantics.
 
@@ -96,6 +141,11 @@ class DeferredWebhookWorker:
     before; ``channels`` binds any other registered channel by name. A row
     whose channel has no binding in this process is recorded as a failure
     -- retried, then terminal and visible -- never guessed at.
+
+    Every address reaches the directory with its channel. A channel-blind
+    ``ParticipantDirectory`` may only serve WhatsApp alone; binding any
+    other channel requires a ``ChannelParticipantDirectory``, or the
+    constructor raises (and with it, boot).
     """
 
     def __init__(
@@ -103,7 +153,7 @@ class DeferredWebhookWorker:
         *,
         session_factory: SessionFactory,
         worker_id: str,
-        directory: ParticipantDirectory | None,
+        directory: ParticipantDirectory | ChannelParticipantDirectory | None,
         runtime: _Runtime | None = None,
         whatsapp_client: TextSender | None = None,
         recorder: ConversationRecorder | None = None,
@@ -137,7 +187,7 @@ class DeferredWebhookWorker:
             raise ValueError("a webhook worker needs at least one channel binding")
         self._session_factory = session_factory
         self._worker_id = worker_id
-        self._directory = directory
+        self._directory = _channel_directory(directory, bindings)
         self._channels = bindings
         self._recorder = recorder
         self._terminal_notifier = terminal_notifier
@@ -319,7 +369,8 @@ class DeferredWebhookWorker:
             )
             return
 
-        if self._directory is None:
+        directory = self._directory
+        if directory is None:
             logger.error(
                 "webhook_worker.no_participant_directory",
                 outbox_work_id=str(work.id),
@@ -330,8 +381,10 @@ class DeferredWebhookWorker:
             )
             return
 
+        # The channel travels with the address: identity is resolved per
+        # channel, never across channels.
         try:
-            phone_number = self._directory.normalize_address(turn.sender)
+            address = directory.normalize_channel_address(turn.sender, channel=channel)
         except ValueError:
             logger.warning(
                 "webhook_worker.invalid_address",
@@ -344,7 +397,10 @@ class DeferredWebhookWorker:
             return
 
         try:
-            participant = await self._resolve_participant(phone_number)
+            async with self._session_factory() as session:
+                participant = await directory.resolve_channel_address(
+                    session, address, channel=channel
+                )
         except Exception as exc:
             await self._record_failure(work, exc)
             return
@@ -355,7 +411,7 @@ class DeferredWebhookWorker:
 
         # The conversation this turn belongs to: the normalized address,
         # scoped to its channel so two channels never share one thread.
-        conversation = channel_scoped_key(channel, phone_number)
+        conversation = channel_scoped_key(channel, address)
         replay = _persisted_reply(work)
         if replay is None:
             try:
@@ -387,7 +443,7 @@ class DeferredWebhookWorker:
                 return
 
             replay = (
-                {"to": phone_number, "body": assistant_text},
+                {"to": address, "body": assistant_text},
                 f"{inbound.meta_message_id}:reply",
             )
             try:
@@ -419,10 +475,6 @@ class DeferredWebhookWorker:
         async with self._session_factory() as session:
             inbound = await session.get(InboundMessage, work.inbound_message_id)
         return cast(InboundMessage | None, inbound)
-
-    async def _resolve_participant(self, phone_number: str) -> Any:
-        async with self._session_factory() as session:
-            return await self._directory.resolve(session, phone_number)  # type: ignore[union-attr]
 
     async def _record_turn(
         self,

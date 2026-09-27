@@ -70,6 +70,7 @@ from agents_system.services.outbox import (
     count_outbox_backlog,
 )
 from agents_system.services.participants import (
+    ChannelParticipantDirectory,
     ConversationRecorder,
     ParticipantDirectory,
 )
@@ -1391,7 +1392,9 @@ def create_app(
     agents: Mapping[str, Agent | str] | None = None,
     grants: Mapping[str, Sequence[str]] | None = None,
     clients: Mapping[str, str] | None = None,
-    participant_directory: ParticipantDirectory | None = None,
+    participant_directory: (
+        ParticipantDirectory | ChannelParticipantDirectory | None
+    ) = None,
     conversation_recorder: ConversationRecorder | None = None,
     roots: RootConfig | None = None,
     title: str = "agents_system",
@@ -1447,7 +1450,10 @@ def create_app(
         included: leave the id out for no client).
     participant_directory:
         Resolves an inbound channel address to an identity. Absent means the
-        inbound route fails closed and runs no turn.
+        inbound route fails closed and runs no turn. A plain
+        ``ParticipantDirectory`` is never told which channel an address came
+        from, so it serves WhatsApp alone: registering any ``channels`` needs
+        a ``ChannelParticipantDirectory``, or boot fails.
     conversation_recorder:
         Records completed turns. Absent means none are recorded.
     roots:

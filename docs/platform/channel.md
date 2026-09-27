@@ -36,7 +36,7 @@ class ChannelAdapter(Protocol):
 | `verify_inbound` | In the request, on the raw body, after the size ceiling and **before anything is parsed or persisted** | Reject by raising `fastapi.HTTPException` (normally 403). Compare secrets in constant time (`hmac.compare_digest` / `secrets.compare_digest`). |
 | `read_inbound` | In the request, only after `verify_inbound` passed | Return `InboundDelivery(payload, messages)`. `payload` (a JSON-serializable dict) is stored against every message; `messages` is one `InboundRef(message_id, conversation_key)` each. No messages means "acknowledge, persist nothing" (a status callback, a malformed body). Must not raise on attacker-shaped input. |
 | `extract_turn` | In the deferred worker, once per stored message | Given the stored `payload` and the message's own id, return `InboundTurn(message_id, sender, text)`, or `None` to complete it without a turn (a non-text message, say). |
-| `send_text` | In the deferred worker | Send `body` to `to` (the sender, normalized by the deployment's `ParticipantDirectory`). Raise on failure: the worker retries. Delivery is **at least once** -- an ambiguous send can be repeated. |
+| `send_text` | In the deferred worker | Send `body` to `to` (the sender, normalized for this channel by the deployment's participant directory). Raise on failure: the worker retries. Delivery is **at least once** -- an ambiguous send can be repeated. |
 
 Rules the platform relies on:
 
@@ -85,6 +85,39 @@ app = create_app(
   joins the shared checkpointer whenever the process builds one
   (`WHATSAPP_CHECKPOINTER_ENABLED`, which despite its name is the
   process-wide switch).
+- Registering any channel requires a channel-aware participant directory
+  (next section), or boot fails.
+
+## Participant identity is per channel (security requirement)
+
+A sender address only means something inside the channel that authenticated
+it. The same digits can be a WhatsApp customer's phone number and, on another
+channel, a chat id or a value the sender controls. If one directory resolved
+every channel's senders without knowing the channel, anyone able to reach a
+second channel could send an existing customer's number and have the turn run
+and be recorded under that customer's participant id.
+
+So the directory is always told the channel:
+
+```python
+class ChannelParticipantDirectory(Protocol):
+    def normalize_channel_address(self, raw: str, *, channel: str) -> str: ...
+    async def resolve_channel_address(
+        self, session: Any, address: str, *, channel: str
+    ) -> Participant | None: ...
+```
+
+- The implementation decides, explicitly and per channel, which identity an
+  address belongs to. Keep channels in separate identity spaces unless the
+  deployment has its own proof that an address on one channel is the same
+  person on another. Otherwise the contract is `ParticipantDirectory`'s:
+  `ValueError` from normalization drops the delivery, and resolution owns its
+  session's transaction.
+- A plain, channel-blind `ParticipantDirectory` keeps working for a
+  WhatsApp-only deployment: WhatsApp is the address space it was written for.
+- A worker bound to **any** other channel refuses a channel-blind directory.
+  The lifespan builds that worker, so `create_app(channels=...)` with a
+  channel-blind `participant_directory` fails at boot, naming the channels.
 
 ## Configuration belongs to the adapter
 
@@ -110,9 +143,10 @@ channel-agnostic.
 
 - **Text only.** `InboundTurn` carries text; media is out of scope, as it is
   for WhatsApp.
-- **One participant directory.** The deployment's `ParticipantDirectory`
-  normalizes and resolves every channel's sender. A channel whose addresses
-  are not phone numbers needs a directory that understands them.
+- **One participant directory.** The deployment passes a single directory,
+  and it serves every channel. It is told each address's channel (see above),
+  so a channel whose addresses are not phone numbers is handled by that
+  directory's per-channel logic.
 - **Not for request/response APIs.** The OpenAI-compatible adapter
   (`/v1/chat/completions`, Open WebUI) answers in the same HTTP response; it
   has no inbound webhook, no durable handoff and no outbound send, so it is
@@ -124,7 +158,10 @@ channel-agnostic.
 registers it through `create_app(channels=...)`, and drives one full turn
 through the real route, the real `accept_inbound_message`, the real deferred
 worker and a real harness-built `AgentRuntime` (only the outbox SQL and the
-model provider are in-memory). The unchanged `tests/test_webhook.py` and
-`tests/test_webhook_worker.py` pin WhatsApp's behaviour.
+model provider are in-memory). The same file proves the directory is told
+each sender's channel, and that a channel-blind directory is refused for a
+second channel at worker construction and at boot. The unchanged
+`tests/test_webhook.py` and `tests/test_webhook_worker.py` pin WhatsApp's
+behaviour, channel-blind directory included.
 
 > Spanish mirror: `docs/platform_es/channel.md` (keep both current together).

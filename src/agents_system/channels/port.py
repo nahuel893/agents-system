@@ -68,9 +68,10 @@ class InboundDelivery:
 class InboundTurn:
     """The one turn a stored message asks for.
 
-    ``sender`` is the channel-native address; the platform normalizes it
-    through the deployment's ``ParticipantDirectory`` and replies to the
-    normalized form via ``ChannelAdapter.send_text``.
+    ``sender`` is the channel-native address; the platform normalizes and
+    resolves it through the deployment's participant directory, together
+    with this channel's name (``ChannelParticipantDirectory``), and replies
+    to the normalized form via ``ChannelAdapter.send_text``.
     """
 
     message_id: str

@@ -51,8 +51,10 @@ class ParticipantDirectory(Protocol):
         would make the sender retry a message that can never succeed.
 
         Normalization is here rather than on the channel because today the
-        only implementation is phone-number based. When the channel port
-        lands (#71) this may move to the adapter, where it arguably belongs.
+        only implementation is phone-number based. This directory is never
+        told which channel an address arrived on, so the worker lets it
+        serve the built-in WhatsApp channel alone; any other channel needs a
+        `ChannelParticipantDirectory` (#22).
         """
         ...
 
@@ -74,6 +76,40 @@ class ParticipantDirectory(Protocol):
         A read-only implementation simply never commits, and nothing here
         requires it to.
         """
+        ...
+
+
+@runtime_checkable
+class ChannelParticipantDirectory(Protocol):
+    """A participant directory told which channel each address arrived on.
+
+    Channel identity is part of the question (#22). A raw sender is only
+    meaningful inside the channel that authenticated it: the same digits
+    can be a WhatsApp customer's phone number and, on another channel, a
+    chat id or a value the sender typed. A directory that answered without
+    the channel would hand whoever can reach any registered channel the
+    identity of a customer on another one.
+
+    The implementation decides, explicitly, whether two channels share an
+    identity space. Keep them apart unless the deployment has its own proof
+    that an address on one channel belongs to the same person on the other.
+    The contract is otherwise `ParticipantDirectory`'s: `ValueError` from
+    normalization is a dropped delivery, and `resolve_channel_address` owns
+    the transaction on the session it is handed.
+
+    The deferred worker requires this protocol as soon as any channel other
+    than the built-in WhatsApp one is bound. A plain `ParticipantDirectory`
+    stays valid for a WhatsApp-only deployment.
+    """
+
+    def normalize_channel_address(self, raw: str, *, channel: str) -> str:
+        """Return the canonical form of *raw* as sent on *channel*."""
+        ...
+
+    async def resolve_channel_address(
+        self, session: Any, address: str, *, channel: str
+    ) -> Participant | None:
+        """Return the participant *address* is on *channel*, or None."""
         ...
 
 

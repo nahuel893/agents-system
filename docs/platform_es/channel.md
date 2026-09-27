@@ -37,7 +37,7 @@ class ChannelAdapter(Protocol):
 | `verify_inbound` | En el request, sobre el body crudo, después del techo de tamaño y **antes de parsear o persistir nada** | Rechaza lanzando `fastapi.HTTPException` (normalmente 403). Compara secretos en tiempo constante (`hmac.compare_digest` / `secrets.compare_digest`). |
 | `read_inbound` | En el request, solo después de que `verify_inbound` pasó | Devuelve `InboundDelivery(payload, messages)`. `payload` (un dict serializable a JSON) se guarda junto a cada mensaje; `messages` es un `InboundRef(message_id, conversation_key)` por mensaje. Sin mensajes significa "reconocer, no persistir nada" (un callback de estado, un body malformado). No debe lanzar ante entradas con forma de ataque. |
 | `extract_turn` | En el worker diferido, una vez por mensaje guardado | Dado el `payload` guardado y el id propio del mensaje, devuelve `InboundTurn(message_id, sender, text)`, o `None` para completarlo sin turno (un mensaje que no es texto, por ejemplo). |
-| `send_text` | En el worker diferido | Envía `body` a `to` (el remitente, normalizado por el `ParticipantDirectory` de la implementación). Lanza ante una falla: el worker reintenta. La entrega es **al menos una vez** —un envío ambiguo puede repetirse—. |
+| `send_text` | En el worker diferido | Envía `body` a `to` (el remitente, normalizado para este canal por el directorio de participantes de la implementación). Lanza ante una falla: el worker reintenta. La entrega es **al menos una vez** —un envío ambiguo puede repetirse—. |
 
 Reglas en las que se apoya la plataforma:
 
@@ -88,6 +88,42 @@ app = create_app(
   Se une al checkpointer compartido siempre que el proceso construya uno
   (`WHATSAPP_CHECKPOINTER_ENABLED`, que a pesar del nombre es el interruptor
   de todo el proceso).
+- Registrar cualquier canal exige un directorio de participantes que conozca
+  el canal (sección siguiente), o el arranque falla.
+
+## La identidad del participante es por canal (requisito de seguridad)
+
+Una dirección de remitente solo significa algo dentro del canal que la
+autenticó. Los mismos dígitos pueden ser el teléfono de un cliente de WhatsApp
+y, en otro canal, un id de chat o un valor que controla quien envía. Si un
+único directorio resolviera los remitentes de todos los canales sin conocer el
+canal, cualquiera que pudiera llegar a un segundo canal podría enviar el número
+de un cliente existente y hacer que el turno se ejecute y se registre con el id
+de participante de ese cliente.
+
+Por eso al directorio siempre se le dice el canal:
+
+```python
+class ChannelParticipantDirectory(Protocol):
+    def normalize_channel_address(self, raw: str, *, channel: str) -> str: ...
+    async def resolve_channel_address(
+        self, session: Any, address: str, *, channel: str
+    ) -> Participant | None: ...
+```
+
+- La implementación decide, de forma explícita y por canal, a qué identidad
+  pertenece una dirección. Hay que mantener los canales en espacios de
+  identidad separados salvo que la implementación tenga su propia prueba de
+  que una dirección en un canal es la misma persona en otro. Por lo demás el
+  contrato es el de `ParticipantDirectory`: un `ValueError` al normalizar
+  descarta la entrega, y la resolución es dueña de la transacción de su sesión.
+- Un `ParticipantDirectory` común, que no conoce el canal, sigue funcionando
+  en una implementación solo de WhatsApp: WhatsApp es el espacio de
+  direcciones para el que se escribió.
+- Un worker ligado a **cualquier** otro canal rechaza un directorio que no
+  conoce el canal. El lifespan construye ese worker, así que
+  `create_app(channels=...)` con un `participant_directory` que no conoce el
+  canal falla en el arranque, nombrando los canales.
 
 ## La configuración pertenece al adaptador
 
@@ -115,10 +151,10 @@ correctamente, agnósticos del canal.
 
 - **Solo texto.** `InboundTurn` lleva texto; los medios quedan fuera de
   alcance, igual que para WhatsApp.
-- **Un único directorio de participantes.** El `ParticipantDirectory` de la
-  implementación normaliza y resuelve el remitente de todos los canales. Un
-  canal cuyas direcciones no son números de teléfono necesita un directorio
-  que las entienda.
+- **Un único directorio de participantes.** La implementación pasa un solo
+  directorio, y sirve a todos los canales. Se le dice el canal de cada
+  dirección (ver arriba), así que un canal cuyas direcciones no son números de
+  teléfono se atiende con la lógica por canal de ese directorio.
 - **No es para APIs de request/respuesta.** El adaptador compatible con
   OpenAI (`/v1/chat/completions`, Open WebUI) responde en la misma respuesta
   HTTP; no tiene webhook entrante, ni traspaso durable, ni envío saliente, así
@@ -130,8 +166,11 @@ correctamente, agnósticos del canal.
 test, lo registra con `create_app(channels=...)` y conduce un turno completo
 por la ruta real, el `accept_inbound_message` real, el worker diferido real y
 un `AgentRuntime` real construido por el harness (solo el SQL del outbox y el
-proveedor del modelo son en memoria). Los `tests/test_webhook.py` y
-`tests/test_webhook_worker.py` sin cambios fijan el comportamiento de
-WhatsApp.
+proveedor del modelo son en memoria). El mismo archivo prueba que al
+directorio se le dice el canal de cada remitente, y que un directorio que no
+conoce el canal se rechaza para un segundo canal al construir el worker y en
+el arranque. Los `tests/test_webhook.py` y `tests/test_webhook_worker.py` sin
+cambios fijan el comportamiento de WhatsApp, incluido el directorio que no
+conoce el canal.
 
 > Espejo en inglés: `docs/platform/channel.md` (mantener ambos al día juntos).

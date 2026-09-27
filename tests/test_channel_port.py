@@ -24,7 +24,12 @@ from typing import Any, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from conftest import FakeConversationRecorder, create_test_app
+from conftest import (
+    FakeConversationRecorder,
+    FakeParticipant,
+    FakeParticipantDirectory,
+    create_test_app,
+)
 from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from langchain_core.language_models.fake_chat_models import (
@@ -49,7 +54,8 @@ from agents_system.services.outbox import (
     OutboxFailureOutcome,
     accept_inbound_message,
 )
-from agents_system.services.webhook_worker import DeferredWebhookWorker
+from agents_system.services.participants import ChannelParticipantDirectory
+from agents_system.services.webhook_worker import ChannelBinding, DeferredWebhookWorker
 
 FAKE_TOKEN = "fake-channel-token"
 FAKE_SENDER = "5491100000001"
@@ -93,6 +99,26 @@ class FakeChannel:
 
     async def send_text(self, to: str, body: str) -> None:
         self.sent.append((to, body))
+
+
+class ChannelAwareDirectory:
+    """A ``ChannelParticipantDirectory`` that keeps each channel's addresses
+    in an identity space of their own: the same raw sender on two channels
+    is two participants."""
+
+    def __init__(self) -> None:
+        self.normalized: list[tuple[str, str]] = []
+        self.resolved: list[tuple[str, str]] = []
+
+    def normalize_channel_address(self, raw: str, *, channel: str) -> str:
+        self.normalized.append((channel, raw))
+        return "+" + raw.lstrip("+")
+
+    async def resolve_channel_address(
+        self, session: Any, address: str, *, channel: str
+    ) -> FakeParticipant:
+        self.resolved.append((channel, address))
+        return FakeParticipant(id=f"{channel}/{address}")
 
 
 def _fake_body(*message_ids: str) -> bytes:
@@ -262,12 +288,14 @@ async def test_a_fake_second_channel_drives_a_full_turn_through_the_port(
     store.install(monkeypatch)
     fake = FakeChannel(token=FAKE_TOKEN)
     recorder = FakeConversationRecorder()
+    directory = ChannelAwareDirectory()
     settings = _boot_settings()
     app = create_test_app(
         agents={"support": "sales-agent"},
         grants={"support": ["read:catalog"]},
         channels={"fake": Channel(adapter=fake, runtime_id="support")},
         chat_model=_ToolAwareFakeModel(responses=[AIMessage(content=FAKE_REPLY)]),
+        participant_directory=directory,
         conversation_recorder=recorder,
     )
     app.dependency_overrides[get_settings] = lambda: settings
@@ -289,8 +317,10 @@ async def test_a_fake_second_channel_drives_a_full_turn_through_the_port(
             await _wait_for(lambda: store.completed)
 
     # The reply went out through the fake channel's own sender, to the
-    # participant the shared directory normalized.
+    # address the directory normalized -- told which channel it came from.
     assert fake.sent == [("+" + FAKE_SENDER, FAKE_REPLY)]
+    assert directory.normalized == [("fake", FAKE_SENDER)]
+    assert directory.resolved == [("fake", "+" + FAKE_SENDER)]
     # Durably accepted under the channel's own name, its ids scoped to it.
     (stored,) = store.inbound.values()
     assert stored.channel == "fake"
@@ -303,6 +333,7 @@ async def test_a_fake_second_channel_drives_a_full_turn_through_the_port(
     # The turn's conversation is scoped to the channel too.
     (turn,) = recorder.turns
     assert turn["thread_id"] == "fake:+" + FAKE_SENDER
+    assert turn["participant_id"] == "fake/+" + FAKE_SENDER
     assert turn["assistant_text"] == FAKE_REPLY
 
 
@@ -673,3 +704,139 @@ def test_the_worker_needs_at_least_one_channel() -> None:
             worker_id="worker-a",
             directory=MagicMock(),
         )
+
+
+# ---------------------------------------------------------------------------
+# Participant identity is resolved per channel, never across channels
+# ---------------------------------------------------------------------------
+
+
+def _whatsapp_envelope(message_id: str, sender: str) -> dict[str, Any]:
+    message = {"id": message_id, "from": sender, "text": {"body": "hola"}}
+    return {"entry": [{"changes": [{"value": {"messages": [message]}}]}]}
+
+
+def _replying_runtime() -> MagicMock:
+    runtime = MagicMock()
+    runtime.run_turn = AsyncMock(return_value=[AIMessage(content="ok")])
+    return runtime
+
+
+def test_the_channel_aware_test_directory_satisfies_its_protocol() -> None:
+    assert isinstance(ChannelAwareDirectory(), ChannelParticipantDirectory)
+    assert not isinstance(FakeParticipantDirectory(), ChannelParticipantDirectory)
+
+
+async def test_the_directory_is_told_which_channel_each_sender_arrived_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same raw sender on WhatsApp and on a second channel reaches the
+    directory as two (channel, address) questions, so it can keep them apart
+    -- a second channel cannot claim a WhatsApp customer's identity just by
+    sending that customer's number."""
+    store = _Store()
+    store.install(monkeypatch)
+    rows = [
+        InboundMessage(
+            id=uuid.uuid4(),
+            channel="whatsapp",
+            meta_message_id="wamid.1",
+            payload=_whatsapp_envelope("wamid.1", FAKE_SENDER),
+        ),
+        InboundMessage(
+            id=uuid.uuid4(),
+            channel="fake",
+            meta_message_id="fake:m-1",
+            payload=json.loads(_fake_body("m-1")),
+        ),
+    ]
+    for row in rows:
+        store.inbound[row.id] = row
+        work = OutboxWork(
+            id=uuid.uuid4(), inbound_message_id=row.id, conversation_key=FAKE_SENDER
+        )
+        store.work[work.id] = work
+    directory = ChannelAwareDirectory()
+    recorder = FakeConversationRecorder()
+    whatsapp = MagicMock()
+    whatsapp.send_text = AsyncMock()
+
+    worker = DeferredWebhookWorker(
+        session_factory=store.session_factory,
+        worker_id="worker-a",
+        directory=directory,
+        runtime=_replying_runtime(),
+        whatsapp_client=whatsapp,
+        recorder=recorder,
+        channels={
+            "fake": ChannelBinding(
+                adapter=FakeChannel(FAKE_TOKEN), runtime=_replying_runtime()
+            )
+        },
+    )
+    await worker.process_available(limit=2)
+
+    assert store.failures == []
+    assert sorted(directory.normalized) == [
+        ("fake", FAKE_SENDER),
+        ("whatsapp", FAKE_SENDER),
+    ]
+    assert sorted(directory.resolved) == [
+        ("fake", "+" + FAKE_SENDER),
+        ("whatsapp", "+" + FAKE_SENDER),
+    ]
+    assert sorted(turn["participant_id"] for turn in recorder.turns) == [
+        "fake/+" + FAKE_SENDER,
+        "whatsapp/+" + FAKE_SENDER,
+    ]
+
+
+def test_the_worker_refuses_a_channel_blind_directory_for_another_channel() -> None:
+    """A channel-blind ``ParticipantDirectory`` cannot tell a second
+    channel's senders from WhatsApp's, so it may serve WhatsApp alone."""
+    with pytest.raises(ValueError) as exc_info:
+        DeferredWebhookWorker(
+            session_factory=_Store().session_factory,
+            worker_id="worker-a",
+            directory=FakeParticipantDirectory(),
+            runtime=_replying_runtime(),
+            whatsapp_client=MagicMock(),
+            channels={
+                "fake": ChannelBinding(
+                    adapter=FakeChannel(FAKE_TOKEN), runtime=_replying_runtime()
+                )
+            },
+        )
+
+    message = str(exc_info.value)
+    assert "'fake'" in message
+    assert "ChannelParticipantDirectory" in message
+
+
+async def test_boot_refuses_a_registered_channel_with_a_channel_blind_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import ExitStack
+
+    from agents_system.main import lifespan
+
+    store = _Store()
+    settings = _boot_settings()
+    app = create_test_app(
+        agents={"support": "sales-agent"},
+        grants={"support": ["read:catalog"]},
+        channels={
+            "fake": Channel(adapter=FakeChannel(FAKE_TOKEN), runtime_id="support")
+        },
+        chat_model=_ToolAwareFakeModel(responses=[]),
+        participant_directory=FakeParticipantDirectory(),
+    )
+
+    with ExitStack() as stack, pytest.raises(ValueError) as exc_info:
+        for active in _lifespan_patches(settings, store):
+            stack.enter_context(active)
+        async with lifespan(app):
+            pass
+
+    assert "'fake'" in str(exc_info.value)
+    assert "ChannelParticipantDirectory" in str(exc_info.value)
