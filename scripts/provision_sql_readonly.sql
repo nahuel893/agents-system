@@ -57,10 +57,12 @@
 --     -f scripts/provision_sql_readonly.sql
 --
 -- Idempotent: safe to re-run, and re-running REPAIRS drift - every setting is
--- re-applied, every privilege is stripped, and only the listed views are
+-- re-applied, every privilege is stripped (by its recorded grantor, not just
+-- the one running this script - issue #131), and only the listed views are
 -- granted again. Remove a view from the list and re-run to revoke it.
--- Atomic: everything runs in one transaction, so a bad view name leaves the
--- role exactly as it was.
+-- Atomic: everything runs in one transaction, so a bad view name, or a
+-- privilege the repair could not actually strip, leaves the role exactly as
+-- it was (the final check at the end raises rather than let that commit).
 
 \set ON_ERROR_STOP on
 
@@ -96,19 +98,31 @@ GRANT CONNECT ON DATABASE :"DBNAME" TO sql_readonly;
 -- check refuses to run while it holds it.
 REVOKE CREATE ON DATABASE :"DBNAME" FROM sql_readonly;
 
--- 3. No inherited privileges: drop membership in any other role.
+-- 3. No inherited privileges: drop membership in any other role, from
+-- whichever role actually granted it. PostgreSQL 16 tracks a role
+-- membership grant's real grantor, and a bare REVOKE (no GRANTED BY)
+-- resolves its own implicit grantor as the CURRENT session role: a
+-- membership granted by anyone else only prints a WARNING
+-- ("role ... has not been granted membership in role ... by role ...")
+-- and is left in place, while this script still committed (issue #131,
+-- reproduced against a real PostgreSQL 16). Naming the recorded grantor
+-- explicitly is what actually removes it.
 DO $$
 DECLARE
     membership record;
 BEGIN
     FOR membership IN
-        SELECT granted.rolname
+        SELECT granted.rolname AS granted_role, grantor.rolname AS grantor_role
         FROM pg_auth_members AS m
         JOIN pg_roles AS granted ON granted.oid = m.roleid
         JOIN pg_roles AS member ON member.oid = m.member
+        JOIN pg_roles AS grantor ON grantor.oid = m.grantor
         WHERE member.rolname = 'sql_readonly'
     LOOP
-        EXECUTE format('REVOKE %I FROM sql_readonly', membership.rolname);
+        EXECUTE format(
+            'REVOKE %I FROM sql_readonly GRANTED BY %I',
+            membership.granted_role, membership.grantor_role
+        );
     END LOOP;
 END
 $$;
@@ -120,23 +134,69 @@ SELECT set_config('sql_readonly.views', :'sql_views', false) AS views_to_grant;
 
 DO $$
 DECLARE
+    reader_oid oid;
     schema_row record;
+    class_row record;
+    grantor_row record;
     entry text;
     parts text[];
 BEGIN
+    SELECT oid INTO STRICT reader_oid FROM pg_roles WHERE rolname = 'sql_readonly';
+
     FOR schema_row IN
-        SELECT nspname
+        SELECT oid, nspname, nspacl
         FROM pg_namespace
         WHERE nspname NOT IN ('pg_catalog', 'information_schema')
           AND nspname NOT LIKE 'pg\_toast%'
           AND nspname NOT LIKE 'pg\_temp\_%'
     LOOP
-        EXECUTE format('REVOKE ALL ON ALL TABLES IN SCHEMA %I FROM sql_readonly',
-                       schema_row.nspname);
-        EXECUTE format('REVOKE ALL ON ALL SEQUENCES IN SCHEMA %I FROM sql_readonly',
-                       schema_row.nspname);
-        EXECUTE format('REVOKE ALL ON SCHEMA %I FROM sql_readonly',
-                       schema_row.nspname);
+        -- Every table, view, materialized view, foreign table and sequence
+        -- in this schema: revoke every privilege sql_readonly holds on it,
+        -- from EACH role that actually granted it. A blanket
+        -- `REVOKE ALL ... FROM sql_readonly` (no GRANTED BY) only removes
+        -- what the CURRENT session role granted directly; a role that
+        -- re-granted a delegated (WITH GRANT OPTION) privilege from someone
+        -- else keeps it, with no error - reproduced against a real
+        -- PostgreSQL 16 (issue #131). Unlike role membership (step 3),
+        -- object-privilege REVOKE's own `GRANTED BY` clause only accepts
+        -- CURRENT_USER (PostgreSQL raises "grantor must be current user"
+        -- for anything else, confirmed against a real PostgreSQL 16), so
+        -- the actual grantor is impersonated with `SET ROLE` instead - safe
+        -- here because this whole script requires a superuser, who may
+        -- `SET ROLE` to any role. `aclexplode` on a NULL ACL (no privilege
+        -- customized on the object) returns no rows, so a plain
+        -- default-privilege object is correctly left alone here.
+        FOR class_row IN
+            SELECT c.oid, c.relname, c.relacl
+            FROM pg_class AS c
+            WHERE c.relnamespace = schema_row.oid
+              AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+        LOOP
+            FOR grantor_row IN
+                SELECT DISTINCT g.rolname
+                FROM aclexplode(class_row.relacl) AS a
+                JOIN pg_roles AS g ON g.oid = a.grantor
+                WHERE a.grantee = reader_oid
+            LOOP
+                EXECUTE format('SET ROLE %I', grantor_row.rolname);
+                EXECUTE format(
+                    'REVOKE ALL ON %I.%I FROM sql_readonly',
+                    schema_row.nspname, class_row.relname
+                );
+                RESET ROLE;
+            END LOOP;
+        END LOOP;
+
+        FOR grantor_row IN
+            SELECT DISTINCT g.rolname
+            FROM aclexplode(schema_row.nspacl) AS a
+            JOIN pg_roles AS g ON g.oid = a.grantor
+            WHERE a.grantee = reader_oid
+        LOOP
+            EXECUTE format('SET ROLE %I', grantor_row.rolname);
+            EXECUTE format('REVOKE ALL ON SCHEMA %I FROM sql_readonly', schema_row.nspname);
+            RESET ROLE;
+        END LOOP;
     END LOOP;
 
     FOREACH entry IN ARRAY string_to_array(current_setting('sql_readonly.views'), ',')
@@ -174,6 +234,110 @@ BEGIN
         EXECUTE format('GRANT USAGE ON SCHEMA %I TO sql_readonly', parts[1]);
         EXECUTE format('GRANT SELECT ON %I.%I TO sql_readonly', parts[1], parts[2]);
     END LOOP;
+END
+$$;
+
+-- 5. Verify the drift repair actually held, rather than trust that every
+-- REVOKE above matched every real grantor: raise (aborting the whole
+-- transaction, so nothing above is committed) if sql_readonly can still do
+-- anything beyond CONNECT, the listed views' SELECT and their schemas'
+-- USAGE. This is the same shape of check the tool itself runs on every call
+-- (services/db_role.py, check_query_role) - run here too so drift a REVOKE
+-- silently failed to repair is a hard failure at provisioning time, not a
+-- surprise at the tool's next call (issue #131).
+DO $$
+DECLARE
+    leftover_membership text;
+    leftover record;
+BEGIN
+    SELECT granted.rolname INTO leftover_membership
+    FROM pg_auth_members AS m
+    JOIN pg_roles AS granted ON granted.oid = m.roleid
+    JOIN pg_roles AS member ON member.oid = m.member
+    WHERE member.rolname = 'sql_readonly'
+    LIMIT 1;
+    IF leftover_membership IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_readonly is still a member of role "%": a REVOKE '
+            'above did not remove every grant (a grantor mismatch is the '
+            'usual cause on PostgreSQL 16 - see step 3). Repair it by hand '
+            'and re-run this script.', leftover_membership;
+    END IF;
+
+    IF pg_catalog.has_database_privilege('sql_readonly', current_database(), 'CREATE')
+    THEN
+        RAISE EXCEPTION 'sql_readonly can still CREATE in database %: the '
+            'REVOKE in step 2 did not hold.', current_database();
+    END IF;
+
+    FOR leftover IN
+        SELECT n.nspname, c.relname, c.relkind
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND n.nspname NOT LIKE 'pg\_toast%'
+          AND n.nspname NOT LIKE 'pg\_temp\_%'
+          AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+          AND (
+              (
+                  c.relkind = 'S'
+                  AND (
+                      pg_catalog.has_sequence_privilege(
+                          'sql_readonly', c.oid, 'SELECT'
+                      )
+                      OR pg_catalog.has_sequence_privilege(
+                          'sql_readonly', c.oid, 'USAGE, UPDATE'
+                      )
+                  )
+              )
+              OR (
+                  c.relkind <> 'S'
+                  AND (
+                      (
+                          pg_catalog.has_any_column_privilege(
+                              'sql_readonly', c.oid, 'SELECT'
+                          )
+                          -- Exempt exactly the views this run just granted
+                          -- SELECT on. Scoped to THIS match only: a write
+                          -- privilege below is never exempted, even on a
+                          -- listed view (issue #131 review).
+                          AND NOT (
+                              c.relkind IN ('v', 'm')
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM unnest(
+                                      string_to_array(current_setting('sql_readonly.views'), ',')
+                                  ) AS granted_entry(name)
+                                  WHERE parse_ident(btrim(granted_entry.name))
+                                        = ARRAY[n.nspname::text, c.relname::text]
+                              )
+                          )
+                      )
+                      OR pg_catalog.has_any_column_privilege(
+                          'sql_readonly', c.oid, 'INSERT, UPDATE, REFERENCES'
+                      )
+                      OR pg_catalog.has_table_privilege(
+                          'sql_readonly', c.oid, 'DELETE, TRUNCATE, TRIGGER'
+                      )
+                  )
+              )
+          )
+    LOOP
+        RAISE EXCEPTION 'sql_readonly can still access %.% (relkind %): a '
+            'REVOKE above did not hold for every grantor.',
+            leftover.nspname, leftover.relname, leftover.relkind;
+    END LOOP;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_namespace AS n
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND n.nspname NOT LIKE 'pg\_toast%'
+          AND n.nspname NOT LIKE 'pg\_temp\_%'
+          AND pg_catalog.has_schema_privilege('sql_readonly', n.oid, 'CREATE')
+    ) THEN
+        RAISE EXCEPTION 'sql_readonly can still CREATE in some schema: a '
+            'REVOKE above did not hold for every grantor.';
+    END IF;
 END
 $$;
 

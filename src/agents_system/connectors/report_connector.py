@@ -25,10 +25,10 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import structlog
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
+from agents_system.services.db_role import DATABASE_UNAVAILABLE_ERRORS
 from agents_system.services.reports import (
     ParamSpec,
     ReportSpec,
@@ -244,7 +244,7 @@ def build_report_connector(
             result = await run_report(engine, spec, raw_params)
         except ReportValidationError as error:
             return {"error": str(error)}
-        except SQLAlchemyError:
+        except DATABASE_UNAVAILABLE_ERRORS:
             # A DB failure has to come back as a RESULT, not an exception.
             # `fetch_rows` runs a bare `await conn.execute`, and an
             # OperationalError (connection refused, statement_timeout, lock
@@ -255,6 +255,13 @@ def build_report_connector(
             # `except Exception` returned 200 to Meta and the customer got no
             # reply at all, while the OpenAI adapter had no handler and
             # returned a raw 500 that never reached structlog.
+            #
+            # `SQLAlchemyError` alone let a raw connect-phase failure through:
+            # on the asyncpg connect path SQLAlchemy does not wrap the
+            # driver's or the OS's own exception (see
+            # `db_role.UNWRAPPED_CONNECT_ERRORS`), so a closed port, an
+            # unknown host, a rejected password or a connect timeout still
+            # escaped here uncaught (issue #131).
             #
             # The tool boundary is the right place to stop it, because "the
             # reporting database is unavailable" is a real answer the agent

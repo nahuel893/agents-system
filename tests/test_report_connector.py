@@ -281,6 +281,50 @@ async def test_connector_returns_a_structured_error_when_the_database_fails(
     assert result["error_kind"] == "database_unavailable"
 
 
+_CONNECT_FAILURES = [
+    "ConnectionRefusedError",
+    "gaierror",
+    "InvalidPasswordError",
+    "TimeoutError",
+]
+
+
+@pytest.mark.parametrize("error_id", _CONNECT_FAILURES)
+async def test_connector_returns_a_result_for_the_real_unwrapped_connect_failures(
+    monkeypatch: Any, error_id: str
+) -> None:
+    """`fetch_rows` opens its own connection; on the asyncpg connect path
+    SQLAlchemy does not wrap a closed port, an unknown host, a rejected
+    password or a connect timeout - each escaped `except SQLAlchemyError`
+    here (issue #131), exactly like it escaped `role_is_read_only`.
+    """
+    import socket as socket_module
+
+    import asyncpg
+
+    from agents_system.connectors import report_connector as rc
+
+    errors: dict[str, Exception] = {
+        "ConnectionRefusedError": ConnectionRefusedError(111, "Connect call failed"),
+        "gaierror": socket_module.gaierror(-2, "Name or service not known"),
+        "InvalidPasswordError": asyncpg.exceptions.InvalidPasswordError(
+            "password authentication failed"
+        ),
+        "TimeoutError": TimeoutError("connect timed out"),
+    }
+    error = errors[error_id]
+
+    async def exploding_run_report(*_: Any, **__: Any) -> dict[str, Any]:
+        raise error
+
+    monkeypatch.setattr(rc, "run_report", exploding_run_report)
+
+    connector = rc.build_report_connector(object(), _catalog())
+    result = await connector({"report": "sales_by_zone", "params": {}})
+
+    assert result["error_kind"] == "database_unavailable"
+
+
 async def test_connector_database_error_never_leaks_the_connection_string(
     monkeypatch: Any,
 ) -> None:

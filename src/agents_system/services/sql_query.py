@@ -236,9 +236,26 @@ def json_cell(value: Any) -> Any:
     Money stays a string, for the reason `reports.json_safe` gives: no
     binary-float artifacts in figures a human reconciles. Non-finite floats
     become strings because strict JSON has no NaN or Infinity; bytes use
-    PostgreSQL's own hex form; anything else unknown (UUID, time, interval,
-    network types) becomes its string form rather than a serialization
-    failure that would take the whole turn down.
+    PostgreSQL's own hex form; anything else unknown (UUID, time, network
+    types) falls through to its Python `str()` form rather than a
+    serialization failure that would take the whole turn down.
+
+    That fallback runs on whatever asyncpg already decoded the value into,
+    and for three PostgreSQL types that decoding is lossy in ways this
+    function cannot detect or undo (issue #131):
+
+    - an interval becomes a `datetime.timedelta` using a fixed 30-day month
+      and 365-day year, so `interval '1 month'` and `interval '30 days'`
+      arrive here indistinguishable;
+    - `-infinity`/`infinity` timestamps and dates become
+      `datetime.min`/`datetime.max` - real-looking year 1 / year 9999 dates
+      with nothing to mark that the original value was unbounded;
+    - a composite (row) type becomes an `asyncpg.Record`, whose `str()` here
+      is a Python repr, not the value's SQL text.
+
+    A query that needs the exact value for one of these types should cast
+    that column to text itself (`col::text`), which reaches this function as
+    an already-safe, already-precise string instead.
     """
     if value is None or isinstance(value, str | bool | int):
         return value
