@@ -121,10 +121,16 @@ registry.register(backends.message_sender_tool_spec())
   forma. Un destinatario existente devuelve `status: "recorded"`; nunca se
   envía ni se entrega, y su registro en memoria se pierde al terminar el
   proceso. Un destinatario desconocido devuelve `status: "not_found"`.
-- `catalog_search` es solo léxica (subcadenas en SKU o descripción). Cada
-  resultado tiene `similarity: null`; no afirma búsqueda vectorial ni
-  semántica. Una consulta vacía o sin coincidencias devuelve `results: []` con
-  `classification: "no_match"`.
+- `catalog_search` es solo léxica (subcadenas en SKU o descripción); no
+  afirma búsqueda vectorial ni semántica. Aun así reporta una señal de
+  confianza real (#117): una coincidencia exacta, sin distinguir mayúsculas,
+  en el SKU o la descripción devuelve `classification: "direct"` con
+  `similarity: 1.0`, la clasificación de la plataforma para una coincidencia
+  confiable (el contrato de `catalog_search` en `docs/platform/tool.md`).
+  Cualquier otra coincidencia es `classification: "ambiguous"` con
+  `similarity: null` — una coincidencia parcial por subcadena no tiene una
+  señal de distancia real más allá de "no es idéntica". Una consulta vacía o
+  sin coincidencias devuelve `results: []` con `classification: "no_match"`.
 - `run_report` expone el `CATALOG` portátil y cerrado de ventas; su esquema
   de herramienta documenta el tipo, los valores permitidos y el valor por
   defecto de cada parámetro desde las definiciones `ReportSpec` / `ParamSpec`

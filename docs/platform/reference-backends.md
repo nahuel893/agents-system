@@ -118,10 +118,15 @@ registry.register(backends.message_sender_tool_spec())
   same way. An existing recipient returns `status: "recorded"`; it is never
   sent or delivered, and its in-memory record is lost at process exit. An
   unknown recipient returns `status: "not_found"`.
-- `catalog_search` is lexical only (SKU or description substring matching).
-  Each result has `similarity: null`; it makes no vector or semantic-search
-  claim. An empty query or no match returns `results: []` with
-  `classification: "no_match"`.
+- `catalog_search` is lexical only (SKU or description substring matching);
+  it makes no vector or semantic-search claim. It still reports a real
+  confidence signal (#117): an exact, case-insensitive match on the SKU or
+  description reports `classification: "direct"` with `similarity: 1.0`, the
+  platform's classification for a confident match (`docs/platform/tool.md`'s
+  `catalog_search` contract). Any other hit is `classification: "ambiguous"`
+  with `similarity: null` — a partial substring match has no real distance
+  signal beyond "not identical". An empty query or no match returns
+  `results: []` with `classification: "no_match"`.
 - `run_report` exposes the closed portable sales `CATALOG`; its tool schema
   documents every report parameter's type, allowed values, and default from
   the catalog's `ReportSpec` / `ParamSpec` definitions. A parameter shared by
