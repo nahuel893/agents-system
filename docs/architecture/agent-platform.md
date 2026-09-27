@@ -434,3 +434,5 @@ The following decisions are still intentionally open:
    - RBAC and injection rules per connector
 5. `docs/architecture/adr-002-agent-model-and-capabilities.md`
    - architecture corrections to the agent model, prompts, tool permissions, and persistence described in this document — includes the formal "agent" definition (`docs/platform/agent.md`) and records the correction of this document's folder-path references from `agents/` to `platform/roles/` (ADR-002 F.19)
+6. `docs/architecture/adr-008-mcp-support.md`
+   - Proposed: whether/how agents consume tools from external Model Context Protocol servers, or expose the platform's own tools as one, and how either maps onto the tiered permission model above

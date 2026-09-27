@@ -255,6 +255,7 @@ Runs one read-only query the model wrote, for questions the fixed `run_report` c
 
 - Permission model and connector-specific injection rules: `docs/architecture/permission-model.md`
 - Read-only SQL tool, its trust boundary and the AD-2 amendment: `docs/architecture/adr-007-read-only-sql-tool.md`
+- Proposed Model Context Protocol (MCP) support — mapping MCP tools onto `ToolSpec`/`Tier`/Layer-2 revalidation: `docs/architecture/adr-008-mcp-support.md`
 - Injection pipeline and ordering: `docs/platform/harness.md`
 - Skill definitions (behavioral counterpart to tools): `docs/platform/skill.md`
 - Agent `manifest.md` `tools` field: `docs/platform/role.md`

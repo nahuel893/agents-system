@@ -230,3 +230,4 @@ Los agentes operan en nombre de identidades reales. Sus accesos están limitados
 - Reglas y límites de delegación: `docs/architecture_es/delegation-policy.md`
 - Matriz de control de acceso y RBAC: `docs/architecture_es/permission-model.md`
 - Correcciones de arquitectura al modelo de agentes, prompts, permisos de herramientas y persistencia descritos en este documento — incluye la definición formal de "agente" (`docs/platform_es/agent.md`) y señala dónde la versión en inglés de este documento (`docs/architecture/agent-platform.md`) quedó desactualizada con la ruta `agents/` (ruta real: `platform/roles/`; esta versión en español ya usa la ruta correcta): `docs/architecture_es/adr-002-agent-model-and-capabilities.md`
+- Propuesta de soporte de Model Context Protocol (MCP), cliente y/o servidor, y cómo encaja en el modelo de permisos por niveles de arriba: `docs/architecture_es/adr-008-mcp-support.md`
