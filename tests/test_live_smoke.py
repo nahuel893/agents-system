@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 import pytest
 
@@ -90,6 +91,14 @@ async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> Non
     # `read_thread` assertion below, on top of `boot_live_harness` now also
     # deleting each run's own checkpoint threads at teardown.
     phone = f"+1555{uuid.uuid4().int % 10_000_000:07d}"
+    # Captured BEFORE the request, not after (#113 review follow-up): the
+    # API turn above already wrote a `role="sales-agent"`,
+    # `event_type="tool_call_attempted"`, `tool_name="catalog_search"` audit
+    # row, which is otherwise indistinguishable from a row the webhook turn
+    # itself should write -- `occurred_after` is what actually scopes the
+    # assertion below to this turn, per this module's own docstring design
+    # ("role/event_type/occurred_after").
+    webhook_turn_started_at = datetime.now(UTC)
     webhook_response = await live_harness.deliver_webhook(
         phone=phone,
         text=(
@@ -111,7 +120,10 @@ async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> Non
     assert sent["text"]["body"]
 
     webhook_audit_rows = await live_harness.audit_rows(
-        role="sales-agent", event_type="tool_call_attempted", tool_name="catalog_search"
+        role="sales-agent",
+        event_type="tool_call_attempted",
+        tool_name="catalog_search",
+        occurred_after=webhook_turn_started_at,
     )
     assert webhook_audit_rows, (
         "expected at least one catalog_search tool_call_attempted audit row "

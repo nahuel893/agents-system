@@ -494,11 +494,21 @@ def _run_migrations(database_url: str, *, repo_root: Path) -> None:
     `audit-migration`/`outbox-migration` jobs' own throwaway-database
     pattern. `alembic/env.py` reads `DATABASE_URL` from the environment in
     preference to `Settings` (see its own module docstring), which is
-    exactly why only the env var needs to change here."""
+    exactly why only the env var needs to change here.
+
+    The subprocess `env` is built from scratch (`PATH` + `DATABASE_URL`),
+    never `{**os.environ, ...}` (#113 review follow-up): a full copy of the
+    process environment also copies any real model-provider secret a
+    developer exported to run the live harness against a real model into
+    this function's own locals, where a migration failure combined with any
+    verbose-traceback tool (`pytest -l`/`--showlocals`, rich tracebacks, a
+    notebook/IDE debugger) could print it verbatim. `alembic upgrade head`
+    genuinely only needs `DATABASE_URL`; `PATH` is kept so the interpreter
+    and any tool it shells out to can still be resolved."""
     import subprocess
     import sys
 
-    env = {**os.environ, "DATABASE_URL": database_url}
+    env = {"PATH": os.environ.get("PATH", ""), "DATABASE_URL": database_url}
     subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=repo_root,
@@ -743,12 +753,17 @@ class LiveHarness:
         )
         body = json.dumps(envelope).encode()
         signature = sign_payload(body, self.meta_webhook_secret)
-        # Recorded BEFORE the request completes (not after): `phone` is the
-        # exact thread_id `DeferredWebhookWorker` engages the checkpointer
-        # with (#113 review) once it processes this message, regardless of
-        # whether the worker has run yet by the time this call returns --
-        # teardown must still know to clean it up.
-        self.used_thread_ids.add(phone)
+        # Recorded BEFORE the request completes (not after), and normalized
+        # the same way `DeferredWebhookWorker` will: it checkpoints under
+        # `AcceptAllParticipantDirectory.normalize_address(turn.phone_number)`
+        # (#113 review), which adds a leading `+` when *phone* is missing
+        # one. Tracking the raw, unnormalized `phone` here would record the
+        # wrong key whenever a caller passes a number without a leading
+        # `+`, so teardown would delete nothing and leak the real Redis
+        # checkpoint (#113 review follow-up) -- regardless of whether the
+        # worker has run yet by the time this call returns.
+        normalized_phone = AcceptAllParticipantDirectory().normalize_address(phone)
+        self.used_thread_ids.add(normalized_phone)
         return await self.client.post(
             "/webhook",
             content=body,
