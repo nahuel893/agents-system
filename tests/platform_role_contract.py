@@ -41,7 +41,36 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 import re
+import unicodedata
 from typing import Any
+
+#: The mathematical minus sign U+2212 is visually indistinguishable from a
+#: hyphen but Unicode does not classify it under the ``Pd`` (dash
+#: punctuation) general category, so it needs listing explicitly alongside
+#: the category check in ``_normalize_dash_lookalikes`` below.
+_MINUS_SIGN = "−"
+
+
+def _normalize_dash_lookalikes(text: str) -> str:
+    """Map every Unicode dash-punctuation character (general category
+    ``Pd`` -- hyphen U+2010, non-breaking hyphen U+2011, figure dash U+2012,
+    en dash U+2013, em dash U+2014, horizontal bar U+2015, fullwidth
+    hyphen-minus U+FF0D, etc.) plus the mathematical minus sign U+2212
+    (category ``Sm``, but visually indistinguishable from a hyphen) to the
+    plain ASCII ``-``.
+
+    ``_changelog_names_role`` only ever excludes the literal ASCII ``-``/
+    ``_`` from its word boundary. Without this normalization, a changelog
+    entry that spells a hyphenated predefined role (e.g. ``sales-agent``)
+    with one of these look-alike characters instead of ASCII ``-`` would not
+    be recognized as a dash by that boundary check, letting the bare
+    substring ``agent`` inside it read as a genuine, separately-bounded
+    word -- the exact substring-collision bug ``_changelog_names_role``
+    exists to close, reopened one Unicode dash away."""
+    return "".join(
+        "-" if ch == _MINUS_SIGN or unicodedata.category(ch) == "Pd" else ch
+        for ch in text
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -350,9 +379,16 @@ def _changelog_names_role(role: str, changelog_text: str) -> bool:
     real ``CHANGELOG.md`` for reasons that have nothing to do with the
     role's own governance. ``\\b`` alone does not treat ``-``/``_`` as word
     boundaries, so this also excludes ``sales-agent``/``sales_agent``
-    matching a search for ``"agent"``."""
+    matching a search for ``"agent"``.
+
+    *changelog_text* is normalized through ``_normalize_dash_lookalikes``
+    first so a visually-identical Unicode dash (e.g. ``sales‑agent``,
+    non-breaking hyphen) blocks the boundary the same way the literal ASCII
+    ``-`` already does -- otherwise that look-alike character is neither
+    ``\\w`` nor the excluded ASCII ``-``, and the bare substring ``agent``
+    inside it would read as a genuine, separately-bounded word."""
     pattern = r"(?<![\w-])" + re.escape(role) + r"(?![\w-])"
-    return re.search(pattern, changelog_text) is not None
+    return re.search(pattern, _normalize_dash_lookalikes(changelog_text)) is not None
 
 
 def check_role_governance_snapshot(

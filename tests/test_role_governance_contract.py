@@ -171,6 +171,45 @@ def test_changelog_check_rejects_unrelated_substring_collision() -> None:
     assert "CHANGELOG" in str(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    "lookalike_dash",
+    [
+        "‐",  # HYPHEN
+        "‑",  # NON-BREAKING HYPHEN
+        "‒",  # FIGURE DASH
+        "–",  # EN DASH
+        "—",  # EM DASH
+        "―",  # HORIZONTAL BAR
+        "−",  # MINUS SIGN
+    ],
+)
+def test_changelog_check_rejects_unicode_dash_lookalike_collision(
+    lookalike_dash: str,
+) -> None:
+    """Regression (issue #133): the same substring-collision bug
+    ``test_changelog_check_rejects_unrelated_substring_collision`` closes for
+    the ASCII ``-``/``_`` case reopens, narrower, for a visually-identical
+    Unicode dash. ``\\b``'s own word-boundary logic already treats these
+    dash-lookalikes as non-word characters, so a hyphenated predefined role
+    name spelled with one of them (e.g. ``sales‑agent``) still lets the
+    bare substring ``"agent"`` read as a genuine, separately-bounded word --
+    exactly what ``_changelog_names_role``'s ASCII ``-``/``_`` exclusion
+    exists to prevent for the real hyphen. A real changelog entry that only
+    ever names the compound role ``sales‑agent`` must never satisfy the
+    bare role ``"agent"``'s changelog condition."""
+    lookalike_changelog_text = f"### sales{lookalike_dash}agent gained order_writer\n"
+    with pytest.raises(AssertionError) as excinfo:
+        check_role_governance_snapshot(
+            "agent",
+            _FIXTURE_SNAPSHOT.tools | {"new_tool"},
+            _FIXTURE_SNAPSHOT.permissions,
+            "2.0",  # MAJOR bump satisfied
+            _FIXTURE_SNAPSHOT,
+            changelog_text=lookalike_changelog_text,
+        )
+    assert "CHANGELOG" in str(excinfo.value)
+
+
 def test_divergence_with_both_conditions_passes() -> None:
     check_role_governance_snapshot(
         _FIXTURE_ROLE,
