@@ -215,7 +215,11 @@ own `model:` never affects any other runtime.
 
 - **Role-to-role `extends:`** folds `model` per key, the same shape as
   `execution_limits`: a child may declare only `temperature: 0.7` and still
-  inherit `provider`/`model` from its parent.
+  inherit `provider`/`model` from its parent. A child's `model:` must still
+  be a mapping, `inherit`, or omitted; any other value (a bare scalar, a
+  malformed string) fails resolution immediately, even when the parent's
+  own `model:` is perfectly valid — it is never silently discarded in
+  favor of the parent's.
 - **A deployment override** replaces the role's `model:` wholesale, not per
   key -- picking a provider+model for a client is a deliberate, complete
   choice, not a partial tweak. A deployment that declares no `model:` at all
@@ -231,10 +235,14 @@ own `model:` never affects any other runtime.
 Every registered runtime's `model:` (if any) is resolved and its chat model
 is actually constructed during application startup (`main.py`'s
 `lifespan`), inside the same loop that already builds every other runtime
--- a missing `OPENAI_COMPATIBLE_BASE_URL`, an unsupported provider, or any
+-- a missing `OPENAI_COMPATIBLE_BASE_URL`, a missing provider credential
+(`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, ...), an unsupported provider, or any
 other malformed declaration fails boot loudly, the same posture every other
 boot-time configuration check in this file already has. Nothing here is
-deferred to the first inbound message.
+deferred to the first inbound message. When the failing `model:` belongs to
+one specific agent's own declaration (rather than the global
+`ADAPTER_PROVIDER` default every runtime without one falls back to), the
+boot error names that agent's role too.
 
 ### Cost tracking is unaffected
 

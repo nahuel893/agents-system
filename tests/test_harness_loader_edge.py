@@ -383,6 +383,40 @@ def test_fold_parent_into_child_child_description_wins_on_name_collision() -> No
 
 
 # ---------------------------------------------------------------------------
+# _validate_escalation_wording — the same silent normalized-key collision
+# `_render_escalation_block` (#137) fixed for its own `descriptions`
+# dict-building can hide behind the PARENT's own descriptions too (#146
+# review).
+# ---------------------------------------------------------------------------
+def test_validate_escalation_wording_raises_on_parent_description_key_collision() -> (
+    None
+):
+    """`_validate_escalation_wording` used to build its own ``wording`` dict
+    with a plain comprehension over the PARENT's ``descriptions`` -- two
+    distinct raw keys that normalize to the same condition name (a stray
+    extra space in one of two otherwise-identical declarations) silently
+    resolved to whichever the comprehension iterated last, exactly the
+    shape of collision issue #137 already closed for
+    ``_render_escalation_block``'s own dict-building. This must raise
+    instead of silently picking one."""
+    from agents_system.harness.loader import _validate_escalation_wording
+
+    parent = {
+        "conditions": ["low stock"],
+        "descriptions": {
+            "low stock": "Escalate when stock runs low.",
+            "low  stock": "A different, colliding description.",
+        },
+    }
+    resolved = {"conditions": ["low stock"], "escalate_to": None}
+
+    with pytest.raises(DefinitionError, match="normalize"):
+        _validate_escalation_wording(
+            parent, {}, resolved, who="role 'child'", against="parent", rule=""
+        )
+
+
+# ---------------------------------------------------------------------------
 # _read_md — missing file fails loud
 # ---------------------------------------------------------------------------
 def test_read_md_missing_raises(tmp_path: pathlib.Path) -> None:

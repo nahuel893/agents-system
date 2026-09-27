@@ -2120,8 +2120,28 @@ def _fold_parent_into_child(
             **(parent_model or {}),
             **child_model,
         }
-    else:
+    elif child_model is None or child_model == "inherit":
         resolved_model = parent_model
+    else:
+        # Issue #146 review: a non-mapping, non-None, non-'inherit' value
+        # (a bare scalar -- the same authoring typo `_resolve_model_
+        # declaration` already rejects at every OTHER boundary: the
+        # no-override path in `resolve()` and a deployment override in
+        # `merge()`) used to fall through to the branch above and silently
+        # resolve to the PARENT's model, discarding the child's malformed
+        # declaration with no error at all. A per-key merge cannot simply
+        # run the child value through `_resolve_model_declaration` here --
+        # a legitimate partial override (e.g. `model: {temperature: 0.7}`
+        # alone, inheriting `provider`/`model` from the parent) would fail
+        # ITS OWN completeness check -- so only the shape (mapping / None /
+        # 'inherit') is rejected here; full-shape validation still runs on
+        # the fully-resolved value in `resolve()`/`merge()`.
+        raise DefinitionError(
+            f"Invariant violation — model: {who} declares a malformed "
+            f"model: value {child_model!r}; expected a mapping with "
+            "'provider'/'model' keys (or omit the key, or set it to "
+            "'inherit', to inherit)."
+        )
 
     def _merge_mapping(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         merged = dict(a)
@@ -3314,10 +3334,32 @@ def _validate_escalation_wording(
     both files (``_fold_parent_into_child``).
     """
     inherited = {_condition_name(c) for c in _as_str_list(parent.get("conditions"))}
-    wording = {
-        _condition_name(name): " ".join(str(text).split())
-        for name, text in _descriptions_of(parent).items()
-    }
+    # Issue #146 review: the same silent key-collision `_render_escalation_
+    # block` (issue #137) fixed for its own `descriptions` dict-building
+    # applies here too. A plain dict comprehension over the PARENT's
+    # `descriptions` would let two distinct raw keys that normalize to the
+    # same condition name (a stray extra space in one of two otherwise-
+    # identical declarations) silently resolve to whichever the
+    # comprehension iterated last -- hiding the collision instead of
+    # raising on it, exactly the shape of authoring mistake #137 already
+    # guards against on the render side.
+    wording: dict[str, str] = {}
+    _wording_raw_keys: dict[str, str] = {}
+    for _raw_key, _text in _descriptions_of(parent).items():
+        _normalized_key = _condition_name(_raw_key)
+        _colliding_raw_key = _wording_raw_keys.get(_normalized_key)
+        if _colliding_raw_key is not None:
+            raise DefinitionError(
+                f"Invariant violation — escalation_rules.descriptions: the "
+                f"{against} declares keys {_colliding_raw_key!r} and "
+                f"{_raw_key!r}, which both normalize to {_normalized_key!r}. "
+                "Two distinct raw description keys colliding after "
+                "whitespace normalization would silently keep whichever one "
+                "happened to be declared last. Fix the source so each "
+                "condition has exactly one description key."
+            )
+        _wording_raw_keys[_normalized_key] = str(_raw_key)
+        wording[_normalized_key] = " ".join(str(_text).split())
     for name, text in _descriptions_of(declared).items():
         condition = _condition_name(name)
         if condition in inherited and " ".join(str(text).split()) != wording.get(

@@ -12,11 +12,14 @@ read-only engine, not the turn-scoped session).
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import structlog
+import structlog.testing
 
 from agents_system.connectors.report_connector import (
     build_report_connector,
@@ -361,6 +364,101 @@ async def test_connector_database_error_never_leaks_the_connection_string(
     assert secret not in serialized
     assert "bi_readonly" not in serialized
     assert "db:5432" not in serialized
+
+
+async def test_connector_logs_only_error_class_and_report_name_never_a_traceback(
+    monkeypatch: Any,
+) -> None:
+    """Issue #146 review: `_logger.exception(...)` renders the caught
+    exception's full traceback into the log -- `run_report` executes with
+    real bound parameters, so a driver-level `SQLAlchemyError`'s traceback
+    text can carry those parameter values, including customer data, into
+    the logs even though the RETURNED result is already fixed text (see the
+    test above). Only the error class and the report name belong in the
+    log, the same fixed-text rule `sql_query_connector.py`'s own
+    database-error branches already follow: never `exc_info`, never the
+    exception's own text.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from agents_system.connectors import report_connector as rc
+
+    secret = "sup3rs3cr3t-bi-password"
+
+    async def exploding_run_report(*_: Any, **__: Any) -> dict[str, Any]:
+        raise OperationalError(
+            "SELECT 1",
+            {},
+            Exception(
+                f"could not connect to postgresql://bi_readonly:{secret}@db:5432/acme"
+            ),
+        )
+
+    monkeypatch.setattr(rc, "run_report", exploding_run_report)
+
+    connector = rc.build_report_connector(object(), _catalog())
+
+    with structlog.testing.capture_logs() as logs:
+        result = await connector({"report": "sales_by_zone", "params": {}})
+
+    assert result["error_kind"] == "database_unavailable"
+    assert len(logs) == 1
+    assert logs[0]["error_class"] == "OperationalError"
+    assert logs[0]["report"] == "sales_by_zone"
+    assert not logs[0].get("exc_info")
+    assert secret not in json.dumps(logs[0], default=str)
+
+
+async def test_connector_database_error_is_never_rendered_with_the_statement_by_a_real_pipeline(
+    monkeypatch: Any,
+) -> None:
+    """`structlog.testing.capture_logs()` intercepts the event dict BEFORE
+    any exception-formatting processor runs, so the test above cannot see
+    whether `exc_info=True` on the caught error would still render the
+    failing statement (with the model's literal values baked in) once a
+    real structlog pipeline (`format_exc_info` + `JSONRenderer`) formats the
+    log line -- this is the one that actually runs that pipeline, mirroring
+    `test_sql_query_connector.py`'s identical real-pipeline regression test
+    (issue #146 review).
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from agents_system.connectors import report_connector as rc
+
+    secret = "sup3rs3cr3t-bi-password"
+
+    async def exploding_run_report(*_: Any, **__: Any) -> dict[str, Any]:
+        raise OperationalError(
+            "SELECT 1",
+            {},
+            Exception(
+                f"could not connect to postgresql://bi_readonly:{secret}@db:5432/acme"
+            ),
+        )
+
+    monkeypatch.setattr(rc, "run_report", exploding_run_report)
+
+    connector = rc.build_report_connector(object(), _catalog())
+
+    stream = io.StringIO()
+    structlog.configure(
+        processors=[
+            structlog.processors.StackInfoRenderer(),
+            structlog.dev.set_exc_info,
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),
+        ],
+        logger_factory=structlog.PrintLoggerFactory(file=stream),
+        cache_logger_on_first_use=False,
+    )
+    try:
+        result = await connector({"report": "sales_by_zone", "params": {}})
+    finally:
+        structlog.reset_defaults()
+
+    rendered = stream.getvalue()
+    assert result["error_kind"] == "database_unavailable"
+    assert secret not in rendered
 
 
 async def test_connector_marks_an_empty_result_as_a_successful_no_match(
