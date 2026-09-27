@@ -546,7 +546,6 @@ re-run this table, not assume it still holds.
 | `escalation_notifier` | `connectors/platform_connectors.py:420` | T2 | `send:escalation` → Send (T2) | pass (2>=2) | pass (max 2>=2) |
 | `use_term` | `connectors/operator.py:816` | T3 | `exec:command` → Exec (T3) | pass (3>=3) | pass (max 3>=3) |
 | `read_file` | `connectors/operator.py:838` | T3 | `read:files` → Read (T0) | pass (3>=0) | **FAIL** (max 0>=3 is false) |
-| `session_state` (eval tool) | `evals/live_registry.py:133` | T0 | none | pass (vacuous) | N/A (T0, no floor) |
 | public library example | `__init__.py:19-24` (docs, not a shipped runtime tool) | T1 | `read:catalog` → Read (T0) | pass (1>=0) | N/A (T1, no floor) |
 
 #### Scenario: read_file is the one pre-existing R2b failure
