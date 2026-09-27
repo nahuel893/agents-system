@@ -226,8 +226,17 @@ class _ReadOnlyEngine:
     # `seed_demo=True`): every `execute()` raises this instead of returning
     # a row batch.
     raises: Exception | None = None
+    # issue #145 follow-up -- simulates the database itself being
+    # unreachable (connection refused, unknown host, connect timeout, a
+    # password/connection-limit refusal): on the asyncpg connect path
+    # SQLAlchemy does NOT wrap these as `SQLAlchemyError`, unlike a
+    # query-path failure, so `connect()` itself raises instead of
+    # `execute()`.
+    connect_raises: Exception | None = None
 
     def connect(self) -> _ReadOnlyConnection:
+        if self.connect_raises is not None:
+            raise self.connect_raises
         return _ReadOnlyConnection(self)
 
 
@@ -575,6 +584,33 @@ async def test_message_sender_reports_not_configured_when_demo_schema_is_missing
 
     assert result["error_kind"] == "reference_data_not_configured"
     assert backends.recorded_messages == []
+
+
+async def test_catalog_search_reports_not_configured_when_database_is_unreachable() -> (
+    None
+):
+    """issue #145 follow-up: a DB-unreachable connect-path failure (connection
+    refused, unknown host, connect timeout, a password/connection-limit
+    refusal) is NOT wrapped by SQLAlchemy the way a query-path failure is --
+    it surfaces as a bare `OSError`/`asyncpg.PostgresError`, exactly the
+    class `services/db_role.py`'s `DATABASE_UNAVAILABLE_ERRORS` exists to
+    catch (issue #131), and which the sibling `run_report` tool
+    (`connectors/report_connector.py`) already handles. `_fetch_rows` must
+    degrade this exactly like the missing-table case above, never let it
+    crash the whole turn."""
+    engine = _ReadOnlyEngine(
+        connect_raises=ConnectionRefusedError("[Errno 111] Connect call failed")
+    )
+    backends = ReferenceBackends(engine)
+
+    with capture_logs() as logs:
+        result = await backends.catalog_search_tool_spec().connector({"q": "yerba"})
+
+    assert result["error_kind"] == "reference_data_not_configured"
+    assert any(
+        entry.get("event") == "reference_backends.demo_schema_unavailable"
+        for entry in logs
+    )
 
 
 async def test_catalog_search_still_reports_a_genuine_no_match_when_schema_is_fine() -> (

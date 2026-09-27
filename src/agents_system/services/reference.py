@@ -24,12 +24,12 @@ import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agents_system.connectors.report_connector import build_report_tool_spec
 from agents_system.connectors.sales_reports import CATALOG
 from agents_system.harness.registry import Tier, ToolSpec
+from agents_system.services.db_role import DATABASE_UNAVAILABLE_ERRORS
 
 _logger = structlog.get_logger(__name__)
 
@@ -276,24 +276,36 @@ class ReferenceBackends:
         """Run *statement* against the configured demo/reference schema.
 
         Returns ``None`` -- distinct from an honest empty list -- when the
-        query itself fails at the database level (issue #145: a demo schema
-        that is CONNECTED but never migrated/seeded, e.g.
-        `evals.live_harness.boot_live_harness` without `seed_demo=True`,
-        raised `asyncpg.exceptions.UndefinedTableError: relation "articulos"
-        does not exist`, wrapped by SQLAlchemy as a `SQLAlchemyError`
-        subclass). That is a configuration problem, not a legitimate "no
-        rows" answer, so every caller degrades it exactly like
-        `readonly_engine is None` (`_not_configured()`) instead of letting a
-        raw SQL exception crash the whole turn -- which is what drove
-        `services/outbox.py`'s retry-with-backoff storm this issue reports
-        as a real-model run barely completing under load.
+        database itself is the problem, never when a query legitimately has
+        no rows. Two distinct failure shapes land here (issue #145 and its
+        follow-up):
+
+        - A query-path failure: a demo schema that is CONNECTED but never
+          migrated/seeded, e.g. `evals.live_harness.boot_live_harness`
+          without `seed_demo=True`, raises
+          `asyncpg.exceptions.UndefinedTableError: relation "articulos" does
+          not exist`, wrapped by SQLAlchemy as a `SQLAlchemyError` subclass.
+        - A connect-path failure: the database is unreachable (connection
+          refused, unknown host, connect timeout, a password/connection-limit
+          refusal). On the asyncpg connect path SQLAlchemy does NOT wrap
+          these -- they surface as a bare `OSError` or `asyncpg.PostgresError`
+          (see `services/db_role.py`'s `UNWRAPPED_CONNECT_ERRORS`, added for
+          the identical reason in issue #131, and already relied on by the
+          sibling `run_report` tool in `connectors/report_connector.py`).
+
+        Both are configuration problems, not a legitimate "no rows" answer,
+        so every caller degrades them exactly like `readonly_engine is None`
+        (`_not_configured()`) instead of letting a raw exception crash the
+        whole turn -- which is what drove `services/outbox.py`'s
+        retry-with-backoff storm this issue reports as a real-model run
+        barely completing under load.
         """
         assert self._readonly_engine is not None
         try:
             async with self._readonly_engine.connect() as connection:
                 result = await connection.execute(statement, params)
                 return [dict(row) for row in result.mappings().all()]
-        except SQLAlchemyError as exc:
+        except DATABASE_UNAVAILABLE_ERRORS as exc:
             _logger.warning(
                 "reference_backends.demo_schema_unavailable",
                 message=(
