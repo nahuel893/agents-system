@@ -223,13 +223,47 @@ corrida en la que fue ejercitado, y fue ejercitado al menos una vez.
 - Crecimiento del historial en conversaciones largas (reductor
   `add_messages` sin límite, arriba).
 
-## Fase 4 — Ciclo de vida completo (desbloqueada; ADR-004 / library-first-agents fusionado)
+## Fase 4 — Ciclo de vida completo (terminada, #84)
 
-Definir un agente personalizado → registrarlo → servirlo → conversar con él
-→ auditarlo → actualizarlo. El trabajo library-first-agents
-(`openspec/changes/archive/2026-09-26-library-first-agents/`) se fusionó y
-archivó, entregando la superficie de localizador/registro que esta fase
-necesita; todavía no comenzada (seguimiento en #84).
+**Estado: terminada (#84).** `tests/test_live_eval_phase4.py` (`pytest -m live`)
+prueba el ciclo de vida completo del agente personalizado -- definir,
+registrar, servir, conversar, auditar, actualizar -- como UN solo escenario en
+vivo, a través de `boot_live_harness`, con compuerta al 80% sobre `EVAL_RUNS`
+(3 por defecto; observado 3/3, 100%, contra `deepseek/deepseek-v4-flash-0731`).
+El agente personalizado
+(`tests/fixtures/agents/phase4_lifecycle/roles/restock-helper`) se construye
+con la API pública `Agent` (`Agent.from_folder`): extiende el rol predefinido
+`sales-agent`, agrega una skill (`restock_alert`) y una herramienta
+`command_tools` declarativa (`check_stock`, ADR-002 C.12), y ajusta
+`max_tool_calls` a 5. Se registra con `create_app(agents={id: Agent},
+grants=...)` bajo un runtime id elegido, se sirve (`GET /v1/models` lo lista) y
+se conversa con él tanto por la API HTTP real como por el webhook real de
+WhatsApp -- sus llamadas a `check_stock` llegan a la tabla real `audit_event`
+bajo su propio nombre de rol, con la misma taxonomía/redacción que usan las
+filas de un rol predefinido (hereda sin cambios el `audit_policy` de
+`sales-agent`). Actualizarlo -- una definición nueva con una skill cambiada
+(un override `skill_contents` inline) y un permiso menos
+(`{"inherit": True, "remove": ["run:check_stock"]}`) -- se ejercita mediante
+una segunda llamada, independiente, a `boot_live_harness` bajo el MISMO
+runtime id (un "reinicio de la app"): el cambio se prueba de forma
+determinística (el prompt compuesto por `build_runtime`, nunca solo la
+redacción del modelo), y el permiso eliminado bloquea la herramienta en el
+momento del BOOT -- una fila de auditoría `tool_denied` llega antes de
+cualquier conversación, y el modelo, aun así pedido que la llame, escala
+correctamente por `required_tool_missing` en lugar de fabricar un resultado.
+
+La única aserción del ciclo de vida que no necesita modelo -- que una
+variante del mismo agente personalizado que eleva un límite o afloja
+`untrusted_input` falla en el boot con un `DefinitionError` claro -- vive en
+`tests/test_agent_lifecycle_safety_ceiling.py`, a través de la misma llamada
+`build_runtime()` que el lifespan de `create_app` hace por cada agente
+registrado; no necesita infraestructura en vivo y corre en la suite offline
+por defecto.
+
+El trabajo library-first-agents
+(`openspec/changes/archive/2026-09-26-library-first-agents/`) se había
+fusionado y archivado, entregando la superficie de localizador/registro que
+esta fase necesitaba.
 
 ## Funcionalidad → escenario en vivo → aserción → cómo se observa (Fases 0–2)
 

@@ -196,13 +196,42 @@ was exercised, and it was exercised at least once.
 - History growth in long-running conversations (unbounded `add_messages`
   reducer, above).
 
-## Phase 4 — Full lifecycle (unblocked; ADR-004 / library-first-agents merged)
+## Phase 4 — Full lifecycle (done, #84)
 
-Define a custom agent → register it → serve it → converse with it → audit it
-→ update it. The library-first-agents work
-(`openspec/changes/archive/2026-09-26-library-first-agents/`) has merged and
-archived, landing the locator/registration surface this phase needs; not yet
-started (tracked at #84).
+**Status: done (#84).** `tests/test_live_eval_phase4.py` (`pytest -m live`)
+proves the full custom-agent lifecycle -- define, register, serve, converse,
+audit, update -- as ONE live scenario, through `boot_live_harness`, gated at
+80% over `EVAL_RUNS` (3 by default; observed 3/3, 100%, over
+`deepseek/deepseek-v4-flash-0731`). The custom agent
+(`tests/fixtures/agents/phase4_lifecycle/roles/restock-helper`) is built with
+the public `Agent` API (`Agent.from_folder`): it extends the predefined
+`sales-agent`, adds a skill (`restock_alert`) and a declarative `command_tools`
+tool (`check_stock`, ADR-002 C.12), and tightens `max_tool_calls` to 5. It is
+registered with `create_app(agents={id: Agent}, grants=...)` under a chosen
+runtime id, served (`GET /v1/models` lists it), and conversed with over both
+the real HTTP API and the real WhatsApp webhook -- its `check_stock` calls
+land in the real `audit_event` table under its own role name, the same
+taxonomy/redaction a predefined role's rows use (it inherits `sales-agent`'s
+`audit_policy` unchanged). Updating it -- a new definition with a changed
+skill (an inline `skill_contents` override) and one fewer permission
+(`{"inherit": True, "remove": ["run:check_stock"]}`) -- is exercised through a
+second, independent `boot_live_harness` call under the SAME runtime id (an
+"app restart"): the change is proven deterministically (`build_runtime`'s own
+composed prompt, never only the model's wording), and the removed permission
+blocks the tool at BOOT time -- a `tool_denied` audit row lands before any
+conversation happens, and the model, still asked to call it, correctly
+escalates on `required_tool_missing` instead of fabricating a result.
+
+The one lifecycle assertion that needs no model -- that a variant of the same
+custom agent which raises a limit or loosens `untrusted_input` fails at boot
+with a clear `DefinitionError` -- lives in
+`tests/test_agent_lifecycle_safety_ceiling.py` instead, through the exact
+`build_runtime()` call `create_app`'s lifespan makes for every registered
+agent; it needs no live infrastructure and runs in the default offline suite.
+
+The library-first-agents work
+(`openspec/changes/archive/2026-09-26-library-first-agents/`) had merged and
+archived, landing the locator/registration surface this phase needed.
 
 ## Feature → scenario → assertion → how observed (Phases 0–2)
 
