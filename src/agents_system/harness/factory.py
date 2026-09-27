@@ -157,6 +157,17 @@ def _read_skill(root: pathlib.Path, skills_dir: pathlib.Path, name: str) -> str 
     out of the root, a skill name with ``..`` in it, and a role name that
     walks out of the deployments root are all refused. Never raises for an
     escape: it is reported as "not found here", like a missing file.
+
+    Issue #127 review follow-up: this collapses every failure — an escape,
+    a permission error, an oversized file (``_read_within_root``'s own
+    cap), and non-UTF-8 content — into the same "not found" outcome rather
+    than a `FactoryError` naming the specific reason. That is a deliberate
+    extension of the choice already documented above (issue #75), not an
+    oversight: distinguishing "escapes its root" from "not found" here would
+    also have to distinguish every other reason a skill file cannot be
+    read, and `_load_skills`' `FactoryError` already names every source it
+    checked, which is what an author needs to fix a genuinely missing
+    skill.
     """
     path = _resolve_within_root(root, skills_dir, f"{name}.md")
     if path is None:

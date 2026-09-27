@@ -121,6 +121,24 @@ def test_argv0_unresolvable_name_raises() -> None:
         )
 
 
+def test_argv0_relative_which_result_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #127: `shutil.which(raw)` can itself return a RELATIVE path when
+    `$PATH` contains a relative entry (e.g. `.` or `bin`) — ADR-002 C.12
+    requires argv[0] to resolve to an absolute path at load time, so a
+    relative `which()` result must fail loudly instead of being stored and
+    silently needing `$PATH`/cwd context again at call time."""
+    monkeypatch.setattr(
+        "agents_system.harness.loader.shutil.which", lambda raw: "relative/bin/tool"
+    )
+
+    with pytest.raises(DefinitionError, match="relative"):
+        _validate_argv_template(
+            ["tool", "literal"], {}, tool_name="bad", source=_SOURCE
+        )
+
+
 # ---------------------------------------------------------------------------
 # _parse_command_tools — the full per-entry manifest shape
 # ---------------------------------------------------------------------------
