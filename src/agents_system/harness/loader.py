@@ -53,7 +53,7 @@ import pathlib
 import re
 import shutil
 import stat
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 import structlog
@@ -1285,6 +1285,42 @@ _DIR_OPEN_FLAG = os.O_PATH if hasattr(os, "O_PATH") else os.O_RDONLY
 #: size. 1 MiB comfortably fits every real role/manifest/policy/skill file.
 _MAX_DEFINITION_FILE_BYTES = 1024 * 1024
 
+#: Chunk size for `_read_bounded`'s incremental read loop -- large enough to
+#: keep the syscall count reasonable for a normal-sized file, small enough
+#: that an oversized file is caught shortly after crossing the cap instead
+#: of being pulled fully into memory first.
+_READ_CHUNK_BYTES = 65536
+
+
+def _read_bounded(read: Callable[[int], bytes], *, label: str) -> bytes:
+    """Read from ``read`` (a callable taking a byte count and returning up
+    to that many bytes, empty at EOF -- the shape of both ``os.read`` and a
+    file object's ``.read()``) in bounded chunks, raising ``OSError`` with
+    ``errno.EFBIG`` the moment the running total exceeds
+    ``_MAX_DEFINITION_FILE_BYTES``, without ever accumulating more than that
+    plus one chunk in memory.
+
+    This is the cap's actual enforcement. The ``stat()``/``fstat()`` size
+    check kept in both ``_read_within_root`` branches ahead of this call is
+    only a fast-path rejection for a file already oversized at that instant
+    -- a point-in-time check that a file growing between the check and the
+    read would otherwise slip past, since a plain ``read()``/``read_text()``
+    call has no bound of its own (issue #127 PR review, TOCTOU). Bounding
+    the read itself, not just the size it reported earlier, holds regardless
+    of what the file does after the check.
+    """
+    total = 0
+    chunks: list[bytes] = []
+    while True:
+        chunk = read(_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > _MAX_DEFINITION_FILE_BYTES:
+            raise OSError(errno.EFBIG, "definition file too large", label)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
 
 def _read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
     """Read ``path``, a real path strictly inside ``root`` (what
@@ -1299,9 +1335,13 @@ def _read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
     only, not list/read). A component that is a symlink by now fails the open
     instead of being followed, so the file read is always the one under
     ``root``. The file is opened the same way, non-blocking, and must be a
-    regular file no larger than ``_MAX_DEFINITION_FILE_BYTES``: a FIFO cannot
-    stall the load, a directory or FIFO is refused with its handle closed,
-    and an oversized file is refused before it is read.
+    regular file: a FIFO cannot stall the load, and a directory or FIFO is
+    refused with its handle closed. A file already oversized at ``stat()``/
+    ``fstat()`` time is rejected before it is read at all, but the cap is
+    actually enforced by ``_read_bounded`` bounding the read call itself, so
+    a file that grows past the cap after that check still cannot force a
+    read beyond ``_MAX_DEFINITION_FILE_BYTES`` (issue #127 PR review,
+    TOCTOU).
 
     Every refusal is an ``OSError`` (a path outside ``root``, a lexical
     ``.``/``..`` component, and invalid UTF-8 content all included); callers
@@ -1329,7 +1369,9 @@ def _read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
         try:
             if path.stat().st_size > _MAX_DEFINITION_FILE_BYTES:
                 raise OSError(errno.EFBIG, "definition file too large", path.name)
-            return path.read_text(encoding="utf-8")
+            with path.open("rb") as handle:
+                raw = _read_bounded(handle.read, label=path.name)
+            return raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise OSError(errno.EINVAL, f"not valid UTF-8 ({exc})", path.name) from exc
 
@@ -1357,11 +1399,14 @@ def _read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
     except BaseException:
         os.close(file_fd)
         raise
-    with open(file_fd, encoding="utf-8") as handle:
-        try:
-            return handle.read()
-        except UnicodeDecodeError as exc:
-            raise OSError(errno.EINVAL, f"not valid UTF-8 ({exc})", parts[-1]) from exc
+    try:
+        raw = _read_bounded(lambda size: os.read(file_fd, size), label=parts[-1])
+    finally:
+        os.close(file_fd)
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise OSError(errno.EINVAL, f"not valid UTF-8 ({exc})", parts[-1]) from exc
 
 
 def _shown_path(root: pathlib.Path, path: pathlib.Path) -> str:

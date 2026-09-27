@@ -127,6 +127,8 @@ A check followed by a read leaves a window: a folder that passed the check can b
 
 This was chosen over documenting the window because it takes only the standard library on both systems the platform runs on, and it removes the gap instead of describing it.
 
+The file's size cap (1 MiB) has the same shape of window and is closed the same way: a `stat()`/`fstat()` size check ahead of the read is only a fast-path rejection for a file already oversized at that instant, since checking a reported size and then reading are still two separate moments a growing file could straddle. The cap's actual enforcement is in the read itself — `_read_bounded` reads in fixed-size chunks and raises the moment the running total crosses the cap, so it never depends on the size the earlier check saw (PR #138 review).
+
 Threat model:
 
 - **Untrusted:** anyone who can write inside an importer root, for example an uploaded or per-tenant agent folder. Every sibling folder under that same root is inside the same untrusted boundary and can be reached by another sibling's `extends:` chain (see "Siblings share a root" below) — a per-tenant layout must give each tenant its own root, never share one parent folder across tenants.

@@ -127,6 +127,8 @@ Validar y después leer deja una ventana: una carpeta que pasó la validación p
 
 Se eligió esto en lugar de documentar la ventana porque solo usa la biblioteca estándar en los dos sistemas donde corre la plataforma, y elimina el hueco en vez de describirlo.
 
+El límite de tamaño del archivo (1 MiB) tiene el mismo tipo de ventana y se cierra de la misma forma: una validación de tamaño con `stat()`/`fstat()` antes de la lectura es solo un rechazo rápido para un archivo ya sobredimensionado en ese instante, porque validar un tamaño reportado y después leer siguen siendo dos momentos distintos que un archivo en crecimiento puede atravesar. El límite se aplica de verdad en la lectura misma — `_read_bounded` lee en bloques de tamaño fijo y falla en cuanto el total acumulado supera el límite, así que nunca depende del tamaño que vio la validación anterior (revisión de la PR #138).
+
 Modelo de amenazas:
 
 - **No confiable:** cualquiera que pueda escribir dentro de una raíz de importador, por ejemplo una carpeta de agente subida o por tenant. Cada carpeta hermana bajo esa misma raíz está dentro del mismo límite no confiable y puede ser alcanzada por la cadena `extends:` de otra hermana (ver "Las carpetas hermanas comparten raíz" más arriba) — un diseño por tenant tiene que darle a cada tenant su propia raíz, nunca compartir una carpeta padre entre tenants.

@@ -34,6 +34,7 @@ from agents_system.harness import loader as loader_module
 from agents_system.harness.factory import FactoryError, _load_skills
 from agents_system.harness.loader import (
     _DIR_FD_READS,
+    _MAX_DEFINITION_FILE_BYTES,
     DefinitionError,
     FolderLocator,
     RootConfig,
@@ -193,6 +194,82 @@ def test_oversized_definition_file_is_refused(tmp_path: pathlib.Path) -> None:
         resolve(FolderLocator(path=folder, root=root), roots=_roots(tmp_path))
 
     assert "too large" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# The size cap is a stat()/fstat() check strictly BEFORE the read, not a
+# bound on the read itself (TOCTOU) -- PR #138 review follow-up.
+# ---------------------------------------------------------------------------
+
+
+@_needs_dir_fd
+def test_read_within_root_bounds_the_actual_read_after_fstat_toctou(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dir-fd path checks `os.fstat(file_fd).st_size` and THEN reads the
+    fd with a bare `handle.read()` -- the check does not bound the read that
+    follows it. A file that grows between the two still gets fully read,
+    defeating the cap. Proven deterministically (no real race needed) by
+    growing the file, via its path, as a side effect of the `fstat()` call
+    itself -- the same interleaving a concurrent writer in the importer
+    folder (an untrusted, ongoing-write trust boundary) would race into."""
+    root = tmp_path / "agents"
+    folder = _agent(root, "vip-support")
+    role_md = folder / "role.md"
+    role_md.write_text("small-and-under-cap\n", encoding="utf-8")
+
+    original_fstat = os.fstat
+    grown = False
+
+    def fstat_that_grows_the_file_mid_check(fd: int) -> os.stat_result:
+        nonlocal grown
+        result = original_fstat(fd)
+        if not grown:
+            grown = True
+            role_md.write_bytes(
+                role_md.read_bytes() + b"X" * (_MAX_DEFINITION_FILE_BYTES + 5000)
+            )
+        return result
+
+    monkeypatch.setattr(loader_module.os, "fstat", fstat_that_grows_the_file_mid_check)
+
+    with pytest.raises(OSError, match="too large"):
+        _read_within_root(root, role_md)
+
+
+def test_read_within_root_bounds_the_actual_read_after_stat_toctou_fallback(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same TOCTOU as above, for the non-dir-fd fallback path (`path.stat()`
+    then `path.read_text()`) -- forced regardless of platform by disabling
+    `_DIR_FD_READS`, since this fallback is what any OS lacking
+    directory-handle support runs unconditionally."""
+    root = tmp_path / "agents"
+    folder = _agent(root, "vip-support")
+    role_md = folder / "role.md"
+    role_md.write_text("small-and-under-cap\n", encoding="utf-8")
+
+    monkeypatch.setattr(loader_module, "_DIR_FD_READS", False)
+
+    original_stat = pathlib.Path.stat
+    grown = False
+
+    def stat_that_grows_the_file_mid_check(
+        self: pathlib.Path, *args: object, **kwargs: object
+    ) -> os.stat_result:
+        nonlocal grown
+        result = original_stat(self, *args, **kwargs)
+        if not grown and self == role_md:
+            grown = True
+            role_md.write_bytes(
+                role_md.read_bytes() + b"X" * (_MAX_DEFINITION_FILE_BYTES + 5000)
+            )
+        return result
+
+    monkeypatch.setattr(pathlib.Path, "stat", stat_that_grows_the_file_mid_check)
+
+    with pytest.raises(OSError, match="too large"):
+        _read_within_root(root, role_md)
 
 
 # ---------------------------------------------------------------------------
