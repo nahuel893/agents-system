@@ -218,7 +218,12 @@ propio `model:` nunca afecta a ningún otro runtime.
 
 - **`extends:` entre roles** combina `model` clave por clave, la misma
   forma que `execution_limits`: un hijo puede declarar solo
-  `temperature: 0.7` y aun así heredar `provider`/`model` de su padre.
+  `temperature: 0.7` y aun así heredar `provider`/`model` de su padre. El
+  `model:` del hijo igual debe ser un mapping, `inherit`, u omitirse;
+  cualquier otro valor (un escalar suelto, una cadena malformada) hace
+  fallar la resolución de inmediato, incluso cuando el `model:` del padre
+  es perfectamente válido -- nunca se descarta en silencio a favor del
+  padre.
 - **Una anulación de despliegue** reemplaza el `model:` del rol por
   completo, no clave por clave -- elegir un proveedor+modelo para un
   cliente es una decisión deliberada y completa, no un ajuste parcial. Un
@@ -235,11 +240,16 @@ propio `model:` nunca afecta a ningún otro runtime.
 El `model:` de cada runtime registrado (si lo tiene) se resuelve y su
 modelo de chat se construye realmente durante el arranque de la aplicación
 (`lifespan` de `main.py`), dentro del mismo bucle que ya construye cada
-otro runtime -- un `OPENAI_COMPATIBLE_BASE_URL` faltante, un proveedor no
-soportado, o cualquier otra declaración malformada hace fallar el arranque
-en voz alta, la misma postura que ya tiene cualquier otra verificación de
-configuración de arranque en este documento. Nada aquí se difiere hasta el
-primer mensaje entrante.
+otro runtime -- un `OPENAI_COMPATIBLE_BASE_URL` faltante, una credencial de
+proveedor faltante (`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, ...), un proveedor
+no soportado, o cualquier otra declaración malformada hace fallar el
+arranque en voz alta, la misma postura que ya tiene cualquier otra
+verificación de configuración de arranque en este documento. Nada aquí se
+difiere hasta el primer mensaje entrante. Cuando el `model:` que falla
+pertenece a la declaración propia de un agente específico (en vez del
+proveedor global por defecto `ADAPTER_PROVIDER` al que recurre todo runtime
+sin declaración propia), el error de arranque también nombra el rol de ese
+agente.
 
 ### El seguimiento de costos no se ve afectado
 

@@ -41,36 +41,37 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 import re
-import unicodedata
+import string
 from typing import Any
 
-#: The mathematical minus sign U+2212 is visually indistinguishable from a
-#: hyphen but Unicode does not classify it under the ``Pd`` (dash
-#: punctuation) general category, so it needs listing explicitly alongside
-#: the category check in ``_normalize_dash_lookalikes`` below.
-_MINUS_SIGN = "−"
+#: Issue #146 review: characters that genuinely separate two words in prose
+#: -- whitespace plus the ASCII punctuation actually used to end or delimit
+#: a sentence/clause. ``-``/``_`` are deliberately excluded: they are the
+#: two characters a hyphenated or snake_cased predefined role name (e.g.
+#: ``sales-agent``) is joined with, so they must never count as a boundary.
+#:
+#: This used to be a BLACKLIST instead ("anything that is not ``\w`` or a
+#: literal ``-`` is a boundary"), extended in #133/#134 to also normalize
+#: every Unicode dash-punctuation (category ``Pd``) look-alike to ASCII
+#: ``-`` first. That approach has to enumerate every look-alike connector
+#: character one Unicode general-category class at a time -- and a
+#: look-alike from any OTHER class (e.g. the swung dash ``⁓``, category
+#: ``Po``, or the undertie ``‿``, category ``Pc``) reopens the identical
+#: substring-collision bug, one character class away, because it is
+#: neither ``\w`` nor a normalized dash. An explicit ALLOWLIST fails closed
+#: instead: only a character actually known to separate words counts as a
+#: boundary, so an unanticipated connector-shaped character of any kind
+#: -- whatever Unicode category it turns out to belong to -- is never
+#: mistaken for one.
+_BOUNDARY_CHARACTERS = frozenset(string.punctuation) - {"-", "_"}
 
 
-def _normalize_dash_lookalikes(text: str) -> str:
-    """Map every Unicode dash-punctuation character (general category
-    ``Pd`` -- hyphen U+2010, non-breaking hyphen U+2011, figure dash U+2012,
-    en dash U+2013, em dash U+2014, horizontal bar U+2015, fullwidth
-    hyphen-minus U+FF0D, etc.) plus the mathematical minus sign U+2212
-    (category ``Sm``, but visually indistinguishable from a hyphen) to the
-    plain ASCII ``-``.
-
-    ``_changelog_names_role`` only ever excludes the literal ASCII ``-``/
-    ``_`` from its word boundary. Without this normalization, a changelog
-    entry that spells a hyphenated predefined role (e.g. ``sales-agent``)
-    with one of these look-alike characters instead of ASCII ``-`` would not
-    be recognized as a dash by that boundary check, letting the bare
-    substring ``agent`` inside it read as a genuine, separately-bounded
-    word -- the exact substring-collision bug ``_changelog_names_role``
-    exists to close, reopened one Unicode dash away."""
-    return "".join(
-        "-" if ch == _MINUS_SIGN or unicodedata.category(ch) == "Pd" else ch
-        for ch in text
-    )
+def _is_boundary(char: str | None) -> bool:
+    """Whether *char* (or ``None`` for the start/end of the text) is a
+    valid word boundary around a role name -- see ``_BOUNDARY_CHARACTERS``.
+    ``str.isspace()`` covers Unicode whitespace broadly (including a
+    non-breaking space), not only the ASCII forms."""
+    return char is None or char.isspace() or char in _BOUNDARY_CHARACTERS
 
 
 @dataclasses.dataclass(frozen=True)
@@ -377,18 +378,30 @@ def _changelog_names_role(role: str, changelog_text: str) -> bool:
     substring of the unrelated product name ``"agents-system"``/
     ``"agents_system"``, which already appears throughout this repository's
     real ``CHANGELOG.md`` for reasons that have nothing to do with the
-    role's own governance. ``\\b`` alone does not treat ``-``/``_`` as word
-    boundaries, so this also excludes ``sales-agent``/``sales_agent``
-    matching a search for ``"agent"``.
+    role's own governance. Neither ``-`` nor ``_`` is ever treated as a
+    boundary, so this also excludes ``sales-agent``/``sales_agent`` matching
+    a search for ``"agent"``.
 
-    *changelog_text* is normalized through ``_normalize_dash_lookalikes``
-    first so a visually-identical Unicode dash (e.g. ``sales‑agent``,
-    non-breaking hyphen) blocks the boundary the same way the literal ASCII
-    ``-`` already does -- otherwise that look-alike character is neither
-    ``\\w`` nor the excluded ASCII ``-``, and the bare substring ``agent``
-    inside it would read as a genuine, separately-bounded word."""
-    pattern = r"(?<![\w-])" + re.escape(role) + r"(?![\w-])"
-    return re.search(pattern, _normalize_dash_lookalikes(changelog_text)) is not None
+    Issue #146 review: every occurrence of the bare substring is checked
+    against ``_is_boundary`` on BOTH sides, an explicit allowlist of real
+    word-separating characters (see ``_BOUNDARY_CHARACTERS``) rather than a
+    blacklist that has to enumerate every look-alike connector character
+    one Unicode category at a time (as the earlier ``\\b``-plus-``-``/``_``
+    exclusion, then its dash-lookalike-normalizing successor, both did).
+    Anything not on that allowlist -- a letter, digit, ``-``/``_``, or any
+    other connector-shaped character of any Unicode category -- fails
+    closed as "not a boundary", so a role spelled with an unanticipated
+    look-alike connector (e.g. ``sales⁓agent``) can never read as a
+    genuine, separately-bounded ``"agent"``."""
+    pattern = re.escape(role)
+    for match in re.finditer(pattern, changelog_text):
+        before = changelog_text[match.start() - 1] if match.start() > 0 else None
+        after = (
+            changelog_text[match.end()] if match.end() < len(changelog_text) else None
+        )
+        if _is_boundary(before) and _is_boundary(after):
+            return True
+    return False
 
 
 def check_role_governance_snapshot(

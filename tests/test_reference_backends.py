@@ -315,6 +315,36 @@ async def test_reference_backends_catalog_search_stays_ambiguous_for_partial_mat
     }
 
 
+async def test_reference_backends_catalog_search_direct_classification_keeps_non_exact_rows_null() -> (
+    None
+):
+    """Issue #146 review: `classification` is `"direct"` for the WHOLE
+    response the moment ANY row is an exact match -- it is not a per-row
+    property. A non-exact row returned alongside that exact one in the SAME
+    response must still report its own `similarity: None`, not inherit the
+    response's overall confidence (docs/platform/reference-backends.md)."""
+    engine = _ReadOnlyEngine(
+        row_batches=[
+            [
+                {"sku": "ART-001", "description": "Yerba mate 1kg"},
+                {"sku": "ART-002", "description": "Yerba mate 500g"},
+            ]
+        ]
+    )
+    backends = ReferenceBackends(engine)
+    spec = backends.catalog_search_tool_spec()
+
+    result = await spec.connector({"q": "ART-001"})
+
+    assert result == {
+        "results": [
+            {"sku": "ART-001", "description": "Yerba mate 1kg", "similarity": 1.0},
+            {"sku": "ART-002", "description": "Yerba mate 500g", "similarity": None},
+        ],
+        "classification": "direct",
+    }
+
+
 async def test_reference_backends_lookup_existing_demo_client_or_returns_no_hit() -> (
     None
 ):

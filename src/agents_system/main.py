@@ -653,6 +653,18 @@ def _build_chat_model(
         from langchain_anthropic import ChatAnthropic
 
         anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY") or None
+        if not anthropic_api_key:
+            # Issue #146 review: unlike groq (`ChatGroq` raises `GroqError`
+            # at construction on a `None` key) and openai_compatible (the
+            # explicit guards below), `ChatAnthropic` validates nothing at
+            # construction time -- it silently builds a client that would
+            # only fail on its first real call, as an opaque authentication
+            # error deep inside a turn instead of a boot failure naming the
+            # missing variable. With per-agent models (#141) a role can now
+            # select its own provider, so this matters more than it used to.
+            raise ValueError(
+                "ANTHROPIC_API_KEY is required when ADAPTER_PROVIDER=anthropic"
+            )
         anthropic_kwargs: dict[str, Any] = {}
         if temperature is not None:
             anthropic_kwargs["temperature"] = temperature
@@ -757,12 +769,24 @@ def _resolve_model_for_definition(
     selection = getattr(definition, "model", None)
     if not isinstance(selection, Mapping) or not selection:
         return default_model
-    return _build_chat_model(
-        selection["provider"],
-        model_override=selection["model"],
-        temperature=selection.get("temperature"),
-        max_tokens=selection.get("max_tokens"),
-    )
+    try:
+        return _build_chat_model(
+            selection["provider"],
+            model_override=selection["model"],
+            temperature=selection.get("temperature"),
+            max_tokens=selection.get("max_tokens"),
+        )
+    except ValueError as error:
+        # Issue #146 review: `_build_chat_model` has no runtime/role
+        # context of its own -- it builds the SAME shared default model
+        # every runtime without its own declaration reuses, so it can only
+        # name the missing credential, never which agent needed it. This is
+        # the one call site that resolves a per-agent `model:` declaration,
+        # so it is the only place that can name the role too.
+        role_name = getattr(definition, "role_name", "<unknown>")
+        raise ValueError(
+            f"Role {role_name!r} failed to build its model: {error}"
+        ) from error
 
 
 _PROVIDER_PROBE_TIMEOUT_S = 1.0

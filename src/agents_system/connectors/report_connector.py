@@ -244,7 +244,7 @@ def build_report_connector(
             result = await run_report(engine, spec, raw_params)
         except ReportValidationError as error:
             return {"error": str(error)}
-        except DATABASE_UNAVAILABLE_ERRORS:
+        except DATABASE_UNAVAILABLE_ERRORS as error:
             # A DB failure has to come back as a RESULT, not an exception.
             # `fetch_rows` runs a bare `await conn.execute`, and an
             # OperationalError (connection refused, statement_timeout, lock
@@ -266,8 +266,20 @@ def build_report_connector(
             # The tool boundary is the right place to stop it, because "the
             # reporting database is unavailable" is a real answer the agent
             # can give.
-            _logger.exception(
-                "bi.report_failed", report=report_name, params=sorted(raw_params)
+            #
+            # Issue #146 review: `_logger.exception(...)` (`.error(...,
+            # exc_info=True)`) renders the caught exception's own traceback
+            # into the log. `run_report` executes with real bound
+            # parameters, so a driver-level `DBAPIError`'s text/traceback
+            # routinely quotes the failing statement WITH those literal
+            # values baked in (possibly customer data) -- the identical
+            # leak `sql_query_connector.py`'s own `_database_error` exists
+            # to avoid (never `exc_info`, only fixed, known-safe fields).
+            # Only the error class and the report name are logged here.
+            _logger.error(
+                "bi.report_failed",
+                report=report_name,
+                error_class=type(error).__name__,
             )
             return {
                 "error": _DB_UNAVAILABLE_MESSAGE,
