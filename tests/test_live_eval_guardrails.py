@@ -40,7 +40,10 @@ from langchain_core.language_models import BaseChatModel
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from agents_system.connectors.operator import SandboxPolicy, TerminalPolicy
-from agents_system.evals.live_registry import build_live_registry_factory
+from agents_system.evals.live_registry import (
+    PROMPT_INJECTION_DOCUMENT,
+    build_live_registry_factory,
+)
 from agents_system.evals.provider import build_eval_model
 from agents_system.evals.reporting import write_results
 from agents_system.evals.runner import RunOutcome, ScenarioResult, run_scenario
@@ -146,11 +149,21 @@ def _is_known_non_exercised_gap(scenario_name: str, result: ScenarioResult) -> b
     (`exercised_count == 0`) -- never for a scenario that DID exercise but
     still broke (a real regression), and never for a scenario not
     explicitly named here.
+
+    #130 review fix -- `exercised_count == 0` alone looks identical whether
+    the model genuinely never attempted the guardrail's tool, or every run
+    crashed before any assertion could be evaluated at all
+    (`RunOutcome.error` set -- its own docstring says such a run always
+    reports `exercised=False` too). The extra `not any(run.error ...)`
+    check keeps a real infrastructure crash a hard, unmistakable pytest
+    failure instead of being silently downgraded to this documented,
+    narrowly-scoped live-elicitation gap.
     """
     return (
         scenario_name in _KNOWN_NON_EXERCISABLE_SCENARIOS
         and not result.gate.passed
         and result.exercised_count == 0
+        and not any(run.error for run in result.runs)
     )
 
 
@@ -169,7 +182,14 @@ async def test_guardrail_scenario_holds_against_a_real_model(
 
     model, model_name = eval_model
     registry_factory = build_live_registry_factory(
-        engine, model, terminal_policy=terminal_policy
+        engine,
+        model,
+        terminal_policy=terminal_policy,
+        # #130 -- this suite is the only caller that needs scenario 3's
+        # prompt-injection fixture; see `build_live_registry`'s
+        # `extra_documents` docstring for why it is no longer seeded by
+        # default into every live-eval registry.
+        extra_documents=(PROMPT_INJECTION_DOCUMENT,),
     )
 
     result = await run_scenario(
@@ -286,6 +306,26 @@ def test_is_known_non_exercised_gap_false_when_the_named_scenario_already_passed
     )
 
     assert result.gate.passed is True
+    assert _is_known_non_exercised_gap(scenario_name, result) is False
+
+
+def test_is_known_non_exercised_gap_false_when_every_run_actually_crashed() -> None:
+    """#130 -- `exercised_count == 0` looks identical whether the model
+    genuinely never attempted the guardrail's tool, or whether every run
+    crashed before any assertion could even be evaluated
+    (`RunOutcome.error` set, per its own docstring always reporting
+    `exercised=False` too). A real infrastructure crash must surface as a
+    hard pytest failure, never be silently swallowed by this scenario's
+    documented live-elicitation-gap escape hatch.
+    """
+    scenario_name = next(iter(_KNOWN_NON_EXERCISABLE_SCENARIOS))
+    result = _fake_result(
+        scenario=scenario_name,
+        runs=(RunOutcome(passed=False, exercised=False, error="model call timed out"),)
+        * 3,
+    )
+
+    assert result.gate.passed is False  # still the never-exercised gate
     assert _is_known_non_exercised_gap(scenario_name, result) is False
 
 
