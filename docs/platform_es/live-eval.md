@@ -663,6 +663,70 @@ el script real (`render_provision_sql_readonly`, probado unitariamente en
 rol de la herramienta a través del mismo instructivo que sigue un operador a
 mano, en vez de una reimplementación paralela que podría desalinearse de él.
 
+## Escenarios de carga de la Fase 3 (issue #83)
+
+`tests/test_live_load_phase3.py` prueba el comportamiento de la plataforma
+bajo carga concurrente, a través del camino real webhook ->
+`DeferredWebhookWorker` (nunca `AgentRuntime.run_turn` directamente) vía
+`boot_live_harness`. Dos capas, controladas por un marcador de pytest NUEVO,
+`load` (opt-in y deseleccionado por defecto, igual que `live`/`integration`
+-- ver `pyproject.toml`):
+
+- **Determinista** (`pytest -m load`): impulsa 20-100 conversaciones
+  concurrentes contra un modelo falso en proceso (`_LoadTestFakeModel`) en
+  lugar de un proveedor real. Necesita solo un Postgres/Redis alcanzable,
+  sin dependencia del proveedor, sin costo, sin límites de tasa, sin
+  no-determinismo -- cada aserción es un pass/fail duro.
+- **Corrida pequeña con modelo real** (`pytest -m 'load and live'`): 20
+  conversaciones concurrentes a través de un proveedor real
+  (`EVAL_PROVIDER`), reportando tokens/costo/latencia reales con un modelo
+  real en el ciclo. Recomendado `EVAL_RUNS=1` -- este es un escenario de
+  carga/reporte, no uno de camino feliz con compuerta; no hay umbral de
+  pass/fail sobre las respuestas del modelo.
+
+```bash
+pytest -m load tests/test_live_load_phase3.py -v -s                        # modelo falso, rápido
+EVAL_PROVIDER=openai_compatible pytest -m 'load and live' \
+  tests/test_live_load_phase3.py -v -s                                     # modelo real
+```
+
+### Un nuevo punto de inyección: `create_app(chat_model=...)`
+
+Antes de este issue, el resultado de `build_eval_model()` de
+`boot_live_harness` solo llegaba a los conectores de referencia de la
+fábrica de registro (`evals.live_registry.build_live_registry_factory`) --
+el `AgentRuntime` real de cada turno siempre se construía con
+`_build_chat_model(settings.adapter_provider)` dentro del lifespan de
+`main.py`, sin ningún punto de override. Un escenario de carga determinista
+necesita que el MISMO modelo falso impulse ambos, así que `create_app`
+recibió un parámetro explícito `chat_model`: `None` (el valor por defecto)
+mantiene el comportamiento de cada llamador existente byte por byte;
+cuando se da, reemplaza `_build_chat_model(...)` para cada runtime
+registrado que no tenga su propio override `model:` por agente (el
+override por agente del issue #13/D-037, cuando existe, sigue teniendo
+prioridad -- es más específico que uno de un escenario de carga a nivel de
+proceso). `boot_live_harness(model=..., model_name=...)` pasa su propio
+modelo resuelto por este punto solo cuando un llamador inyecta uno
+explícitamente -- ver los docstrings de `_resolve_eval_model` y de
+`boot_live_harness` en `evals/live_harness.py`.
+
+### Qué verifica cada escenario, y qué reportó una corrida real
+
+Los números de abajo son de una corrida real contra el propio Postgres/Redis
+de docker-compose de este repositorio (2026-09-27); otra máquina u otro
+modelo reportarán números absolutos distintos, pero la FORMA de cada
+garantía debería sostenerse.
+
+| Escenario | Aserción | Observado |
+|---|---|---|
+| Contrapresión de admisión (5/10/20 concurrentes, bajo/en/sobre el techo) | `in_flight` nunca supera `max_concurrent_turns` (10); la ronda que supera el techo necesita medible un segundo ciclo de poll | El pico de `in_flight` fue exactamente 10 en cada ronda; la ronda de 20 conversaciones (2.5s) tardó más que la de 10, consistente con un segundo ciclo real de `webhook_worker_poll_interval_s` (1.0s) admitiendo el resto |
+| Admisión compartida (10 vía webhook + 10 vía `POST /v1/chat/completions`, disparados concurrentemente) | El MISMO limiter acota el total combinado, no 10 por canal (la afirmación "process-wide" del propio `services/admission.py`) | El pico de `in_flight` combinando ambos canales fue exactamente 10, nunca 20 |
+| 20 / 50 / 100 conversaciones concurrentes | Percentiles de latencia, memoria y uso del pool se mantienen dentro de la regla de dimensionamiento del #107 (`database_pool_size + database_max_overflow >= max_concurrent_turns + 2`) | p50/p95/p99 = 2.5s/3.1s/3.2s (20), 4.5s/7.0s/7.0s (50), 7.7s/13.8s/14.0s (100); la memoria residente creció solo unos pocos MB por ronda; el pico de conexiones ocupadas alcanzó el techo completo del pool (15) en cada concurrencia, nunca por encima |
+| Orden por conversación (8 mensajes, una conversación, disparados concurrentemente junto a otras 24) | El orden de finalización (`outbox_work.completed_at`) coincide con el orden de encolado | Se sostuvo exactamente; la regla de exclusión de hermanos del propio outbox (`pending_outbox_statement`) serializa los mensajes de una conversación aproximadamente uno por ciclo de poll (~1s) incluso bajo carga concurrente de otras conversaciones |
+| Reintentos y fallas terminales del outbox, bajo una carga de otras 15 conversaciones | Una cantidad acotada de fallas inducidas igual tiene éxito por reintento; una falla permanente termina en `MAX_OUTBOX_ATTEMPTS` con su propio evento de auditoría | El reintento tuvo éxito en su 3er intento (2 fallas inducidas + 1 éxito); la falla permanente terminó en exactamente 5 intentos, registrando una fila de auditoría `webhook_delivery_terminal_failure`, y nunca se registró como enviada |
+| Crecimiento del historial de conversación (15 turnos secuenciales, una conversación) | Documentado, no corregido (la corrección la posee Wave 3 #28) | Crecimiento estrictamente lineal, 2 mensajes agregados por turno: `[2, 3, 4, ..., 16]` -- confirma que el reducer `add_messages` de `agent/state.py` nunca recorta |
+| Corrida pequeña con modelo real (20 concurrentes, `deepseek/deepseek-v4-flash-0731` vía OpenRouter) | Reporta tokens/costo/latencia reales; lo que se completa nunca se pierde ni se registra dos veces; sin piso sobre cuántas se completan (la capacidad propia de un proveedor real bajo concurrencia, no una garantía de la plataforma) | Solo 3/20 (15%) se completaron dentro de 240s con la cuenta/clave propia de este sandbox -- p50=95s, p95=147s, max=152s para esas tres; se registraron 4325 tokens de entrada + 1100 de salida; costo desconocido (`Settings.model_prices` no tiene entrada para este model id). Un hallazgo genuinamente nuevo: ningún escenario de live-eval existente había disparado antes 20 solicitudes CONCURRENTES con modelo real (el `_run_gated` de la Fase 1/4 corre su `EVAL_RUNS` secuencialmente) -- esto parece el throttling propio de la cuenta del proveedor bajo una ráfaga concurrente en lugar de un defecto de la plataforma (nunca se devolvió un error; las solicitudes simplemente tardaron mucho más de lo usual), pero vale la pena que un maintainer lo revise con una clave de mayor capacidad antes de asumir eso |
+
 ## Escenario en vivo de la Fase 4 (issue #84)
 
 `tests/test_live_eval_phase4.py` (`pytest -m live`) prueba el ciclo de vida
@@ -737,67 +801,6 @@ offline, mediante la misma llamada `build_runtime()` que el lifespan de
 mismo fixture `restock-helper` y no necesita ni un modelo en vivo ni un
 Postgres/Redis alcanzable, así que corre en la suite por defecto, no detrás
 de `pytest -m live`.
-
-## Escenarios de carga de la Fase 3 (issue #83)
-
-`tests/test_live_load_phase3.py` prueba el comportamiento de la plataforma
-bajo carga concurrente, a través del camino real webhook ->
-`DeferredWebhookWorker` (nunca `AgentRuntime.run_turn` directamente) vía
-`boot_live_harness`. Dos capas, controladas por un marcador de pytest NUEVO,
-`load` (opt-in y deseleccionado por defecto, igual que `live`/`integration`
--- ver `pyproject.toml`):
-
-- **Determinista** (`pytest -m load`): impulsa 20-100 conversaciones
-  concurrentes contra un modelo falso en proceso (`_LoadTestFakeModel`) en
-  lugar de un proveedor real. Necesita solo un Postgres/Redis alcanzable,
-  sin dependencia del proveedor, sin costo, sin límites de tasa, sin
-  no-determinismo -- cada aserción es un pass/fail duro.
-- **Corrida pequeña con modelo real** (`pytest -m 'load and live'`): 20
-  conversaciones concurrentes a través de un proveedor real
-  (`EVAL_PROVIDER`), reportando tokens/costo/latencia reales con un modelo
-  real en el ciclo. Recomendado `EVAL_RUNS=1` -- este es un escenario de
-  carga/reporte, no uno de camino feliz con compuerta; no hay umbral de
-  pass/fail sobre las respuestas del modelo.
-
-```bash
-pytest -m load tests/test_live_load_phase3.py -v -s                        # modelo falso, rápido
-EVAL_PROVIDER=openai_compatible pytest -m 'load and live' \
-  tests/test_live_load_phase3.py -v -s                                     # modelo real
-```
-
-### Un nuevo punto de inyección: `create_app(chat_model=...)`
-
-Antes de este issue, el resultado de `build_eval_model()` de
-`boot_live_harness` solo llegaba a los conectores de referencia de la
-fábrica de registro (`evals.live_registry.build_live_registry_factory`) --
-el `AgentRuntime` real de cada turno siempre se construía con
-`_build_chat_model(settings.adapter_provider)` dentro del lifespan de
-`main.py`, sin ningún punto de override. Un escenario de carga determinista
-necesita que el MISMO modelo falso impulse ambos, así que `create_app`
-recibió un parámetro explícito `chat_model`: `None` (el valor por defecto)
-mantiene el comportamiento de cada llamador existente byte por byte;
-cuando se da, reemplaza `_build_chat_model(...)` para cada runtime
-registrado. `boot_live_harness(model=..., model_name=...)` pasa su propio
-modelo resuelto por este punto solo cuando un llamador inyecta uno
-explícitamente -- ver los docstrings de `_resolve_eval_model` y de
-`boot_live_harness` en `evals/live_harness.py`.
-
-### Qué verifica cada escenario, y qué reportó una corrida real
-
-Los números de abajo son de una corrida real contra el propio Postgres/Redis
-de docker-compose de este repositorio (2026-09-27); otra máquina u otro
-modelo reportarán números absolutos distintos, pero la FORMA de cada
-garantía debería sostenerse.
-
-| Escenario | Aserción | Observado |
-|---|---|---|
-| Contrapresión de admisión (5/10/20 concurrentes, bajo/en/sobre el techo) | `in_flight` nunca supera `max_concurrent_turns` (10); la ronda que supera el techo necesita medible un segundo ciclo de poll | El pico de `in_flight` fue exactamente 10 en cada ronda; la ronda de 20 conversaciones (2.5s) tardó más que la de 10, consistente con un segundo ciclo real de `webhook_worker_poll_interval_s` (1.0s) admitiendo el resto |
-| Admisión compartida (10 vía webhook + 10 vía `POST /v1/chat/completions`, disparados concurrentemente) | El MISMO limiter acota el total combinado, no 10 por canal (la afirmación "process-wide" del propio `services/admission.py`) | El pico de `in_flight` combinando ambos canales fue exactamente 10, nunca 20 |
-| 20 / 50 / 100 conversaciones concurrentes | Percentiles de latencia, memoria y uso del pool se mantienen dentro de la regla de dimensionamiento del #107 (`database_pool_size + database_max_overflow >= max_concurrent_turns + 2`) | p50/p95/p99 = 2.5s/3.1s/3.2s (20), 4.5s/7.0s/7.0s (50), 7.7s/13.8s/14.0s (100); la memoria residente creció solo unos pocos MB por ronda; el pico de conexiones ocupadas alcanzó el techo completo del pool (15) en cada concurrencia, nunca por encima |
-| Orden por conversación (8 mensajes, una conversación, disparados concurrentemente junto a otras 24) | El orden de finalización (`outbox_work.completed_at`) coincide con el orden de encolado | Se sostuvo exactamente; la regla de exclusión de hermanos del propio outbox (`pending_outbox_statement`) serializa los mensajes de una conversación aproximadamente uno por ciclo de poll (~1s) incluso bajo carga concurrente de otras conversaciones |
-| Reintentos y fallas terminales del outbox, bajo una carga de otras 15 conversaciones | Una cantidad acotada de fallas inducidas igual tiene éxito por reintento; una falla permanente termina en `MAX_OUTBOX_ATTEMPTS` con su propio evento de auditoría | El reintento tuvo éxito en su 3er intento (2 fallas inducidas + 1 éxito); la falla permanente terminó en exactamente 5 intentos, registrando una fila de auditoría `webhook_delivery_terminal_failure`, y nunca se registró como enviada |
-| Crecimiento del historial de conversación (15 turnos secuenciales, una conversación) | Documentado, no corregido (la corrección la posee Wave 3 #28) | Crecimiento estrictamente lineal, 2 mensajes agregados por turno: `[2, 3, 4, ..., 16]` -- confirma que el reducer `add_messages` de `agent/state.py` nunca recorta |
-| Corrida pequeña con modelo real (20 concurrentes, `deepseek/deepseek-v4-flash-0731` vía OpenRouter) | Reporta tokens/costo/latencia reales; lo que se completa nunca se pierde ni se registra dos veces; sin piso sobre cuántas se completan (la capacidad propia de un proveedor real bajo concurrencia, no una garantía de la plataforma) | Solo 3/20 (15%) se completaron dentro de 240s con la cuenta/clave propia de este sandbox -- p50=95s, p95=147s, max=152s para esas tres; se registraron 4325 tokens de entrada + 1100 de salida; costo desconocido (`Settings.model_prices` no tiene entrada para este model id). Un hallazgo genuinamente nuevo: ningún escenario de live-eval existente había disparado antes 20 solicitudes CONCURRENTES con modelo real (el `_run_gated` de la Fase 1/4 corre su `EVAL_RUNS` secuencialmente) -- esto parece el throttling propio de la cuenta del proveedor bajo una ráfaga concurrente en lugar de un defecto de la plataforma (nunca se devolvió un error; las solicitudes simplemente tardaron mucho más de lo usual), pero vale la pena que un maintainer lo revise con una clave de mayor capacidad antes de asumir eso |
 
 ## Correrlo como pipeline propio de un rol
 
