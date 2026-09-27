@@ -44,7 +44,12 @@ from agents_system.integration import openai_router, webhook_router
 from agents_system.integration.whatsapp_client import WhatsAppClient
 from agents_system.models.base import get_bi_engine, get_engine, get_session_factory
 from agents_system.observability import RequestIdMiddleware, setup_logging
-from agents_system.observability.metrics import DEFAULT_METRICS, DEFAULT_REGISTRY
+from agents_system.observability.metrics import (
+    DEFAULT_METRICS,
+    DEFAULT_REGISTRY,
+    Metrics,
+)
+from agents_system.observability.provider_http import MetricsHTTPTransport
 from agents_system.services.admission import TurnAdmissionLimiter
 from agents_system.services.db_role import role_is_read_only
 from agents_system.services.outbox import (
@@ -614,6 +619,7 @@ def _build_chat_model(
     model_override: str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    metrics: Metrics | None = None,
 ) -> Any:
     """Construct the chat model for the given provider.
 
@@ -631,6 +637,18 @@ def _build_chat_model(
     ``Settings``/the process environment, never from an override, which is
     exactly why `harness.loader._validate_model_config` never allows a
     credential-shaped key into one.
+
+    issue #145 -- ``metrics`` is an OPTIONAL override of the ``Metrics`` set
+    the ``openai_compatible`` branch's provider-request/retry counters are
+    recorded on (`observability/provider_http.py::MetricsHTTPTransport`).
+    ``None`` (default) uses the process-wide ``DEFAULT_METRICS`` -- the set
+    ``GET /metrics`` serves -- so every existing call site is unaffected; a
+    test passes its own throw-away set for isolated assertions, the same
+    pattern ``AgentRuntime(..., metrics=...)`` already uses. Every other
+    provider branch is unaffected by this parameter for now (see the
+    module's #145 investigation notes: the reported timeout/throttling
+    evidence is all from the ``openai_compatible`` provider actually used in
+    production).
     """
     import os
 
@@ -710,11 +728,31 @@ def _build_chat_model(
         openai_compatible_kwargs: dict[str, Any] = {}
         if max_tokens is not None:
             openai_compatible_kwargs["max_tokens"] = max_tokens
+
+        # issue #145 -- a bounded per-call timeout (previously unset, which
+        # left the openai SDK's own 600s default in effect) plus a transport
+        # that records every raw HTTP attempt's status and the SDK's own
+        # retries on /metrics -- see observability/provider_http.py's module
+        # docstring for the investigation this responds to. connect stays at
+        # the openai SDK's own default (5s); only read/write/pool -- the
+        # generation itself -- are bounded by the configured setting.
+        resolved_metrics = metrics if metrics is not None else DEFAULT_METRICS
+        http_async_client = httpx.AsyncClient(
+            transport=MetricsHTTPTransport(
+                httpx.AsyncHTTPTransport(),
+                provider="openai_compatible",
+                metrics=resolved_metrics,
+            )
+        )
         return ReasoningSanitizedChatOpenAI(
             model=model_id,
             base_url=settings.openai_compatible_base_url,
             api_key=SecretStr(compatible_api_key),
             temperature=temperature if temperature is not None else 0,
+            timeout=httpx.Timeout(
+                settings.openai_compatible_request_timeout_s, connect=5.0
+            ),
+            http_async_client=http_async_client,
             **openai_compatible_kwargs,
         )
 

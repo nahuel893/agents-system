@@ -29,14 +29,18 @@ from datetime import timedelta
 from typing import Any, Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from conftest import create_test_app
+from prometheus_client import CollectorRegistry
 
 import agents_system.harness.factory  # noqa: F401 -- see the note below
 from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI
 from agents_system.config import Settings, get_settings
 from agents_system.harness.loader import DefinitionError, RootConfig
 from agents_system.main import _build_chat_model, lifespan
+from agents_system.observability.metrics import DEFAULT_METRICS, build_metrics
+from agents_system.observability.provider_http import MetricsHTTPTransport
 from agents_system.permissions import UntrustedInputGrantError
 
 # `harness.factory` binds `resolve` from `harness.loader` at import time.
@@ -749,6 +753,86 @@ def test_openai_compatible_model_still_supports_bind_tools() -> None:
         ]
     )
     assert isinstance(bound.bound, ReasoningSanitizedChatOpenAI)
+
+
+# ---------------------------------------------------------------------------
+# issue #145 -- bounded per-call timeout + provider 429/retry observability
+# ---------------------------------------------------------------------------
+
+
+def test_openai_compatible_model_gets_a_bounded_request_timeout() -> None:
+    """Previously unset, leaving the openai SDK's own 600s default in effect
+    -- one stuck provider call could wait up to ten minutes with no visible
+    failure (issue #145). Must now be a real, finite bound sourced from
+    Settings, not the SDK default and not `None`.
+    """
+    settings = _openai_compatible_settings(openai_compatible_request_timeout_s=12.5)
+    with patch("agents_system.main.get_settings", return_value=settings):
+        model = _build_chat_model("openai_compatible")
+
+    timeout = model.request_timeout
+    assert isinstance(timeout, httpx.Timeout)
+    assert timeout.read == 12.5
+    assert timeout.write == 12.5
+    assert timeout.pool == 12.5
+
+
+def test_openai_compatible_model_wires_the_metrics_http_transport() -> None:
+    """The async client's transport must be `MetricsHTTPTransport` bound to
+    the "openai_compatible" provider label and the process-wide default
+    metrics, so a real 429/retry shows up on `/metrics` (issue #145)."""
+    with patch(
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model("openai_compatible")
+
+    assert isinstance(model.http_async_client, httpx.AsyncClient)
+    transport = model.http_async_client._transport
+    assert isinstance(transport, MetricsHTTPTransport)
+    assert transport._provider == "openai_compatible"
+    assert transport._metrics is DEFAULT_METRICS
+
+
+def test_openai_compatible_model_accepts_an_injected_metrics_set() -> None:
+    """A caller (a test, a load scenario) can pass its own throw-away
+    `Metrics` set instead of the process-wide default, mirroring
+    `AgentRuntime(..., metrics=...)`'s own isolation pattern."""
+    registry = CollectorRegistry()
+    my_metrics = build_metrics(registry)
+    with patch(
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model("openai_compatible", metrics=my_metrics)
+
+    assert model.http_async_client._transport._metrics is my_metrics
+
+
+async def test_openai_compatible_model_records_a_429_on_the_injected_metrics() -> None:
+    """End-to-end through the real construction path (no network): a 429
+    from the wrapped transport increments `agent_provider_requests_total`
+    with `status="rate_limited"` under the exact provider label this model
+    was built with."""
+    registry = CollectorRegistry()
+    my_metrics = build_metrics(registry)
+    with patch(
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model("openai_compatible", metrics=my_metrics)
+
+    transport = model.http_async_client._transport
+    request = httpx.Request("POST", "https://example.test/v1/chat/completions")
+    fake_response = httpx.Response(429, request=request)
+    with patch.object(
+        transport._inner, "handle_async_request", AsyncMock(return_value=fake_response)
+    ):
+        await transport.handle_async_request(request)
+
+    assert (
+        my_metrics.provider_requests_total.labels(
+            provider="openai_compatible", status="rate_limited"
+        )._value.get()
+        == 1
+    )
 
 
 # ---------------------------------------------------------------------------

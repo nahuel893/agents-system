@@ -11,18 +11,28 @@ from agents_system.observability.metrics import (
     Metrics,
     build_metrics,
     record_limit_trip,
+    record_provider_request,
+    record_provider_retry,
     record_tool_call,
     record_turn,
 )
 from agents_system.observability.middleware import RequestIdMiddleware
+from agents_system.observability.provider_http import (
+    MetricsHTTPTransport,
+    classify_provider_status,
+)
 
 __all__ = [
     "DEFAULT_METRICS",
     "DEFAULT_REGISTRY",
     "Metrics",
+    "MetricsHTTPTransport",
     "RequestIdMiddleware",
     "build_metrics",
+    "classify_provider_status",
     "record_limit_trip",
+    "record_provider_request",
+    "record_provider_retry",
     "record_tool_call",
     "record_turn",
     "request_id_ctx",

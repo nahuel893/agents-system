@@ -24,6 +24,7 @@ import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agents_system.connectors.report_connector import build_report_tool_spec
@@ -271,11 +272,39 @@ class ReferenceBackends:
 
     async def _fetch_rows(
         self, statement: Any, params: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, Any]] | None:
+        """Run *statement* against the configured demo/reference schema.
+
+        Returns ``None`` -- distinct from an honest empty list -- when the
+        query itself fails at the database level (issue #145: a demo schema
+        that is CONNECTED but never migrated/seeded, e.g.
+        `evals.live_harness.boot_live_harness` without `seed_demo=True`,
+        raised `asyncpg.exceptions.UndefinedTableError: relation "articulos"
+        does not exist`, wrapped by SQLAlchemy as a `SQLAlchemyError`
+        subclass). That is a configuration problem, not a legitimate "no
+        rows" answer, so every caller degrades it exactly like
+        `readonly_engine is None` (`_not_configured()`) instead of letting a
+        raw SQL exception crash the whole turn -- which is what drove
+        `services/outbox.py`'s retry-with-backoff storm this issue reports
+        as a real-model run barely completing under load.
+        """
         assert self._readonly_engine is not None
-        async with self._readonly_engine.connect() as connection:
-            result = await connection.execute(statement, params)
-            return [dict(row) for row in result.mappings().all()]
+        try:
+            async with self._readonly_engine.connect() as connection:
+                result = await connection.execute(statement, params)
+                return [dict(row) for row in result.mappings().all()]
+        except SQLAlchemyError as exc:
+            _logger.warning(
+                "reference_backends.demo_schema_unavailable",
+                message=(
+                    "A reference-backend query failed against the "
+                    "configured readonly_engine -- the demo schema is "
+                    "likely not migrated/seeded. Reporting "
+                    "'not configured' instead of crashing the turn."
+                ),
+                error=str(exc)[:200],
+            )
+            return None
 
     async def _lookup_client(self, phone: Any) -> dict[str, Any]:
         if self._readonly_engine is None:
@@ -289,6 +318,8 @@ class ReferenceBackends:
         except ValueError:
             return {"client_id": None, "name": None, "phone": phone}
         rows = await self._fetch_rows(_CLIENT_LOOKUP_SQL, {"client_id": client_id})
+        if rows is None:
+            return self._not_configured()
         if not rows:
             return {"client_id": None, "name": None, "phone": phone}
 
@@ -320,6 +351,8 @@ class ReferenceBackends:
                 _CATALOG_SEARCH_SQL,
                 {"query": query, "limit": max(1, min(limit, 50))},
             )
+            if rows is None:
+                return self._not_configured()
             if not rows:
                 return {"results": [], "classification": "no_match"}
 

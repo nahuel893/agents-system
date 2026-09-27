@@ -20,6 +20,7 @@ from typing import Any, Self
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
+from sqlalchemy.exc import SQLAlchemyError
 from structlog.testing import capture_logs
 
 from agents_system.connectors.order_connector import build_order_writer_tool_spec
@@ -211,13 +212,20 @@ class _ReadOnlyConnection:
 
     async def execute(self, statement: Any, params: dict[str, Any]) -> _Result:
         self.engine.calls.append((statement, params))
+        if self.engine.raises is not None:
+            raise self.engine.raises
         return _Result(self.engine.row_batches.pop(0))
 
 
 @dataclass
 class _ReadOnlyEngine:
-    row_batches: list[list[dict[str, Any]]]
+    row_batches: list[list[dict[str, Any]]] = field(default_factory=list)
     calls: list[tuple[Any, dict[str, Any]]] = field(default_factory=list)
+    # issue #145 -- simulates the demo schema being unavailable (a missing
+    # `articulos`/`padron_clientes` table, e.g. `boot_live_harness` without
+    # `seed_demo=True`): every `execute()` raises this instead of returning
+    # a row batch.
+    raises: Exception | None = None
 
     def connect(self) -> _ReadOnlyConnection:
         return _ReadOnlyConnection(self)
@@ -503,3 +511,81 @@ async def test_reference_backends_fail_closed_when_no_readonly_engine_is_opted_i
     assert unbound_client["error_kind"] == "reference_data_not_configured"
     assert unbound_message["error_kind"] == "reference_data_not_configured"
     assert backends.recorded_messages == []
+
+
+# ---------------------------------------------------------------------------
+# issue #145 -- a demo schema that is CONNECTED but missing its tables (e.g.
+# `boot_live_harness` without `seed_demo=True`) must degrade the same way an
+# unset `readonly_engine` does, never crash the whole turn with a raw SQL
+# exception. Reproduced live: `EVAL_PROVIDER=openai_compatible` real-model
+# load runs saw every `catalog_search` call fail with
+# `asyncpg.exceptions.UndefinedTableError: relation "articulos" does not
+# exist`, an unhandled exception that failed the turn and drove the
+# `services/outbox.py` retry storm this issue reports as "no error is ever
+# returned" / a real-model run barely completing under load.
+# ---------------------------------------------------------------------------
+
+
+async def test_catalog_search_reports_not_configured_when_demo_schema_is_missing() -> (
+    None
+):
+    engine = _ReadOnlyEngine(
+        raises=SQLAlchemyError('relation "articulos" does not exist')
+    )
+    backends = ReferenceBackends(engine)
+
+    with capture_logs() as logs:
+        result = await backends.catalog_search_tool_spec().connector({"q": "yerba"})
+
+    assert result["error_kind"] == "reference_data_not_configured"
+    assert any(
+        entry.get("event") == "reference_backends.demo_schema_unavailable"
+        for entry in logs
+    )
+
+
+async def test_client_lookup_reports_not_configured_when_demo_schema_is_missing() -> (
+    None
+):
+    engine = _ReadOnlyEngine(
+        raises=SQLAlchemyError('relation "padron_clientes" does not exist')
+    )
+    backends = ReferenceBackends(engine)
+
+    result = await backends.client_lookup_tool_spec().connector(
+        {"phone": "+5491100000042"}
+    )
+
+    assert result["error_kind"] == "reference_data_not_configured"
+
+
+async def test_message_sender_reports_not_configured_when_demo_schema_is_missing() -> (
+    None
+):
+    """`message_sender` validates its recipient through `_lookup_client` --
+    the same missing-schema degradation must propagate through it too."""
+    engine = _ReadOnlyEngine(
+        raises=SQLAlchemyError('relation "padron_clientes" does not exist')
+    )
+    backends = ReferenceBackends(engine)
+
+    result = await backends.message_sender_tool_spec().connector(
+        {"to": "+5491100000042", "text": "hola"}
+    )
+
+    assert result["error_kind"] == "reference_data_not_configured"
+    assert backends.recorded_messages == []
+
+
+async def test_catalog_search_still_reports_a_genuine_no_match_when_schema_is_fine() -> (
+    None
+):
+    """A working demo schema that legitimately has no matching rows must
+    still answer `no_match` -- the new degradation path must never mask a
+    real, honest empty result as a config problem."""
+    engine = _ReadOnlyEngine(row_batches=[[]])
+    backends = ReferenceBackends(engine)
+
+    result = await backends.catalog_search_tool_spec().connector({"q": "nope"})
+
+    assert result == {"results": [], "classification": "no_match"}

@@ -59,6 +59,26 @@ _TURN_DURATION_BUCKETS_S = (0.1, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, float("inf")
 #: around that default.
 _TOOL_CALL_DURATION_BUCKETS_S = (0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30, float("inf"))
 
+#: issue #145 -- the bounded, code-defined status classes one raw HTTP
+#: response (or transport failure) from a chat model provider is bucketed
+#: into. NEVER the raw status code or provider error body (unbounded,
+#: possibly PII-bearing) -- see `observability/provider_http.py`'s
+#: `classify_provider_status`, the sole place a real status code is turned
+#: into one of these.
+PROVIDER_REQUEST_STATUSES = (
+    "success",
+    "rate_limited",
+    "client_error",
+    "server_error",
+    "network_error",
+)
+
+#: issue #145 -- the bounded, code-defined chat model providers
+#: `main._build_chat_model` dispatches on. Mirrors `Settings.adapter_provider`
+#: or `Settings.eval_provider`'s own `Literal` -- never a caller-supplied
+#: string reaching a label.
+PROVIDER_NAMES = ("groq", "anthropic", "openai_compatible", "ollama")
+
 
 @dataclasses.dataclass(frozen=True)
 class Metrics:
@@ -78,6 +98,8 @@ class Metrics:
     tokens_total: Counter
     cost_usd_total: Counter
     audit_events_dropped: Gauge
+    provider_requests_total: Counter
+    provider_retries_total: Counter
 
 
 def build_metrics(registry: CollectorRegistry) -> Metrics:
@@ -142,6 +164,29 @@ def build_metrics(registry: CollectorRegistry) -> Metrics:
             "Audit events dropped by the in-process asynchronous audit sink.",
             registry=registry,
         ),
+        # issue #145 -- provider-side throttling and the chat model client's
+        # own retries are invisible in `agent_turns_total{outcome="error"}`
+        # alone: that counter fires only once a whole turn ultimately fails,
+        # after the SDK's own internal retries already ran, and it cannot
+        # distinguish a 429 from any other provider failure. These two
+        # counters are recorded per raw HTTP attempt
+        # (`observability/provider_http.py::MetricsHTTPTransport`), one
+        # layer below the turn, so a rate-limited account is visible on
+        # `/metrics` even while every turn still nominally "succeeds" after
+        # retrying.
+        provider_requests_total=Counter(
+            "agent_provider_requests",
+            "HTTP responses (or transport failures) from a chat model "
+            "provider, by provider and status.",
+            ["provider", "status"],
+            registry=registry,
+        ),
+        provider_retries_total=Counter(
+            "agent_provider_retries",
+            "SDK-level retry attempts made against a chat model provider, by provider.",
+            ["provider"],
+            registry=registry,
+        ),
     )
 
 
@@ -196,3 +241,25 @@ def record_tool_call(
 def record_limit_trip(metrics: Metrics, *, limit: str) -> None:
     """Record one execution limit firing (e.g. `_limit_reached` -- `max_tool_calls`)."""
     metrics.limit_trips_total.labels(limit=limit).inc()
+
+
+def record_provider_request(metrics: Metrics, *, provider: str, status: str) -> None:
+    """Record one raw HTTP attempt against a chat model provider (issue #145).
+
+    Called once per HTTP request/response (or transport failure) the
+    provider's own SDK makes -- including every attempt the SDK's internal
+    retry loop issues, not just the final one a turn ultimately sees. This is
+    what makes a 429 visible even when the SDK quietly retries it into an
+    eventual success.
+    """
+    metrics.provider_requests_total.labels(provider=provider, status=status).inc()
+
+
+def record_provider_retry(metrics: Metrics, *, provider: str) -> None:
+    """Record one SDK-level retry attempt against a chat model provider
+    (issue #145) -- a request whose `x-stainless-retry-count` header shows
+    the SDK itself is re-sending it after an earlier attempt on the SAME
+    logical call failed. Never fires for a call's first, non-retried
+    attempt.
+    """
+    metrics.provider_retries_total.labels(provider=provider).inc()
