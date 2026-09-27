@@ -24,6 +24,7 @@ import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from langchain_core.language_models import BaseChatModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import SecretStr
 from sqlalchemy import text
@@ -327,12 +328,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
 
             # Build the shared, global default chat model from
-            # ADAPTER_PROVIDER. D-037 (issue #13, ADR-004) -- this stays the
-            # DEFAULT every runtime falls back to; a runtime whose own
-            # resolved definition declares its own `model:` gets a dedicated
-            # one instead, built per-runtime below
-            # (`_resolve_model_for_definition`).
-            default_model = _build_chat_model(settings.adapter_provider)
+            # ADAPTER_PROVIDER -- unless the caller overrode it via
+            # create_app(chat_model=...) (#83, Phase 3): a load scenario's
+            # fast, deterministic fake model then powers every runtime that
+            # has no per-agent override, instead of a real provider having to
+            # stay reachable, and correct, under concurrent load. D-037
+            # (issue #13, ADR-004) -- this stays the DEFAULT every runtime
+            # falls back to; a runtime whose own resolved definition declares
+            # its own `model:` still gets a dedicated one instead, built
+            # per-runtime below (`_resolve_model_for_definition`), taking
+            # precedence over this override too -- an explicit per-agent
+            # choice is more specific than a load scenario's process-wide one.
+            chat_model_override = getattr(app.state, "chat_model_override", None)
+            default_model = (
+                chat_model_override
+                if chat_model_override is not None
+                else _build_chat_model(settings.adapter_provider)
+            )
 
             # D-014 S4 (design AD-1/AD-7) — shared checkpointer, only built
             # when checkpointing is enabled at all. Injected into every
@@ -1188,6 +1200,7 @@ def create_app(
     conversation_recorder: ConversationRecorder | None = None,
     roots: RootConfig | None = None,
     title: str = "agents_system",
+    chat_model: BaseChatModel | None = None,
 ) -> FastAPI:
     """Application factory. Returns a configured FastAPI instance.
 
@@ -1248,6 +1261,18 @@ def create_app(
         specifying deployments_root.
     title:
         OpenAPI title.
+    chat_model:
+        Override the chat model every registered ``AgentRuntime`` is built
+        with, instead of the lifespan's own ``_build_chat_model(settings.
+        adapter_provider)`` (#83, Phase 3). ``None`` (the default) keeps that
+        original behaviour byte-for-byte -- every existing caller is
+        unaffected. A load scenario passes a fast, deterministic, zero-
+        network fake model here instead of depending on a real provider
+        staying reachable, and correct, under concurrent load; this is a
+        SEPARATE seam from ``registry_factory``'s own model argument
+        (`evals.live_registry.build_live_registry_factory`), which only
+        drives the reference-backend connectors' own LLM calls, never the
+        turn-running ``AgentRuntime`` itself.
     """
     setup_logging()
 
@@ -1266,6 +1291,7 @@ def create_app(
     application.state.participant_directory = participant_directory
     application.state.conversation_recorder = conversation_recorder
     application.state.roots = roots
+    application.state.chat_model_override = chat_model
     application.state.provider_probe = ProviderHealthProbe()
 
     application.add_middleware(RequestIdMiddleware)

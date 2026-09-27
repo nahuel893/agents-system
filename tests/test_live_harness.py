@@ -15,9 +15,11 @@ from agents_system.evals.live_harness import (
     AcceptAllParticipantDirectory,
     FakeWhatsAppServer,
     LiveHarness,
+    _resolve_eval_model,
     audit_rows_statement,
     build_meta_webhook_envelope,
     metric_value,
+    outbox_rows_statement,
 )
 from agents_system.integration.meta_signature import sign_payload, verify_signature
 
@@ -872,3 +874,102 @@ def test_live_registry_factory_adapter_tool_wrappers_replaces_with_the_wrapper_r
     assert wrapped is not registry.get("catalog_search")
     assert wrapped.name == "run_report"
     assert wrapped.connector is not None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_eval_model (#83, Phase 3) -- lets `boot_live_harness` accept an
+# injected model (a deterministic fake for a load scenario) instead of always
+# calling `build_eval_model()`, without touching any live-model call path.
+# Pure/offline: no real Postgres/Redis/model needed.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_eval_model_returns_the_injected_model_and_name() -> None:
+    fake_model = object()
+
+    model, model_name = _resolve_eval_model(fake_model, "load-test-fake")
+
+    assert model is fake_model
+    assert model_name == "load-test-fake"
+
+
+def test_resolve_eval_model_requires_a_name_when_a_model_is_given() -> None:
+    with pytest.raises(ValueError, match="model_name"):
+        _resolve_eval_model(object(), None)
+
+
+def test_resolve_eval_model_requires_a_non_empty_name_when_a_model_is_given() -> None:
+    with pytest.raises(ValueError, match="model_name"):
+        _resolve_eval_model(object(), "")
+
+
+def test_resolve_eval_model_falls_back_to_build_eval_model_when_both_are_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agents_system.evals import live_harness
+
+    sentinel_model = object()
+    monkeypatch.setattr(
+        live_harness,
+        "build_eval_model",
+        lambda: (sentinel_model, "real-provider-model"),
+    )
+
+    model, model_name = _resolve_eval_model(None, None)
+
+    assert model is sentinel_model
+    assert model_name == "real-provider-model"
+
+
+# ---------------------------------------------------------------------------
+# FakeWhatsAppServer._consume_failure (#83, Phase 3) -- lets a load scenario
+# deterministically induce a bounded number of outbound-send failures for one
+# recipient at a time, to exercise the outbox's retry and terminal-failure
+# paths under load without touching any other concurrent conversation's
+# sends. Pure/offline: never starts the real uvicorn server.
+# ---------------------------------------------------------------------------
+
+
+def test_fake_whatsapp_server_consume_failure_is_false_with_nothing_configured() -> (
+    None
+):
+    server = FakeWhatsAppServer()
+
+    assert server._consume_failure("+15550001111") is False
+
+
+def test_fake_whatsapp_server_consume_failure_decrements_then_stops_failing() -> None:
+    server = FakeWhatsAppServer(fail_remaining={"+15550001111": 2})
+
+    assert server._consume_failure("+15550001111") is True
+    assert server._consume_failure("+15550001111") is True
+    assert server._consume_failure("+15550001111") is False
+    # A second recipient configured with no entry is never affected by the
+    # first's countdown.
+    assert server._consume_failure("+15550002222") is False
+
+
+# ---------------------------------------------------------------------------
+# outbox_rows_statement (#83, Phase 3) -- a pure statement builder, unit-
+# testable by compiling it, mirroring audit_rows_statement above. Lets a load
+# scenario read back one conversation's outbox rows in arrival order to check
+# per-conversation ordering directly against the durable rows, the same
+# ordering `pending_outbox_statement` itself enforces at claim time.
+# ---------------------------------------------------------------------------
+
+
+def test_outbox_rows_statement_filters_by_conversation_key() -> None:
+    stmt = outbox_rows_statement("+15550001111")
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+
+    assert "outbox_work.conversation_key" in compiled
+    assert "+15550001111" in compiled
+
+
+def test_outbox_rows_statement_orders_by_enqueued_at_then_id() -> None:
+    stmt = outbox_rows_statement("+15550001111")
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": True})).upper()
+
+    order_by_index = compiled.index("ORDER BY")
+    order_clause = compiled[order_by_index:]
+    assert order_clause.index("ENQUEUED_AT") < order_clause.index("OUTBOX_WORK.ID")

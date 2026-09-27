@@ -215,6 +215,16 @@ corrida en la que fue ejercitado, y fue ejercitado al menos una vez.
 
 ## Fase 3 — Operación bajo carga
 
+**Estado: terminada (#83).** `tests/test_live_load_phase3.py` cubre cada
+punto de abajo mediante `boot_live_harness`, detrás de un marcador de
+pytest NUEVO, `load` (opt-in, deseleccionado por defecto igual que
+`live`/`integration`) -- ver la sección propia "Escenarios de carga de la
+Fase 3" de `docs/platform/live-eval.md` para el diseño completo (incluido
+el punto de inyección `create_app(chat_model=...)` que esta fase agregó
+para que un escenario de carga determinista pueda impulsar el
+`AgentRuntime` real con un modelo falso, no solo los conectores de
+referencia) y los números que reportó una corrida real.
+
 - 20–100 conversaciones concurrentes.
 - Backpressure en el límite por defecto del admission limiter de 10 turnos
   en vuelo (`services/admission.py:DEFAULT_MAX_CONCURRENT_TURNS`,
@@ -225,6 +235,30 @@ corrida en la que fue ejercitado, y fue ejercitado al menos una vez.
   la Fase 0).
 - Crecimiento del historial en conversaciones largas (reductor
   `add_messages` sin límite, arriba).
+
+Dos capas, ambas a través del camino real webhook ->
+`DeferredWebhookWorker`: una capa determinista contra un modelo falso
+rápido en proceso (20/50/100 conversaciones concurrentes, backpressure
+bajo/en/sobre el techo, orden por conversación, reintentos inducidos y una
+falla terminal del outbox, y 15 turnos secuenciales del crecimiento sin
+límite del historial de una conversación), y una capa pequeña con modelo
+real (20 conversaciones concurrentes, `deepseek/deepseek-v4-flash-0731` vía
+OpenRouter, `EVAL_RUNS=1`) que reporta tokens/costo/latencia reales. La
+brecha del crecimiento del historial queda documentada aquí, no corregida
+-- la corrección se rastrea por separado (Wave 3 #28), coincidiendo con la
+nota de alcance original de esta fase abajo.
+
+**Hallazgo con modelo real**: ningún escenario de live-eval existente había
+disparado antes 20 solicitudes CONCURRENTES con modelo real (el `_run_gated`
+de la Fase 1/4 corre su `EVAL_RUNS` secuencialmente, una a la vez). Hacerlo
+reveló un límite de capacidad real: solo 3/20 (15%) se completaron dentro de
+240s con la cuenta/clave propia de OpenRouter de este sandbox, y las que se
+completaron tardaron p50=95s/p95=147s/max=152s -- nunca se devolvió un
+error, las solicitudes simplemente tardaron mucho más de lo que muestra
+cualquier corrida secuencial. Esto se lee como el throttling propio de la
+cuenta del proveedor bajo una ráfaga concurrente, no como un defecto de la
+plataforma, pero se reporta aquí en lugar de asumirlo; ver la propia tabla
+de la Fase 3 en `docs/platform/live-eval.md` para los números completos.
 
 ## Fase 4 — Ciclo de vida completo (terminada, #84)
 
