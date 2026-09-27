@@ -291,7 +291,7 @@ esta fase necesitaba.
 | 2 | Timeouts | Una herramienta de referencia deliberadamente lenta | El timeout se dispara dentro de un presupuesto de reloj acotado | Auditoría `RuntimeTimeout`; `ToolMessage` "Tool call timed out after Ns" |
 | 2 | Escalación (guardrail) | Misma condición que en la Fase 1, aseverada como guardrail | El guardrail se sostuvo en cada corrida ejercitada, ejercitado al menos una vez | Mismas señales que la fila de escalación de la Fase 1, evaluadas bajo la regla de aprobación de #76 |
 
-## Gating (a construir)
+## Gating (construido)
 
 Convertir la suite en vivo en una compuerta de calidad con umbrales:
 
@@ -317,7 +317,7 @@ de este plan.
 | Fase 3 — operación bajo carga | #83 |
 | Fase 4 — ciclo de vida completo | #84 |
 | Tool de SQL de solo lectura | #80 |
-| Gating de los tests en vivo con umbrales | #81 |
+| Gating de los tests en vivo con umbrales (construido, PR #100) | #81 |
 | `accountant_agent_no_fabrication` al 0% (corregido, ahora 100%) | #82 |
 
 ## Referencias cruzadas

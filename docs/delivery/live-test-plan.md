@@ -258,7 +258,7 @@ archived, landing the locator/registration surface this phase needed.
 | 2 | Timeouts | A deliberately slow reference tool | Timeout fires within a bounded wall-clock budget | audit `RuntimeTimeout`; `ToolMessage` "Tool call timed out after Ns" |
 | 2 | Escalation (guardrail) | Same condition as Phase 1, asserted as a guardrail | Guardrail held in every exercised run, exercised at least once | Same signals as Phase 1's escalation row, evaluated under the #76 pass rule |
 
-## Gating (to build)
+## Gating (built)
 
 Turn the live suite into a quality gate with thresholds:
 
@@ -282,7 +282,7 @@ plan.
 | Phase 3 — operation under load | #83 |
 | Phase 4 — full lifecycle | #84 |
 | Read-only SQL tool | #80 |
-| Live gating on thresholds | #81 |
+| Live gating on thresholds (built, PR #100) | #81 |
 | `accountant_agent_no_fabrication` at 0% (fixed, now 100%) | #82 |
 
 ## Cross-references
