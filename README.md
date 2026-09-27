@@ -342,6 +342,7 @@ Environment variables (loaded from `.env`). Key settings:
 | `OPENAI_COMPATIBLE_BASE_URL` | — | **Required** for `openai_compatible`. Chat endpoint base URL |
 | `OPENAI_COMPATIBLE_MODEL` | — | **Required** for `openai_compatible`. Model id to request |
 | `OPENAI_COMPATIBLE_API_KEY` | — | Optional — omit it for keyless local endpoints |
+| `OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` | `45.0` | Bounded per-HTTP-call timeout to the `openai_compatible` provider (issue #145). Keep it under `total_execution_timeout_s` (60s default) |
 
 Full reference: [`src/agents_system/config.py`](src/agents_system/config.py).
 
@@ -373,6 +374,15 @@ Notes:
   the response) are sanitized automatically — see
   [`src/agents_system/agent/reasoning.py`](src/agents_system/agent/reasoning.py). Streaming
   is **not** sanitized; nothing in the app streams today.
+- Per-call provider HTTP status and retries are visible on `/metrics`
+  (`agent_provider_requests_total`, `agent_provider_retries_total`) and a
+  stuck call now fails after `OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` instead of
+  waiting silently (issue #145) — see
+  [`docs/platform/observability.md`](docs/platform/observability.md#provider-observability-and-the-issue-145-investigation)
+  for the full investigation: a suspected provider rate limit turned out to
+  be a live-eval harness setup gap (`catalog_search` querying an unseeded
+  demo table), now fixed in `services/reference.py` and
+  `tests/test_live_load_phase3.py`.
 
 ---
 

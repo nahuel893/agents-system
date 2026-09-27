@@ -594,7 +594,26 @@ async def test_small_real_model_load_run_reports_tokens_cost_and_latency() -> No
     """
     model, model_name = build_eval_model()
     concurrency = 20
-    async with boot_live_harness(model=model, model_name=model_name) as harness:
+    # issue #145 -- previously omitted `seed_demo=True`, so `sales-agent`'s
+    # `catalog_search` (which this scenario's own prompt, "Do you have Item
+    # Alpha in stock?", is designed to trigger) had a CONNECTED
+    # `readonly_engine` pointed at this harness's own alembic-managed schema
+    # -- which has no `articulos` table at all. Every call raised
+    # `asyncpg.exceptions.UndefinedTableError`, an unhandled exception that
+    # failed the whole turn and drove `services/outbox.py`'s
+    # retry-with-backoff storm this issue investigated as suspected chat
+    # model provider throttling: real per-call HTTP timings (`/metrics`'
+    # `agent_provider_requests_total`) showed EVERY raw request to the
+    # provider succeeding, while `agent_tool_calls_total{outcome="error",
+    # tool="catalog_search"}` matched `agent_turns_total{outcome="error"}`
+    # exactly. `services/reference.py`'s `catalog_search`/`client_lookup` now
+    # also degrade to "not configured" instead of raising when the demo
+    # schema is unavailable (defense in depth for a real misconfigured
+    # deployment), but the actual bug here was this test never seeding the
+    # schema its own prompt exercises.
+    async with boot_live_harness(
+        model=model, model_name=model_name, seed_demo=True
+    ) as harness:
         limiter = harness.app.state.turn_admission_limiter
         phones = [_phone("real", i) for i in range(concurrency)]
 

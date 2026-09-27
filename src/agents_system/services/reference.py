@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agents_system.connectors.report_connector import build_report_tool_spec
 from agents_system.connectors.sales_reports import CATALOG
 from agents_system.harness.registry import Tier, ToolSpec
+from agents_system.services.db_role import DATABASE_UNAVAILABLE_ERRORS
 
 _logger = structlog.get_logger(__name__)
 
@@ -271,11 +272,51 @@ class ReferenceBackends:
 
     async def _fetch_rows(
         self, statement: Any, params: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, Any]] | None:
+        """Run *statement* against the configured demo/reference schema.
+
+        Returns ``None`` -- distinct from an honest empty list -- when the
+        database itself is the problem, never when a query legitimately has
+        no rows. Two distinct failure shapes land here (issue #145 and its
+        follow-up):
+
+        - A query-path failure: a demo schema that is CONNECTED but never
+          migrated/seeded, e.g. `evals.live_harness.boot_live_harness`
+          without `seed_demo=True`, raises
+          `asyncpg.exceptions.UndefinedTableError: relation "articulos" does
+          not exist`, wrapped by SQLAlchemy as a `SQLAlchemyError` subclass.
+        - A connect-path failure: the database is unreachable (connection
+          refused, unknown host, connect timeout, a password/connection-limit
+          refusal). On the asyncpg connect path SQLAlchemy does NOT wrap
+          these -- they surface as a bare `OSError` or `asyncpg.PostgresError`
+          (see `services/db_role.py`'s `UNWRAPPED_CONNECT_ERRORS`, added for
+          the identical reason in issue #131, and already relied on by the
+          sibling `run_report` tool in `connectors/report_connector.py`).
+
+        Both are configuration problems, not a legitimate "no rows" answer,
+        so every caller degrades them exactly like `readonly_engine is None`
+        (`_not_configured()`) instead of letting a raw exception crash the
+        whole turn -- which is what drove `services/outbox.py`'s
+        retry-with-backoff storm this issue reports as a real-model run
+        barely completing under load.
+        """
         assert self._readonly_engine is not None
-        async with self._readonly_engine.connect() as connection:
-            result = await connection.execute(statement, params)
-            return [dict(row) for row in result.mappings().all()]
+        try:
+            async with self._readonly_engine.connect() as connection:
+                result = await connection.execute(statement, params)
+                return [dict(row) for row in result.mappings().all()]
+        except DATABASE_UNAVAILABLE_ERRORS as exc:
+            _logger.warning(
+                "reference_backends.demo_schema_unavailable",
+                message=(
+                    "A reference-backend query failed against the "
+                    "configured readonly_engine -- the demo schema is "
+                    "likely not migrated/seeded. Reporting "
+                    "'not configured' instead of crashing the turn."
+                ),
+                error=str(exc)[:200],
+            )
+            return None
 
     async def _lookup_client(self, phone: Any) -> dict[str, Any]:
         if self._readonly_engine is None:
@@ -289,6 +330,8 @@ class ReferenceBackends:
         except ValueError:
             return {"client_id": None, "name": None, "phone": phone}
         rows = await self._fetch_rows(_CLIENT_LOOKUP_SQL, {"client_id": client_id})
+        if rows is None:
+            return self._not_configured()
         if not rows:
             return {"client_id": None, "name": None, "phone": phone}
 
@@ -320,6 +363,8 @@ class ReferenceBackends:
                 _CATALOG_SEARCH_SQL,
                 {"query": query, "limit": max(1, min(limit, 50))},
             )
+            if rows is None:
+                return self._not_configured()
             if not rows:
                 return {"results": [], "classification": "no_match"}
 

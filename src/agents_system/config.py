@@ -281,6 +281,14 @@ class Settings(BaseSettings):
     openai_compatible_api_key: str = ""
     openai_compatible_base_url: str = ""
     openai_compatible_model: str = ""
+    # issue #145 -- bounded per-HTTP-call timeout to the openai_compatible
+    # provider. Previously unset, which left the openai SDK's own default in
+    # effect (connect=5s, read/write/pool=600s): one stuck call could wait up
+    # to ten minutes with no visible failure. 45s is comfortably under
+    # total_execution_timeout_s (60s, harness.loader.PLATFORM_DEFAULT_LIMITS)
+    # so a single hung call fails with a clear client-side timeout instead of
+    # being silently absorbed by the platform's own per-turn budget.
+    openai_compatible_request_timeout_s: float = Field(default=45.0, gt=0)
 
     # Ollama adapter (#169, ADR-002 E.18) — configurable model + host so a
     # role can be evaluated against a different local model (e.g. the live-eval

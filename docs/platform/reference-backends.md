@@ -132,6 +132,25 @@ registry.register(backends.message_sender_tool_spec())
   substring match has no real distance signal beyond "not identical". An
   empty query or no match returns `results: []` with
   `classification: "no_match"`.
+- A `readonly_engine` that is set but points at a schema without the demo
+  tables (`articulos`, `padron_clientes` — e.g. `evals.live_harness.
+  boot_live_harness` called without `seed_demo=True`) degrades the same way
+  an unset `readonly_engine` does: `catalog_search`/`client_lookup`
+  (including through `message_sender`'s own recipient check) return
+  `error_kind: "reference_data_not_configured"` and log one
+  `reference_backends.demo_schema_unavailable` warning, instead of letting
+  the underlying `asyncpg.exceptions.UndefinedTableError` (wrapped as a
+  `sqlalchemy.exc.SQLAlchemyError`) crash the whole turn (issue #145). The
+  same degradation covers a `readonly_engine` whose *database* is
+  unreachable — connection refused, unknown host, connect timeout, or a
+  password/connection-limit refusal — which SQLAlchemy does NOT wrap on the
+  asyncpg connect path (it surfaces as a bare `OSError` or
+  `asyncpg.PostgresError`, the same class `services/db_role.py`'s
+  `DATABASE_UNAVAILABLE_ERRORS` already catches for the read-only-role
+  check, issue #131). A genuinely empty, correctly-migrated demo schema
+  still reports an honest `no_match` / `client_id: null` — this degradation
+  is scoped to the database connection or query itself failing, never to a
+  legitimate empty result.
 - `run_report` exposes the closed portable sales `CATALOG`; its tool schema
   documents every report parameter's type, allowed values, and default from
   the catalog's `ReportSpec` / `ParamSpec` definitions. A parameter shared by
