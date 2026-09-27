@@ -1082,9 +1082,15 @@ estar marcado `untrusted_input=true`, y la única defensa actual de la
 plataforma es "hacía falta la clave de API para estar en esa conversación
 siquiera". Si los patrones de uso de OpenWebUI cambian (p. ej. un flujo que
 canaliza contenido externo raspado a través de él), esta aceptación debería
-revisarse. Ver también #71 (extracción del puerto de canal) — relacionado
-con cómo se resuelve el runtime de un canal, pero distinto de este
-invariante de arranque; #111 no depende de la forma del puerto de #71.
+revisarse. Ver también #22 (extracción del puerto de canal, antes el #71
+del archivo) — relacionado con cómo se resuelve el runtime de un canal,
+pero distinto de este invariante de arranque; #111 no depende de la forma
+del puerto. Desde #22 el mismo control de arranque (y el control del
+presupuesto del lease del outbox que lo acompaña) corre para cada runtime al
+que está vinculado un canal de webhook: `WHATSAPP_RUNTIME_ID` exactamente
+como arriba, y cada canal que una implementación registra con
+`create_app(channels={nombre: Channel(adapter=..., runtime_id=...)})` — ver
+`docs/platform_es/channel.md`.
 
 **Lectura de body sin límite — cerrado, no aceptado (#37).** Sobre esta
 misma ruta había un riesgo distinto que NO se aceptó: `POST

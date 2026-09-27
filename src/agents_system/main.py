@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import re
 import secrets
 import time
 import uuid
@@ -32,6 +33,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agents_system import __version__
 from agents_system.agent.spec import Agent
+from agents_system.channels.port import (
+    Channel,
+    ChannelAdapter,
+    ChannelResolver,
+    InboundChannels,
+)
+from agents_system.channels.whatsapp import (
+    WHATSAPP_CHANNEL,
+    WhatsAppChannel,
+    WhatsAppChannelSettings,
+)
 from agents_system.config import Settings, get_settings
 from agents_system.harness.loader import (
     _SAFE_SEGMENT,
@@ -222,11 +234,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         resource_stack.push_async_callback(audit_sink.stop)
 
         # D-014 — outbound WhatsApp client (design AD-2), built once and shared.
+        # #22 -- WhatsApp's settings are read through the channel's own view.
+        whatsapp = WhatsAppChannelSettings.from_settings(settings)
         app.state.whatsapp_client = WhatsAppClient(
             httpx.AsyncClient(),
-            phone_number_id=settings.whatsapp_phone_number_id,
-            token=settings.whatsapp_token,
-            base_url=settings.whatsapp_graph_api_url,
+            phone_number_id=whatsapp.phone_number_id,
+            token=whatsapp.access_token,
+            base_url=whatsapp.graph_api_url,
         )
         resource_stack.push_async_callback(app.state.whatsapp_client.aclose)
 
@@ -251,7 +265,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
 
         if plan.registrations:
-            from agents_system.agent.graph import AgentRuntime, _effective_limits
+            from agents_system.agent.graph import AgentRuntime
             from agents_system.harness.factory import build_runtime
             from agents_system.harness.loader import resolve
             from agents_system.services.embeddings import get_embedding_provider
@@ -363,6 +377,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             roots: RootConfig | None = getattr(app.state, "roots", None)
 
+            # #22 -- every webhook channel bound to each runtime id: the
+            # built-in WhatsApp channel (WHATSAPP_RUNTIME_ID) and every
+            # channel create_app(channels=...) registered. Each gets the same
+            # boot-time checks below.
+            channels_by_runtime: dict[str, list[str]] = {}
+            if whatsapp.runtime_id:
+                channels_by_runtime[whatsapp.runtime_id] = [WHATSAPP_CHANNEL]
+            for channel_name, channel in _registered_channels(app).items():
+                channels_by_runtime.setdefault(channel.runtime_id, []).append(
+                    channel_name
+                )
+
             runtimes: dict[str, AgentRuntime] = {}
             for runtime_id, registration in plan.registrations.items():
                 client = registration.client
@@ -414,45 +440,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     )
 
                 # ADR-002 C.13 — a channel must only ever be bound to a role
-                # marked safe for the input it delivers. WhatsApp is
+                # marked safe for the input it delivers. Every webhook channel
+                # (WhatsApp, and since #22 any registered one) is
                 # attacker-reachable external input; check the resolved
                 # definition BEFORE build_runtime does any work and BEFORE
                 # app.state.runtimes is populated, so a misconfigured
                 # deployment (e.g. an untrusted_input=false role bound to
                 # WhatsApp) is a boot failure, not a per-message surprise
-                # caught (or missed) later. Scoped to the exact WhatsApp
-                # runtime id only — the OpenAI adapter is an accepted risk,
+                # caught (or missed) later. Scoped to the channel-bound
+                # runtime ids only — the OpenAI adapter is an accepted risk,
                 # not enforced here (see ADR-002 C.13 "OpenAI adapter").
-                if (
-                    settings.whatsapp_runtime_id
-                    and runtime_id == settings.whatsapp_runtime_id
-                    and not definition.untrusted_input
-                ):
-                    raise DefinitionError(
-                        f"Channel 'whatsapp' is bound to {registration.subject} "
-                        f"(runtime {runtime_id!r}), which resolves "
-                        "untrusted_input=False. WhatsApp delivers "
-                        "untrusted external input, so it must "
-                        "declare untrusted_input: true (ADR-002 C.11/C.13) "
-                        "to be bound to it. Refusing to boot."
+                #
+                # A channel turn must also finish before its deferred-webhook
+                # lease expires. Reserve explicit non-turn headroom for
+                # surrounding persistence and provider-send work;
+                # adapter-only runtimes do not run under this lease and
+                # remain unconstrained by it.
+                for channel_name in channels_by_runtime.get(runtime_id, ()):
+                    _check_channel_runtime(
+                        channel_name, runtime_id, registration.subject, definition
                     )
-
-                # A WhatsApp turn must finish before its deferred-webhook lease
-                # expires. Reserve explicit non-turn headroom for surrounding
-                # persistence and provider-send work; adapter-only runtimes do
-                # not run under this lease and remain unconstrained by it.
-                if runtime_id == settings.whatsapp_runtime_id:
-                    effective_limits = _effective_limits(definition.execution_limits)
-                    total_timeout_s = effective_limits["total_execution_timeout_s"]
-                    non_turn_headroom_s = 60
-                    lease_seconds = DEFAULT_LEASE_DURATION.total_seconds()
-                    if total_timeout_s + non_turn_headroom_s >= lease_seconds:
-                        raise ValueError(
-                            f"WhatsApp runtime {runtime_id!r} has "
-                            f"total_execution_timeout_s={total_timeout_s}; with "
-                            f"non_turn_headroom_s={non_turn_headroom_s}, it must be "
-                            f"less than outbox lease_seconds={lease_seconds}"
-                        )
 
                 # permission-model PR3 (issue #38, design.md Resolved
                 # Decision 5) -- the grant source is the SOLE grant for this
@@ -534,29 +541,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # ``DeferredWebhookWorker``'s, reusing W2a's lease primitives; this
         # lifespan only owns when start()/stop() run.
         webhook_runtime = (
-            app.state.runtimes.get(settings.whatsapp_runtime_id)
-            if settings.whatsapp_runtime_id
-            else None
+            app.state.runtimes.get(whatsapp.runtime_id) if whatsapp.runtime_id else None
         )
-        if webhook_runtime is not None:
-            from agents_system.services.webhook_worker import DeferredWebhookWorker
-
-            webhook_worker = DeferredWebhookWorker(
-                session_factory=get_session_factory(app.state.engine),
-                worker_id=f"webhook-worker-{uuid.uuid4()}",
-                directory=app.state.participant_directory,
-                runtime=webhook_runtime,
-                whatsapp_client=app.state.whatsapp_client,
-                recorder=app.state.conversation_recorder,
-                checkpointer_enabled=settings.whatsapp_checkpointer_enabled,
-                poll_interval_s=settings.webhook_worker_poll_interval_s,
-                claim_limit=settings.webhook_worker_claim_limit,
-                admission_limiter=app.state.turn_admission_limiter,
-            )
-            await webhook_worker.start()
-            resource_stack.push_async_callback(webhook_worker.stop)
-            app.state.webhook_worker = webhook_worker
-        elif settings.whatsapp_token and settings.whatsapp_phone_number_id:
+        if (
+            webhook_runtime is None
+            and whatsapp.access_token
+            and whatsapp.phone_number_id
+        ):
             # #141 review follow-up -- WhatsApp is otherwise fully
             # configured to receive AND reply (both outbound credentials
             # set), yet `whatsapp_runtime_id` is empty. `POST /webhook` is
@@ -584,7 +575,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # test before this message claims it again.
             raise DefinitionError(
                 "WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID are configured "
-                f"but whatsapp_runtime_id={settings.whatsapp_runtime_id!r} "
+                f"but whatsapp_runtime_id={whatsapp.runtime_id!r} "
                 "resolves to no runtime (unset). "
                 "POST /webhook would durably accept signed WhatsApp messages "
                 "that the deferred worker would never process. Set "
@@ -592,10 +583,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "WHATSAPP_TOKEN/WHATSAPP_PHONE_NUMBER_ID if this deployment "
                 "does not use WhatsApp. Refusing to boot."
             )
+
+        # #22 -- one worker serves every channel: WhatsApp through
+        # `runtime`/`whatsapp_client` (unchanged), each channel
+        # create_app(channels=...) registered through `channels`, on the
+        # runtime its registration names (built and checked above).
+        registered_channels = _registered_channels(app)
+        if webhook_runtime is not None or registered_channels:
+            from agents_system.services.webhook_worker import (
+                ChannelBinding,
+                DeferredWebhookWorker,
+            )
+
+            webhook_worker = DeferredWebhookWorker(
+                session_factory=get_session_factory(app.state.engine),
+                worker_id=f"webhook-worker-{uuid.uuid4()}",
+                directory=app.state.participant_directory,
+                runtime=webhook_runtime,
+                whatsapp_client=(
+                    app.state.whatsapp_client if webhook_runtime is not None else None
+                ),
+                recorder=app.state.conversation_recorder,
+                checkpointer_enabled=whatsapp.checkpointer_enabled,
+                poll_interval_s=settings.webhook_worker_poll_interval_s,
+                claim_limit=settings.webhook_worker_claim_limit,
+                admission_limiter=app.state.turn_admission_limiter,
+                channels={
+                    name: ChannelBinding(
+                        adapter=channel.adapter,
+                        runtime=app.state.runtimes[channel.runtime_id],
+                    )
+                    for name, channel in registered_channels.items()
+                },
+            )
+            await webhook_worker.start()
+            resource_stack.push_async_callback(webhook_worker.stop)
+            app.state.webhook_worker = webhook_worker
         else:
             structlog.get_logger().warning(
                 "webhook_worker.no_runtime_resolved",
-                whatsapp_runtime_id=settings.whatsapp_runtime_id,
+                whatsapp_runtime_id=whatsapp.runtime_id,
                 detail=(
                     "no runtime resolved for whatsapp_runtime_id; the "
                     "deferred webhook worker did not start. Durable inbound "
@@ -1152,6 +1179,106 @@ def _settings_agents(
     return agents, clients
 
 
+#: A registered channel's name (#22): the ``/webhook/{name}`` path segment
+#: and the value stored in ``webhook_inbox.channel``, so deliberately
+#: narrower than a runtime id -- lowercase, URL- and log-safe, short.
+_CHANNEL_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+
+
+def _validate_channels(channels: Mapping[str, Channel] | None) -> dict[str, Channel]:
+    """``create_app(channels=...)``, validated when the app is created.
+
+    The generic route serves these as soon as the app exists (no lifespan
+    needed), so a bad name must fail here rather than at boot.
+    ``whatsapp`` is the built-in channel and cannot be re-registered.
+    """
+    validated: dict[str, Channel] = {}
+    for name, channel in (channels or {}).items():
+        if not isinstance(name, str) or not _CHANNEL_NAME.fullmatch(name):
+            raise DefinitionError(
+                f"channels key {_bounded_repr(str(name))} is not a valid channel "
+                "name: 1-32 characters of lowercase letters, digits, '_' or "
+                "'-', starting with a letter."
+            )
+        if name == WHATSAPP_CHANNEL:
+            raise DefinitionError(
+                f"channels[{name!r}] is reserved for the built-in WhatsApp "
+                "channel (configured through WHATSAPP_* / META_WEBHOOK_SECRET)."
+            )
+        if not isinstance(channel, Channel):
+            raise DefinitionError(
+                f"channels[{name!r}] must be a Channel(adapter=..., "
+                f"runtime_id=...), got {type(channel).__name__}."
+            )
+        if not isinstance(channel.adapter, ChannelAdapter):
+            raise DefinitionError(
+                f"channels[{name!r}].adapter does not implement ChannelAdapter "
+                "(verify_inbound, read_inbound, extract_turn, send_text)."
+            )
+        if not isinstance(channel.runtime_id, str) or not channel.runtime_id:
+            raise DefinitionError(
+                f"channels[{name!r}].runtime_id must name a registered runtime "
+                "id (a non-empty str)."
+            )
+        validated[name] = channel
+    return validated
+
+
+def _fixed_resolver(channel: Channel) -> ChannelResolver:
+    """A registered channel's adapter, whatever the request's Settings."""
+
+    def resolve(_settings: Settings) -> ChannelAdapter:
+        return channel.adapter
+
+    return resolve
+
+
+def _registered_channels(app: FastAPI) -> Mapping[str, Channel]:
+    """The channels ``create_app(channels=...)`` registered (#22)."""
+    channels: Mapping[str, Channel] | None = getattr(app.state, "channels", None)
+    return channels if channels is not None else {}
+
+
+def _check_channel_runtime(
+    channel_name: str, runtime_id: str, subject: str, definition: Any
+) -> None:
+    """The boot-time checks every channel-bound runtime gets.
+
+    ADR-002 C.13: a webhook channel delivers untrusted external input, so the
+    runtime answering it must resolve ``untrusted_input=True``. And its turn
+    must finish, with 60 seconds of non-turn headroom, before the deferred
+    worker's outbox lease expires. Applied to the built-in WhatsApp channel
+    (``WHATSAPP_RUNTIME_ID``) exactly as before #22, and to every registered
+    channel's runtime.
+    """
+    from agents_system.agent.graph import _effective_limits
+
+    label = (
+        "WhatsApp" if channel_name == WHATSAPP_CHANNEL else f"Channel {channel_name!r}"
+    )
+    if not definition.untrusted_input:
+        raise DefinitionError(
+            f"Channel {channel_name!r} is bound to {subject} "
+            f"(runtime {runtime_id!r}), which resolves "
+            f"untrusted_input=False. {label} delivers "
+            "untrusted external input, so it must "
+            "declare untrusted_input: true (ADR-002 C.11/C.13) "
+            "to be bound to it. Refusing to boot."
+        )
+
+    effective_limits = _effective_limits(definition.execution_limits)
+    total_timeout_s = effective_limits["total_execution_timeout_s"]
+    non_turn_headroom_s = 60
+    lease_seconds = DEFAULT_LEASE_DURATION.total_seconds()
+    if total_timeout_s + non_turn_headroom_s >= lease_seconds:
+        raise ValueError(
+            f"{label} runtime {runtime_id!r} has "
+            f"total_execution_timeout_s={total_timeout_s}; with "
+            f"non_turn_headroom_s={non_turn_headroom_s}, it must be "
+            f"less than outbox lease_seconds={lease_seconds}"
+        )
+
+
 def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
     """Which runtimes to build, validated before the lifespan creates any
     resource, so a bad registration fails boot before anything is served."""
@@ -1225,9 +1352,15 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
     whatsapp_ids = (
         [settings.whatsapp_runtime_id] if settings.whatsapp_runtime_id else []
     )
+    # #22 -- a registered channel's runtime id is checked the same way.
+    channel_ids = [
+        (f"channels[{name!r}].runtime_id", [channel.runtime_id])
+        for name, channel in _registered_channels(app).items()
+    ]
     for channel, ids in (
         ("WHATSAPP_RUNTIME_ID", whatsapp_ids),
         ("ADAPTER_RUNTIMES", settings.adapter_runtimes),
+        *channel_ids,
     ):
         # issue #128 item 2 -- an id that fails this membership check is, by
         # definition, not yet a validated runtime id and may be unbounded.
@@ -1263,6 +1396,7 @@ def create_app(
     roots: RootConfig | None = None,
     title: str = "agents_system",
     chat_model: BaseChatModel | None = None,
+    channels: Mapping[str, Channel] | None = None,
 ) -> FastAPI:
     """Application factory. Returns a configured FastAPI instance.
 
@@ -1335,8 +1469,19 @@ def create_app(
         (`evals.live_registry.build_live_registry_factory`), which only
         drives the reference-backend connectors' own LLM calls, never the
         turn-running ``AgentRuntime`` itself.
+    channels:
+        Channel name -> ``agents_system.channels.port.Channel(adapter=...,
+        runtime_id=...)`` (#22): extra messaging channels beside the built-in
+        WhatsApp one, served at ``/webhook/{name}`` by the same generic route
+        and deferred worker. A name is 1-32 lowercase letters, digits, ``_``
+        or ``-`` (starting with a letter), and ``whatsapp`` is reserved; a bad
+        entry fails here. Each ``runtime_id`` must be registered (``agents``
+        or ``AGENT_REGISTRATIONS``), resolve ``untrusted_input=True`` and fit
+        the outbox lease, or boot fails -- the checks ``WHATSAPP_RUNTIME_ID``
+        gets. ``None`` (the default) registers none.
     """
     setup_logging()
+    registered_channels = _validate_channels(channels)
 
     settings = get_settings()
     application = FastAPI(
@@ -1355,6 +1500,19 @@ def create_app(
     application.state.roots = roots
     application.state.chat_model_override = chat_model
     application.state.provider_probe = ProviderHealthProbe()
+    # #22 -- the generic webhook route resolves its adapter from here:
+    # WhatsApp is built per request from that request's Settings (so a
+    # dependency override reaches it, as it always has); a registered
+    # channel brings its own adapter and configuration.
+    application.state.channels = registered_channels
+    resolvers: dict[str, ChannelResolver] = {
+        WHATSAPP_CHANNEL: WhatsAppChannel.from_settings
+    }
+    for name, channel in registered_channels.items():
+        resolvers[name] = _fixed_resolver(channel)
+    application.state.inbound_channels = InboundChannels(
+        default=WHATSAPP_CHANNEL, resolvers=resolvers
+    )
 
     application.add_middleware(RequestIdMiddleware)
     application.include_router(webhook_router)

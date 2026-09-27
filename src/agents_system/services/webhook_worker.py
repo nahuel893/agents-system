@@ -1,22 +1,29 @@
-"""Deferred processor for durable Meta webhook outbox work.
+"""Deferred processor for durable webhook outbox work, for every channel.
 
 W2b2 wires this worker's ``start``/``stop`` lifecycle into the application
 lifespan and replaces the synchronous webhook path: the live route only
 persists an inbound message and returns; a turn runs, and a reply is sent,
 entirely through this worker's poll loop.
+
+#22 -- the worker is channel-agnostic. Each inbox row names its channel;
+the worker hands the row back to that channel's adapter
+(``agents_system.channels.port.ChannelAdapter``) to extract the turn and to
+send the reply, and runs the turn on the runtime bound to that channel.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 import structlog
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 
-from agents_system.models.outbox import InboundMessage, OutboxWork
+from agents_system.channels.port import ChannelAdapter, TextSender
+from agents_system.channels.whatsapp import WHATSAPP_CHANNEL, WhatsAppChannel
+from agents_system.models.outbox import LEGACY_CHANNEL, InboundMessage, OutboxWork
 from agents_system.services.admission import (
     DEFAULT_MAX_CONCURRENT_TURNS,
     TurnAdmissionLimiter,
@@ -24,6 +31,8 @@ from agents_system.services.admission import (
 from agents_system.services.outbox import (
     DEFAULT_LEASE_DURATION,
     OutboxLeaseLostError,
+    channel_native_key,
+    channel_scoped_key,
     claim_available_outbox_work,
     complete_outbox_work,
     persist_outbound_intent,
@@ -47,19 +56,22 @@ class _Runtime(Protocol):
     ) -> list[AnyMessage]: ...
 
 
-class _WhatsAppClient(Protocol):
-    async def send_text(self, to: str, body: str) -> None: ...
-
-
 TerminalFailureNotifier = Callable[[OutboxWork, str], Awaitable[None]]
 SessionFactory = Callable[[], Any]
 
 
 @dataclass(frozen=True)
-class _InboundTurn:
-    meta_message_id: str
-    phone_number: str
-    text: str
+class ChannelBinding:
+    """What the worker needs to serve one channel's rows (#22).
+
+    ``checkpointer_enabled`` passes a ``thread_id`` to ``run_turn`` -- the
+    conversation, scoped to the channel -- so the turn joins the shared
+    checkpointer whenever the process built one.
+    """
+
+    adapter: ChannelAdapter
+    runtime: _Runtime
+    checkpointer_enabled: bool = True
 
 
 class DeferredWebhookWorker:
@@ -78,6 +90,12 @@ class DeferredWebhookWorker:
     expires -- the same guarantee a mid-turn cancellation already has
     (``process_claimed_work`` lets ``asyncio.CancelledError`` propagate
     instead of recording a failure). No exactly-once execution is implied.
+
+    Channels (#22): ``runtime`` + ``whatsapp_client`` (+
+    ``checkpointer_enabled``) bind the built-in WhatsApp channel, exactly as
+    before; ``channels`` binds any other registered channel by name. A row
+    whose channel has no binding in this process is recorded as a failure
+    -- retried, then terminal and visible -- never guessed at.
     """
 
     def __init__(
@@ -86,24 +104,42 @@ class DeferredWebhookWorker:
         session_factory: SessionFactory,
         worker_id: str,
         directory: ParticipantDirectory | None,
-        runtime: _Runtime,
-        whatsapp_client: _WhatsAppClient,
+        runtime: _Runtime | None = None,
+        whatsapp_client: TextSender | None = None,
         recorder: ConversationRecorder | None = None,
         checkpointer_enabled: bool = False,
         terminal_notifier: TerminalFailureNotifier | None = None,
         poll_interval_s: float = 1.0,
         claim_limit: int = 10,
         admission_limiter: TurnAdmissionLimiter | None = None,
+        channels: Mapping[str, ChannelBinding] | None = None,
     ) -> None:
         if not worker_id:
             raise ValueError("worker_id must not be empty")
+        if (runtime is None) != (whatsapp_client is None):
+            raise ValueError(
+                "runtime and whatsapp_client bind the WhatsApp channel "
+                "together: pass both or neither"
+            )
+        bindings = dict(channels or {})
+        if runtime is not None and whatsapp_client is not None:
+            if WHATSAPP_CHANNEL in bindings:
+                raise ValueError(
+                    f"channel {WHATSAPP_CHANNEL!r} is bound twice: by "
+                    "runtime/whatsapp_client and by channels"
+                )
+            bindings[WHATSAPP_CHANNEL] = ChannelBinding(
+                adapter=WhatsAppChannel(sender=whatsapp_client),
+                runtime=runtime,
+                checkpointer_enabled=checkpointer_enabled,
+            )
+        if not bindings:
+            raise ValueError("a webhook worker needs at least one channel binding")
         self._session_factory = session_factory
         self._worker_id = worker_id
         self._directory = directory
-        self._runtime = runtime
-        self._whatsapp_client = whatsapp_client
+        self._channels = bindings
         self._recorder = recorder
-        self._checkpointer_enabled = checkpointer_enabled
         self._terminal_notifier = terminal_notifier
         self._poll_interval_s = poll_interval_s
         self._claim_limit = claim_limit
@@ -249,7 +285,34 @@ class DeferredWebhookWorker:
             await self._record_failure(work, exc)
             return
 
-        turn = _extract_inbound_turn(inbound) if inbound is not None else None
+        if inbound is None:
+            await self._complete_or_retry(
+                work, "inbound message has no serviceable text"
+            )
+            return
+
+        # A row built in memory (tests) has no server default applied; every
+        # persisted row carries its channel (migration 006, NOT NULL).
+        channel = inbound.channel or LEGACY_CHANNEL
+        binding = self._channels.get(channel)
+        if binding is None:
+            logger.error(
+                "webhook_worker.no_channel_binding",
+                outbox_work_id=str(work.id),
+                channel=channel,
+            )
+            await self._record_failure(
+                work, RuntimeError(f"no binding for channel {channel!r}")
+            )
+            return
+
+        try:
+            turn = binding.adapter.extract_turn(
+                inbound.payload, channel_native_key(channel, inbound.meta_message_id)
+            )
+        except Exception as exc:
+            await self._record_failure(work, exc)
+            return
         if turn is None:
             await self._complete_or_retry(
                 work, "inbound message has no serviceable text"
@@ -260,7 +323,7 @@ class DeferredWebhookWorker:
             logger.error(
                 "webhook_worker.no_participant_directory",
                 outbox_work_id=str(work.id),
-                message_id=turn.meta_message_id,
+                message_id=inbound.meta_message_id,
             )
             await self._record_failure(
                 work, RuntimeError("participant directory is unavailable")
@@ -268,7 +331,7 @@ class DeferredWebhookWorker:
             return
 
         try:
-            phone_number = self._directory.normalize_address(turn.phone_number)
+            phone_number = self._directory.normalize_address(turn.sender)
         except ValueError:
             logger.warning(
                 "webhook_worker.invalid_address",
@@ -290,6 +353,9 @@ class DeferredWebhookWorker:
             await self._complete_or_retry(work, "participant is not active")
             return
 
+        # The conversation this turn belongs to: the normalized address,
+        # scoped to its channel so two channels never share one thread.
+        conversation = channel_scoped_key(channel, phone_number)
         replay = _persisted_reply(work)
         if replay is None:
             try:
@@ -300,10 +366,10 @@ class DeferredWebhookWorker:
                 # this worker's turns are priced correctly without needing a
                 # routing id of its own to pass -- previously this call site
                 # was exactly why WhatsApp turns were never priced at all.
-                result_messages = await self._runtime.run_turn(
+                result_messages = await binding.runtime.run_turn(
                     messages=[HumanMessage(content=turn.text)],
-                    session_id=turn.meta_message_id,
-                    thread_id=phone_number if self._checkpointer_enabled else None,
+                    session_id=inbound.meta_message_id,
+                    thread_id=conversation if binding.checkpointer_enabled else None,
                 )
                 assistant_text = _extract_assistant_text(result_messages)
             except Exception as exc:
@@ -311,7 +377,7 @@ class DeferredWebhookWorker:
                 return
 
             await self._record_turn(
-                phone_number=phone_number,
+                thread_id=conversation,
                 participant_id=participant.id,
                 user_text=turn.text,
                 assistant_text=assistant_text,
@@ -322,7 +388,7 @@ class DeferredWebhookWorker:
 
             replay = (
                 {"to": phone_number, "body": assistant_text},
-                f"{turn.meta_message_id}:reply",
+                f"{inbound.meta_message_id}:reply",
             )
             try:
                 async with self._session_factory() as session:
@@ -342,7 +408,7 @@ class DeferredWebhookWorker:
 
         body, _send_key = replay
         try:
-            await self._whatsapp_client.send_text(to=body["to"], body=body["body"])
+            await binding.adapter.send_text(to=body["to"], body=body["body"])
         except Exception as exc:
             await self._record_failure(work, exc)
             return
@@ -361,7 +427,7 @@ class DeferredWebhookWorker:
     async def _record_turn(
         self,
         *,
-        phone_number: str,
+        thread_id: str,
         participant_id: Any,
         user_text: str,
         assistant_text: str,
@@ -372,14 +438,14 @@ class DeferredWebhookWorker:
             async with self._session_factory() as session:
                 await self._recorder.record_turn(
                     session,
-                    thread_id=phone_number,
+                    thread_id=thread_id,
                     participant_id=participant_id,
                     user_text=user_text,
                     assistant_text=assistant_text,
                 )
                 await session.commit()
         except Exception:
-            logger.warning("webhook_worker.recorder_failed", phone_number=phone_number)
+            logger.warning("webhook_worker.recorder_failed", phone_number=thread_id)
 
     async def _complete_or_retry(self, work: OutboxWork, reason: str) -> None:
         try:
@@ -431,60 +497,6 @@ class DeferredWebhookWorker:
                 "webhook_worker.terminal_notification_failed",
                 outbox_work_id=str(work.id),
             )
-
-
-def _extract_inbound_turn(inbound: InboundMessage) -> _InboundTurn | None:
-    """Find this inbox row's exact Meta message across a shared envelope.
-
-    A message whose Meta ``type`` is not ``"text"`` (image, audio, location,
-    document, ...) is intentionally never serviceable here: this platform
-    relays text to the agent, not type-specific media, and does not attempt
-    one today. That is logged explicitly so it reads as a deliberate,
-    durably-completed outcome rather than a silent drop; replying to a
-    non-text message is a documented product follow-up, not a bug here.
-    """
-    entries = inbound.payload.get("entry")
-    if not isinstance(entries, list):
-        return None
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        changes = entry.get("changes")
-        if not isinstance(changes, list):
-            continue
-        for change in changes:
-            if not isinstance(change, dict):
-                continue
-            value = change.get("value")
-            if not isinstance(value, dict):
-                continue
-            messages = value.get("messages")
-            if not isinstance(messages, list):
-                continue
-            for message in messages:
-                if not isinstance(message, dict):
-                    continue
-                message_id = message.get("id")
-                if message_id != inbound.meta_message_id:
-                    continue
-                phone_number = message.get("from")
-                text_value = message.get("text")
-                text = text_value.get("body") if isinstance(text_value, dict) else None
-                if not isinstance(phone_number, str) or not isinstance(text, str):
-                    message_type = message.get("type")
-                    if isinstance(message_type, str) and message_type != "text":
-                        logger.info(
-                            "webhook_worker.non_text_message",
-                            meta_message_id=inbound.meta_message_id,
-                            message_type=message_type,
-                        )
-                    return None
-                return _InboundTurn(
-                    meta_message_id=inbound.meta_message_id,
-                    phone_number=phone_number,
-                    text=text,
-                )
-    return None
 
 
 def _persisted_reply(work: OutboxWork) -> tuple[dict[str, str], str] | None:
