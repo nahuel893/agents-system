@@ -44,6 +44,30 @@ Ambos por defecto valen lo mismo que estaba hardcodeado antes de #169
 (`qwen2.5:3b`, la resolución de host propia de ChatOllama) — una corrida sin
 configurar no cambia.
 
+### La suite completa en un comando
+
+`scripts/run-live-suite.sh` corre todas las suites en vivo en orden: smoke,
+roles, guardrails, la tool de SQL de solo lectura, Fase 1, Fase 4 y las dos
+capas de carga de la Fase 3. Si una suite falla, las demás siguen, y al final
+imprime un resumen PASS/FAIL.
+
+```bash
+scripts/run-live-suite.sh           # EVAL_RUNS=3 por escenario (alrededor de una hora)
+scripts/run-live-suite.sh --quick   # EVAL_RUNS=1, una primera pasada barata
+```
+
+Necesita Postgres en `127.0.0.1:5432` y Redis en `127.0.0.1:6379` (los
+servicios de `docker compose`), la base `agents_system_demo`, `bwrap` y las
+claves del proveedor en `.env`. Carga `.env` sin imprimirlo y usa
+`EVAL_PROVIDER=openai_compatible`, salvo que `EVAL_PROVIDER_OVERRIDE` indique
+otro proveedor.
+
+Para la suite de la tool de SQL crea una base descartable con las vistas de
+fixture y el rol `sql_readonly`, igual que el job de integración de SQL del
+CI, y la borra al terminar. Los logs y `SUMMARY.txt` quedan en
+`evals/results/live-suite-<timestamp>/`. Las tasas por escenario, los tokens y
+el costo siguen en los reportes de siempre en `evals/results/`.
+
 ## Cambiar de proveedor (EVAL_PROVIDER)
 
 El proveedor propio del eval es un switch separado del `ADAPTER_PROVIDER` de
