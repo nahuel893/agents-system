@@ -365,6 +365,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     roots=roots,
                 )
 
+                # issue #128 item 1 -- a client named explicitly, whose
+                # deployment override folder does not exist, must fail boot
+                # rather than silently fall back to the generic,
+                # un-narrowed role. `resolve()` sets `AgentDefinition.
+                # deployment` to None on EXACTLY the no-override path (see
+                # its own "No override" branch), so `client is not None`
+                # together with `deployment is None` here means
+                # `loader.load_override` already logged
+                # `loader.override_not_found` and returned None -- a typo'd
+                # or removed client folder, not a legitimate "this role has
+                # no override" (that case never sets `client`). A deployment
+                # override may only NARROW the generic role, so silently
+                # falling back to it WIDENS the tool surface -- refuse
+                # instead.
+                if client is not None and definition.deployment is None:
+                    raise DefinitionError(
+                        f"Runtime {runtime_id!r} ({registration.subject}) "
+                        f"specifies client override {client!r}, but its "
+                        "deployment override folder does not exist (see the "
+                        "loader.override_not_found warning above). A "
+                        "missing override silently falls back to the "
+                        "generic, un-narrowed role, widening the tool "
+                        "surface -- refusing to boot. Fix the client name "
+                        "or add the deployment folder."
+                    )
+
                 # ADR-002 C.13 — a channel must only ever be bound to a role
                 # marked safe for the input it delivers. WhatsApp is
                 # attacker-reachable external input; check the resolved
@@ -433,6 +459,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # explicit path while the runtime actually installed -- its
                 # tool surface and its skill files -- resolved against the
                 # library's guessed default.
+                #
+                # issue #128 item 3 -- `definition=definition` reuses the
+                # SAME resolved definition the untrusted_input/client checks
+                # above already validated, instead of letting build_runtime
+                # resolve role_type/client/roots a second, independent time.
                 equipped = build_runtime(
                     role_type=registration.locator,
                     registry=registry,
@@ -440,6 +471,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     client=client,
                     roots=roots,
                     session_provider=session_provider,
+                    definition=definition,
                 )
                 # #78 Phase 0 Slice 2 -- runtime_id=runtime_id labels this
                 # runtime's metrics with its registered runtime id (the
@@ -734,6 +766,24 @@ _MAX_RUNTIME_ID_LENGTH = 64
 labels, so it is short by contract, not only safe by character class."""
 
 
+def _bounded_repr(value: str) -> str:
+    """``repr(value)``, truncated to ``_MAX_RUNTIME_ID_LENGTH`` characters of
+    *value* itself, plus a trailing character count, when longer.
+
+    issue #128 item 2 -- every boot error that echoes a caller-supplied,
+    not-yet-validated id back (an unregistered ``clients``/``grants`` key, an
+    unmatched ``WHATSAPP_RUNTIME_ID``/``ADAPTER_RUNTIMES`` id) must go
+    through this, never a bare ``!r}``: those ids reach the error message
+    specifically BECAUSE they failed validation, so nothing has bounded
+    their length yet either. Reused by ``_validate_runtime_id`` and
+    ``_parse_agent_registration``, which used to each inline the same
+    truncate-then-repr logic.
+    """
+    if len(value) <= _MAX_RUNTIME_ID_LENGTH:
+        return repr(value)
+    return f"{value[:_MAX_RUNTIME_ID_LENGTH]!r}... ({len(value)} characters)"
+
+
 def _validate_runtime_id(runtime_id: str) -> str:
     """Reject a runtime id that is empty, longer than
     ``_MAX_RUNTIME_ID_LENGTH``, or contains anything other than letters,
@@ -757,9 +807,8 @@ def _validate_runtime_id(runtime_id: str) -> str:
     if len(runtime_id) > _MAX_RUNTIME_ID_LENGTH:
         # Never echo the whole value: the length is the problem.
         raise DefinitionError(
-            f"Invalid runtime id {runtime_id[:_MAX_RUNTIME_ID_LENGTH]!r}... "
-            f"({len(runtime_id)} characters). A runtime id is at most "
-            f"{_MAX_RUNTIME_ID_LENGTH} characters."
+            f"Invalid runtime id {_bounded_repr(runtime_id)}. A runtime id "
+            f"is at most {_MAX_RUNTIME_ID_LENGTH} characters."
         )
     if not _SAFE_SEGMENT.fullmatch(runtime_id):
         raise DefinitionError(
@@ -802,11 +851,16 @@ def _parse_agent_registration(value: str) -> tuple[str, str | None]:
     ``main.py``'s own env-boot convention, not a public string format: a
     library caller registers ``Agent``/``str`` objects through
     ``create_app(agents=...)`` instead. Strict -- at most one ``@``, and
-    both the role and the client must match ``loader._SAFE_SEGMENT``;
-    anything else fails boot naming the value, cut to
-    ``_MAX_RUNTIME_ID_LENGTH`` characters. Nothing else in the value has a
-    meaning: ``__`` in particular is part of the role name, never a
-    separator.
+    both the role and the client must match ``loader._SAFE_SEGMENT`` AND be
+    at most ``_MAX_RUNTIME_ID_LENGTH`` characters (issue #128 item 6: a
+    segment made only of legal characters but far longer than any real role
+    or client name previously passed straight through here, to overflow
+    into a raw ``OSError`` -- ``ENAMETOOLONG`` -- once it reached a real
+    filesystem join in ``loader._role_folder``/``_deployment_folder``,
+    instead of this function's own bounded ``DefinitionError``); anything
+    else fails boot naming the value, cut to ``_MAX_RUNTIME_ID_LENGTH``
+    characters. Nothing else in the value has a meaning: ``__`` in
+    particular is part of the role name, never a separator.
     """
     if not isinstance(value, str):
         raise DefinitionError(
@@ -814,18 +868,20 @@ def _parse_agent_registration(value: str) -> tuple[str, str | None]:
             'expected "{role}" or "{role}@{client}".'
         )
     role, separator, client = value.partition("@")
-    if not _SAFE_SEGMENT.fullmatch(role) or (
-        separator and not _SAFE_SEGMENT.fullmatch(client)
+    role_or_client_too_long = len(role) > _MAX_RUNTIME_ID_LENGTH or (
+        separator and len(client) > _MAX_RUNTIME_ID_LENGTH
+    )
+    if (
+        role_or_client_too_long
+        or not _SAFE_SEGMENT.fullmatch(role)
+        or (separator and not _SAFE_SEGMENT.fullmatch(client))
     ):
-        shown = (
-            f"{value!r}"
-            if len(value) <= _MAX_RUNTIME_ID_LENGTH
-            else f"{value[:_MAX_RUNTIME_ID_LENGTH]!r}... ({len(value)} characters)"
-        )
         raise DefinitionError(
-            f"Invalid agent registration {shown}. Expected "
+            f"Invalid agent registration {_bounded_repr(value)}. Expected "
             '"{role}" or "{role}@{client}", where the role and the client '
-            f"each match {_SAFE_SEGMENT.pattern} and '@' appears at most once."
+            f"each match {_SAFE_SEGMENT.pattern}, are each at most "
+            f"{_MAX_RUNTIME_ID_LENGTH} characters, and '@' appears at most "
+            "once."
         )
     return role, (client if separator else None)
 
@@ -861,7 +917,9 @@ def _build_registrations(
     clients = clients or {}
     # A client names a subtractive deployment override: one keyed by a
     # typo'd id would silently serve that agent WITHOUT its narrowing.
-    unknown = [repr(key) for key in clients if key not in agents]
+    # issue #128 item 2 -- `key` is exactly what failed the membership check
+    # below, so it is not yet a validated runtime id and may be unbounded.
+    unknown = [_bounded_repr(key) for key in clients if key not in agents]
     if unknown:
         raise DefinitionError(
             f"clients names runtime id(s) {', '.join(unknown)} that agents "
@@ -950,6 +1008,16 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
                 "deployment client of a registered predefined role, so it "
                 "needs agents to register one. Refusing to boot."
             )
+        # issue #128 item 5 -- create_app's own docstring says grants is
+        # "keyed by the same ids as agents", exactly like clients above; a
+        # grants= with no agents= to key it against was silently accepted
+        # instead of refused the same way.
+        if grants is not None:
+            raise DefinitionError(
+                "create_app got grants but no agents: grants is keyed by "
+                "the same runtime ids as agents, so it needs agents to "
+                "register one. Refusing to boot."
+            )
         agents, clients = _settings_agents(settings.agent_registrations)
         source = "AGENT_REGISTRATIONS"
         # Static, never derived from the id: nothing parses it.
@@ -961,6 +1029,25 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
         source = "create_app(agents=...)"
         hint = ""
     registrations = _build_registrations(agents, clients)
+
+    # issue #128 item 4 -- create_app(grants=...) keys were never
+    # cross-checked against what agents actually registers, unlike clients
+    # just above: an id create_app(grants=...) names that agents does not
+    # register was silently ignored instead of failing boot. Scoped to the
+    # caller-supplied grants= only -- never settings.deploy_grants below,
+    # which the per-runtime "has no grant entry" check in the lifespan loop
+    # already covers, for a distinct, separately-tested scenario (e.g. a
+    # DEPLOY_GRANTS entry still keyed by the old, removed scheme -- see
+    # test_registration_fails_boot_without_a_grant_for_the_id).
+    if grants is not None:
+        unknown_grants = [
+            _bounded_repr(key) for key in grants if key not in registrations
+        ]
+        if unknown_grants:
+            raise DefinitionError(
+                f"grants names runtime id(s) {', '.join(unknown_grants)} "
+                f"that {source} does not register. Refusing to boot."
+            )
 
     # A channel id is looked up in the registration as an opaque key, never
     # parsed. One that matches nothing fails boot: an unmatched
@@ -974,8 +1061,12 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
         ("WHATSAPP_RUNTIME_ID", whatsapp_ids),
         ("ADAPTER_RUNTIMES", settings.adapter_runtimes),
     ):
+        # issue #128 item 2 -- an id that fails this membership check is, by
+        # definition, not yet a validated runtime id and may be unbounded.
         unmatched = [
-            repr(runtime_id) for runtime_id in ids if runtime_id not in registrations
+            _bounded_repr(runtime_id)
+            for runtime_id in ids
+            if runtime_id not in registrations
         ]
         if unmatched:
             raise DefinitionError(

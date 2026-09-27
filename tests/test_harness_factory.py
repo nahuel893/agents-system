@@ -109,6 +109,58 @@ def test_build_runtime_attaches_resolved_definition() -> None:
     assert runtime.definition.deployment == "client-a"
 
 
+# ---------------------------------------------------------------------------
+# issue #128 item 3 -- a caller that already resolved the definition (e.g.
+# main.py's boot-time untrusted_input/lease checks, which must run BEFORE
+# build_runtime -- see tests/test_main.py::
+# test_create_app_refuses_to_boot_when_whatsapp_role_is_not_untrusted_input)
+# passes it straight through instead of build_runtime resolving role_type/
+# client/roots a second, independent time. Two independent reads of the same
+# importer-owned `Agent.from_folder` folder could in principle diverge.
+# ---------------------------------------------------------------------------
+
+
+def test_build_runtime_uses_a_supplied_definition_without_resolving_again() -> None:
+    from unittest.mock import patch
+
+    from agents_system.harness.factory import build_runtime
+    from agents_system.harness.loader import resolve
+
+    definition = resolve("sales-agent", client="client-a", roots=_client_a_roots())
+
+    with patch(
+        "agents_system.harness.factory.resolve",
+        side_effect=AssertionError("build_runtime must not resolve again"),
+    ):
+        runtime = build_runtime(
+            "sales-agent",
+            _sales_registry(),
+            SALES_PERMISSIONS,
+            client="client-a",
+            roots=_client_a_roots(),
+            definition=definition,
+        )
+
+    assert runtime.definition is definition
+
+
+def test_build_runtime_resolves_normally_when_no_definition_is_supplied() -> None:
+    """The default (omitted `definition=`) is unchanged for every existing
+    caller."""
+    from agents_system.harness.factory import build_runtime
+
+    runtime = build_runtime(
+        "sales-agent",
+        _sales_registry(),
+        SALES_PERMISSIONS,
+        client="client-a",
+        roots=_client_a_roots(),
+    )
+
+    assert runtime.definition.role_name == "sales-agent"
+    assert runtime.definition.deployment == "client-a"
+
+
 def test_build_runtime_grants_all_tools_when_permitted() -> None:
     from agents_system.harness.factory import build_runtime
 
