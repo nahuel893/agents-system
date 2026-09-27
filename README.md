@@ -2,11 +2,11 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-00a393)](https://fastapi.tiangolo.com)
-[![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-purple)](https://langchain-ai.github.io/langgraph/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17+-336791)](https://postgresql.org)
+[![LangGraph 1.x](https://img.shields.io/badge/LangGraph-1.x-purple)](https://langchain-ai.github.io/langgraph/)
+[![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-336791)](https://postgresql.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
 
-**agents-system** is a production-grade runtime platform for instantiating and orchestrating AI agents. It provides a declarative agent-definition system, a pluggable harness for tool registration and permission enforcement, and a client-deployment model that lets you inject custom skills and context per organization — all without modifying the core runtime.
+**agents-system** is a production-grade runtime platform for instantiating and orchestrating AI agents. It provides a declarative *and* library-first agent-definition system, a pluggable harness for tool registration and permission enforcement, and a two-layer deployment model that lets a consuming application inject its own tools, skills, and per-client overrides — all without modifying the core runtime.
 
 > 🇪🇸 Documentación en español disponible en [`docs/platform_es/`](docs/platform_es/).
 
@@ -27,10 +27,16 @@
   - [Running](#running)
 - [Run the Demo API](#run-the-demo-api)
 - [Configuration](#configuration)
-- [Defining a New Agent Role](#defining-a-new-agent-role)
+- [Library-First Usage](#library-first-usage)
+- [Read-Only SQL Tool](#read-only-sql-tool)
+- [Provider and Model per Agent](#provider-and-model-per-agent)
+- [Defining a New Predefined Role](#defining-a-new-predefined-role)
 - [Creating a Client Deployment](#creating-a-client-deployment)
-- [Multi-Agent Delegation Model](#multi-agent-delegation-model)
+- [Multi-Agent Delegation (Planned)](#multi-agent-delegation-planned)
+- [Observability](#observability)
+- [Production Deployment](#production-deployment)
 - [Testing](#testing)
+- [Governance: Guard 1](#governance-guard-1)
 - [Docs](#docs)
 - [License](#license)
 
@@ -42,12 +48,14 @@ The platform treats agents as **declarative, composable units**. You define:
 
 - **What** the agent is (`role.md` — system prompt, purpose, scope)
 - **What tools** it can use (`manifest.md` — tool list, permissions, skills)
-- **How** it behaves (`policy.md` — autonomy, escalation rules, delegation policy)
+- **How** it behaves (`policy.md` — autonomy, escalation rules, delegation policy, model/provider)
 
 These definitions live in two layers:
 
-1. **Generic roles** under `platform/roles/{role}/` — reusable agent archetypes (orchestrator, data agent, sales agent, summary agent, etc.)
-2. **Client deployments** under `deployments/{client}/{role}/` — per-client overrides that inherit, restrict, or extend the generic role
+1. **Predefined roles** under `platform/roles/{role}/` — eight reusable agent archetypes the platform ships (`orchestrator`, `sales-agent`, `data-agent`, `summary-agent`, `accountant-agent`, `developer-agent`, `operator-agent`, `support-agent`), all extending the shared `agent`/`base` roles.
+2. **Client deployment overrides** — per-client narrowing of a predefined role. These live in **your own application's repository**, not in this one; see [Creating a Client Deployment](#creating-a-client-deployment).
+
+Since the library-first change (ADR-004), you are no longer limited to the eight predefined roles: build a custom `Agent` directly in Python — from a folder, from parameters, or both — that `extends` a predefined role (or the generic `agent` role), resolved through the exact same pipeline as a platform role. See [Library-First Usage](#library-first-usage).
 
 The **harness** (loader + registry + injector + interceptor + factory) assembles a validated, permission-bound `EquippedRuntime` from these declarations. The runtime is then handed to an agent orchestrator (LangGraph by default) for execution.
 
@@ -96,6 +104,12 @@ This design means you can instantiate a **data analyst agent**, a **sales agent*
 └──────────────────────────────────────────────────────┘
 ```
 
+`deployments/{client}/{role}/` above is a path *shape*, resolved through an
+injectable `RootConfig(deployments_root=...)` — in a real deployment it
+almost always points at the **consuming application's own repository**, not
+at this one's `deployments/` folder (which ships empty; see
+[Creating a Client Deployment](#creating-a-client-deployment)).
+
 ### Declarative Agent Definitions
 
 Each role is a folder with three Markdown files using YAML frontmatter:
@@ -104,7 +118,7 @@ Each role is a folder with three Markdown files using YAML frontmatter:
 platform/roles/{role}/
 ├── role.md       # System prompt, role purpose, scope
 ├── manifest.md   # Allowed tools, permissions, skills
-└── policy.md     # Autonomy, escalation, delegation rules
+└── policy.md     # Autonomy, escalation, delegation rules, model/provider
 ```
 
 Example (`platform/roles/sales-agent/role.md`):
@@ -134,7 +148,9 @@ The **factory** (`factory.py`) assembles everything into a frozen `EquippedRunti
 
 ### Two-Layer Deployment Model
 
-Generic roles live in `platform/roles/` and are reusable across clients. Client deployments live in `deployments/` and **inherit + restrict**:
+Predefined roles live in `platform/roles/` and ship inside the package. Client
+deployment overrides **inherit + restrict** a predefined role for one client,
+and live in the *consuming application's* own repository:
 
 ```
 deployments/{client}/{role}/
@@ -142,9 +158,14 @@ deployments/{client}/{role}/
 ├── manifest.md    # tools ⊆ parent.tools, permissions: inherit+
 ├── policy.md      # autonomy_rank ≤ parent.autonomy_rank
 └── skills/        # Additional context injected into the prompt
-    ├── contexto-cliente.md
-    └── reglas-de-negocio.md
 ```
+
+This repository's own `deployments/` directory ships **empty** — it exists
+only as the documented mount-point contract
+([`deployments/README.md`](deployments/README.md)) and as the default
+`RootConfig` falls back to when nothing else is configured. Point
+`RootConfig(deployments_root=...)` at wherever *your* deployment tree
+actually lives; it is never packaged inside `agents_system`.
 
 Merge rules:
 - Absent field → inherited from parent
@@ -152,7 +173,7 @@ Merge rules:
 - `{inherit: true, remove: [...]}` → parent list minus removals
 - `{override: value}` → replace parent (invariants still enforced)
 
-Enforced invariants:
+Enforced invariants — additive for capability, subtractive for safety:
 1. `tools_override ⊆ tools_parent`
 2. `permissions_override ⊆ permissions_parent`
 3. `autonomy_rank(override) ≤ autonomy_rank(parent)`
@@ -165,12 +186,12 @@ Enforced invariants:
 | Component | Technology | Why |
 |-----------|------------|-----|
 | **Runtime** | FastAPI (Python) | Async-native, high throughput, widely understood |
-| **Agent Orchestration** | LangGraph 0.2+ | State graphs, checkpointing, multi-agent, `thread_id` isolation |
+| **Agent Orchestration** | LangGraph 1.x | State graphs, checkpointing, multi-agent, `thread_id` isolation |
 | **LLM** | Pluggable: Anthropic, OpenAI, Groq, Ollama | Model per task, none locked in |
 | **Declarative Format** | YAML frontmatter in Markdown | Human-readable, diffable, composable |
 | **Tool Registry** | Python dataclasses + permission tuples | Simple, testable, auditable |
-| **State / Cache** | Redis 7+ | Sub-millisecond reads, TTL-based eviction |
-| **Primary Database** | PostgreSQL 17 | Relational storage for orders, clients, audit logs |
+| **State / Cache** | Redis 8+ | Sub-millisecond reads, TTL-based eviction, RediSearch query engine |
+| **Primary Database** | PostgreSQL 16 | Relational storage for orders, clients, audit logs |
 | **Logging** | structlog | Structured JSON with correlation IDs |
 | **Async Queue** | FastAPI BackgroundTasks → Celery (scale) | Start simple, scale when needed |
 
@@ -179,37 +200,44 @@ Enforced invariants:
 ## Project Structure
 
 ```
-├── platform/roles/               # Generic agent archetypes
+├── platform/roles/               # Predefined agent archetypes (8, plus the shared `agent`/`base` roles)
 │   ├── orchestrator/             # Top-level routing & policy
 │   ├── sales-agent/              # Sales & ordering role
 │   ├── data-agent/               # Data retrieval & synthesis
-│   └── summary-agent/            # Meeting & conversation summaries
+│   ├── summary-agent/            # Meeting & conversation summaries
+│   ├── accountant-agent/
+│   ├── developer-agent/
+│   ├── operator-agent/
+│   └── support-agent/
 │
-├── deployments/                  # Client-specific overrides
-│   └── acme/                    # Example: a regional beverage distributor
-│       └── sales-agent/          # ACME-specific sales agent
-│           └── skills/           # Injected context
+├── deployments/                  # Mount point for client deployment overrides.
+│   └── README.md                 # Ships empty — see "Creating a Client Deployment"
+│
+├── examples/
+│   └── demo/
+│       └── app.py                 # Runnable demo entrypoint — see "Run the Demo API"
 │
 ├── src/agents_system/             # Platform source
-│   ├── agent/                    # LangGraph agent graph & nodes
-│   ├── connectors/               # External integrations (stubs, RAG)
+│   ├── agent/                    # LangGraph agent graph & the Python `Agent` API (agent/spec.py)
+│   ├── connectors/               # External integrations (stubs, RAG, SQL tool, sandboxed operator)
 │   ├── harness/                  # ⬅ Core platform
-│   │   ├── loader.py             #   YAML definition loader + merge
+│   │   ├── loader.py             #   Definition loader + merge + RootConfig
 │   │   ├── registry.py           #   Tool authority
 │   │   ├── injector.py           #   RBAC surface resolution
 │   │   ├── interceptor.py        #   Execution-time enforcement
 │   │   └── factory.py            #   EquippedRuntime assembler
 │   ├── integration/              # API adapters (OpenAI, webhook, WhatsApp)
 │   ├── models/                   # SQLAlchemy ORM
-│   ├── observability/            # Logging, middleware
+│   ├── observability/            # Logging, metrics, middleware
 │   ├── services/                 # Redis, embeddings, sync pipelines
 │   ├── config.py                 # Pydantic-settings config
 │   └── main.py                   # FastAPI application factory
 │
-├── tests/                        # 30+ test files (Strict TDD)
-├── docs/                         # Architecture, platform, delivery (EN + ES)
-├── docker-compose.yml            # PostgreSQL + Redis
-└── delegations.md                # Multi-agent work ledger
+├── tests/                        # Strict-TDD test suite (offline by default; opt-in live/load suites)
+├── docs/                         # Architecture, platform, delivery, operations docs (EN + ES)
+├── docker-compose.yml            # PostgreSQL + Redis (development)
+├── docker-compose.prod.yml       # Production stack (postgres, redis, migrate, app)
+└── deploy/systemd/                # Production systemd units
 ```
 
 ---
@@ -226,7 +254,7 @@ Enforced invariants:
 
 ```bash
 # Clone and enter
-git clone https://github.com/your-org/agents-system.git
+git clone https://github.com/nahuel893/agents-system.git
 cd agents-system
 
 # Create environment and install dependencies
@@ -338,6 +366,8 @@ Environment variables (loaded from `.env`). Key settings:
 | `ADAPTER_RUNTIMES` | `[]` | Which registered runtime ids `/v1` publishes. Empty publishes none — the runtime *cache* may hold more, for other channels, and those are never exposed here. Setting any requires `ADAPTER_API_KEY` |
 | `WHATSAPP_RUNTIME_ID` | — | Which registered runtime id inbound WhatsApp routes to. Unset means the route answers 200 and runs no turn. **If `WHATSAPP_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID` are both set, this must resolve to a runtime or the app refuses to boot** (#141) — otherwise `/webhook` durably accepts signed messages nothing ever processes |
 | `DEPLOY_GRANTS` | `{}` | **Required** per registered runtime id (issue #38). JSON object mapping each registered id to the list of permission wire names actually granted to it — e.g. `{"acme-sales": ["read:catalog", "write:orders"]}`. A role's own manifest only declares what it *may* need; this is what a deployment actually *grants*, and it bounds Layer-2 revalidation for the whole life of that runtime. A registered runtime with no matching entry fails boot loudly, naming the runtime id |
+| `REGISTRY_FACTORY` | `default_registry_factory` | `module:callable` returning a `ToolRegistry`. **Required** whenever any agent is registered — see [Production Deployment](#production-deployment) |
+| `MODEL_PRICES` | `{}` | Cost table for real per-turn token usage, keyed by provider model id — see [Provider and Model per Agent](#provider-and-model-per-agent) |
 | `EMBEDDING_PROVIDER` | `local` | Embedding provider: `local` or `openai` |
 | `OPENAI_COMPATIBLE_BASE_URL` | — | **Required** for `openai_compatible`. Chat endpoint base URL |
 | `OPENAI_COMPATIBLE_MODEL` | — | **Required** for `openai_compatible`. Model id to request |
@@ -386,7 +416,163 @@ Notes:
 
 ---
 
-## Defining a New Agent Role
+## Library-First Usage
+
+`agents_system` is not only the runtime behind `/v1` — it is an importable
+library. The package ships the harness and the eight predefined roles; it
+never ships a client's tools or a client's deployment overrides. A consuming
+application supplies both at runtime, by injection:
+
+```python
+import agents_system
+from langchain_anthropic import ChatAnthropic
+
+# 1. Build your own registry with your own tools (connectors call YOUR services)
+registry = agents_system.ToolRegistry()
+registry.register(
+    agents_system.ToolSpec(
+        name="catalog_search",
+        required_permissions=("read:catalog",),
+        connector=my_catalog_search,
+        tier=agents_system.Tier.T1,
+        description="Search the product catalog by free-text query.",
+        input_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    )
+)
+
+# 2. Point RootConfig at YOUR deployment tree (never guessed for you)
+roots = agents_system.RootConfig(deployments_root=MY_APP_ROOT / "deployments")
+
+# 3. Build the equipped runtime — a predefined role, optionally narrowed for a client
+equipped = agents_system.build_runtime(
+    "sales-agent",
+    registry,
+    granted_permissions=["read:catalog", "send:message"],
+    client="my-client",  # omit to use the predefined role unmodified
+    roots=roots,
+)
+
+# 4. Turn it into a live agent
+agent = agents_system.AgentRuntime(
+    equipped, model=ChatAnthropic(model="claude-sonnet-4-5")
+)
+```
+
+A custom agent can be defined directly in Python instead of (or as well as) a
+folder, and `extends` a predefined role the same way a deployment override
+would:
+
+```python
+from agents_system import Agent
+
+triage_bot = Agent.from_folder(
+    "agents/triage-bot",
+    extends="sales-agent",  # inherit tools/policy from a predefined role
+    skill_contents={
+        "triage-notes": "..."
+    },  # inline skill text, or a `skills/` folder next to it
+)
+```
+
+Register runtimes with `create_app` — every registered id needs an explicit
+`grants` entry, there is no auto-grant (issue #38):
+
+```python
+from agents_system.main import create_app
+
+app = create_app(
+    registry_factory=build_registry,
+    agents={"acme-sales": "sales-agent", "triage-bot": triage_bot},
+    clients={"acme-sales": "acme"},
+    grants={
+        "acme-sales": ["read:catalog", "write:orders"],
+        "triage-bot": ["read:catalog"],
+    },
+)
+```
+
+`AGENT_REGISTRATIONS` (`{id: "role"}` or `{id: "role@client"}`) is the
+environment-variable equivalent of `agents=` when `create_app` receives none.
+
+**Importer safety ceiling.** `extends` is additive for capability — a child
+keeps its parent's tools and permissions and may add its own — but
+subtractive for safety: autonomy, execution limits, and audit redaction may
+only match or tighten the parent's, never loosen them, at every hop of an
+`extends:` chain, and even for a parentless importer root (held to the
+platform defaults). Breaking this raises `DefinitionError`.
+
+Full reference, the two traps, and the complete worked example:
+[`docs/platform/library-usage.md`](docs/platform/library-usage.md).
+
+---
+
+## Read-Only SQL Tool
+
+A database-enforced read-only SQL tool (`sql_query`, permission `query:sql`,
+tier T2) ships as a registerable tool but is **not equipped by any predefined
+role by default** — adding it to a shipped role is a deliberate,
+SemVer-relevant decision left to each deployment. Three independent layers
+enforce read-only access: a dedicated PostgreSQL role with
+`default_transaction_read_only` and no DDL/DML grants; an application-side
+guard that parses every query with `sqlglot` and executes only its own
+canonical re-rendering of a single allowlisted `SELECT`; and a byte-capped,
+error-sanitized tool surface that never leaks raw driver errors.
+
+To use it: provision the `sql_readonly` role (`scripts/provision_sql_readonly.sql`),
+build a dedicated engine, register
+`build_sql_query_tool_spec(engine, SqlQueryConfig(views={...}))` with your
+`ToolRegistry`, and grant `query:sql` through `DEPLOY_GRANTS` to the roles
+that should have it.
+
+Full design and provisioning steps:
+[`docs/architecture/adr-007-read-only-sql-tool.md`](docs/architecture/adr-007-read-only-sql-tool.md).
+
+---
+
+## Provider and Model per Agent
+
+Every runtime defaults to the single, global `ADAPTER_PROVIDER`-driven model.
+A role's `policy.md` — a predefined role's own, a deployment override's, or
+the `Agent`/`Agent.from_folder` Python API's `model=` parameter — can opt
+into its own provider and model instead:
+
+```yaml
+model:
+  provider: anthropic          # ollama | groq | anthropic | openai_compatible
+  model: claude-3-5-sonnet-latest
+  temperature: 0.2             # optional, 0-2
+  max_tokens: 1024              # optional, positive integer
+```
+
+Declaring nothing keeps the global default. Role-to-role `extends:` folds
+`model` per key (a child can declare only `temperature` and still inherit
+`provider`/`model`); a deployment override replaces it wholesale. Unlike
+autonomy or execution limits, there is no ceiling here — model/provider
+selection never widens what a role is allowed to do.
+
+**Cost.** Real per-turn token usage and cost are tracked automatically,
+keyed by the resolved provider model id. Configure prices with `MODEL_PRICES`:
+
+```bash
+export MODEL_PRICES='{"claude-sonnet-4-5": {"input_per_million": 3.0, "output_per_million": 15.0}}'
+```
+
+A model id with no entry reports cost as `None` rather than guessing.
+
+Full reference: [`docs/platform/policy.md`](docs/platform/policy.md).
+
+---
+
+## Defining a New Predefined Role
+
+This adds a **new predefined role to the platform itself** (this repository).
+If you're integrating `agents_system` into your own application, use
+[Library-First Usage](#library-first-usage) instead — you rarely need to fork
+this repo to get a custom agent.
 
 ```bash
 # 1. Create the role definition folder
@@ -431,13 +617,21 @@ EOF
 
 Now register the required tools in code (`ToolRegistry`) and the new role is ready to use.
 
+Changing tools or permissions on an **existing** predefined role's manifest
+triggers Guard 1 — see [Governance: Guard 1](#governance-guard-1).
+
 ---
 
 ## Creating a Client Deployment
 
-Override any generic role for a specific client with custom context:
+A client deployment override narrows a predefined role for one client — it
+may subtract tools/permissions, never add them (see
+[Two-Layer Deployment Model](#two-layer-deployment-model)). It lives in
+**your own application's repository**, not in this one: this repo's
+`deployments/` directory ships empty as the documented mount-point contract.
 
 ```bash
+# In YOUR application's repo, not this one:
 mkdir -p deployments/acme-corp/my-analyst/skills
 
 cat > deployments/acme-corp/my-analyst/role.md << 'EOF'
@@ -457,20 +651,97 @@ cat > deployments/acme-corp/my-analyst/skills/acme-glossary.md << 'EOF'
 EOF
 ```
 
-The loader automatically merges the override with the generic role. Skills are appended to the system prompt as additional context.
+Point the platform at it explicitly — `RootConfig` never guesses a
+consumer's own deployment tree:
+
+```python
+roots = agents_system.RootConfig(deployments_root=MY_APP_ROOT / "deployments")
+equipped = agents_system.build_runtime(
+    "my-analyst",
+    registry,
+    granted_permissions=["read:analytics", "read:reports"],
+    client="acme-corp",
+    roots=roots,
+)
+```
+
+If `deployments_root` doesn't exist and a `client=` override is requested,
+resolution raises `DefinitionError` instead of silently falling back to the
+unrestricted predefined role.
+
+Full reference: [`docs/platform/deployment.md`](docs/platform/deployment.md),
+[`docs/platform/library-usage.md`](docs/platform/library-usage.md).
 
 ---
 
-## Multi-Agent Delegation Model
+## Multi-Agent Delegation (Planned)
 
-This repository itself is built by multiple AI agents working in parallel:
+Two different things share the word "delegation" here:
 
-1. **Lead/Planner** writes task slices into `delegations.md` with scope, branch, and acceptance criteria.
-2. **Workers** (Claude Code, Antigravity, OpenCode) each work in an **isolated git worktree + branch**.
-3. **Coordination** happens through git + Engram (persistent memory) — no direct agent-to-agent communication.
-4. **On finish**: workers commit → save to Engram → set status to `in_review` → notify the human integrator.
+- **This repository's own contribution workflow** — how multiple AI coding
+  agents build `agents-system` itself — is tracked through GitHub Issues, not
+  a shared ledger file. See [`AGENTS.md`](AGENTS.md).
+- **Runtime delegation** — one agent role spawning a child agent role
+  mid-conversation — is **declared but not implemented**. The `orchestrator`
+  predefined role's manifest grants `spawn:sales-agent`, `spawn:data-agent`,
+  and `spawn:summary-agent` permissions, and its `policy.md` declares a full
+  `delegation_policy` (`allowed`, `permitted_child_roles`, `max_depth`) — but
+  no `spawn` tool, connector, or runtime mechanism exists anywhere in
+  `src/agents_system/`. `max_delegation_depth`/`max_clarification_attempts`
+  are parsed but not yet enforced. This is tracked as future work, tentatively
+  a future ADR.
 
-Full protocol: [`docs/delivery/delegation-protocol.md`](docs/delivery/delegation-protocol.md).
+Design notes for when it lands:
+[`docs/architecture/delegation-policy.md`](docs/architecture/delegation-policy.md).
+Current implementation status:
+[`docs/delivery/live-test-plan.md`](docs/delivery/live-test-plan.md).
+
+---
+
+## Observability
+
+- **`GET /health`** — liveness. Always returns HTTP 200; the body's `status`
+  is `ok` or `degraded`. Reports PostgreSQL, Redis, webhook outbox state, chat
+  provider reachability, and audit loss.
+- **`GET /ready`** — readiness. Same body, but 200 only when `status` is
+  `ok`; otherwise 503 (a core dependency is down, the provider is
+  unreachable, or outbox work has expired/abandoned leases with no worker
+  running).
+- **`GET /metrics`** — Prometheus exposition, off by default
+  (`METRICS_ENABLED=true`, bearer `METRICS_API_KEY`). Process, turn, tool,
+  token, cost, and provider metrics: `agent_turns_total`,
+  `agent_turn_duration_seconds`, `agent_tokens_total`, `agent_cost_usd_total`,
+  `agent_tool_calls_total`, `agent_tool_call_duration_seconds`,
+  `agent_limit_trips_total`, `agent_audit_events_dropped`,
+  `agent_provider_requests_total`, `agent_provider_retries_total`, plus the
+  standard `prometheus_client` process collector.
+
+Full reference: [`docs/platform/observability.md`](docs/platform/observability.md).
+
+---
+
+## Production Deployment
+
+Two supported paths, both documented end to end:
+
+- **Docker Compose** — `docker-compose.prod.yml`: coordinated `postgres`,
+  `redis`, `migrate`, and `app` services.
+- **systemd** — `deploy/systemd/`: `agents-system-migrate.service`
+  (`Type=oneshot`, runs migrations before anything else) and
+  `agents-system-app.service` (`Type=simple`, the Uvicorn server with
+  automatic restarts).
+
+Both **migrate on deploy**: `alembic upgrade head` runs before the app
+starts, and a non-zero exit aborts the deployment.
+
+When any agent is registered (`AGENT_REGISTRATIONS` or
+`create_app(agents=...)`), **`REGISTRY_FACTORY`** (a `module:callable`
+returning a `ToolRegistry`) is required. The default factory only equips
+generic stub tools and cannot equip role-specific tools (`catalog_search`,
+`client_lookup`, `message_sender`, ...) — startup aborts immediately with a
+`DefinitionError` naming what's missing.
+
+Full reference: [`docs/operations/deployment.md`](docs/operations/deployment.md).
 
 ---
 
@@ -479,7 +750,7 @@ Full protocol: [`docs/delivery/delegation-protocol.md`](docs/delivery/delegation
 The project uses **Strict TDD**: tests are written first (RED → GREEN).
 
 ```bash
-# Run all tests
+# Offline suite (the default — live and load tests are excluded automatically)
 uv run pytest
 
 # Unit tests only (skip integration)
@@ -495,13 +766,54 @@ uv run mypy src/
 uv run ruff check src/
 ```
 
-The test suite (30+ files) covers:
+Two opt-in suites run against real infrastructure and are never part of CI:
+
+```bash
+uv run pytest -m live               # live-eval pipeline against a real local model
+uv run pytest -m load               # concurrent-load scenarios against a real app
+uv run pytest -m 'load and live'    # a small load run against a real model
+```
+
+They cover four phases: **Phase 1** (platform features end-to-end, HTTP API +
+WhatsApp webhook), **Phase 2** — the guardrail suite — (Layer-2
+revalidation, prompt-injection containment, sandbox containment, tool-call
+and timeout limits; run with
+`EVAL_RUNS=3 pytest -m live tests/test_live_eval_guardrails.py -s`),
+**Phase 3** (concurrent load through the webhook path), and **Phase 4** (a
+full custom-agent lifecycle: define, register, serve, converse, audit,
+update).
+
+Full reference: [`docs/platform/live-eval.md`](docs/platform/live-eval.md).
+
+The offline suite (30+ files) covers:
 - Harness: loader, registry, injector, interceptor, factory
 - Agent: graph, state, runtime nodes
 - Integration: webhook, WhatsApp client, OpenAI adapter
 - Services: Redis, embeddings, sync pipelines
-- Connectors: RAG, stubs
+- Connectors: RAG, SQL tool, sandboxed operator, stubs
 - Models: SQLAlchemy ORM
+
+---
+
+## Governance: Guard 1
+
+A predefined role's `tools`/`permissions` surface is a shared safety baseline
+that other agents' `extends:` chains build on, so changing it is gated:
+
+- A PR touching `platform/roles/**/manifest.md` must either match a reviewed,
+  checked-in snapshot of the role's resolved `(tools, permissions)`
+  (`tests/platform_role_contract.py`), or the role's `version:` frontmatter
+  must take a MAJOR bump.
+- The same PR must carry a conventional-commit breaking marker (`!` before
+  the first `:` in the subject, or a `BREAKING CHANGE:` footer), checked by
+  `scripts/check_role_governance_marker.py` — a `CHANGELOG.md` entry doesn't
+  exist yet at PR time, so the marker is the enforceable equivalent.
+
+Both `ci` and `predefined-role-governance-marker` are required GitHub status
+checks on `main`. An importer-authored `Agent` that merely `extends:` a
+predefined role is out of Guard 1's scope.
+
+Full reference: [`docs/architecture/adr-004-library-first-agents.md`](docs/architecture/adr-004-library-first-agents.md).
 
 ---
 
@@ -513,9 +825,8 @@ The test suite (30+ files) covers:
 | Platform Specification | [`docs/platform/`](docs/platform/) | EN |
 | Library Usage (integrating `agents_system` into your app) | [`docs/platform/library-usage.md`](docs/platform/library-usage.md) | EN |
 | Especificación de Plataforma | [`docs/platform_es/`](docs/platform_es/) | ES |
-| Delivery & Delegation Protocol | [`docs/delivery/`](docs/delivery/) | EN + ES |
-| Product Requirements (ACME) | [`PRD_WhatsApp_Sales_Agent.md`](PRD_WhatsApp_Sales_Agent.md) | ES |
-| Delegation Work Ledger | [`delegations.md`](delegations.md) | EN |
+| Production Operations (deployment, systemd, sandboxing) | [`docs/operations/`](docs/operations/) | EN + ES |
+| Delivery Workflow | [`docs/delivery/`](docs/delivery/) | EN + ES |
 
 ---
 
