@@ -77,7 +77,8 @@ def _build_checkpointer_cm(settings: Settings) -> Any:
     payloads — do NOT reuse ``get_redis_client`` here.
 
     ``AsyncRedisSaver.from_conn_string(...)`` (confirmed against the
-    installed ``langgraph-checkpoint-redis==0.3.6``) is itself an
+    installed ``langgraph-checkpoint-redis==0.5.2``, issue #32's langgraph
+    1.x migration) is itself an
     ``@asynccontextmanager`` classmethod: entering it constructs the saver
     and calls ``asetup()`` (idempotent index creation) + ``aset_client_info()``
     via ``__aenter__``; it must be held open for the app's lifetime and torn

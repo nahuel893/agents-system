@@ -507,8 +507,9 @@ jobs:
   # ADR-002 H.29: nothing checked whether a dependency has a known
   # vulnerability. `pip-audit` (or the `uv` equivalent, once its own native
   # audit is stable) runs against exactly what `uv sync --group dev` just
-  # installed and fails the build on any known vulnerability that is not on
-  # the explicit, commented ignore list below.
+  # installed and fails the build on any known vulnerability. Any ignore
+  # list added later must be explicit, commented, and cite its own tracking
+  # issue (see the step below for the history of the one that was here).
   #
   # pip-audit is intentionally NOT a project/dev dependency: `uv run --with
   # pip-audit pip-audit --local` audits an EMPTY ephemeral overlay (0
@@ -544,56 +545,32 @@ jobs:
       # urllib3 -- all resolved within pyproject.toml's EXISTING constraints
       # (no pin changed) via `uv lock -P <pkg>`, with the full unit suite
       # verified green afterward; those are gone from uv.lock, not ignored
-      # here. The 22 that remain each need real migration work, not a
-      # lockfile edit -- every one is tracked by its own follow-up issue,
-      # cited below, and an entry may only be removed by closing or
-      # narrowing the issue it cites (never silently, and never because the
-      # build was red).
+      # here. The remaining 15 -- the whole langchain/langgraph ecosystem
+      # (langchain-anthropic, langchain-core, langchain-openai, langgraph,
+      # langgraph-checkpoint, langgraph-sdk, langsmith) -- needed a real 1.x
+      # migration, not a lockfile edit (issue #32): closed by moving all
+      # seven packages to their 1.x line together. No ignore list remains;
+      # a future finding fails the build like any other, and any new
+      # baseline exception must cite its own tracking issue here.
       - name: Audit the locked dependency set for known vulnerabilities
         run: |
-          IGNORE_VULNS=(
-            # langchain-anthropic, langchain-core, langchain-openai,
-            # langgraph, langgraph-checkpoint, langgraph-sdk, langsmith --
-            # pyproject.toml pins langgraph/langchain-openai/langchain-
-            # anthropic to <1.0, but several of these CVEs (langchain-core's
-            # PYSEC-2026-2562 and PYSEC-2026-2193 in particular) have no fix
-            # backported to the 0.x line -- closing them means moving the
-            # whole interdependent ecosystem to its 1.x line together, a
-            # real migration. Tracked in #151.
-            --ignore-vuln PYSEC-2026-2556
-            --ignore-vuln PYSEC-2026-2562
-            --ignore-vuln PYSEC-2026-2563
-            --ignore-vuln PYSEC-2026-2564
-            --ignore-vuln PYSEC-2026-2193
-            --ignore-vuln PYSEC-2026-76
-            --ignore-vuln PYSEC-2026-83
-            --ignore-vuln PYSEC-2026-2574
-            --ignore-vuln PYSEC-2026-2573
-            --ignore-vuln PYSEC-2026-2194
-            --ignore-vuln PYSEC-2026-2575
-            --ignore-vuln PYSEC-2026-2583
-            --ignore-vuln PYSEC-2026-2555
-            --ignore-vuln PYSEC-2026-2582
-            --ignore-vuln CVE-2026-59152
-          )
-
           # GitHub Actions runs `run:` steps as `bash -e ... {0}` by default,
           # so `AUDIT_EXIT=$?` on its own line would never execute when
           # pip-audit exits non-zero -- set -e aborts the script at the
           # failing command first, and the diagnostic below (and the exit
           # code it explains) would silently never print. The `&& ... || ...`
           # form assigns AUDIT_EXIT either way without tripping set -e.
-          .venv/bin/pip-audit --local --progress-spinner off -f json -o pip-audit-report.json "${IGNORE_VULNS[@]}" && AUDIT_EXIT=0 || AUDIT_EXIT=$?
+          .venv/bin/pip-audit --local --progress-spinner off -f json -o pip-audit-report.json && AUDIT_EXIT=0 || AUDIT_EXIT=$?
 
           .venv/bin/python -c "
           import json
           data = json.load(open('pip-audit-report.json'))
           deps = data.get('dependencies', [])
           flagged = [d for d in deps if d.get('vulns')]
-          print(f'pip-audit: {len(deps)} packages audited, {len(flagged)} still flagged after the baseline ignore list.')
+          print(f'pip-audit: {len(deps)} packages audited, {len(flagged)} flagged.')
           for d in flagged:
               ids = ', '.join(v['id'] for v in d['vulns'])
-              print(f'  UNEXPECTED (not on the baseline list): {d[\"name\"]} {d[\"version\"]} -> {ids}')
+              print(f'  {d[\"name\"]} {d[\"version\"]} -> {ids}')
           "
 
           exit "$AUDIT_EXIT"
