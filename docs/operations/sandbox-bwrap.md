@@ -91,6 +91,16 @@ Reaping drains any output still in the pipes and is capped at 5 seconds.
 If that runs out, `operator.reap_incomplete` is logged at error level and
 the call ends anyway.
 
+A cancellation can also land while the command is still being spawned,
+after the child has started but before its pipes are connected. asyncio's
+own cleanup for that moment kills only the direct child and then waits for
+the pipes to close, which the rest of the group can hold open for as long
+as it runs. So `_run_argv` never lets a cancellation reach the spawn: it
+awaits the spawn through `asyncio.shield`, lets it finish, and then kills
+the group as it would at any other moment. That wait is capped at 5
+seconds as well. A spawn still unfinished by then is cancelled and
+`operator.spawn_incomplete` is logged at error level.
+
 ### Why the sandbox runs without `--new-session`
 
 `--new-session` made bwrap's namespace init call `setsid()`, which moved

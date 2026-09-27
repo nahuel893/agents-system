@@ -101,6 +101,17 @@ La cosecha drena la salida que todavía quede en los pipes y tiene un tope
 de 5 segundos. Si se agota, se registra `operator.reap_incomplete` con
 nivel error y la llamada termina igual.
 
+Una cancelación también puede llegar mientras el comando todavía se está
+lanzando, después de que el proceso hijo arrancó pero antes de que sus
+pipes estén conectados. La limpieza propia de asyncio para ese momento
+mata solo al hijo directo y después espera a que se cierren los pipes, que
+el resto del grupo puede mantener abiertos mientras siga corriendo. Por
+eso `_run_argv` nunca deja que una cancelación llegue al lanzamiento: lo
+espera a través de `asyncio.shield`, lo deja terminar y después mata al
+grupo como en cualquier otro momento. Esa espera también tiene un tope de
+5 segundos. Si el lanzamiento no terminó para entonces, se cancela y se
+registra `operator.spawn_incomplete` con nivel error.
+
 ### Por qué el sandbox corre sin `--new-session`
 
 `--new-session` hacía que el init del espacio de nombres de bwrap llamara
