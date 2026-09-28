@@ -74,6 +74,44 @@ def test_data_agent_stops_when_no_tool_holds_the_figure() -> None:
     assert "reworded" in prompt
 
 
+def test_data_agent_stop_rule_allows_one_lookup_per_distinct_entity() -> None:
+    section = " ".join(
+        _prompt("data-agent")
+        .split("## stopping when no tool holds the answer")[1]
+        .split()
+    )
+
+    # The stop rule targets repeated calls for the SAME missing fact, so a
+    # question about two SKUs (or a customer and a SKU) still gets one lookup
+    # each, and an incomplete result may be followed up.
+    assert "same missing" in section
+    assert "distinct" in section
+    assert "follow-up" in section
+    # The blanket wording that forbade a second call to a tool is gone.
+    assert "at most once per question" not in section
+
+
+def test_developer_agent_allows_one_bounded_discovery_step_before_escalating() -> None:
+    prompt = _prompt("developer-agent")
+    section = " ".join(
+        prompt.split("## when the task cannot be finished")[1]
+        .split("## escalation rules")[0]
+        .split()
+    )
+
+    # A listing or knowledge-base lookup that can locate the file is a
+    # permitted discovery step; open-ended probing is not.
+    assert "discovery" in section
+    assert "one bounded" in section
+    # Escalation is due when the task is STILL unanswered after that step.
+    assert "still" in section
+    # A single policy refusal escalates immediately.
+    assert "command_refused_by_policy" in section
+    assert "immediately" in section
+    # The blanket ban on looking in the directory is gone.
+    assert "Do not keep probing with neighbours" not in section
+
+
 @pytest.mark.parametrize("role", ["developer-agent", "data-agent"])
 def test_guidance_does_not_leak_design_notes(role: str) -> None:
     assert "## design notes" not in _prompt(role)
