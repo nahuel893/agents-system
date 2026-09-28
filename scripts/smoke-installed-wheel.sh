@@ -153,7 +153,8 @@ if messages[-1].content != "Yes, Item Alpha is in stock.":
     sys.exit(f"unexpected final answer: {messages[-1].content!r}")
 
 print(
-    f"SMOKE-RESULT agents_system {agents_system.__version__} from {package_dir}: "
+    f"SMOKE-RESULT agents_system {agents_system.__version__} imported from "
+    f"<throwaway venv>/{package_dir.relative_to(venv_dir)}: "
     f"tool result {tool_messages[0].content!r}, answer {messages[-1].content!r}"
 )
 PY
