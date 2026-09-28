@@ -133,7 +133,10 @@ runs the lifespan in its own task and each request in a task that does not
 inherit the lifespan's context: every `/v1` request resolved no sink, and its
 audit events (`tool_call_attempted`, `tool_call_blocked`, `runtime_timeout`)
 were dropped. `tests/test_library_standalone.py` runs a served turn from a
-fresh `contextvars.Context()` to pin this.
+fresh `contextvars.Context()` to pin this. Because the registration now
+outlives the task that made it, the lifespan also unregisters its sink on
+shutdown, after stopping it, so a stopped sink is never left taking the
+process's events.
 
 With no sink registered — a library user running `AgentRuntime` without
 `create_app` who has not registered one — `_emit_async` does not build the

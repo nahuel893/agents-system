@@ -478,3 +478,23 @@ async def test_the_served_app_registers_a_real_sink_that_every_request_sees(
     assert "runtime_built" in event_types
     assert "tool_call_attempted" in event_types
     assert not [e for e in logs if e["event"] == "audit.sink_not_registered"]
+
+
+async def test_the_served_app_unregisters_its_sink_when_it_shuts_down(
+    monkeypatch: pytest.MonkeyPatch, served_env_cleanup: None
+) -> None:
+    """The registration is process-wide, so it must end with the lifespan
+    that made it: a stopped sink left registered would take every later
+    audit event in the process and record none of them, with no warning."""
+    from agents_system.audit.sink import AuditSink
+    from agents_system.main import lifespan
+
+    _served_environment(monkeypatch)
+    app = _served_app(ServedFakeModel(responses=[AIMessage(content="hi")]))
+
+    p1, p2, p3 = _served_patches()
+    with p1, p2, p3:
+        async with lifespan(app):
+            assert AuditSink.registered() is app.state.audit_sink
+
+    assert AuditSink.registered() is None

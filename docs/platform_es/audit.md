@@ -139,7 +139,10 @@ uvicorn corre el lifespan en su propia task y cada petición en una task que no
 hereda el contexto del lifespan: cada petición a `/v1` no resolvía ningún sink
 y sus eventos de auditoría (`tool_call_attempted`, `tool_call_blocked`,
 `runtime_timeout`) se descartaban. `tests/test_library_standalone.py` corre un
-turno servido desde un `contextvars.Context()` nuevo para fijar esto.
+turno servido desde un `contextvars.Context()` nuevo para fijar esto. Como el
+registro ahora sobrevive a la task que lo hizo, el lifespan también desregistra
+su sink al apagarse, después de detenerlo, así un sink detenido nunca queda
+tomando los eventos del proceso.
 
 Sin sink registrado — un usuario de la biblioteca que corre `AgentRuntime` sin
 `create_app` y no registró ninguno — `_emit_async` ni siquiera construye el

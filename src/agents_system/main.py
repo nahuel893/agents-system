@@ -232,6 +232,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await audit_sink.start()
         AuditSink.set_current(audit_sink)
         app.state.audit_sink = audit_sink
+        # Issue #166 -- the registration is process-wide, so it ends with
+        # this lifespan: pushed first, it runs after `stop()` below (LIFO),
+        # and a stopped sink is never left taking the process's events.
+        resource_stack.callback(AuditSink.clear_current, audit_sink)
         resource_stack.push_async_callback(audit_sink.stop)
 
         # D-014 — outbound WhatsApp client (design AD-2), built once and shared.
