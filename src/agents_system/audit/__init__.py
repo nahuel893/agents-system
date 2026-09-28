@@ -2,6 +2,7 @@
 
 from agents_system.audit.events import (
     AuditEvent,
+    EscalationNotDelivered,
     RuntimeBuilt,
     RuntimeInitialized,
     RuntimeTimeout,
@@ -14,6 +15,7 @@ from agents_system.audit.events import (
     UnknownTool,
 )
 from agents_system.audit.recorder import (
+    record_escalation_not_delivered,
     record_runtime_built,
     record_runtime_initialized,
     record_runtime_timeout,
@@ -29,6 +31,7 @@ from agents_system.audit.redactor import Redactor
 
 __all__ = [
     "AuditEvent",
+    "EscalationNotDelivered",
     "Redactor",
     "RuntimeBuilt",
     "RuntimeInitialized",
@@ -40,6 +43,7 @@ __all__ = [
     "ToolDenied",
     "ToolGranted",
     "UnknownTool",
+    "record_escalation_not_delivered",
     "record_runtime_built",
     "record_runtime_initialized",
     "record_runtime_timeout",

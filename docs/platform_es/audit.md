@@ -95,7 +95,9 @@ desde tres ramas distintas del interceptor — `not_in_surface`,
 Conviene notar que `unknown_tool` es un evento de **tiempo de construcción**. Se
 dispara en el injector cuando un manifiesto de rol nombra una herramienta que el
 registry no tiene, inmediatamente antes de lanzar `InjectionError`; el runtime
-nunca arranca. No es el caso `not_in_surface` del interceptor, que es un *modelo*
+nunca arranca. La única excepción es `escalation_notifier` en el uso como
+biblioteca en proceso, donde `build_runtime` lo completa con el default
+incorporado (ver `escalation_not_delivered` arriba). No es el caso `not_in_surface` del interceptor, que es un *modelo*
 nombrando una herramienta en tiempo de llamada contra un runtime que sí se
 construyó.
 

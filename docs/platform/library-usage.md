@@ -107,7 +107,9 @@ access to it; once it is public again,
 `git+https://github.com/nahuel893/agents-system@vX.Y.Z` works without
 credentials. Pin a tag rather than a branch, so every upgrade is a deliberate
 change to your `pyproject.toml`; uv records the resolved commit in your
-`uv.lock`.
+`uv.lock`. When no tag holds a change you need yet, pin its full commit hash
+the same way (`...agents-system@<commit-sha>`) and move to the tag once it
+is released.
 
 A Docker build usually has no git credentials. Build the wheel where you do,
 copy it into your application, and install the file:
@@ -217,12 +219,12 @@ registry.register(
 )
 
 
-# 2. Register EVERY tool the role declares. sales-agent declares five, one of
-#    them (escalation_notifier) inherited from its parent role; build_runtime
-#    raises InjectionError for any declared tool the registry lacks, except
-#    escalation_notifier, which gets a built-in default. A tool you register
-#    but do not grant is denied at build time and never reaches the model, so
-#    a stub is enough for the ones this app does not use.
+# 2. Register every other tool the role declares. sales-agent declares five;
+#    build_runtime raises InjectionError for any declared tool the registry
+#    lacks, except escalation_notifier (inherited from its parent role), which
+#    gets a built-in default that reaches no human. A tool you register but do
+#    not grant is denied at build time and never reaches the model, so a stub
+#    is enough for the ones this app does not use.
 def not_wired(inputs: dict, /) -> dict:
     return {"error": "this tool is not wired in this application"}
 
@@ -231,7 +233,6 @@ for name, permission, tier in [
     ("client_lookup", "read:client_registry", agents_system.Tier.T1),
     ("message_sender", "send:message", agents_system.Tier.T2),
     ("order_writer", "write:orders", agents_system.Tier.T2),
-    ("escalation_notifier", "send:escalation", agents_system.Tier.T2),
 ]:
     registry.register(
         agents_system.ToolSpec(
@@ -269,12 +270,13 @@ if __name__ == "__main__":
 
 Three things the example shows on purpose:
 
-- **Every tool the role declares must be registered** — including tools the
-  role inherits (`sales-agent` gets `escalation_notifier` from its parent,
-  `platform/roles/agent`). `build_runtime` raises `InjectionError: Unknown
-  tool: ...` for any declared tool your registry lacks; the one exception is
-  `escalation_notifier` (see "Escalation: the built-in default"). Registering a tool is
-  not granting it: a tool whose permission you do not pass in
+- **Every tool the role declares must be registered**, inherited ones
+  included, with one exception: `escalation_notifier`, which every
+  role-defined agent inherits from `platform/roles/agent`, gets a built-in
+  default when your registry lacks it (see "Escalation: the built-in
+  default"). `build_runtime` raises `InjectionError: Unknown tool: ...` for
+  any other declared tool your registry lacks. Registering a tool is not
+  granting it: a tool whose permission you do not pass in
   `granted_permissions` is denied at build time and never reaches the model,
   which is why a stub connector is enough for the tools this app does not use.
 - **`granted_permissions` is the only grant.** Here the caller holds

@@ -92,7 +92,10 @@ and `permission_revoked` — which is why the counts differ.
 
 Note that `unknown_tool` is a **build-time** event. It fires in the injector when
 a role manifest names a tool the registry does not have, immediately before
-`InjectionError` is raised; the runtime never starts. It is not the
+`InjectionError` is raised; the runtime never starts. The one exception is
+`escalation_notifier` in in-process library use, where `build_runtime`
+fills it with the built-in default instead (see `escalation_not_delivered`
+above). It is not the
 interceptor's `not_in_surface` case, which is a *model* naming a tool at call
 time against a runtime that built successfully.
 

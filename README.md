@@ -473,12 +473,12 @@ registry.register(
 )
 
 
-# 2. Register EVERY tool the role declares. sales-agent declares five, one of
-#    them (escalation_notifier) inherited from its parent role; build_runtime
-#    raises InjectionError for any declared tool the registry lacks, except
-#    escalation_notifier, which gets a built-in default. A tool you register
-#    but do not grant is denied at build time and never reaches the model, so
-#    a stub is enough for the ones this app does not use.
+# 2. Register every other tool the role declares. sales-agent declares five;
+#    build_runtime raises InjectionError for any declared tool the registry
+#    lacks, except escalation_notifier (inherited from its parent role), which
+#    gets a built-in default that reaches no human. A tool you register but do
+#    not grant is denied at build time and never reaches the model, so a stub
+#    is enough for the ones this app does not use.
 def not_wired(inputs: dict, /) -> dict:
     return {"error": "this tool is not wired in this application"}
 
@@ -487,7 +487,6 @@ for name, permission, tier in [
     ("client_lookup", "read:client_registry", agents_system.Tier.T1),
     ("message_sender", "send:message", agents_system.Tier.T2),
     ("order_writer", "write:orders", agents_system.Tier.T2),
-    ("escalation_notifier", "send:escalation", agents_system.Tier.T2),
 ]:
     registry.register(
         agents_system.ToolSpec(

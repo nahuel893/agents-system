@@ -111,7 +111,9 @@ SSH tenga acceso; cuando vuelva a ser público,
 `git+https://github.com/nahuel893/agents-system@vX.Y.Z` funciona sin
 credenciales. Fijá un tag y no una rama, así cada actualización es un cambio
 deliberado en tu `pyproject.toml`; uv registra el commit resuelto en tu
-`uv.lock`.
+`uv.lock`. Si todavía ningún tag contiene un cambio que necesitás, fijá el
+hash completo de su commit de la misma forma (`...agents-system@<commit-sha>`)
+y pasá al tag cuando se publique.
 
 Un build de Docker normalmente no tiene credenciales de git. Construí el
 wheel donde sí las tenés, copialo a tu aplicación e instalá el archivo:
@@ -223,13 +225,13 @@ registry.register(
 )
 
 
-# 2. Registrá TODAS las tools que declara el rol. sales-agent declara cinco,
-#    una de ellas (escalation_notifier) heredada de su rol padre; build_runtime
-#    lanza InjectionError por cualquier tool declarada que falte en el
-#    registro, salvo escalation_notifier, que recibe un default incorporado.
-#    Registrar una tool no es concederla: una tool registrada pero no
-#    concedida se deniega al construir y nunca llega al modelo, así que alcanza
-#    con un stub para las que esta aplicación no usa.
+# 2. Registrá las demás tools que declara el rol. sales-agent declara cinco;
+#    build_runtime lanza InjectionError por cualquier tool declarada que falte
+#    en el registro, salvo escalation_notifier (heredada de su rol padre), que
+#    recibe un default incorporado que no llega a ningún humano. Registrar una
+#    tool no es concederla: una tool registrada pero no concedida se deniega
+#    al construir y nunca llega al modelo, así que alcanza con un stub para
+#    las que esta aplicación no usa.
 def not_wired(inputs: dict, /) -> dict:
     return {"error": "this tool is not wired in this application"}
 
@@ -238,7 +240,6 @@ for name, permission, tier in [
     ("client_lookup", "read:client_registry", agents_system.Tier.T1),
     ("message_sender", "send:message", agents_system.Tier.T2),
     ("order_writer", "write:orders", agents_system.Tier.T2),
-    ("escalation_notifier", "send:escalation", agents_system.Tier.T2),
 ]:
     registry.register(
         agents_system.ToolSpec(
@@ -277,13 +278,13 @@ if __name__ == "__main__":
 
 Tres cosas que el ejemplo muestra a propósito:
 
-- **Hay que registrar todas las tools que declara el rol** — incluidas las que
-  el rol hereda (`sales-agent` recibe `escalation_notifier` de su padre,
-  `platform/roles/agent`). `build_runtime` lanza `InjectionError: Unknown
-  tool: ...` por cualquier tool declarada que falte en tu registro; la única
-  excepción es `escalation_notifier` (ver "Escalamiento: el default
-  incorporado"). Registrar
-  una tool no es concederla: una tool cuyo permiso no pasás en
+- **Hay que registrar todas las tools que declara el rol**, incluidas las
+  heredadas, con una excepción: `escalation_notifier`, que todo agente
+  definido por rol hereda de `platform/roles/agent`, recibe un default
+  incorporado cuando tu registro no lo tiene (ver "Escalamiento: el default
+  incorporado"). `build_runtime` lanza `InjectionError: Unknown tool: ...`
+  por cualquier otra tool declarada que falte en tu registro. Registrar una
+  tool no es concederla: una tool cuyo permiso no pasás en
   `granted_permissions` se deniega al construir y nunca llega al modelo; por
   eso alcanza con un connector stub para las tools que esta aplicación no usa.
 - **`granted_permissions` es la única concesión.** Acá el caller tiene
