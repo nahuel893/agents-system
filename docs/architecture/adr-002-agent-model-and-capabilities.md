@@ -6,40 +6,42 @@
 
 | # | Item | Group | Status | Planned slice |
 |---|---|---|---|---|
-| 1 | Role = class; agent = durable identity + memory, ephemeral activation | A. Agent model | ⏳ pending (definition only — see `docs/platform/agent.md`) | #117 |
-| 2 | Per-principal identity into `granted_permissions` | A. Agent model | ⏳ pending | Tied to issue #53 |
-| 3 | Three memory types, platform-enforced isolation by `agent_id` | A. Agent model | ⏳ pending | Depends on 25 — #119 |
-| 4 | Durable working memory (checkpointer persistence) | A. Agent model | ⚠️ partial (checkpointer exists, not durable) | New PR — Redis AOF+volume or Postgres — #118 |
-| 5 | `memory_policy` folded but unenforced | A. Agent model | ⏳ pending | Depends on 3, 25 — #120 |
-| 6 | Delegation declared, not executable | A. Agent model | ⏳ pending | Issue #53 |
-| 7 | `agent.md` as reference definition | A. Agent model | ✅ done (this change) | — |
-| 8 | BUG: role.md prose leaks as system prompt / design notes leak to users | B. Prompts | ✅ done | PR0 (recommended before B.9 and any live eval) — #107 |
-| 9 | Universal base prompt contract | B. Prompts | ✅ done | Same PR as 8 — #107 |
-| 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ✅ done | PR2 — #109 |
-| 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ✅ done | PR1 — #108 |
-| 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ✅ done | PR3 — #110 |
-| 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ✅ done | PR4 — #111 |
-| 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ✅ done | PR5 — #112 |
-| 15 | Reference backends for platform-generic ports | C. Tools & permissions | ✅ done (this change) | — #113 |
-| 16 | Rejected: `operator-agent` as parent of `data-agent`; composition over multi-inheritance | D. Role composition | ✅ decision recorded (no code change) | Issue #53 |
-| 17 | Inherited role contract test suite | D. Role composition | ✅ done (this change) | — #114 |
-| 18 | Live evaluation pipeline | E. Verification | 🚧 in progress | Runner + smoke scenario shipped — #169; per-role scenarios pending — #52 |
-| 19 | Stale: `role.md`/`manifesto.md` say `agents/`, real path is `platform/roles/` | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
-| 20 | Stale: `tool.md` `sensitive:` description, pgvector RAG description | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
-| 21 | Stale: `permission-model.md` open decision (resolved by 10) + pgvector | F. Stale docs | ✅ done (#106) | Doc-only fix — #106 |
-| 22 | Durable chat history | G. Persistence & memory | ⚠️ partial (same as 4) | Same PR as 4 — #118 |
-| 23 | `ConversationRecorder` reference implementation | G. Persistence & memory | ⚠️ partial (port + test fake only, no production impl) | New PR — #121 |
-| 24 | Context-size control (trimming/compaction) | G. Persistence & memory | ⏳ pending | New PR — #122 |
-| 25 | Agent-own memory (`remember`/`recall`) | G. Persistence & memory | ⏳ pending | Depends on 2, 3 — #123 |
-| 26 | Reasoning persistence — explicit decision | G. Persistence & memory | ⏳ pending | New PR — #124 |
-| 27 | Integration tests that never run | H. CI | ✅ done | CI PR 1 (issue #42) |
-| 28 | Formatting not enforced (`ruff format`) | H. CI | ✅ done | CI PR 2 — #105 |
-| 29 | No dependency vulnerability checks | H. CI | ✅ done | CI PR 3 — #115 |
-| 30 | Secret scanning only local | H. CI | ✅ done | CI PR 3 — #115 |
-| 31 | Every run executes twice; no cancellation | H. CI | ✅ done | CI PR 1 — #104 |
-| 32 | No coverage measurement | H. CI | ⏳ pending | CI PR 4 — #116 |
-| 33 | Shell scripts not linted in CI | H. CI | ⏳ pending | CI PR 4 — #116 |
-| 34 | Green CI does not gate a merge | H. CI | ⏳ pending | Settings, issue #61 |
+| 1 | Role = class; agent = durable identity + memory, ephemeral activation | A. Agent model | ⏳ pending (definition shipped in `bcca9a0`; see `docs/platform/agent.md`) | #23 |
+| 2 | Per-principal identity into `granted_permissions` | A. Agent model | ⏳ pending | #15 |
+| 3 | Three memory types, platform-enforced isolation by `agent_id` | A. Agent model | ⏳ pending | #25 (blocked by #15 and #29) |
+| 4 | Durable working memory (checkpointer persistence) | A. Agent model | ⚠️ partial (checkpointer exists, not durable) | #24 |
+| 5 | `memory_policy` folded but unenforced | A. Agent model | ⏳ pending | #26 (blocked by #25 and #29) |
+| 6 | Delegation declared, not executable | A. Agent model | ⏳ pending | #15 (per-principal identity); #170 (ADR-006, agent-to-agent delegation) |
+| 7 | `agent.md` as reference definition | A. Agent model | ✅ done | `bcca9a0` |
+| 8 | BUG: role.md prose leaks as system prompt / design notes leak to users | B. Prompts | ✅ done | `307cc8a` (with 9) |
+| 9 | Universal base prompt contract | B. Prompts | ✅ done | `307cc8a` (with 8) |
+| 10 | Capability tiers (T0–T3) on `ToolSpec` | C. Tools & permissions | ✅ done | `0348771` |
+| 11 | `untrusted_input` flag + invariant vs. `exec:*` | C. Tools & permissions | ✅ done | `5001140` |
+| 12 | Declarative `command_tools` in manifests | C. Tools & permissions | ✅ done | `66d0f02` |
+| 13 | Channel enforcement (fail at boot, not per-message) | C. Tools & permissions | ✅ done | `219a21d` |
+| 14 | T3 sandbox (bubblewrap) | C. Tools & permissions | ✅ done | `bdd52c2` |
+| 15 | Reference backends for platform-generic ports | C. Tools & permissions | ✅ done | `a9b6dcc`, `b5cf81b` |
+| 16 | Rejected: `operator-agent` as parent of `data-agent`; composition over multi-inheritance | D. Role composition | ✅ decision recorded (no code change) | Open Assistant-capability question: #15 |
+| 17 | Inherited role contract test suite | D. Role composition | ✅ done | `358930f` |
+| 18 | Live evaluation pipeline | E. Verification | 🚧 in progress | Shipped: runner `e9f282b`, success-rate gate `bfcd0e0`, guardrail suite `cb84919`, remaining-role scenarios `bfb7a30`, whole-suite script `3b99a4c`. Open: #139, #157; scheduled workflow untracked |
+| 19 | Stale: `role.md`/`manifesto.md` say `agents/`, real path is `platform/roles/` | F. Stale docs | ✅ done | `ec1e979` |
+| 20 | Stale: `tool.md` `sensitive:` description, pgvector RAG description | F. Stale docs | ✅ done | `ec1e979` |
+| 21 | Stale: `permission-model.md` open decision (resolved by 10) + pgvector | F. Stale docs | ✅ done | `ec1e979`, `0348771` |
+| 22 | Durable chat history | G. Persistence & memory | ⚠️ partial (same as 4) | #24 |
+| 23 | `ConversationRecorder` reference implementation | G. Persistence & memory | ⚠️ partial (port + test fake only, no production impl) | #27 |
+| 24 | Context-size control (trimming/compaction) | G. Persistence & memory | ⏳ pending | #28 |
+| 25 | Agent-own memory (`remember`/`recall`) | G. Persistence & memory | ⏳ pending | #29 (blocked by #15 and #25) |
+| 26 | Reasoning persistence — explicit decision | G. Persistence & memory | ⏳ pending | #30 |
+| 27 | Integration tests that never run | H. CI | ✅ done | `729e2d9` |
+| 28 | Formatting not enforced (`ruff format`) | H. CI | ✅ done | `4659acb` |
+| 29 | No dependency vulnerability checks | H. CI | ✅ done | `3bdfaec` |
+| 30 | Secret scanning only local | H. CI | ✅ done | `3bdfaec` |
+| 31 | Every run executes twice; no cancellation | H. CI | ✅ done | `e7d47e0` |
+| 32 | No coverage measurement | H. CI | ✅ done | `b4a79a1` |
+| 33 | Shell scripts not linted in CI | H. CI | ✅ done | `b4a79a1` |
+| 34 | Green CI does not gate a merge | H. CI | ⚠️ partial (`main` is protected with required status checks; required approving reviews are still 0 and the settings are not versioned) | #20 (second reviewer), #21 (settings as code) |
+
+> **Citation convention.** `#NN` is an issue on this repository. A hash in backticks is a commit on `main`; the `(#NN)` suffix in those commit subjects numbers the pre-split repository and must not be read as a current issue or PR. Statuses were reconciled against the merged code, not against this table's earlier wording. Dated narrative inside an item body ("Correction" blocks, "as of #NNN") keeps the pre-split numbers it was written with.
 
 ## Context
 
@@ -142,7 +144,7 @@ current agent" now has an unambiguous referent. `docs/platform/agent.md`
 becomes the canonical citation for future documents instead of each
 re-deriving the distinction.
 
-**Status.** ✅ done as a definition (this change ships `agent.md`). No code
+**Status.** ✅ done as a definition (`agent.md` shipped in `bcca9a0`). No code
 changes in this item; A.2 is where identity actually gets threaded through.
 
 ---
@@ -237,7 +239,7 @@ stating plainly rather than leaving implicit, because it changes what
 "least privilege" currently means in practice: it is enforced between roles,
 not yet between two different users of the same role.
 
-**Status.** ⏳ pending. **Planned slice:** tied to issue #53 (delegation/
+**Status.** ⏳ pending. **Planned slice:** tied to issue #15 (delegation/
 identity work), since A.6's delegation identity question and this one are
 the same underlying gap — a principal identity that persists across a turn
 and, eventually, across a delegation.
@@ -279,7 +281,7 @@ the boundary structural rather than a filter that must be remembered.
 by) and largely defines the acceptance criteria for G.25's storage design.
 
 **Status.** ⏳ pending. **Planned slice:** depends on 25 (agent-own memory
-implementation) and, transitively, on A.2.
+implementation) and, transitively, on A.2. Tracked by #25.
 
 ---
 
@@ -331,7 +333,7 @@ example) rather than an accidental side effect of Redis's TTL default.
 
 **Status.** ⚠️ partial (checkpointer exists and works; durability does not).
 **Planned slice:** new PR — Redis AOF + volume, or Postgres as source of
-truth; same PR as G.22 (same underlying gap).
+truth; same PR as G.22 (same underlying gap). Tracked by #24.
 
 ---
 
@@ -371,7 +373,7 @@ role) is the right design and re-adding it later would re-open every role's
 `policy.md` as aspirational, not enforced — this matters for anyone auditing
 what a role can actually do today.
 
-**Status.** ⏳ pending. **Planned slice:** depends on 3 and 25.
+**Status.** ⏳ pending. **Planned slice:** depends on 3 and 25. Tracked by #26.
 
 ---
 
@@ -413,14 +415,14 @@ the orchestrator currently delegates (e.g. treating `agent-platform.md`'s
 "Orchestrator Agent... Responsible for: top-level routing, role selection"
 as descriptive of working code) is describing intent, not behavior.
 
-**Status.** ⏳ pending. **Planned slice:** ties to issue #53.
+**Status.** ⏳ pending. **Planned slice:** ties to issue #15 (identity) and #170 (ADR-006, agent-to-agent delegation).
 
 ---
 
 #### A.7 — `agent.md` as the reference definition
 
 Covered in full by the new `docs/platform/agent.md`, referenced throughout
-this ADR. **Status:** ✅ done (this change).
+this ADR. **Status:** ✅ done (`bcca9a0`).
 
 ---
 
@@ -514,7 +516,7 @@ the model not to repeat what it was handed.
 its rationale (Option 1) or add the heading (Option 2). No permission,
 tool, or policy semantics change — this is prompt-composition only.
 
-**Status.** ✅ done — landed together with B.9 in #107. Option 2 was the
+**Status.** ✅ done — landed together with B.9 in `307cc8a`. Option 2 was the
 option implemented: `role.md` bodies now carry a `## design notes` heading,
 and the loader (`harness/loader.py`'s `_split_design_notes`) strips
 everything at/after it from `system_prompt` before composition, raising
@@ -580,7 +582,7 @@ instruction not to fabricate data does not stop a compromised or confused
 model from calling a real, permitted tool it should not have called in that
 moment; only the permission/tier/revalidation machinery in C does that.
 
-**Status.** ✅ done — landed together with B.8 in #107. The loader
+**Status.** ✅ done — landed together with B.8 in `307cc8a`. The loader
 (`harness/loader.py`'s `_append_base_contract`) appends the six clauses to
 every prompt `resolve()` returns, exactly once regardless of `extends:`
 chain depth, so no `role.md` or deployment override declares or can
@@ -1000,7 +1002,7 @@ role bound to a runtime is fixed at boot), for no benefit over checking
 once, and — after #43/#44 — there is no longer a per-message runtime
 resolution point to attach it to at all.
 
-**Status.** ✅ done — #111. **Tests:**
+**Status.** ✅ done — `219a21d`. **Tests:**
 `tests/test_agent_runtime.py::test_agent_runtime_untrusted_input_property_reflects_false`/`_true`
 (the property), and
 `tests/test_main.py::test_create_app_refuses_to_boot_when_whatsapp_role_is_not_untrusted_input`
@@ -1307,7 +1309,7 @@ more personal register, same underlying tool access as `agent`) versus (b)
 a genuinely different **capability** set (calendar access, reminder
 scheduling, user-scoped memory — none of which any existing role grants
 today). This ADR does not resolve which reading is correct; it flags the
-question as the concrete next decision issue #53 should settle before an
+question as the concrete next decision issue #15 should settle before an
 Assistant role is defined, because the two readings lead to different
 `manifest.md` shapes (tone alone needs no new tools; capability needs new
 connectors this ADR has not scoped).
@@ -1316,12 +1318,12 @@ connectors this ADR has not scoped).
 manifest-level "mixin" list distinct from `extends:` (declare tools/
 permissions from another role's manifest without taking its full identity
 chain) — a reasonable middle ground, not decided here; worth exploring
-alongside issue #53 if hand-declaring every trait proves repetitive across
+alongside issue #15 if hand-declaring every trait proves repetitive across
 several future roles.
 
 **Status.** ✅ decision recorded (rejecting the operator-parent proposal);
 no code change required by the rejection itself. **Planned slice:** the open
-Assistant-capability question ties to issue #53.
+Assistant-capability question ties to issue #15.
 
 ---
 
@@ -1441,19 +1443,7 @@ between releases.
 — rejected: real model calls are slow, cost money, and are not fully
 deterministic, which is the wrong shape for a gate that blocks every PR.
 
-**Status.** 🚧 in progress — #169 ships the runner: `src/agents_system/evals/`
-(`schema.py`'s YAML scenario schema, `runner.py`'s assertion evaluation and
-N-run success-rate aggregation, `reporting.py`'s JSON + markdown output to
-the gitignored `evals/results/`), the `live` pytest marker (deselected by
-default, same shape as `integration`), configurable `ollama_model`/
-`ollama_base_url` on `Settings` (`src/agents_system/main.py`'s
-`_build_chat_model` no longer hardcodes `qwen2.5:3b`), and one smoke
-scenario (`evals/scenarios/sales_agent_smoke.yaml`) proving the pipeline end
-to end against real Ollama. **Still pending:** per-role scenario coverage
-(#169 explicitly scoped that out to sibling issues under #52) and any
-nightly-run automation — this pipeline still runs by hand
-(`pytest -m live`) only. See `docs/platform/live-eval.md` /
-`docs/platform_es/live-eval.md`.
+**Status.** 🚧 in progress. Shipped: the runner (`e9f282b`) — `src/agents_system/evals/` (`schema.py`'s YAML scenario schema, `runner.py`'s assertion evaluation and N-run success-rate aggregation, `reporting.py`'s JSON + markdown output to the gitignored `evals/results/`), the `live` pytest marker (deselected by default, same shape as `integration`), configurable `ollama_model`/`ollama_base_url` on `Settings`, and a smoke scenario; then the success-rate gate (`bfcd0e0`), the live guardrail suite (`cb84919`), scenarios for the remaining seven roles (`bfb7a30`) and the whole-suite script `scripts/run-live-suite.sh` (`3b99a4c`). **Still open:** the `EVAL_RUNS=5` re-verification of the four per-role escalation scenarios (#139) and the developer-agent / data-agent behavior failures (#157). The manually triggered workflow described above is not tracked by any issue yet, so the pipeline still runs by hand (`pytest -m live`). See `docs/platform/live-eval.md` / `docs/platform_es/live-eval.md`.
 
 ---
 
@@ -1491,7 +1481,7 @@ that fix. The fix in this item is therefore English-only.
 **Decision.** Fix the path in both files; no other content in either file
 was found to be inaccurate about the *shape* of a role definition (three
 files, `role.md`/`manifest.md`/`policy.md`) — only the containing directory
-name is wrong. **Status:** ✅ done (#106). **Slice:** doc-only fix, no code
+name is wrong. **Status:** ✅ done (`ec1e979`). **Slice:** doc-only fix, no code
 change; landed in the same PR as this ADR's other doc corrections.
 
 ---
@@ -1540,7 +1530,7 @@ therefore only the `sensitive:`/`always_revalidate` fix — adding the missing
 `always_revalidate` mention to `tool.md`'s injection-sequence step 4
 alongside the existing `write:`/`send:` heuristic.
 
-**Status.** ✅ done (#106). **Slice:** doc-only fix; the `sensitive:`/`tier`
+**Status.** ✅ done (`ec1e979`). **Slice:** doc-only fix; the `sensitive:`/`tier`
 wording should be revisited again once C.10 actually ships (`tier` becomes
 the accurate vocabulary), so consider a light second pass on `tool.md` at
 that time rather than only now.
@@ -1570,7 +1560,7 @@ without claiming a resolution that has not shipped.
 
 **Decision.** Once C.10 ships, replace the "Open decision (3)" callout with
 a reference to this ADR's C.10 (tiers) and C.9's four-layer enforcement
-description. **Status:** ✅ done — C.10 (#109) shipped, and
+description. **Status:** ✅ done — C.10 (`0348771`) shipped, and
 `permission-model.md`'s "Open decision (3)" callout is now replaced outright
 with a resolution naming the tier table and the two enforcement points it
 governs (interceptor revalidation, injector's untrusted_input/T3 barrier),
@@ -1628,8 +1618,7 @@ of curation) or "history" that is lossily summarized before it needs to be
 
 Same underlying gap as A.4 (the checkpointer is not durable) — not
 restated here to avoid two descriptions of one fix drifting apart. See A.4
-for the full analysis. **Status:** ⚠️ partial. **Planned slice:** same PR
-as A.4.
+for the full analysis. **Status:** ⚠️ partial. **Planned slice:** same PR as A.4 (#24).
 
 ---
 
@@ -1665,8 +1654,7 @@ acknowledged gap in an otherwise-complete design, not choosing between
 approaches.
 
 **Status.** ⚠️ partial (port + fake exist; no production implementation).
-**Planned slice:** new PR, reasonable to pair with A.4/G.22 since both touch
-durable conversation storage.
+**Planned slice:** new PR, reasonable to pair with A.4/G.22 since both touch durable conversation storage. Tracked by #27.
 
 ---
 
@@ -1701,7 +1689,7 @@ summarizes older context.
 not *message count* or *token count*; a very active conversation can exceed
 a context window well within 24 hours.
 
-**Status.** ⏳ pending. **Planned slice:** new PR.
+**Status.** ⏳ pending. **Planned slice:** new PR, tracked by #28.
 
 ---
 
@@ -1722,8 +1710,7 @@ isolation over prompt-level discipline); not restated here.
 **Alternatives considered.** Covered under A.3.
 
 **Status.** ⏳ pending. **Planned slice:** depends on 2 (per-principal
-identity, to have an `agent_id` to key on) and 3 (the memory-type
-definition this implements one-third of).
+identity, to have an `agent_id` to key on) and 3 (the memory-type definition this implements one-third of). Tracked by #29.
 
 ---
 
@@ -1763,7 +1750,7 @@ the concrete tradeoff the implementing PR must resolve.
 **Status.** ⏳ pending. **Planned slice:** new PR; low urgency relative to
 A/B/C/G's other items, but should not remain an un-decided default
 indefinitely once any audit/debugging workflow starts to depend on
-reasoning being either present or absent.
+reasoning being either present or absent. Tracked by #30.
 
 ---
 
@@ -1797,7 +1784,7 @@ endpoint, 2 tests), and `tests/test_outbox_migration_integration.py` (added
 by the durable inbox/outbox work, #43/#131; runs the migration up and down,
 4 tests). `tests/test_platform_tools_integration.py` and `tests/test_reports.py`
 mention the marker only in docstrings and are not marked — the first
-deliberately, so it runs in the default suite. Tracked as issue #42.
+deliberately, so it runs in the default suite. Delivered in `729e2d9` (tracked at the time as a pre-split issue).
 
 **Decision.** Every `integration`-marked test now runs in a dedicated CI
 job, and none of them through a silent skip:
@@ -1843,7 +1830,7 @@ justified deferring them.
 
 **Status.** ✅ done — `db-integration`, `embeddings-integration`,
 `openai-compatible-integration`, `outbox-migration` (`.github/workflows/ci.yml`).
-**Planned slice:** CI PR 1, together with H.31 (#42).
+**Merged:** `729e2d9`, together with H.31 (`e7d47e0`).
 
 #### H.28 — Formatting is not enforced
 
@@ -1866,7 +1853,7 @@ produces different whitespace, and reviews and merges pay for it.
 **Alternatives considered.** Formatting only touched files — rejected: the
 drift never converges, and each unrelated PR carries formatting noise.
 
-**Status.** ✅ done (#105). **Planned slice:** CI PR 2.
+**Status.** ✅ done (`4659acb`).
 
 #### H.29 — No dependency vulnerability checks
 
@@ -1963,7 +1950,7 @@ duplicate delays the signal the author is waiting for.
 without a PR — rejected: work here always goes through a PR; a branch
 without one does not need CI until it has one.
 
-**Status.** ✅ done (#104). **Planned slice:** CI PR 1.
+**Status.** ✅ done (`e7d47e0`).
 
 #### H.32 — No coverage measurement
 
@@ -1995,7 +1982,7 @@ the number instead of the behaviour. Folding the integration jobs into the
 same coverage number — rejected: it would make the gate depend on which
 optional live services happened to be reachable, not on the default suite.
 
-**Status.** ✅ done (#116). **Planned slice:** CI PR 4.
+**Status.** ✅ done (`b4a79a1`).
 
 #### H.33 — Shell scripts are not linted in CI
 
@@ -2024,18 +2011,16 @@ documented `# shellcheck disable=SC2088` (in `resolve_dir`, for literal `~`
 prefix checks that are not path expansion) from its original authoring — no
 script needed a code fix or a new suppression to pass this gate.
 
-**Status.** ✅ done (#116). **Planned slice:** CI PR 4.
+**Status.** ✅ done (`b4a79a1`).
 
 #### H.34 — Green CI does not gate a merge
 
 **Current state.** Nothing requires the CI jobs to pass before a PR merges
-into `main`, and repository settings live outside version control (issues
-#59 and #61). The checks are informative only.
+into `main`, and repository settings live outside version control (issues #20 and #21). The checks are informative only.
 
 **Decision.** Branch protection (or a repository ruleset) on `main` that
 requires `ci`, `bi-readonly`, `audit-migration` and `demo-reports`, plus the
-jobs added by H.27–H.33 once they are stable; the configuration is kept as
-code per #61.
+jobs added by H.27–H.33 once they are stable; the configuration is kept as code per #21.
 
 **Rationale.** A gate that can be bypassed silently is not a gate. The
 stacked-PR incident on 2026-09-22 (#97 merged into an already squash-merged
@@ -2043,10 +2028,9 @@ branch and never reached `main`) is the same class of failure: nothing
 verified what actually landed.
 
 **Alternatives considered.** Relying on reviewer discipline — rejected: the
-project has a single reviewer today (#59).
+project has a single reviewer today (#20).
 
-**Status.** ⏳ pending. **Planned slice:** after CI PRs 1–4, as a settings
-change tracked by #61.
+**Status.** ⚠️ partial. `main` has branch protection with required status checks, applied through the repository settings on 2026-08-30 (per #20); that settings state is not re-verifiable from the code and was not re-checked here. Still open: required approving reviews stay at 0 until a second reviewer identity exists (#20), and the configuration is not yet versioned (#21).
 
 **Later, not part of this group:** the live agent evaluation pipeline (E.18)
 lands as a separate manually triggered workflow, not as a per-PR job.
