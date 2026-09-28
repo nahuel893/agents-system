@@ -108,7 +108,7 @@ OpenRouter, por ejemplo:
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-export OPENAI_COMPATIBLE_MODEL=deepseek/deepseek-v4-flash
+export OPENAI_COMPATIBLE_MODEL=google/gemini-3.8-flash
 export OPENAI_COMPATIBLE_API_KEY=...   # tu propia clave -- nunca la commitees
 pytest -m live
 ```
@@ -120,6 +120,29 @@ nunca imprimas ni commitees ese archivo.) El nombre de modelo que reporta
 ChatOpenAI (`groq`, `openai_compatible`) lo exponen como `model_name`, no
 como `model` — reportar un string hardcodeado acá se desincronizaría en
 silencio de lo que el proveedor realmente usó.
+
+### Modelo de referencia
+
+El modelo de referencia para la evaluación en vivo es `google/gemini-3.8-flash`
+a través de OpenRouter (con soporte de tool calling; USD 0,75 por millón de
+tokens de entrada y 3,75 por millón de salida). Las líneas base y las
+compuertas de este documento y de los issues de ajuste de roles se miden con
+él. `deepseek/deepseek-v4-flash` sigue siendo una segunda opinión válida, solo
+a título informativo. Ningún script fija uno de los dos modelos: el modelo
+siempre sale de `OPENAI_COMPATIBLE_MODEL`.
+
+```bash
+export EVAL_PROVIDER=openai_compatible
+export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
+export OPENAI_COMPATIBLE_MODEL=google/gemini-3.8-flash
+export OPENAI_COMPATIBLE_API_KEY=...   # tu propia clave -- nunca la commitees
+export MODEL_PRICES='{"google/gemini-3.8-flash": {"input_per_million": 0.75, "output_per_million": 3.75}}'
+```
+
+Sin una entrada de `MODEL_PRICES` para el modelo, cada turno reporta
+`cost_usd: None` y la columna de costo de la corrida queda vacía. Nunca dejes
+`EVAL_PROVIDER` en su valor por defecto para una compuerta: elige un modelo
+local de Ollama, y una tasa medida con otro modelo no es comparable.
 
 ## Esquema de escenario
 
@@ -300,7 +323,7 @@ cualquier otra marcada `live`:
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-export OPENAI_COMPATIBLE_MODEL=deepseek/deepseek-v4-flash
+export OPENAI_COMPATIBLE_MODEL=google/gemini-3.8-flash
 export OPENAI_COMPATIBLE_API_KEY=...
 EVAL_RUNS=3 pytest -m live tests/test_live_eval_guardrails.py -s
 ```
@@ -594,7 +617,7 @@ el adapter) --, y
 valor el precio en USD por millón de tokens de entrada/salida:
 
 ```bash
-export MODEL_PRICES='{"deepseek/deepseek-v4-flash": {"input_per_million": 0.14, "output_per_million": 0.28}}'
+export MODEL_PRICES='{"google/gemini-3.8-flash": {"input_per_million": 0.75, "output_per_million": 3.75}}'
 ```
 
 `AgentRuntime` deriva esta clave por sí mismo, al construirse, a partir del

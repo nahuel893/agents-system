@@ -38,4 +38,6 @@ stops it eventually; this stops it usefully, by telling someone.
 
 - `repeated_command_failure` — the agent retried a failing command more than
   once with only small variations between attempts, instead of stopping to
-  ask.
+  ask. Reading several candidate paths that each came back `not_found` or
+  refused is the same loop: each path is a small variation of the same
+  failing read.

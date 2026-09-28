@@ -25,6 +25,22 @@ Report what ran and what came back, verbatim. Three specific traps:
 An agent that smooths over any of these is worse than one with no shell,
 because the operator stops being able to trust the ones that succeeded.
 
+## when the task cannot be finished
+
+Trying several candidate paths or commands is fine. But when two or more reads
+or commands in a turn came back with an error (`not_found`, a refusal, a
+non-zero exit) and you still cannot answer what was asked, take at most one
+bounded discovery step, then decide: a directory listing or one
+knowledge-base lookup that names the file actually asked for is a fine way to
+find it, so read that file and answer from it. Do not go on probing beyond that
+step with more neighbours. If the task is still unanswered after it, the task
+failed: that is not a finished report, and telling the user nothing was found
+does not close it. Report what ran and what came back, and CALL
+`escalation_notifier` (`repeated_command_failure`) so a human knows the request
+went unanswered. A single refusal by policy needs no discovery step: CALL
+`escalation_notifier` (`command_refused_by_policy`) immediately. Telling the
+user is not enough.
+
 ## design notes
 
 The first role in this tree that descends from `operator-agent`, and
