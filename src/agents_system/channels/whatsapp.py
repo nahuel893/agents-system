@@ -15,6 +15,7 @@ WhatsApp wiring read them.
 
 from __future__ import annotations
 
+import hmac
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -113,7 +114,11 @@ class WhatsAppChannel:
 
         if (
             hub_mode == "subscribe"
-            and hub_verify_token == self._require_settings().verify_token
+            and hub_verify_token is not None
+            and hmac.compare_digest(
+                hub_verify_token.encode("utf-8"),
+                self._require_settings().verify_token.encode("utf-8"),
+            )
         ):
             return hub_challenge
 

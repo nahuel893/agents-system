@@ -144,6 +144,35 @@ def test_verify_subscription_echoes_the_challenge() -> None:
     assert _channel().verify_subscription(params) == "abc"
 
 
+def test_verify_subscription_compares_the_token_in_constant_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#165 review follow-up: a plain `==` on the verify token leaks timing
+    information proportional to the number of matching leading bytes. The
+    handshake must compare with `hmac.compare_digest` instead, exactly like
+    the POST path's HMAC check (`verify_inbound`).
+    """
+    import hmac as hmac_module
+
+    calls: list[tuple[bytes, bytes]] = []
+    real_compare_digest = hmac_module.compare_digest
+
+    def _spy(a: bytes, b: bytes) -> bool:
+        calls.append((a, b))
+        return real_compare_digest(a, b)
+
+    monkeypatch.setattr(hmac_module, "compare_digest", _spy)
+
+    params = {
+        "hub.mode": "subscribe",
+        "hub.verify_token": VERIFY_TOKEN,
+        "hub.challenge": "abc",
+    }
+
+    assert _channel().verify_subscription(params) == "abc"
+    assert calls == [(VERIFY_TOKEN.encode("utf-8"), VERIFY_TOKEN.encode("utf-8"))]
+
+
 @pytest.mark.parametrize(
     ("params", "status"),
     [
