@@ -24,6 +24,7 @@ from agents_system.audit.redactor import Redactor
 
 if TYPE_CHECKING:
     from agents_system.audit.events import (
+        EscalationNotDelivered,
         RuntimeBuilt,
         RuntimeInitialized,
         RuntimeTimeout,
@@ -410,6 +411,59 @@ async def record_runtime_timeout(
         deployment=deployment,
         actor=actor,
         total_execution_timeout_s=total_execution_timeout_s,
+        payload=redacted_payload,
+        pii_keys=pii_keys,
+    )
+
+
+#: The model writes an escalation's ``reason``, so it is untrusted and
+#: unbounded. The tool asks for a short label (``customer_angry``); anything
+#: past this is cut before it is redacted, stored or logged.
+ESCALATION_REASON_MAX_CHARS = 200
+
+
+def bound_escalation_reason(reason: str) -> str:
+    """``reason`` cut to ``ESCALATION_REASON_MAX_CHARS``."""
+    return reason[:ESCALATION_REASON_MAX_CHARS]
+
+
+async def record_escalation_not_delivered(
+    definition: Any,
+    tool_name: str,
+    reason: str,
+    details_chars: int,
+) -> EscalationNotDelivered:
+    """Build an EscalationNotDelivered event (issue #168).
+
+    The escalation's ``details`` are free text about the customer (names,
+    IDs, addresses), which the Redactor has no pattern for, so only their
+    length is recorded, never their text. ``reason`` is capped and goes
+    through the redactor, and the event's top-level ``reason`` field is the
+    redacted value, not the raw one.
+    """
+    from agents_system.audit.events import EscalationNotDelivered
+
+    correlation_id = _correlation_id_from_context()
+    sequence = PLACEHOLDER_SEQUENCE
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {
+        "tool_name": tool_name,
+        "reason": bound_escalation_reason(reason),
+        "details_chars": details_chars,
+    }
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
+    return EscalationNotDelivered(
+        event_id=uuid.uuid4(),
+        occurred_at=_now_utc(),
+        correlation_id=correlation_id,
+        sequence=sequence,
+        role=role,
+        deployment=deployment,
+        actor=actor,
+        tool_name=tool_name,
+        reason=redacted_payload["reason"],
         payload=redacted_payload,
         pii_keys=pii_keys,
     )

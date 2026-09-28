@@ -51,7 +51,7 @@ from agents_system.harness.loader import (
     RoleLocator,
     RootConfig,
 )
-from agents_system.harness.registry import RegistryFactory
+from agents_system.harness.registry import RegistryFactory, ToolRegistry
 from agents_system.integration import openai_router, webhook_router
 from agents_system.integration.whatsapp_client import WhatsAppClient
 from agents_system.models.base import get_bi_engine, get_engine, get_session_factory
@@ -346,6 +346,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # wiring of connectors to its own data, and the platform has
             # none. `create_app` stashed the factory on app.state.
             registry = app.state.registry_factory(settings, embedder, bi_engine)
+            _refuse_builtin_default_tools(registry)
 
             session_provider = async_sessionmaker(
                 app.state.engine, expire_on_commit=False
@@ -506,6 +507,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     roots=roots,
                     session_provider=session_provider,
                     definition=definition,
+                    # Issue #168 -- the in-process escalation default reaches
+                    # no human. A served role without its own
+                    # escalation_notifier fails boot, as it always has.
+                    builtin_defaults=False,
                 )
                 # D-037 (issue #13, ADR-004) -- this runtime's own model:
                 # `default_model` unless `definition.model` names its own
@@ -1111,6 +1116,30 @@ class _BootPlan:
     grants: Mapping[str, Any]
     grant_source: str
     """``create_app(grants=...)``, or ``DEPLOY_GRANTS`` when it got none."""
+
+
+def _refuse_builtin_default_tools(registry: ToolRegistry) -> None:
+    """Issue #168 -- never serve a built-in default tool.
+
+    ``build_runtime`` fills a missing ``escalation_notifier`` for in-process
+    use with a default that reaches no human. The lifespan builds with
+    ``builtin_defaults=False``; this closes the other way in, the caller's
+    registry holding the default because it was registered by hand. A
+    customer asking for a person must never be answered by it while the
+    operator believes escalation is wired.
+    """
+    from agents_system.harness.defaults import is_builtin_default
+
+    served_defaults = sorted(
+        name for name in registry.names() if is_builtin_default(registry.get(name))
+    )
+    if served_defaults:
+        raise DefinitionError(
+            f"The tool registry holds the built-in default for "
+            f"{', '.join(served_defaults)}, which reaches no human. It is for "
+            "in-process use only: register a ToolSpec that delivers to a real "
+            "channel. Refusing to boot."
+        )
 
 
 def _build_registrations(

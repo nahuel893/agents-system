@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -156,13 +156,26 @@ def resolve_tool_surface(
     definition: AgentDefinition,
     registry: ToolRegistry,
     granted_permissions: Iterable[str],
+    *,
+    defaults: Mapping[str, ToolSpec] | None = None,
 ) -> InjectionResult:
+    """Resolve the Layer-1 tool surface of ``definition`` against ``registry``.
+
+    ``defaults`` (issue #168) supplies a spec for a declared tool the
+    registry lacks; the registry always wins. It passes the same grant
+    decision as any registered tool. A declared tool found in neither still
+    raises ``InjectionError``.
+    """
     effective = set(definition.permissions) & set(granted_permissions)
     granted: list[ToolSpec] = []
     denied: list[tuple[str, str]] = []
+    defaults = defaults or {}
 
     for name in definition.tools:
-        if name not in registry:
+        from_default = name not in registry and name in defaults
+        if from_default:
+            spec = defaults[name]
+        elif name not in registry:
             logger.error(
                 "injector.unknown_tool",
                 tool=name,
@@ -176,12 +189,25 @@ def resolve_tool_surface(
                 tool_name=name,
             )
             raise InjectionError(f"Unknown tool: {name}")
+        else:
+            spec = registry.get(name)
 
-        spec = registry.get(name)
         reason = _deny_reason(spec, definition, effective)
 
         if reason is None:
             granted.append(spec)
+            if from_default:
+                logger.warning(
+                    "injector.builtin_default_granted",
+                    tool=name,
+                    role=definition.role_name,
+                    deployment=definition.deployment,
+                    message=(
+                        "This tool is not in the registry, so the built-in "
+                        "default is equipped. It does not do the real work: "
+                        "register your own ToolSpec under this name."
+                    ),
+                )
             logger.info(
                 "injector.tool_granted",
                 tool=spec.name,

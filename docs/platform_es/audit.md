@@ -86,15 +86,18 @@ permanece en `payload`.
 | `runtime_timeout` | `agent/graph.py` | El turno excedió `total_execution_timeout_s` |
 | `tool_call_attempted` | `harness/interceptor.py` | Una llamada alcanzó la Capa 2 |
 | `tool_call_blocked` | `harness/interceptor.py` | La Capa 2 rechazó la llamada |
+| `escalation_not_delivered` | `harness/defaults.py` | El `escalation_notifier` por defecto incorporado atendió un escalamiento: no se contactó a ningún humano (solo en uso como biblioteca en proceso, nunca en la app servida). Payload: `tool_name`, `reason` (cortado a 200 caracteres y luego redactado) y `details_chars`, nunca el texto de los detalles |
 
-Doce sitios de llamada para diez tipos de evento. `tool_call_blocked` se emite
+Trece sitios de llamada para once tipos de evento. `tool_call_blocked` se emite
 desde tres ramas distintas del interceptor — `not_in_surface`,
 `revalidation_required` y `permission_revoked` — y por eso los conteos difieren.
 
 Conviene notar que `unknown_tool` es un evento de **tiempo de construcción**. Se
 dispara en el injector cuando un manifiesto de rol nombra una herramienta que el
 registry no tiene, inmediatamente antes de lanzar `InjectionError`; el runtime
-nunca arranca. No es el caso `not_in_surface` del interceptor, que es un *modelo*
+nunca arranca. La única excepción es `escalation_notifier` en el uso como
+biblioteca en proceso, donde `build_runtime` lo completa con el default
+incorporado (ver `escalation_not_delivered` arriba). No es el caso `not_in_surface` del interceptor, que es un *modelo*
 nombrando una herramienta en tiempo de llamada contra un runtime que sí se
 construyó.
 

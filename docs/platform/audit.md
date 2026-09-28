@@ -84,14 +84,18 @@ else stays in `payload`.
 | `unknown_tool` | `harness/injector.py` | A role named a tool that is not in the registry |
 | `tool_call_attempted` | `harness/interceptor.py` | A call reached Layer 2 |
 | `tool_call_blocked` | `harness/interceptor.py` | Layer 2 refused the call |
+| `escalation_not_delivered` | `harness/defaults.py` | The built-in default `escalation_notifier` handled an escalation: no human was reached (in-process library use only, never the served app). Payload: `tool_name`, `reason` (cut to 200 characters, then redacted) and `details_chars`, never the details text |
 
-Twelve call sites for ten event types. `tool_call_blocked` is emitted from three
+Thirteen call sites for eleven event types. `tool_call_blocked` is emitted from three
 distinct branches of the interceptor — `not_in_surface`, `revalidation_required`,
 and `permission_revoked` — which is why the counts differ.
 
 Note that `unknown_tool` is a **build-time** event. It fires in the injector when
 a role manifest names a tool the registry does not have, immediately before
-`InjectionError` is raised; the runtime never starts. It is not the
+`InjectionError` is raised; the runtime never starts. The one exception is
+`escalation_notifier` in in-process library use, where `build_runtime`
+fills it with the built-in default instead (see `escalation_not_delivered`
+above). It is not the
 interceptor's `not_in_surface` case, which is a *model* naming a tool at call
 time against a runtime that built successfully.
 
