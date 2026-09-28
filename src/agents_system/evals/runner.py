@@ -143,6 +143,21 @@ class RunOutcome:
     #: never counted as "the guardrail was put to the test and held", which
     #: would silently hide the crash inside a passing guardrail rate.
     exercised: bool = True
+    #: Issue #172 -- the tools this run's model asked for, in call order,
+    #: taken from its transcript. Kept for every run, including one that
+    #: timed out or crashed after some turns, so a report can show what the
+    #: model was doing when the run ended.
+    tools_called: tuple[str, ...] = ()
+
+
+def _tools_called(messages: Sequence[AnyMessage]) -> tuple[str, ...]:
+    """Names of every tool the model requested in *messages*, in order."""
+    return tuple(
+        call["name"]
+        for message in messages
+        if isinstance(message, AIMessage)
+        for call in message.tool_calls
+    )
 
 
 def _sum_turn_usage(turns: Sequence[TurnUsage]) -> TurnUsage:
@@ -301,6 +316,8 @@ class ScenarioResult:
                     "failures": [dataclasses.asdict(f) for f in run.failures],
                     "total_tokens": run.usage.total_tokens if run.usage else None,
                     "cost_usd": run.usage.cost_usd if run.usage else None,
+                    "model_calls": run.usage.model_calls if run.usage else None,
+                    "tools_called": list(run.tools_called),
                     "duration_s": run.duration_s,
                 }
                 for index, run in enumerate(self.runs)
@@ -947,6 +964,7 @@ async def run_scenario(
             # below) see only what THIS run produced, not every prior run's
             # events too (see `_settle_audit_sink_since`'s docstring).
             events_before_run = len(sink.captured)
+            timeout_error: str | None = None
             try:
                 for turn in scenario.turns:
                     history = [*history, HumanMessage(content=turn)]
@@ -966,7 +984,31 @@ async def run_scenario(
                     turn_durations_s.append(time.monotonic() - turn_start)
                     turn_usages.append(turn_result.usage)
                     history = turn_result.messages
+                    if turn_result.timed_out:
+                        # Issue #172 -- the turn ran out of its budget, so
+                        # its transcript is truncated. Grading that against
+                        # the scenario's assertions reports the truncation
+                        # as a model failure (`expected a call to X; it was
+                        # not called`). Record the timeout itself, keep the
+                        # usage and tool calls it accumulated, and stop
+                        # this run.
+                        timeout_error = (
+                            f"turn timed out after {turn_result.timeout_s:g}s"
+                        )
+                        break
                 await _settle_audit_sink_since(sink, events_before_run)
+                if timeout_error is not None:
+                    outcomes.append(
+                        RunOutcome(
+                            passed=False,
+                            error=timeout_error,
+                            exercised=False,
+                            usage=_sum_turn_usage(turn_usages),
+                            duration_s=sum(turn_durations_s),
+                            tools_called=_tools_called(history),
+                        )
+                    )
+                    continue
                 run_audit_events = tuple(sink.captured[events_before_run:])
                 outcome = evaluate_assertions(
                     scenario.assertions, history, run_audit_events
@@ -980,6 +1022,7 @@ async def run_scenario(
                         duration_s=(
                             sum(turn_durations_s) if turn_durations_s else None
                         ),
+                        tools_called=_tools_called(history),
                     )
                 )
             except Exception as exc:
@@ -998,6 +1041,7 @@ async def run_scenario(
                         duration_s=(
                             sum(turn_durations_s) if turn_durations_s else None
                         ),
+                        tools_called=_tools_called(history),
                     )
                 )
     finally:

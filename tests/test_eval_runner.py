@@ -971,6 +971,126 @@ async def test_run_scenario_a_crashed_run_has_no_usage() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue #172 -- a timed-out turn is reported as a timeout, with what it did
+# ---------------------------------------------------------------------------
+
+
+class _AnswersOnceThenHangsModel(ToolAwareFakeModel):
+    """Serves its first scripted response, then hangs: a turn whose second
+    provider call outlives the turn budget."""
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]
+        import asyncio
+
+        if getattr(self, "_answered_once", False):
+            await asyncio.sleep(10)
+            return AIMessage(content="unreachable")
+        object.__setattr__(self, "_answered_once", True)
+        return await super().ainvoke(*args, **kwargs)
+
+
+def _timeout_scenario(**assertion_kwargs: Any) -> Scenario:
+    return Scenario(
+        name="timeout-scenario",
+        role="sales-agent",
+        turns=("Do you have Item Alpha in stock?",),
+        assertions=ScenarioAssertions(**assertion_kwargs),
+        execution_limits_override={"total_execution_timeout_s": 0.4},
+    )
+
+
+def _first_call_with_usage() -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call-1",
+                "name": "catalog_search",
+                "args": {"q": "Item Alpha"},
+                "type": "tool_call",
+            }
+        ],
+        usage_metadata={"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+    )
+
+
+async def test_run_scenario_reports_a_timed_out_turn_as_the_runs_error() -> None:
+    """A turn that hit total_execution_timeout_s is a timeout, not the
+    assertion failures its truncated transcript happens to produce (#172:
+    it used to read `tools_called: expected a call to ...; it was not
+    called`)."""
+    from conftest import build_test_registry
+
+    model = _AnswersOnceThenHangsModel(responses=[_first_call_with_usage()])
+
+    result = await run_scenario(
+        _timeout_scenario(tools_called=("escalation_notifier",)),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    run = result.runs[0]
+    assert run.passed is False
+    assert run.error == "turn timed out after 0.4s"
+    assert run.failures == ()
+    assert run.exercised is False
+
+
+async def test_run_scenario_a_timed_out_run_keeps_its_usage_and_tool_calls() -> None:
+    """What the turn did before the budget ran out stays in the run record."""
+    from conftest import build_test_registry
+
+    model = _AnswersOnceThenHangsModel(responses=[_first_call_with_usage()])
+
+    result = await run_scenario(
+        _timeout_scenario(),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    run = result.runs[0]
+    assert run.usage is not None
+    assert run.usage.model_calls == 1
+    assert run.usage.total_tokens == 120
+    assert run.tools_called == ("catalog_search",)
+    assert run.duration_s is not None
+    detail = result.to_dict()["run_details"][0]
+    assert detail["error"] == "turn timed out after 0.4s"
+    assert detail["tools_called"] == ["catalog_search"]
+    assert detail["model_calls"] == 1
+    assert detail["total_tokens"] == 120
+
+
+async def test_run_scenario_records_the_tools_called_on_a_finished_run() -> None:
+    from conftest import build_test_registry
+
+    model = ToolAwareFakeModel(
+        responses=[
+            _tool_call("catalog_search", {"q": "Item Alpha"}),
+            AIMessage(content="Yes, Item Alpha is in stock."),
+        ]
+    )
+
+    result = await run_scenario(
+        _scenario(tools_called=("catalog_search",)),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    assert result.runs[0].error is None
+    assert result.runs[0].tools_called == ("catalog_search",)
+
+
+# ---------------------------------------------------------------------------
 # #78 Phase 0 Slice 2 -- turn duration in the eval report
 # ---------------------------------------------------------------------------
 

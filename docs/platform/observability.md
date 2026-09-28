@@ -224,6 +224,40 @@ default `45.0`) now bounds it explicitly, comfortably under
 `total_execution_timeout_s` — a single hung provider call now fails with a
 clear, typed timeout instead of waiting silently.
 
+**The turn budget must hold the provider calls (issue #172).**
+`total_execution_timeout_s` bounds the whole turn and
+`OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` bounds one provider call, so the two
+have to fit together:
+
+```
+total_execution_timeout_s  >=  provider calls per turn x request timeout  +  tool time
+```
+
+A turn that uses a tool makes at least two provider calls (one to choose the
+tool, one to answer from its result). With the 45s request timeout that is
+90s of provider time before the tool runs at all. A budget of 30s, which
+`operator-agent` sets on purpose, cannot hold even one slow call, and a 60s
+budget cannot hold two. `developer-agent` therefore raises its own
+`total_execution_timeout_s` to 120s. Do not lower
+`OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` to compensate: a shorter request timeout
+turns a slow but working provider into a failing one.
+
+At boot the app logs a `runtime.turn_budget_below_request_timeout` WARNING for
+every runtime on the `openai_compatible` provider whose turn budget is below
+the request timeout. It never stops the boot: a tight budget can be deliberate.
+
+**What a timed-out turn reports.** The turn ends with the fixed reply "This
+is taking longer than expected. Please try again." and `outcome="timeout"`.
+Its messages keep everything the graph had produced before the deadline, and
+its usage counts the model calls that completed before it (`TurnResult.usage`),
+so `runtime.turn_usage` and the token and cost metrics are logged for it too.
+A call cut off mid-flight has no usage yet, so the totals are a lower bound. A
+tool call the timeout interrupted stays in the messages, answered with an error
+`ToolMessage`, so the returned messages are a valid history to send back as the
+next turn's. If the checkpointer degraded and the turn restarted, or no state was ever
+produced, the usage is unknown (`None`), never a guess. `TurnResult.timed_out`
+and `TurnResult.timeout_s` let a caller tell the timeout from a normal turn.
+
 **Account sizing guidance for operators.** `max_concurrent_turns` (default
 10) bounds how many turns this process runs at once, but it does NOT bound
 the provider's own account-level rate limit (requests/minute and/or

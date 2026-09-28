@@ -445,6 +445,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         "or add the deployment folder."
                     )
 
+                _warn_if_turn_budget_below_request_timeout(
+                    runtime_id, definition, settings
+                )
+
                 # ADR-002 C.13 — a channel must only ever be bound to a role
                 # marked safe for the input it delivers. Every webhook channel
                 # (WhatsApp, and since #22 any registered one) is
@@ -1316,6 +1320,46 @@ def _check_channel_runtime(
             f"total_execution_timeout_s={total_timeout_s}; with "
             f"non_turn_headroom_s={non_turn_headroom_s}, it must be "
             f"less than outbox lease_seconds={lease_seconds}"
+        )
+
+
+def _warn_if_turn_budget_below_request_timeout(
+    runtime_id: str, definition: Any, settings: Settings
+) -> None:
+    """Warn at boot when a runtime's turn budget cannot hold one provider call.
+
+    ``total_execution_timeout_s`` bounds the whole turn and
+    ``OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S`` bounds one provider HTTP call, so
+    a budget below the request timeout lets a single slow response consume
+    the entire turn (issue #172). A turn that uses a tool makes at least two
+    such calls, so the useful floor is higher still; this only flags the
+    case that is broken outright and stays a warning, never a boot failure:
+    a deliberately tight budget is the operator's call to make.
+
+    Only the ``openai_compatible`` provider is bounded by that setting, so
+    the check reads the provider the runtime will actually use: its own
+    ``model:`` selection when it has one, else ``ADAPTER_PROVIDER``.
+    """
+    from agents_system.agent.graph import _effective_limits
+
+    selection = getattr(definition, "model", None)
+    provider = (
+        selection.get("provider")
+        if isinstance(selection, Mapping) and selection
+        else settings.adapter_provider
+    )
+    if provider != "openai_compatible":
+        return
+    total_timeout_s = _effective_limits(getattr(definition, "execution_limits", None))[
+        "total_execution_timeout_s"
+    ]
+    request_timeout_s = settings.openai_compatible_request_timeout_s
+    if total_timeout_s < request_timeout_s:
+        structlog.get_logger().warning(
+            "runtime.turn_budget_below_request_timeout",
+            runtime_id=runtime_id,
+            total_execution_timeout_s=total_timeout_s,
+            openai_compatible_request_timeout_s=request_timeout_s,
         )
 
 

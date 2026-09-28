@@ -250,10 +250,16 @@ def test_platform_role_resolves_to_its_pinned_definition(role_type: str) -> None
     # Only the operator branch tightens the platform ceiling, and it does so
     # because every call it makes is a subprocess. A role gaining or losing
     # limits is a safety change, so it is pinned per-role rather than assumed.
+    #
+    # `developer-agent` raises only the TURN budget (issue #172): one turn
+    # must hold two provider calls at the 45s request timeout, and 30s could
+    # not even hold one. Its per-tool and tool-call ceilings stay inherited.
     expected_limits = (
         {
             "tool_call_timeout_s": 10,
-            "total_execution_timeout_s": 30,
+            "total_execution_timeout_s": (
+                120 if role_type == "developer-agent" else 30
+            ),
             "max_tool_calls": 10,
         }
         if role_type in {"operator-agent", "developer-agent"}

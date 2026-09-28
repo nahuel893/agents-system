@@ -372,7 +372,7 @@ Environment variables (loaded from `.env`). Key settings:
 | `OPENAI_COMPATIBLE_BASE_URL` | — | **Required** for `openai_compatible`. Chat endpoint base URL |
 | `OPENAI_COMPATIBLE_MODEL` | — | **Required** for `openai_compatible`. Model id to request |
 | `OPENAI_COMPATIBLE_API_KEY` | — | Optional — omit it for keyless local endpoints |
-| `OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` | `45.0` | Bounded per-HTTP-call timeout to the `openai_compatible` provider (issue #145). Keep it under `total_execution_timeout_s` (60s default) |
+| `OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` | `45.0` | Bounded per-HTTP-call timeout to the `openai_compatible` provider (issue #145). Keep it under a role's `total_execution_timeout_s` (60s default), and leave room for two calls per tool-using turn: `developer-agent` sets 120s for that reason (issue #172). Boot logs a WARNING for a role whose budget is below it |
 
 Full reference: [`src/agents_system/config.py`](src/agents_system/config.py).
 

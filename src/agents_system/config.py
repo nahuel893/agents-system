@@ -285,7 +285,8 @@ class Settings(BaseSettings):
     # provider. Previously unset, which left the openai SDK's own default in
     # effect (connect=5s, read/write/pool=600s): one stuck call could wait up
     # to ten minutes with no visible failure. 45s is comfortably under
-    # total_execution_timeout_s (60s, harness.loader.PLATFORM_DEFAULT_LIMITS)
+    # the platform default total_execution_timeout_s (60s,
+    # harness.loader.PLATFORM_DEFAULT_LIMITS)
     # so a single hung call fails with a clear client-side timeout instead of
     # being silently absorbed by the platform's own per-turn budget.
     openai_compatible_request_timeout_s: float = Field(default=45.0, gt=0)

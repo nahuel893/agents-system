@@ -625,6 +625,22 @@ como `"usage": null` al nivel superior, nunca un objeto con campos `null`
 (`{"prompt_tokens": null, ...}` falla la validación de Pydantic del lado
 del cliente).
 
+## Una corrida con timeout reporta el timeout (issue #172)
+
+Cuando un turno alcanza `total_execution_timeout_s`, `run_scenario` corta la
+corrida ahí y registra `error: "turn timed out after <N>s"` en vez de evaluar
+la transcripción truncada. Antes, la transcripción cortada se evaluaba como si
+estuviera terminada, así que un timeout aparecía como una falsa "llamada a
+herramienta faltante" (por ejemplo `escalation_expected: true` sin llamada a
+`escalate_to_human`). El resultado es `passed: false` y `exercised: false`, como
+cualquier otra corrida que nunca llegó a sus aserciones. Los tokens que la
+corrida había usado antes del timeout se siguen sumando en `usage`.
+
+Cada entrada de `run_details` en el JSON de resultados también trae
+`model_calls` (cuántas llamadas al modelo hizo esa corrida) y `tools_called` (los
+nombres de las herramientas que llamó, en orden), para distinguir una corrida
+que falla de una lenta sin abrir la transcripción.
+
 ## Duración de turno (issue #78 Phase 0 Slice 2)
 
 `run_scenario` cronometra la llamada a `run_turn_with_usage` de cada turno
