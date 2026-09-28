@@ -2,14 +2,18 @@
 # Smoke-test agents_system as an INSTALLED LIBRARY, the way an importer uses it.
 #
 # Builds the wheel, installs it into a throwaway virtualenv outside the
-# repository, and runs the README's library example (the block marked
-# `<!-- runnable-example: library -->`) with an EMPTY environment: no `.env`,
-# no server variables, not even PATH or HOME. A scripted chat model is passed
-# to the example's own `main(model)`, so nothing reaches a real provider.
+# repository, and runs two documented examples with an EMPTY environment (no
+# `.env`, no server variables, not even PATH or HOME), each in its own
+# process: the README's library example (the block marked
+# `<!-- runnable-example: library -->`) and the Quickstart of
+# docs/platform/library-usage.md (`<!-- runnable-example: quickstart -->`,
+# issue #168). A scripted chat model is passed to each example's own
+# `main(model)`, so nothing reaches a real provider.
 #
-# It fails if the turn does not complete (one tool call, then the answer), if
-# any traceback is printed, or if the missing AuditSink is reported anything
-# other than exactly once (issue #166). Everything it creates lives in one
+# It fails if a turn does not complete (one tool call, then the answer), if
+# the Quickstart registers any tool besides its own, if any traceback is
+# printed, or if the missing AuditSink is reported anything other than
+# exactly once per process (issue #166). Everything it creates lives in one
 # temporary directory that is removed on exit, success or failure.
 #
 # Usage:
@@ -33,6 +37,8 @@ fail() {
 
 command -v uv >/dev/null 2>&1 || fail "uv not found; install it first"
 [[ -f "${repo_root}/README.md" ]] || fail "README.md not found in ${repo_root}"
+quickstart_doc="${repo_root}/docs/platform/library-usage.md"
+[[ -f "${quickstart_doc}" ]] || fail "docs/platform/library-usage.md not found in ${repo_root}"
 
 python_version="3.12"
 if [[ -f "${repo_root}/.python-version" ]]; then
@@ -92,8 +98,12 @@ uv pip install --quiet --python "${venv_python}" \
   --constraints "${workdir}/constraints.txt" "${wheels[0]}"
 
 cp -- "${repo_root}/README.md" "${workdir}/README.md"
+cp -- "${quickstart_doc}" "${workdir}/library-usage.md"
 cat >"${workdir}/run_example.py" <<'PY'
-"""Run the README's library example against the installed wheel."""
+"""Run one documented example against the installed wheel.
+
+Usage: run_example.py <document> <library|quickstart>
+"""
 
 import asyncio
 import pathlib
@@ -104,12 +114,34 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 import agents_system
 
-MARKER = "<!-- runnable-example: library -->"
+# What each example's scripted turn calls, and what must come back.
+CASES = {
+    "library": {
+        "tool": "catalog_search",
+        "args": {"query": "Item Alpha"},
+        "tool_result": "Item Alpha",
+        "answer": "Yes, Item Alpha is in stock.",
+        "registry": None,
+    },
+    "quickstart": {
+        "tool": "word_count",
+        "args": {"text": "the quick brown fox"},
+        "tool_result": '"words": 4',
+        "answer": "There are 4 words.",
+        # Issue #168: the reader's one tool, and nothing else registered.
+        "registry": ("word_count",),
+    },
+}
 
-readme = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-if readme.count(MARKER) != 1:
-    sys.exit("README.md must mark exactly one runnable library example")
-after = readme.split(MARKER, 1)[1].lstrip("\n")
+document_path = pathlib.Path(sys.argv[1])
+kind = sys.argv[2]
+case = CASES[kind]
+marker = f"<!-- runnable-example: {kind} -->"
+
+document = document_path.read_text(encoding="utf-8")
+if document.count(marker) != 1:
+    sys.exit(f"{document_path.name} must mark exactly one runnable {kind} example")
+after = document.split(marker, 1)[1].lstrip("\n")
 if not after.startswith("```python\n"):
     sys.exit("the runnable-example marker must sit right above a ```python fence")
 code = after[len("```python\n") :].split("\n```", 1)[0] + "\n"
@@ -132,51 +164,64 @@ model = ScriptedModel(
             tool_calls=[
                 {
                     "id": "call-1",
-                    "name": "catalog_search",
-                    "args": {"query": "Item Alpha"},
+                    "name": case["tool"],
+                    "args": case["args"],
                     "type": "tool_call",
                 }
             ],
         ),
-        AIMessage(content="Yes, Item Alpha is in stock."),
+        AIMessage(content=case["answer"]),
     ]
 )
 
-namespace = {"__name__": "readme_example"}
-exec(compile(code, "README.md", "exec"), namespace)
+namespace = {"__name__": f"{kind}_example"}
+exec(compile(code, document_path.name, "exec"), namespace)
+if case["registry"] is not None and namespace["registry"].names() != case["registry"]:
+    sys.exit(f"expected only {case['registry']} registered, got {namespace['registry'].names()}")
 messages = asyncio.run(namespace["main"](model))
 
 tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
-if len(tool_messages) != 1 or "Item Alpha" not in str(tool_messages[0].content):
-    sys.exit(f"expected one catalog_search result for Item Alpha, got {messages!r}")
-if messages[-1].content != "Yes, Item Alpha is in stock.":
+if len(tool_messages) != 1 or case["tool_result"] not in str(tool_messages[0].content):
+    sys.exit(f"expected one {case['tool']} result with {case['tool_result']!r}, got {messages!r}")
+if messages[-1].content != case["answer"]:
     sys.exit(f"unexpected final answer: {messages[-1].content!r}")
 
 print(
-    f"SMOKE-RESULT agents_system {agents_system.__version__} imported from "
+    f"SMOKE-RESULT {kind}: agents_system {agents_system.__version__} imported from "
     f"<throwaway venv>/{package_dir.relative_to(venv_dir)}: "
     f"tool result {tool_messages[0].content!r}, answer {messages[-1].content!r}"
 )
 PY
 
-log "running the README library example with an empty environment"
-run_log="${workdir}/run.log"
-if ! (cd -- "${workdir}" && env -i "${workdir}/venv/bin/python" -I \
-  "${workdir}/run_example.py" "${workdir}/README.md") >"${run_log}" 2>&1; then
-  cat -- "${run_log}" >&2
-  fail "the README library example did not run"
-fi
+# Runs one example in its own process with an empty environment, and checks
+# that its turn completed, printed no traceback, and reported the missing
+# AuditSink exactly once.
+run_example() {
+  local kind="$1" document="$2" description="$3"
+  local run_log="${workdir}/run-${kind}.log"
 
-if grep -q "Traceback" "${run_log}"; then
-  cat -- "${run_log}" >&2
-  fail "a traceback was printed"
-fi
-sink_warnings="$(grep -c "audit.sink_not_registered" "${run_log}" || true)"
-if [[ "${sink_warnings}" != "1" ]]; then
-  cat -- "${run_log}" >&2
-  fail "expected exactly one audit.sink_not_registered warning, got ${sink_warnings}"
-fi
+  log "running the ${description} with an empty environment"
+  if ! (cd -- "${workdir}" && env -i "${workdir}/venv/bin/python" -I \
+    "${workdir}/run_example.py" "${document}" "${kind}") >"${run_log}" 2>&1; then
+    cat -- "${run_log}" >&2
+    fail "the ${description} did not run"
+  fi
 
-grep "SMOKE-RESULT" "${run_log}" >&2
-log "audit.sink_not_registered logged once, no traceback"
+  if grep -q "Traceback" "${run_log}"; then
+    cat -- "${run_log}" >&2
+    fail "the ${description} printed a traceback"
+  fi
+  local sink_warnings
+  sink_warnings="$(grep -c "audit.sink_not_registered" "${run_log}" || true)"
+  if [[ "${sink_warnings}" != "1" ]]; then
+    cat -- "${run_log}" >&2
+    fail "the ${description}: expected exactly one audit.sink_not_registered warning, got ${sink_warnings}"
+  fi
+
+  grep "SMOKE-RESULT" "${run_log}" >&2
+  log "${description}: audit.sink_not_registered logged once, no traceback"
+}
+
+run_example library "${workdir}/README.md" "README library example"
+run_example quickstart "${workdir}/library-usage.md" "library-usage Quickstart"
 log "OK"

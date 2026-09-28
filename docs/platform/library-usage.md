@@ -15,6 +15,70 @@ platform's own architecture, read `docs/platform/harness.md` and
 
 ---
 
+## Quickstart
+
+An agent with one tool of your own, running one turn. Nothing else is
+registered: the escalation tool every agent inherits gets a built-in default
+(see "Escalation: the built-in default" below).
+
+<!-- runnable-example: quickstart -->
+```python
+import asyncio
+
+from langchain_core.messages import HumanMessage
+
+import agents_system
+
+
+# Your tool: a function from a dict of inputs to a dict.
+def word_count(inputs: dict, /) -> dict:
+    return {"words": len(inputs["text"].split())}
+
+
+registry = agents_system.ToolRegistry()
+registry.register(
+    agents_system.ToolSpec(
+        name="word_count",
+        description="Count the words in a text.",
+        input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+        required_permissions=(),  # pure computation: nothing to grant
+        connector=word_count,
+        tier=agents_system.Tier.T0,
+    )
+)
+agent = agents_system.Agent(name="word-counter", tools=("word_count",))
+equipped = agents_system.build_runtime(agent, registry, granted_permissions=[])
+
+
+async def main(model):
+    runtime = agents_system.AgentRuntime(equipped, model=model)
+    return await runtime.run_turn(
+        [HumanMessage("How many words are in 'the quick brown fox'?")],
+        session_id="quickstart",
+    )
+
+
+if __name__ == "__main__":
+    from langchain_anthropic import ChatAnthropic  # reads ANTHROPIC_API_KEY
+
+    messages = asyncio.run(main(ChatAnthropic(model="claude-sonnet-4-5")))
+    print(messages[-1].content)
+```
+
+`tests/test_quickstart_example.py` executes this block as written, and
+`scripts/smoke-installed-wheel.sh` runs it against the built wheel installed
+outside the repository. Any LangChain chat model works in place of
+`ChatAnthropic`.
+
+- `Agent(...)` extends the basic `agent` role (conversation plus escalation)
+  unless you pass `extends=`. Pass it straight to `build_runtime` or
+  `resolve`.
+- A tool that reads or changes your data declares a permission (for example
+  `read:catalog`) and a tier to match, and the caller grants it in
+  `granted_permissions`. The complete example below shows that.
+
+---
+
 ## What the library gives you vs. what you bring
 
 | Comes from `agents_system` | You bring it |
@@ -30,23 +94,39 @@ that assumes ACME, that is a bug, not a feature.
 
 ---
 
-## Installation
+## Use it from another repository
 
-From PyPI, once published:
-
-```bash
-uv add agents-system
-# or
-pip install agents-system
-```
-
-Until then, install directly from the git repository:
+The package is not published to PyPI. Install it from a release tag with uv:
 
 ```bash
-uv add "git+https://github.com/nahuel893/agents-system"
-# or
-pip install "git+https://github.com/nahuel893/agents-system"
+uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
 ```
+
+This works while the repository is private, for anyone whose SSH key has
+access to it; once it is public again,
+`git+https://github.com/nahuel893/agents-system@vX.Y.Z` works without
+credentials. Pin a tag rather than a branch, so every upgrade is a deliberate
+change to your `pyproject.toml`; uv records the resolved commit in your
+`uv.lock`.
+
+A Docker build usually has no git credentials. Build the wheel where you do,
+copy it into your application, and install the file:
+
+```bash
+# in a checkout of agents-system, at the tag you want
+uv build --wheel   # writes dist/agents_system-X.Y.Z-py3-none-any.whl
+
+# in your application
+uv add ./wheels/agents_system-X.Y.Z-py3-none-any.whl
+```
+
+The image then needs the wheel in its build context before it installs
+dependencies (for example `COPY wheels/ wheels/` ahead of `uv sync --frozen`).
+
+The package depends on `torch` for local embeddings. This repository routes
+it to the CPU-only PyTorch index in its own `[tool.uv.sources]`; add the same
+`[tool.uv.sources]` and `[[tool.uv.index]]` entries to your application's
+`pyproject.toml` if you want the same.
 
 Either way, the import name is `agents_system` (underscore) — only the
 distribution name on the index is hyphenated.
@@ -80,7 +160,7 @@ nothing more:
 | `FactoryError` | `agents_system.harness.factory` | Raised when a runtime can't be assembled (e.g. a declared skill file is missing) |
 | `InjectionError` | `agents_system.harness.injector` | Raised when a role declares a tool your registry doesn't have |
 | `AgentRuntime` | `agents_system.agent.graph` | Wraps an `EquippedRuntime` + a chat model into something you call `run_turn` on |
-| `Agent` | `agents_system.agent.spec` | A custom agent defined in Python (`Agent(...)`), from a folder (`Agent.from_folder(path)`), or both; its `_to_locator()` goes wherever a role name does (`resolve`, `build_runtime`). See `docs/platform/role.md` |
+| `Agent` | `agents_system.agent.spec` | A custom agent defined in Python (`Agent(...)`), from a folder (`Agent.from_folder(path)`), or both; pass it wherever a role name goes (`resolve`, `build_runtime`). See `docs/platform/role.md` |
 | `ModelPrice` | `agents_system.config` | One model's price per million input/output tokens, for `AgentRuntime(model_prices=...)` |
 | `AuditSink` | `agents_system.audit.sink` | The audit event sink; register one with `AuditSink.set_current(sink)` to record audit events (see "Running without the server") |
 
@@ -139,9 +219,10 @@ registry.register(
 
 # 2. Register EVERY tool the role declares. sales-agent declares five, one of
 #    them (escalation_notifier) inherited from its parent role; build_runtime
-#    raises InjectionError for any declared tool the registry lacks. A tool
-#    you register but do not grant is denied at build time and never reaches
-#    the model, so a stub is enough for the ones this app does not use.
+#    raises InjectionError for any declared tool the registry lacks, except
+#    escalation_notifier, which gets a built-in default. A tool you register
+#    but do not grant is denied at build time and never reaches the model, so
+#    a stub is enough for the ones this app does not use.
 def not_wired(inputs: dict, /) -> dict:
     return {"error": "this tool is not wired in this application"}
 
@@ -191,7 +272,8 @@ Three things the example shows on purpose:
 - **Every tool the role declares must be registered** — including tools the
   role inherits (`sales-agent` gets `escalation_notifier` from its parent,
   `platform/roles/agent`). `build_runtime` raises `InjectionError: Unknown
-  tool: ...` for any declared tool your registry lacks. Registering a tool is
+  tool: ...` for any declared tool your registry lacks; the one exception is
+  `escalation_notifier` (see "Escalation: the built-in default"). Registering a tool is
   not granting it: a tool whose permission you do not pass in
   `granted_permissions` is denied at build time and never reaches the model,
   which is why a stub connector is enough for the tools this app does not use.
@@ -278,6 +360,32 @@ finally:
 The registration is process-wide: every task records into the same sink,
 whichever task registered it.
 
+### Escalation: the built-in default
+
+Every role-defined agent inherits `escalation_notifier` (`send:escalation`,
+tier T2) from `platform/roles/agent`. When your registry has none,
+`build_runtime` fills it with a built-in default so the agent still builds.
+That default:
+
+- **reaches no human.** It answers the model with the platform's "no
+  escalation channel is configured" text, so the model tells the user nobody
+  was reached instead of promising a callback;
+- logs a WARNING, `escalation.not_delivered` (role, reason, details), and
+  records an `escalation_not_delivered` audit event on every call;
+- is equipped only when you grant `send:escalation`, and then logs a WARNING,
+  `injector.builtin_default_granted`, at build time. The Quickstart grants
+  nothing, so there it is denied and never reaches the model;
+- is replaced by any `escalation_notifier` you register. The
+  `EscalationChannel` port behind the real tool is described in
+  `docs/platform/reference-backends.md`.
+
+The served app never uses it. `create_app`'s lifespan builds with
+`build_runtime(..., builtin_defaults=False)`, so a served role without its own
+`escalation_notifier` fails boot with `InjectionError: Unknown tool:
+escalation_notifier`, and a registry that holds the default (registered by
+hand) is refused at boot. Pass `builtin_defaults=False` yourself for the same
+fail-closed behaviour in-process.
+
 ---
 
 ## Two traps
@@ -353,5 +461,5 @@ so you know to check `AgentDefinition.deployment is not None` (or log
 - Audit sink, events and storage: `docs/platform/audit.md`
 - Token usage and cost (`MODEL_PRICES`): `docs/platform/live-eval.md`
 - Reference backends for the four platform-generic ports (knowledge, summarizer, escalation, order writer): `docs/platform/reference-backends.md`
-- Source: `src/agents_system/harness/{registry,loader,injector,factory}.py`, `src/agents_system/agent/graph.py`, `src/agents_system/audit/sink.py`, `src/agents_system/__init__.py`
+- Source: `src/agents_system/harness/{registry,loader,injector,factory,defaults}.py`, `src/agents_system/agent/graph.py`, `src/agents_system/audit/sink.py`, `src/agents_system/__init__.py`
 - Spanish version: `docs/platform_es/library-usage.md`

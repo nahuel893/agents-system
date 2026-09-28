@@ -17,6 +17,70 @@ Versión en inglés: `docs/platform/library-usage.md`.
 
 ---
 
+## Inicio rápido
+
+Un agente con una tool propia, corriendo un turno. No se registra nada más:
+la tool de escalamiento que todo agente hereda recibe un default incorporado
+(ver "Escalamiento: el default incorporado" más abajo).
+
+<!-- runnable-example: quickstart -->
+```python
+import asyncio
+
+from langchain_core.messages import HumanMessage
+
+import agents_system
+
+
+# Tu tool: una función de un dict de entradas a un dict.
+def word_count(inputs: dict, /) -> dict:
+    return {"words": len(inputs["text"].split())}
+
+
+registry = agents_system.ToolRegistry()
+registry.register(
+    agents_system.ToolSpec(
+        name="word_count",
+        description="Count the words in a text.",
+        input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
+        required_permissions=(),  # cálculo puro: nada que conceder
+        connector=word_count,
+        tier=agents_system.Tier.T0,
+    )
+)
+agent = agents_system.Agent(name="word-counter", tools=("word_count",))
+equipped = agents_system.build_runtime(agent, registry, granted_permissions=[])
+
+
+async def main(model):
+    runtime = agents_system.AgentRuntime(equipped, model=model)
+    return await runtime.run_turn(
+        [HumanMessage("How many words are in 'the quick brown fox'?")],
+        session_id="quickstart",
+    )
+
+
+if __name__ == "__main__":
+    from langchain_anthropic import ChatAnthropic  # lee ANTHROPIC_API_KEY
+
+    messages = asyncio.run(main(ChatAnthropic(model="claude-sonnet-4-5")))
+    print(messages[-1].content)
+```
+
+`tests/test_quickstart_example.py` ejecuta este bloque tal como está escrito,
+y `scripts/smoke-installed-wheel.sh` lo corre contra el wheel construido,
+instalado fuera del repositorio. Cualquier modelo de chat de LangChain sirve
+en lugar de `ChatAnthropic`.
+
+- `Agent(...)` extiende el rol básico `agent` (conversación más escalamiento)
+  salvo que pases `extends=`. Pasalo directamente a `build_runtime` o a
+  `resolve`.
+- Una tool que lee o cambia tus datos declara un permiso (por ejemplo
+  `read:catalog`) y un tier acorde, y el caller lo concede en
+  `granted_permissions`. El ejemplo completo de más abajo lo muestra.
+
+---
+
 ## Qué te da la biblioteca y qué traés vos
 
 | Viene de `agents_system` | Lo traés vos |
@@ -33,23 +97,41 @@ característica.
 
 ---
 
-## Instalación
+## Usarla desde otro repositorio
 
-Desde PyPI, una vez publicado:
-
-```bash
-uv add agents-system
-# o
-pip install agents-system
-```
-
-Hasta entonces, instalalo directamente desde el repositorio git:
+El paquete no está publicado en PyPI. Instalalo desde un tag de release con
+uv:
 
 ```bash
-uv add "git+https://github.com/nahuel893/agents-system"
-# o
-pip install "git+https://github.com/nahuel893/agents-system"
+uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
 ```
+
+Esto funciona mientras el repositorio es privado, para cualquiera cuya clave
+SSH tenga acceso; cuando vuelva a ser público,
+`git+https://github.com/nahuel893/agents-system@vX.Y.Z` funciona sin
+credenciales. Fijá un tag y no una rama, así cada actualización es un cambio
+deliberado en tu `pyproject.toml`; uv registra el commit resuelto en tu
+`uv.lock`.
+
+Un build de Docker normalmente no tiene credenciales de git. Construí el
+wheel donde sí las tenés, copialo a tu aplicación e instalá el archivo:
+
+```bash
+# en un checkout de agents-system, en el tag que quieras
+uv build --wheel   # escribe dist/agents_system-X.Y.Z-py3-none-any.whl
+
+# en tu aplicación
+uv add ./wheels/agents_system-X.Y.Z-py3-none-any.whl
+```
+
+La imagen necesita entonces el wheel en su contexto de build antes de
+instalar dependencias (por ejemplo `COPY wheels/ wheels/` antes de
+`uv sync --frozen`).
+
+El paquete depende de `torch` para los embeddings locales. Este repositorio lo
+dirige al índice de PyTorch solo-CPU en su propio `[tool.uv.sources]`; agregá
+las mismas entradas `[tool.uv.sources]` y `[[tool.uv.index]]` al
+`pyproject.toml` de tu aplicación si querés lo mismo.
 
 En ambos casos el nombre de importación es `agents_system` (con guion bajo);
 solo el nombre de distribución en el índice lleva guion.
@@ -84,7 +166,7 @@ importa solo lo que ese nombre necesita, nada más:
 | `FactoryError` | `agents_system.harness.factory` | Se lanza cuando no se puede ensamblar un runtime (p. ej. falta un archivo de skill declarado) |
 | `InjectionError` | `agents_system.harness.injector` | Se lanza cuando un rol declara una tool que tu registro no tiene |
 | `AgentRuntime` | `agents_system.agent.graph` | Envuelve un `EquippedRuntime` + un modelo de chat en algo sobre lo que llamás `run_turn` |
-| `Agent` | `agents_system.agent.spec` | Un agente propio definido en Python (`Agent(...)`), desde una carpeta (`Agent.from_folder(path)`), o ambos; su `_to_locator()` va donde va un nombre de rol (`resolve`, `build_runtime`). Ver `docs/platform_es/role.md` |
+| `Agent` | `agents_system.agent.spec` | Un agente propio definido en Python (`Agent(...)`), desde una carpeta (`Agent.from_folder(path)`), o ambos; pasalo donde va un nombre de rol (`resolve`, `build_runtime`). Ver `docs/platform_es/role.md` |
 | `ModelPrice` | `agents_system.config` | El precio de un modelo por millón de tokens de entrada/salida, para `AgentRuntime(model_prices=...)` |
 | `AuditSink` | `agents_system.audit.sink` | El sink de eventos de auditoría; registrá uno con `AuditSink.set_current(sink)` para registrar eventos (ver "Correr sin el servidor") |
 
@@ -144,7 +226,8 @@ registry.register(
 # 2. Registrá TODAS las tools que declara el rol. sales-agent declara cinco,
 #    una de ellas (escalation_notifier) heredada de su rol padre; build_runtime
 #    lanza InjectionError por cualquier tool declarada que falte en el
-#    registro. Registrar una tool no es concederla: una tool registrada pero no
+#    registro, salvo escalation_notifier, que recibe un default incorporado.
+#    Registrar una tool no es concederla: una tool registrada pero no
 #    concedida se deniega al construir y nunca llega al modelo, así que alcanza
 #    con un stub para las que esta aplicación no usa.
 def not_wired(inputs: dict, /) -> dict:
@@ -197,7 +280,9 @@ Tres cosas que el ejemplo muestra a propósito:
 - **Hay que registrar todas las tools que declara el rol** — incluidas las que
   el rol hereda (`sales-agent` recibe `escalation_notifier` de su padre,
   `platform/roles/agent`). `build_runtime` lanza `InjectionError: Unknown
-  tool: ...` por cualquier tool declarada que falte en tu registro. Registrar
+  tool: ...` por cualquier tool declarada que falte en tu registro; la única
+  excepción es `escalation_notifier` (ver "Escalamiento: el default
+  incorporado"). Registrar
   una tool no es concederla: una tool cuyo permiso no pasás en
   `granted_permissions` se deniega al construir y nunca llega al modelo; por
   eso alcanza con un connector stub para las tools que esta aplicación no usa.
@@ -285,6 +370,33 @@ finally:
 El registro es de todo el proceso: cada task registra en el mismo sink, sin
 importar qué task lo registró.
 
+### Escalamiento: el default incorporado
+
+Todo agente definido por rol hereda `escalation_notifier` (`send:escalation`,
+tier T2) de `platform/roles/agent`. Cuando tu registro no tiene ninguno,
+`build_runtime` lo completa con un default incorporado para que el agente se
+construya igual. Ese default:
+
+- **no llega a ningún humano.** Le responde al modelo con el texto de la
+  plataforma para "no hay canal de escalamiento configurado", así el modelo le
+  dice al usuario que no se contactó a nadie en lugar de prometerle que lo van
+  a llamar;
+- en cada llamada registra un WARNING, `escalation.not_delivered` (rol,
+  motivo, detalles), y un evento de auditoría `escalation_not_delivered`;
+- solo se equipa si concedés `send:escalation`, y en ese caso registra un
+  WARNING, `injector.builtin_default_granted`, al construir. El inicio rápido
+  no concede nada, así que ahí se deniega y nunca llega al modelo;
+- lo reemplaza cualquier `escalation_notifier` que registres. El puerto
+  `EscalationChannel` detrás de la tool real se describe en
+  `docs/platform_es/reference-backends.md`.
+
+La app servida nunca lo usa. El lifespan de `create_app` construye con
+`build_runtime(..., builtin_defaults=False)`, así que un rol servido sin su
+propio `escalation_notifier` falla el arranque con `InjectionError: Unknown
+tool: escalation_notifier`, y un registro que contiene el default (registrado
+a mano) se rechaza al arrancar. Pasá `builtin_defaults=False` vos mismo para
+tener el mismo comportamiento de falla cerrada en proceso.
+
 ---
 
 ## Dos trampas
@@ -362,4 +474,4 @@ confirmar que un override efectivamente se aplicó.
 - Sink, eventos y almacenamiento de auditoría: `docs/platform_es/audit.md`
 - Uso de tokens y costo (`MODEL_PRICES`): `docs/platform_es/live-eval.md`
 - Backends de referencia para los cuatro puertos genéricos de la plataforma (conocimiento, resumen, escalamiento, escritor de pedidos): `docs/platform_es/reference-backends.md`
-- Código fuente: `src/agents_system/harness/{registry,loader,injector,factory}.py`, `src/agents_system/agent/graph.py`, `src/agents_system/audit/sink.py`, `src/agents_system/__init__.py`
+- Código fuente: `src/agents_system/harness/{registry,loader,injector,factory,defaults}.py`, `src/agents_system/agent/graph.py`, `src/agents_system/audit/sink.py`, `src/agents_system/__init__.py`

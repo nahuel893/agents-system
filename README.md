@@ -425,6 +425,11 @@ application supplies both at runtime, by injection. Running a turn this way
 needs no server environment: no `.env`, no `META_WEBHOOK_SECRET`, no
 database — the runtime never reads the server's `Settings`.
 
+For the smallest start, an agent with one tool of your own in about ten
+lines, see the Quickstart in
+[`docs/platform/library-usage.md`](docs/platform/library-usage.md#quickstart),
+which also covers installing from another repository.
+
 This example runs exactly as written (`tests/test_readme_library_example.py`
 executes it with a scripted model; `scripts/smoke-installed-wheel.sh` runs it
 against the built wheel in an empty environment):
@@ -470,9 +475,10 @@ registry.register(
 
 # 2. Register EVERY tool the role declares. sales-agent declares five, one of
 #    them (escalation_notifier) inherited from its parent role; build_runtime
-#    raises InjectionError for any declared tool the registry lacks. A tool
-#    you register but do not grant is denied at build time and never reaches
-#    the model, so a stub is enough for the ones this app does not use.
+#    raises InjectionError for any declared tool the registry lacks, except
+#    escalation_notifier, which gets a built-in default. A tool you register
+#    but do not grant is denied at build time and never reaches the model, so
+#    a stub is enough for the ones this app does not use.
 def not_wired(inputs: dict, /) -> dict:
     return {"error": "this tool is not wired in this application"}
 
