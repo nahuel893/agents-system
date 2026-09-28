@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import itertools
 import json
 import time
 from collections.abc import Mapping, Sequence
@@ -149,6 +150,41 @@ class _TurnProgress:
     #: A checkpointer degradation retried the turn from scratch: the failed
     #: attempt's spend is unrecoverable, so usage stays unknown.
     degraded: bool = False
+
+
+def _close_unanswered_tool_calls(
+    messages: list[AnyMessage], *, timeout_s: float
+) -> list[AnyMessage]:
+    """Answer every tool call of *messages* that has no reply (issue #172).
+
+    A turn cut off between a model call and the end of its tool round trip
+    leaves the assistant's tool calls without their `ToolMessage`. Providers
+    reject that sequence, so a caller replaying the returned messages as the
+    next turn's history would fail. Each outstanding call gets an error reply
+    placed right after its assistant message; the calls stay visible.
+    """
+    closed: list[AnyMessage] = []
+    for index, message in enumerate(messages):
+        closed.append(message)
+        if not isinstance(message, AIMessage) or not message.tool_calls:
+            continue
+        replied = {
+            later.tool_call_id
+            for later in itertools.takewhile(
+                lambda m: isinstance(m, ToolMessage), messages[index + 1 :]
+            )
+            if isinstance(later, ToolMessage)
+        }
+        closed.extend(
+            ToolMessage(
+                content=f"Tool call interrupted: the turn timed out after {timeout_s}s",
+                tool_call_id=call["id"],
+                status="error",
+            )
+            for call in message.tool_calls
+            if call["id"] not in replied
+        )
+    return closed
 
 
 _UNKNOWN_TURN_USAGE = TurnUsage(
@@ -1019,7 +1055,10 @@ class AgentRuntime:
                     else _aggregate_turn_usage(raw_partial_usage)
                 )
                 return self._finish_turn(
-                    partial_messages
+                    _close_unanswered_tool_calls(
+                        partial_messages,
+                        timeout_s=float(effective_limits["total_execution_timeout_s"]),
+                    )
                     + [
                         AIMessage(
                             content=(

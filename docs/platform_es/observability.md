@@ -275,7 +275,10 @@ fija "This is taking longer than expected. Please try again." y
 antes del límite, y su uso cuenta las llamadas al modelo que completaron antes
 (`TurnResult.usage`), así que `runtime.turn_usage` y las métricas de tokens y
 costo también se registran. Una llamada cortada a mitad de vuelo todavía no tiene
-uso, así que los totales son una cota inferior. Si el checkpointer se degradó y el
+uso, así que los totales son una cota inferior. Una llamada a herramienta que
+el timeout interrumpió queda en los mensajes, respondida con un `ToolMessage` de
+error, así que los mensajes devueltos son un historial válido para enviar de
+vuelta como el del turno siguiente. Si el checkpointer se degradó y el
 turno arrancó de nuevo, o nunca se produjo estado, el uso es desconocido
 (`None`), nunca un valor inventado. `TurnResult.timed_out` y
 `TurnResult.timeout_s` permiten distinguir el timeout de un turno normal.

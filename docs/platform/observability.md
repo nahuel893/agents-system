@@ -251,8 +251,10 @@ is taking longer than expected. Please try again." and `outcome="timeout"`.
 Its messages keep everything the graph had produced before the deadline, and
 its usage counts the model calls that completed before it (`TurnResult.usage`),
 so `runtime.turn_usage` and the token and cost metrics are logged for it too.
-A call cut off mid-flight has no usage yet, so the totals are a lower bound. If
-the checkpointer degraded and the turn restarted, or no state was ever
+A call cut off mid-flight has no usage yet, so the totals are a lower bound. A
+tool call the timeout interrupted stays in the messages, answered with an error
+`ToolMessage`, so the returned messages are a valid history to send back as the
+next turn's. If the checkpointer degraded and the turn restarted, or no state was ever
 produced, the usage is unknown (`None`), never a guess. `TurnResult.timed_out`
 and `TurnResult.timeout_s` let a caller tell the timeout from a normal turn.
 

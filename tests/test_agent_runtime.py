@@ -2283,6 +2283,82 @@ async def test_timeout_during_tool_execution_keeps_the_completed_model_call() ->
     assert any(isinstance(m, AIMessage) and m.tool_calls for m in result.messages)
 
 
+def _unanswered_tool_call_ids(messages: Sequence[Any]) -> list[str]:
+    """Tool calls whose reply does not follow their assistant message
+    directly, the shape a provider rejects as an invalid transcript."""
+    unanswered: list[str] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, AIMessage):
+            continue
+        replied = set()
+        for later in messages[index + 1 :]:
+            if not isinstance(later, ToolMessage):
+                break
+            replied.add(later.tool_call_id)
+        unanswered.extend(c["id"] for c in message.tool_calls if c["id"] not in replied)
+    return unanswered
+
+
+class _RecordingModel(ToolAwareFakeModel):
+    """Remembers the messages of every model call it receives."""
+
+    async def ainvoke(self, input: Any, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]
+        object.__setattr__(self, "seen", list(input))
+        return await super().ainvoke(input, *args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_timeout_during_tool_execution_returns_a_sendable_transcript() -> None:
+    """Issue #172 review: the cancelled tool round trip must not leave the
+    assistant's tool call without its reply in the returned messages, or a
+    caller that sends them back as the next stateless turn's history hands
+    the provider an invalid tool-call sequence. The completed model call's
+    usage and the requested call stay visible."""
+    from agents_system.agent.graph import AgentRuntime
+
+    async def slow_connector(
+        inputs: dict[str, Any], *, session: Any = None
+    ) -> dict[str, Any]:
+        await asyncio.sleep(10)
+        return {}
+
+    slow_spec = ToolSpec(
+        name="slow_tool",
+        required_permissions=(),
+        connector=slow_connector,
+        tier=Tier.T0,
+    )
+    model = ToolAwareFakeModel(
+        responses=[_tool_call_response("slow_tool", "call_172_g")]
+    )
+    agent = AgentRuntime(_timeout_runtime(0.3, (slow_spec,)), model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn_with_usage(
+            [HumanMessage(content="Hi")], session_id="s1", permissions=()
+        ),
+        timeout=3.0,
+    )
+
+    assert result.timed_out is True
+    assert result.usage.model_calls == 1
+    assert any(isinstance(m, AIMessage) and m.tool_calls for m in result.messages)
+    assert _unanswered_tool_call_ids(result.messages) == []
+    closing = [m for m in result.messages if isinstance(m, ToolMessage)]
+    assert [m.tool_call_id for m in closing] == ["call_172_g"]
+    assert closing[0].status == "error"
+
+    # The returned transcript is reusable as the next stateless turn's history.
+    follow_up_model = _RecordingModel(responses=[AIMessage(content="Sure.")])
+    follow_up = AgentRuntime(_timeout_runtime(5.0, ()), follow_up_model)
+    await follow_up.run_turn_with_usage(
+        [*result.messages, HumanMessage(content="Try again")],
+        session_id="s1",
+        permissions=(),
+    )
+    assert _unanswered_tool_call_ids(follow_up_model.seen) == []
+
+
 @pytest.mark.asyncio
 async def test_timed_out_turn_still_exports_the_usage_it_accumulated(
     capsys: pytest.CaptureFixture[str],
