@@ -39,7 +39,7 @@
 | 31 | Every run executes twice; no cancellation | H. CI | ✅ done | `e7d47e0` |
 | 32 | No coverage measurement | H. CI | ✅ done | `b4a79a1` |
 | 33 | Shell scripts not linted in CI | H. CI | ✅ done | `b4a79a1` |
-| 34 | Green CI does not gate a merge | H. CI | ⚠️ partial (`main` is protected with required status checks; required approving reviews are still 0 and the settings are not versioned) | #20 (second reviewer), #21 (settings as code) |
+| 34 | Green CI does not gate a merge | H. CI | ⚠️ partial (protection with required status checks was applied to `main` while the repository was public and #21 closed as done on 2026-09-24; it is not enforced or verifiable while the repository is private, and required approving reviews are still 0) | #20 (second reviewer) |
 
 > **Citation convention.** `#NN` is an issue on this repository. A hash in backticks is a commit on `main`; the `(#NN)` suffix in those commit subjects numbers the pre-split repository and must not be read as a current issue or PR. Statuses were reconciled against the merged code, not against this table's earlier wording. Dated narrative inside an item body ("Correction" blocks, "as of #NNN") keeps the pre-split numbers it was written with.
 
@@ -2020,7 +2020,7 @@ into `main`, and repository settings live outside version control (issues #20 an
 
 **Decision.** Branch protection (or a repository ruleset) on `main` that
 requires `ci`, `bi-readonly`, `audit-migration` and `demo-reports`, plus the
-jobs added by H.27–H.33 once they are stable; the configuration is kept as code per #21.
+jobs added by H.27–H.33 once they are stable; the settings were applied under #21 (now closed).
 
 **Rationale.** A gate that can be bypassed silently is not a gate. The
 stacked-PR incident on 2026-09-22 (#97 merged into an already squash-merged
@@ -2030,7 +2030,7 @@ verified what actually landed.
 **Alternatives considered.** Relying on reviewer discipline — rejected: the
 project has a single reviewer today (#20).
 
-**Status.** ⚠️ partial. `main` has branch protection with required status checks, applied through the repository settings on 2026-08-30 (per #20); that settings state is not re-verifiable from the code and was not re-checked here. Still open: required approving reviews stay at 0 until a second reviewer identity exists (#20), and the configuration is not yet versioned (#21).
+**Status.** ⚠️ partial. Branch protection with required status checks (`ci`, `secret-scan`, `dependency-audit`; admins included; force-push and deletion blocked) was applied to `main` while the repository was public, and #21 was closed as done on 2026-09-24 on that basis. The repository is now private: the protection API answers 403 and `main` reports as unprotected, so the merge gate is not enforced and cannot be verified until the repository is public again or the plan supports branch protection. Treat green CI as informational until then. Still open: required approving reviews stay at 0 until a second reviewer identity exists (#20).
 
 **Later, not part of this group:** the live agent evaluation pipeline (E.18)
 lands as a separate manually triggered workflow, not as a per-PR job.

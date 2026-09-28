@@ -39,7 +39,7 @@
 | 31 | Cada ejecución corre dos veces; sin cancelación | H. CI | ✅ hecho | `e7d47e0` |
 | 32 | No se mide la cobertura | H. CI | ✅ hecho | `b4a79a1` |
 | 33 | Los scripts de shell no se validan en CI | H. CI | ✅ hecho | `b4a79a1` |
-| 34 | CI en verde no condiciona el merge | H. CI | ⚠️ parcial (`main` tiene protección con checks de estado requeridos; las aprobaciones requeridas siguen en 0 y la configuración no está versionada) | #20 (segundo revisor), #21 (configuración como código) |
+| 34 | CI en verde no condiciona el merge | H. CI | ⚠️ parcial (la protección con checks de estado requeridos se aplicó a `main` cuando el repositorio era público y #21 se cerró como resuelto el 2026-09-24; no se aplica ni puede verificarse mientras el repositorio sea privado, y las aprobaciones requeridas siguen en 0) | #20 (segundo revisor) |
 
 > **Convención de citas.** `#NN` es un issue de este repositorio. Un hash entre acentos graves es un commit de `main`; el sufijo `(#NN)` en el asunto de esos commits numera el repositorio previo a la división y no debe leerse como un issue o PR actual. Los estados se reconciliaron contra el código mergeado, no contra la redacción previa de esta tabla. La narrativa fechada dentro del cuerpo de un ítem (bloques "Corrección", "a partir de #NNN") conserva los números previos a la división con los que se escribió.
 
@@ -2237,7 +2237,7 @@ versiones (issues #20 y #21). Los checks son solo informativos.
 
 **Decisión.** Protección de rama (o un ruleset del repositorio) sobre `main`
 que exija `ci`, `bi-readonly`, `audit-migration` y `demo-reports`, más los
-jobs que agreguen H.27–H.33 una vez estables; la configuración se mantiene como código según #21.
+jobs que agreguen H.27–H.33 una vez estables; la configuración se aplicó bajo #21 (ya cerrado).
 
 **Justificación.** Una barrera que se puede saltar en silencio no es una
 barrera. El incidente de PRs apilados del 2026-09-22 (#97 se mergeó en una
@@ -2247,7 +2247,7 @@ falla: nada verificó qué había llegado realmente.
 **Alternativas consideradas.** Confiar en la disciplina de quien revisa:
 descartado, porque hoy el proyecto tiene un único revisor (#20).
 
-**Estado.** ⚠️ parcial. `main` tiene protección de rama con checks de estado requeridos, aplicada mediante la configuración del repositorio el 2026-08-30 (según #20); ese estado de configuración no puede reverificarse desde el código y no se volvió a comprobar aquí. Sigue abierto: las aprobaciones requeridas se mantienen en 0 hasta que exista una segunda identidad revisora (#20), y la configuración todavía no está versionada (#21).
+**Estado.** ⚠️ parcial. La protección de rama con checks de estado requeridos (`ci`, `secret-scan`, `dependency-audit`; administradores incluidos; force-push y borrado bloqueados) se aplicó a `main` cuando el repositorio era público, y #21 se cerró como resuelto el 2026-09-24 sobre esa base. El repositorio ahora es privado: la API de protección responde 403 y `main` figura sin protección, así que la barrera de merge no se aplica y no puede verificarse hasta que el repositorio vuelva a ser público o el plan admita protección de ramas. Hasta entonces, un CI en verde es solo informativo. Sigue abierto: las aprobaciones requeridas se mantienen en 0 hasta que exista una segunda identidad revisora (#20).
 
 **Más adelante, fuera de este grupo:** el pipeline de evaluación de agentes
 en vivo (E.18) llega como un workflow separado de ejecución manual, no como
