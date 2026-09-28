@@ -1053,6 +1053,47 @@ async def test_lifespan_enforces_whatsapp_runtime_timeout_within_outbox_lease(
 
 
 @pytest.mark.asyncio
+async def test_lifespan_enforces_the_outbox_lease_for_a_non_whatsapp_channel() -> None:
+    """#165 review follow-up -- the lease-budget refusal above was exercised
+    only through WHATSAPP_RUNTIME_ID, even though ``_check_channel_runtime``
+    is the shared check every registered channel (#22) goes through. This
+    pins the same refusal driven through a non-WhatsApp channel.
+    """
+    from test_channel_port import FAKE_TOKEN, FakeChannel
+
+    from agents_system.channels.port import Channel
+
+    test_settings = _make_settings(adapter_runtimes=[], whatsapp_runtime_id="")
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = {"total_execution_timeout_s": 540}
+
+    _, _, patches = _runtime_lease_invariant_patches(fake_definition)
+
+    with (
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        _stack(patches),
+    ):
+        app = create_test_app(
+            agents={"internal": "sales-agent"},
+            grants={"internal": ["read:catalog"]},
+            channels={
+                "fake": Channel(adapter=FakeChannel(FAKE_TOKEN), runtime_id="internal")
+            },
+        )
+        with pytest.raises(ValueError) as excinfo:
+            async with lifespan(app):
+                pass
+
+    message = str(excinfo.value)
+    assert "'internal'" in message
+    assert "'fake'" in message
+    assert "540" in message
+    assert "lease" in message
+    assert "600" in message
+
+
+@pytest.mark.asyncio
 async def test_lifespan_accepts_default_whatsapp_runtime_limits() -> None:
     """The default effective limit leaves headroom before the 600-second lease."""
     test_settings = _make_settings(

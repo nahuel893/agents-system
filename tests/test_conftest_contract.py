@@ -231,6 +231,64 @@ def _run_offline_pytest(
     )
 
 
+# #165 review follow-up -- the test below writes a real `.env` at the repo
+# root and removes it in `finally`. A run killed between the write and that
+# `finally` (Ctrl-C, an OOM kill, a CI job timeout) leaves the file behind;
+# every later run then hits the `dotenv_path.exists()` branch above and
+# silently `pytest.skip()`s forever, indistinguishable from "a real developer
+# `.env` is here". This marker, written as the file's first line, lets the
+# next run tell its OWN leftover apart from a real one and fail loudly
+# instead.
+_PLACEHOLDER_DOTENV_MARKER = (
+    "# placeholder written by "
+    "tests/test_conftest_contract.py::"
+    "test_offline_lifespan_test_passes_whether_or_not_dotenv_sets_whatsapp_vars "
+    "-- safe to delete if a killed test run left this behind"
+)
+
+
+def _is_own_placeholder_dotenv(path: Path) -> bool:
+    """Whether *path* is this test's own leftover placeholder, not a real
+    developer `.env` (empty/unreadable counts as "not ours" -- a real `.env`
+    is never assumed to be our leftover just because it happens to be empty
+    or briefly unreadable mid-write).
+    """
+    try:
+        first_line = path.read_text().splitlines()[:1]
+    except (OSError, IndexError):
+        return False
+    return bool(first_line) and first_line[0] == _PLACEHOLDER_DOTENV_MARKER
+
+
+def _write_placeholder_dotenv(path: Path, body: str) -> None:
+    """Atomically create *path* with the placeholder marker plus *body*.
+
+    Writing to a sibling temp file and ``os.replace``-ing it into place means
+    a run killed mid-write never leaves a partially-written `.env` at *path*
+    for `_is_own_placeholder_dotenv`/the next run to reason about -- either
+    the marked placeholder lands whole, or nothing lands at all.
+    """
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp-{os.getpid()}")
+    tmp_path.write_text(f"{_PLACEHOLDER_DOTENV_MARKER}\n{body}")
+    os.replace(tmp_path, path)
+
+
+def test_is_own_placeholder_dotenv_tells_the_leftover_apart_from_a_real_dotenv(
+    tmp_path: Path,
+) -> None:
+    own = tmp_path / "own.env"
+    _write_placeholder_dotenv(own, "WHATSAPP_TOKEN=leaked-token\n")
+
+    real = tmp_path / "real.env"
+    real.write_text("WHATSAPP_TOKEN=a-real-developer-token\n")
+
+    missing = tmp_path / "missing.env"
+
+    assert _is_own_placeholder_dotenv(own) is True
+    assert _is_own_placeholder_dotenv(real) is False
+    assert _is_own_placeholder_dotenv(missing) is False
+
+
 def test_offline_lifespan_test_passes_whether_or_not_dotenv_sets_whatsapp_vars() -> (
     None
 ):
@@ -242,6 +300,16 @@ def test_offline_lifespan_test_passes_whether_or_not_dotenv_sets_whatsapp_vars()
     repo_root = Path(__file__).resolve().parents[1]
     dotenv_path = repo_root / ".env"
     if dotenv_path.exists():
+        if _is_own_placeholder_dotenv(dotenv_path):
+            # A killed previous run of this same test left its own
+            # placeholder behind -- fail loudly and say so, rather than
+            # silently skipping forever as if a real developer `.env` were
+            # here (#165 review follow-up).
+            pytest.fail(
+                f"{dotenv_path} is this test's own leftover placeholder "
+                "from a killed previous run (marker: "
+                f"{_PLACEHOLDER_DOTENV_MARKER!r}). Delete it and re-run."
+            )
         # A real developer `.env` is never read, backed up, or overwritten
         # by this test -- the write below would otherwise clobber it, and
         # its content is out of scope to inspect. The fixture already
@@ -261,8 +329,9 @@ def test_offline_lifespan_test_passes_whether_or_not_dotenv_sets_whatsapp_vars()
     }
 
     without_dotenv = _run_offline_pytest(cwd=repo_root, env=clean_env, node_id=target)
-    dotenv_path.write_text(
-        "WHATSAPP_TOKEN=leaked-token\nWHATSAPP_PHONE_NUMBER_ID=leaked-phone-id\n"
+    _write_placeholder_dotenv(
+        dotenv_path,
+        "WHATSAPP_TOKEN=leaked-token\nWHATSAPP_PHONE_NUMBER_ID=leaked-phone-id\n",
     )
     try:
         with_dotenv = _run_offline_pytest(cwd=repo_root, env=clean_env, node_id=target)

@@ -51,9 +51,12 @@ _test_msg_counter = itertools.count(1)
 # poke the adapter locally) fails every offline lifespan test that builds a
 # real `Settings()`, on that machine only.
 #
-# `pydantic_settings.BaseSettings._settings_build_values` reads
+# `pydantic_settings.BaseSettings._settings_init_sources` reads
 # `cls.model_config.get('env_file')` fresh at every construction that does
-# not pass its own `_env_file` kwarg (pydantic-settings 2.x), so mutating
+# not pass its own `_env_file` kwarg (pydantic-settings 2.15; verified
+# against the installed version -- an earlier comment here named
+# `_settings_build_values`, which reads sources already built by
+# `_settings_init_sources` and does not itself touch `env_file`), so mutating
 # the class-level `model_config` dict in place -- not reassigning the
 # attribute -- makes every such `Settings()` call in the test skip `.env`
 # for the duration of the test; `monkeypatch.setitem` restores the original
