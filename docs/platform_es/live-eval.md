@@ -51,7 +51,7 @@ configurar no cambia.
 claves reales de proveedor. Cualquier otra prueba es el caso contrario
 (#158) — un fixture autouse en `tests/conftest.py` hace que la suite offline
 construya cada `Settings()` como si `.env` no existiera, y limpia las
-variables de entorno ambientales `WHATSAPP_*`/`ADAPTER_*`/
+variables de entorno ambientales `WHATSAPP_*`/`ADAPTER_*`/`META_*`/
 `AGENT_REGISTRATIONS`/`DEPLOY_GRANTS`/`REGISTRY_FACTORY`/de credenciales de
 proveedor antes de cada prueba. Antes de que existiera este fixture, un
 checkout cuyo `.env` configuraba `WHATSAPP_TOKEN`/`WHATSAPP_PHONE_NUMBER_ID`

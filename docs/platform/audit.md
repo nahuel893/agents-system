@@ -142,6 +142,22 @@ outlives the task that made it, the lifespan also unregisters its sink on
 shutdown, after stopping it, so a stopped sink is never left taking the
 process's events.
 
+**Hard rule: one sink per process, not one per task (#165 review follow-up on
+#167).** `set_current`/`registered`/`clear_current` share a single
+module-level variable -- there is no per-task or per-turn scoping. Two
+concurrent in-process turns cannot each use a different sink: the second
+`set_current` call overwrites the first mid-flight, and every event from
+either turn goes to whichever sink is registered at the moment it is
+recorded, not the one that was registered when the turn started. Nothing in
+this codebase does that today -- the eval runner and the live harness that
+would drive concurrent turns in one process are serialized -- so this is a
+documented constraint on the API, not a bug fix. A caller that genuinely
+needs concurrent turns each auditing to their own sink must key the
+registration per task or per loop (e.g. a `contextvars.ContextVar`, scoped
+the same way this design moved away from for the opposite reason above) --
+that is out of scope here; this section exists so the next person who needs
+it does not rediscover the constraint by losing audit events.
+
 With no sink registered — a library user running `AgentRuntime` without
 `create_app` who has not registered one — `_emit_async` does not build the
 event at all and logs `audit.sink_not_registered` once per process. That is a

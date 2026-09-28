@@ -147,6 +147,23 @@ registro ahora sobrevive a la task que lo hizo, el lifespan también desregistra
 su sink al apagarse, después de detenerlo, así un sink detenido nunca queda
 tomando los eventos del proceso.
 
+**Regla dura: un sink por proceso, no uno por task (#165, seguimiento de
+revisión sobre #167).** `set_current`/`registered`/`clear_current` comparten
+una única variable a nivel de módulo — no hay alcance por task ni por turno.
+Dos turnos concurrentes dentro del mismo proceso no pueden usar cada uno un
+sink distinto: la segunda llamada a `set_current` sobrescribe la primera a
+mitad de vuelo, y cada evento de cualquiera de los dos turnos va al sink que
+esté registrado en el momento en que se registra el evento, no al que estaba
+registrado cuando el turno empezó. Nada en este código hace eso hoy — el
+runner de evals y el harness live que podrían correr turnos concurrentes en
+un mismo proceso están serializados — así que esto es una restricción
+documentada de la API, no una corrección de bug. Quien realmente necesite
+turnos concurrentes auditando cada uno a su propio sink debe registrar por
+task o por loop (por ejemplo, una `contextvars.ContextVar`, del mismo tipo
+que este diseño abandonó arriba por la razón opuesta) — eso queda fuera de
+alcance aquí; esta sección existe para que la próxima persona que lo necesite
+no redescubra la restricción perdiendo eventos de auditoría.
+
 Sin sink registrado — un usuario de la biblioteca que corre `AgentRuntime` sin
 `create_app` y no registró ninguno — `_emit_async` ni siquiera construye el
 evento y emite `audit.sink_not_registered` una vez por proceso. Es una
