@@ -610,6 +610,14 @@ bajo la misma clave correcta. Un model id sin entrada acá reporta
 `cost_usd: null` -- es opt-in por modelo, nunca una tarifa global por
 defecto.
 
+`AgentRuntime` nunca lee `Settings` para esta tabla (issue #166): la recibe
+como un argumento explícito, `AgentRuntime(model_prices=...)`. Tanto el
+lifespan de `create_app` como `run_scenario` le pasan `Settings.model_prices`,
+así que la app servida y los live evals valorizan exactamente como antes; un
+usuario de la biblioteca que corre `AgentRuntime` sin `create_app` pasa su
+propia tabla de entradas `agents_system.ModelPrice`, o ninguna (entonces cada
+`cost_usd` es `null`). Ver `docs/platform_es/library-usage.md`.
+
 **El campo `usage` de `POST /v1/chat/completions`**: por compatibilidad con
 el SDK de OpenAI (el propio `CompletionUsage` del SDK oficial `openai`
 requiere enteros no-Optional en cada campo), un uso desconocido se reporta

@@ -188,7 +188,7 @@ registry.register(backends.message_sender_tool_spec())
 
 ## Referencias cruzadas
 
-- Panorama de integración de la biblioteca: `docs/platform/library-usage.md`
+- Panorama de integración de la biblioteca: `docs/platform_es/library-usage.md`
 - Los puertos en sí: `src/agents_system/services/{knowledge,summaries,escalation,orders}.py`
 - Comportamiento en modo cerrado de los conectores: `src/agents_system/connectors/platform_connectors.py`, `src/agents_system/connectors/order_connector.py`
 - ADR-002 C.15: `docs/architecture_es/adr-002-agent-model-and-capabilities.md`

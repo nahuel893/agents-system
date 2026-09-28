@@ -563,6 +563,14 @@ rely on the derived default rather than overriding it, so every entry point
 prices under the same, correct key. A model id with no entry here reports
 `cost_usd: null` -- this is opt-in per model, never a global default rate.
 
+`AgentRuntime` never reads `Settings` for this table (issue #166): it takes
+it as an explicit `AgentRuntime(model_prices=...)` argument. `create_app`'s
+lifespan and `run_scenario` both pass `Settings.model_prices`, so the served
+app and live evals price exactly as before; a library user running
+`AgentRuntime` without `create_app` passes their own table of
+`agents_system.ModelPrice` entries, or none (every `cost_usd` is then
+`null`). See `docs/platform/library-usage.md`.
+
 **`POST /v1/chat/completions`'s `usage` field**: OpenAI SDK compatibility
 (the official `openai` SDK's `CompletionUsage` requires non-Optional ints
 for every field) means an unknown usage is reported as the top-level

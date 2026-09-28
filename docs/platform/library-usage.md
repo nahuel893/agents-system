@@ -81,6 +81,8 @@ nothing more:
 | `InjectionError` | `agents_system.harness.injector` | Raised when a role declares a tool your registry doesn't have |
 | `AgentRuntime` | `agents_system.agent.graph` | Wraps an `EquippedRuntime` + a chat model into something you call `run_turn` on |
 | `Agent` | `agents_system.agent.spec` | A custom agent defined in Python (`Agent(...)`), from a folder (`Agent.from_folder(path)`), or both; its `_to_locator()` goes wherever a role name does (`resolve`, `build_runtime`). See `docs/platform/role.md` |
+| `ModelPrice` | `agents_system.config` | One model's price per million input/output tokens, for `AgentRuntime(model_prices=...)` |
+| `AuditSink` | `agents_system.audit.sink` | The audit event sink; register one with `AuditSink.set_current(sink)` to record audit events (see "Running without the server") |
 
 `agents_system.__version__` is also available, resolved from the installed
 package's metadata (falling back to a placeholder in a source checkout that
@@ -90,21 +92,32 @@ was never `pip install`-ed).
 
 ## Complete example
 
+This example runs exactly as written: `tests/test_readme_library_example.py`
+executes it (with a scripted chat model passed to `main`), and
+`scripts/smoke-installed-wheel.sh` runs the README's copy against the built
+wheel, installed outside the repository, with an empty environment. It is
+the same example as the README's.
+
+<!-- runnable-example: library -->
 ```python
+import asyncio
+
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AnyMessage, HumanMessage
+
 import agents_system
-from langchain_anthropic import ChatAnthropic
 
-# --- 1. Build your own registry and your own tools ---------------------
-#
-# The connector is YOUR code. It can call your database, your APIs, your
-# vector store — the platform doesn't care. The tool NAME has to match a
-# name a platform role's manifest.md declares (see platform/roles/*/manifest.md)
-# for the injector to be able to grant it.
+# 1. Your own tools. A connector is YOUR code: it can call your database,
+#    your APIs, anything. This one searches a small in-memory catalog.
+CATALOG = [
+    {"id": "item-001", "name": "Item Alpha", "stock": 50},
+    {"id": "item-002", "name": "Item Beta", "stock": 0},
+]
 
 
-def my_catalog_search(inputs: dict, /) -> dict:
-    query = inputs["query"]
-    return {"results": my_catalog_service.search(query)}
+def catalog_search(inputs: dict, /) -> dict:
+    query = inputs.get("query", "").lower()
+    return {"results": [item for item in CATALOG if query in item["name"].lower()]}
 
 
 registry = agents_system.ToolRegistry()
@@ -112,8 +125,8 @@ registry.register(
     agents_system.ToolSpec(
         name="catalog_search",
         required_permissions=("read:catalog",),
-        connector=my_catalog_search,
-        tier=agents_system.Tier.T1,  # required (ADR-002 C.10) — T1: scoped read
+        connector=catalog_search,
+        tier=agents_system.Tier.T1,
         description="Search the product catalog by free-text query.",
         input_schema={
             "type": "object",
@@ -122,44 +135,148 @@ registry.register(
         },
     )
 )
-# ... register every other tool the role you're building declares. The
-# injector raises InjectionError for any role-declared tool your registry
-# doesn't have — see "Trap 2" below.
 
-# --- 2. Point RootConfig at YOUR deployment tree ------------------------
-#
-# Omit `deployments_root` and it defaults to the DEV CHECKOUT of whichever
-# clone of `agents_system` you're running from — almost never what you want in
-# a real application. If that default doesn't exist and you request a
-# client override, `resolve()` now raises `DefinitionError` instead of
-# silently falling back to the predefined role. See "Trap 1" below.
 
-roots = agents_system.RootConfig(
-    deployments_root=MY_APP_ROOT / "deployments",
-)
+# 2. Register EVERY tool the role declares. sales-agent declares five, one of
+#    them (escalation_notifier) inherited from its parent role; build_runtime
+#    raises InjectionError for any declared tool the registry lacks. A tool
+#    you register but do not grant is denied at build time and never reaches
+#    the model, so a stub is enough for the ones this app does not use.
+def not_wired(inputs: dict, /) -> dict:
+    return {"error": "this tool is not wired in this application"}
 
-# --- 3. Build the equipped runtime --------------------------------------
 
+for name, permission, tier in [
+    ("client_lookup", "read:client_registry", agents_system.Tier.T1),
+    ("message_sender", "send:message", agents_system.Tier.T2),
+    ("order_writer", "write:orders", agents_system.Tier.T2),
+    ("escalation_notifier", "send:escalation", agents_system.Tier.T2),
+]:
+    registry.register(
+        agents_system.ToolSpec(
+            name=name,
+            required_permissions=(permission,),
+            connector=not_wired,
+            tier=tier,
+        )
+    )
+
+# 3. Build the equipped runtime: a predefined role, your registry, and the
+#    permissions this caller holds. Only granted tools are equipped.
 equipped = agents_system.build_runtime(
     "sales-agent",
     registry,
-    granted_permissions=["read:catalog", "send:message"],
-    client="my-client",  # omit entirely to use the predefined role, unmodified
-    roots=roots,
+    granted_permissions=["read:catalog"],
 )
 
-# --- 4. Turn it into a live agent and run a turn ------------------------
 
-model = ChatAnthropic(model="claude-sonnet-4-5")
-agent = agents_system.AgentRuntime(equipped, model=model)
+# 4. Turn it into a live agent with any LangChain chat model and run a turn.
+async def main(model: BaseChatModel) -> list[AnyMessage]:
+    agent = agents_system.AgentRuntime(equipped, model=model)
+    return await agent.run_turn(
+        [HumanMessage(content="Do you have Item Alpha in stock?")],
+        session_id="demo-session",
+    )
 
-from langchain_core.messages import HumanMessage
 
-reply = await agent.run_turn(
-    [HumanMessage(content="What do you have in stock?")],
-    session_id="session-123",
-)
+if __name__ == "__main__":
+    from langchain_anthropic import ChatAnthropic
+
+    messages = asyncio.run(main(ChatAnthropic(model="claude-sonnet-4-5")))
+    print(messages[-1].content)
 ```
+
+Three things the example shows on purpose:
+
+- **Every tool the role declares must be registered** — including tools the
+  role inherits (`sales-agent` gets `escalation_notifier` from its parent,
+  `platform/roles/agent`). `build_runtime` raises `InjectionError: Unknown
+  tool: ...` for any declared tool your registry lacks. Registering a tool is
+  not granting it: a tool whose permission you do not pass in
+  `granted_permissions` is denied at build time and never reaches the model,
+  which is why a stub connector is enough for the tools this app does not use.
+- **`granted_permissions` is the only grant.** Here the caller holds
+  `read:catalog`, so `catalog_search` is the only tool equipped.
+- **No deployment override.** Without `client=`, `build_runtime` uses the
+  predefined role exactly as shipped, and `RootConfig` is not needed. To
+  narrow the role for your own deployment, add both — see Trap 1 for why
+  `deployments_root` must be explicit:
+
+  ```python
+  equipped = agents_system.build_runtime(
+      "sales-agent",
+      registry,
+      granted_permissions=["read:catalog"],
+      client="my-client",
+      roots=agents_system.RootConfig(deployments_root=MY_APP_ROOT / "deployments"),
+  )
+  ```
+
+---
+
+## Running without the server
+
+`build_runtime` → `AgentRuntime(...)` → `run_turn` never constructs the
+server's `Settings` and needs none of its environment variables (no `.env`,
+no `META_WEBHOOK_SECRET`, no database URL). Two server features are opt-in
+instead of implicit:
+
+### Cost: pass `model_prices`
+
+The served app prices every turn from `MODEL_PRICES`. In library use the
+runtime has no price table unless you give it one, keyed by the provider
+model id (the same key `MODEL_PRICES` uses — see
+`docs/platform/live-eval.md`):
+
+```python
+agent = agents_system.AgentRuntime(
+    equipped,
+    model=model,
+    model_prices={
+        "claude-sonnet-4-5": agents_system.ModelPrice(
+            input_per_million=3.0, output_per_million=15.0
+        ),
+    },
+)
+result = await agent.run_turn_with_usage(messages, session_id="s1")
+result.usage.cost_usd  # float, or None when the model id has no price
+```
+
+Without `model_prices`, `usage.cost_usd` is `None` — never a guessed number.
+Token counts are reported either way.
+
+### Audit: register an `AuditSink`
+
+Audit events (tool granted/denied, tool call attempted/blocked, runtime
+built, ...) go to the process's registered `AuditSink`. `create_app`'s
+lifespan registers one on the application database. In library use nothing
+is registered unless you register it, and the process logs a single
+structured warning, `audit.sink_not_registered`, the first time an event has
+nowhere to go — once per process, never a traceback per event.
+
+To record them, construct the sink on an async SQLAlchemy session factory
+whose database carries the platform's audit tables (created by this
+repository's Alembic migrations — see `docs/platform/audit.md`), start it, and
+register it for the whole process:
+
+```python
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+engine = create_async_engine(MY_DATABASE_URL)
+sink = agents_system.AuditSink(
+    session_factory=async_sessionmaker(engine, expire_on_commit=False)
+)
+await sink.start()
+agents_system.AuditSink.set_current(sink)
+try:
+    ...  # build runtimes and run turns
+finally:
+    await sink.stop()  # drains what is still queued
+    agents_system.AuditSink.clear_current(sink)
+```
+
+The registration is process-wide: every task records into the same sink,
+whichever task registered it.
 
 ---
 
@@ -233,5 +350,8 @@ so you know to check `AgentDefinition.deployment is not None` (or log
 - Predefined role vs. deployment override semantics: `docs/platform/deployment.md`
 - Role/manifest/policy file schema: `docs/platform/role.md`, `docs/platform/policy.md`
 - Tool contract (`ToolSpec`, connector signature): `docs/platform/tool.md`
+- Audit sink, events and storage: `docs/platform/audit.md`
+- Token usage and cost (`MODEL_PRICES`): `docs/platform/live-eval.md`
 - Reference backends for the four platform-generic ports (knowledge, summarizer, escalation, order writer): `docs/platform/reference-backends.md`
-- Source: `src/agents_system/harness/{registry,loader,injector,factory}.py`, `src/agents_system/agent/graph.py`, `src/agents_system/__init__.py`
+- Source: `src/agents_system/harness/{registry,loader,injector,factory}.py`, `src/agents_system/agent/graph.py`, `src/agents_system/audit/sink.py`, `src/agents_system/__init__.py`
+- Spanish version: `docs/platform_es/library-usage.md`

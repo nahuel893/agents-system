@@ -127,6 +127,27 @@ proveniente de un conector externo.
 lifespan de FastAPI y al que se le entrega la session factory respaldada por el
 `AsyncEngine` de la aplicación.
 
+### El registro es de todo el proceso (#166)
+
+`AuditSink.set_current(sink)` registra el sink para todo el proceso;
+`AuditSink.registered()` lo devuelve (o `None`, sin lanzar nunca) y
+`AuditSink.clear_current(sink)` lo quita — solo si ese sink sigue siendo el
+registrado, así quien llama deshace su propio registro sin pisar uno
+posterior. Antes el registro vivía en una `ContextVar`. Una variable de
+contexto solo llega a las tasks creadas desde el contexto que la fijó, y
+uvicorn corre el lifespan en su propia task y cada petición en una task que no
+hereda el contexto del lifespan: cada petición a `/v1` no resolvía ningún sink
+y sus eventos de auditoría (`tool_call_attempted`, `tool_call_blocked`,
+`runtime_timeout`) se descartaban. `tests/test_library_standalone.py` corre un
+turno servido desde un `contextvars.Context()` nuevo para fijar esto.
+
+Sin sink registrado — un usuario de la biblioteca que corre `AgentRuntime` sin
+`create_app` y no registró ninguno — `_emit_async` ni siquiera construye el
+evento y emite `audit.sink_not_registered` una vez por proceso. Es una
+configuración legítima, reportada con honestidad, no un error: sin traceback.
+Cómo registra un sink un usuario de la biblioteca:
+`docs/platform_es/library-usage.md`.
+
 | Propiedad | Comportamiento |
 |---|---|
 | `record(event)` | `put_nowait` en una cola acotada. Retorna en ~5 ms. **Nunca lanza excepción.** |
@@ -372,6 +393,7 @@ incluido `_terminalize_work`, el día que cualquier otra cosa escriba bajo
 |---|---|---|
 | `audit.event_dropped` | Cola llena, evento perdido | Subir `maxsize`, o investigar demoras del drainer |
 | `audit.emit_failed` | El camino de emisión lanzó una excepción | Leer `exc_info` — la petición en sí no se vio afectada |
+| `audit.sink_not_registered` | No hay un `AuditSink` registrado en este proceso; los eventos de auditoría no se registran. Se emite una vez por proceso | Esperado en uso como biblioteca sin sink. En la app servida significaría que el lifespan no registró uno — investigar |
 | `audit.drain_failed` | Falló el INSERT de un lote; esos eventos se perdieron | Leer `error` y `exc_info`. Lleva `batch_size`; el lote se suma a `dropped_count` |
 | `audit.emit_skipped_no_loop` | No hay loop de eventos en ejecución | Esperado en tests síncronos y entrypoints de CLI |
 | `audit.shutdown_timeout` | El `timeout` de `stop()` venció antes de que el drainer saliera solo; se lo canceló como último recurso | Lleva `queued_events_dropped` e `in_flight_events_dropped`, ambos sumados a `dropped_count`. Investigar qué trabó al drainer (usualmente una llamada a la DB colgada); subir `timeout` solo si el drainer es lento, no si está trabado |
