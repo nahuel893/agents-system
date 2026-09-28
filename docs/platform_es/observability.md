@@ -246,6 +246,40 @@ explícitamente, cómodamente por debajo de `total_execution_timeout_s` -- una
 única llamada colgada al proveedor ahora falla con un timeout tipado y
 claro, en vez de esperar en silencio.
 
+**El presupuesto del turno tiene que alojar las llamadas al proveedor (issue
+#172).** `total_execution_timeout_s` acota el turno completo y
+`OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` acota una llamada al proveedor, así que
+los dos tienen que encajar:
+
+```
+total_execution_timeout_s  >=  llamadas al proveedor por turno x timeout de request  +  tiempo de herramientas
+```
+
+Un turno que usa una herramienta hace al menos dos llamadas al proveedor (una
+para elegir la herramienta y otra para responder con su resultado). Con el
+timeout de request de 45s son 90s de proveedor antes de que la herramienta
+corra siquiera. Un presupuesto de 30s, que `operator-agent` fija a propósito,
+no alcanza ni para una llamada lenta, y uno de 60s no alcanza para dos. Por eso
+`developer-agent` sube su propio `total_execution_timeout_s` a 120s. No bajes
+`OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` para compensar: un timeout de request más
+corto convierte a un proveedor lento pero funcional en uno que falla.
+
+Al arrancar, la app registra un WARNING `runtime.turn_budget_below_request_timeout`
+por cada runtime sobre el proveedor `openai_compatible` cuyo presupuesto de turno
+sea menor que el timeout de request. Nunca frena el arranque: un presupuesto
+ajustado puede ser deliberado.
+
+**Qué reporta un turno que agotó el tiempo.** El turno termina con la respuesta
+fija "This is taking longer than expected. Please try again." y
+`outcome="timeout"`. Sus mensajes conservan todo lo que el grafo había producido
+antes del límite, y su uso cuenta las llamadas al modelo que completaron antes
+(`TurnResult.usage`), así que `runtime.turn_usage` y las métricas de tokens y
+costo también se registran. Una llamada cortada a mitad de vuelo todavía no tiene
+uso, así que los totales son una cota inferior. Si el checkpointer se degradó y el
+turno arrancó de nuevo, o nunca se produjo estado, el uso es desconocido
+(`None`), nunca un valor inventado. `TurnResult.timed_out` y
+`TurnResult.timeout_s` permiten distinguir el timeout de un turno normal.
+
 **Guía de dimensionamiento de cuenta para operadores.** `max_concurrent_turns`
 (default 10) acota cuántos turnos corre este proceso a la vez, pero NO acota
 el límite de tasa propio de la cuenta del proveedor (requests/minuto y/o

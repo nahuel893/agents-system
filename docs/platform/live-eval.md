@@ -577,6 +577,22 @@ for every field) means an unknown usage is reported as the top-level
 `"usage": null`, never an object with `null` fields
 (`{"prompt_tokens": null, ...}` fails client-side Pydantic validation).
 
+## A timed-out run reports the timeout (issue #172)
+
+When a turn hits `total_execution_timeout_s`, `run_scenario` stops the run
+there and records `error: "turn timed out after <N>s"` instead of grading the
+truncated transcript. Before, the cut-off transcript was graded as if it were
+a finished one, so a timeout surfaced as a false "missing tool call" (for
+example `escalation_expected: true` with no `escalate_to_human` call). The
+outcome is `passed: false` and `exercised: false`, like any other run that
+never reached its assertions. The tokens the run had used before the timeout
+are still summed into `usage`.
+
+Each entry of `run_details` in the results JSON also carries `model_calls`
+(the number of model calls that run made) and `tools_called` (the tool names
+it called, in order), so a failing run can be told apart from a slow one
+without opening the transcript.
+
 ## Turn duration (issue #78 Phase 0 Slice 2)
 
 `run_scenario` times each turn's `run_turn_with_usage` call with real

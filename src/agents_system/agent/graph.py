@@ -27,7 +27,7 @@ import dataclasses
 import json
 import time
 from collections.abc import Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import aclosing, nullcontext
 from functools import partial
 from typing import Any
 
@@ -83,8 +83,14 @@ class TurnUsage:
     this turn made (a turn can make several when the model uses tools).
 
     - `model_calls` is `None` only when it could not be determined at all
-      (the turn timed out before `run_turn` could account for it) -- never
-      confused with a genuine `0`.
+      (a checkpointer degradation retried the turn from scratch, so the
+      failed attempt's calls are unrecoverable) -- never confused with a
+      genuine `0`.
+    - A turn that TIMED OUT reports what it accumulated before the budget
+      ran out (issue #172): the model calls that completed, and their
+      tokens. A request still in flight when the budget expired never
+      reported usage and is not counted, so a timed-out turn's totals are a
+      lower bound, not an exact figure -- `TurnResult.timed_out` says so.
     - `input_tokens`/`output_tokens`/`total_tokens` are `None` whenever ANY
       of this turn's model calls reported no `usage_metadata`: a partial sum
       is never reported as if it were the whole turn's total.
@@ -124,6 +130,25 @@ class TurnResult:
 
     messages: list[AnyMessage]
     usage: TurnUsage
+    #: Issue #172 -- the turn hit ``total_execution_timeout_s``. `messages`
+    #: and `usage` then hold what accumulated before the budget ran out,
+    #: followed by the sendable timeout reply, so a caller can tell a
+    #: timeout from an answer that merely looks truncated.
+    timed_out: bool = False
+    #: The turn budget (seconds) that expired; ``None`` unless `timed_out`.
+    timeout_s: float | None = None
+
+
+@dataclasses.dataclass
+class _TurnProgress:
+    """The latest graph state a turn reached, kept outside the invocation so
+    a timeout (which cancels it and returns nothing) can still read back
+    the tool calls, model calls and usage accumulated so far (issue #172)."""
+
+    state: dict[str, Any] | None = None
+    #: A checkpointer degradation retried the turn from scratch: the failed
+    #: attempt's spend is unrecoverable, so usage stays unknown.
+    degraded: bool = False
 
 
 _UNKNOWN_TURN_USAGE = TurnUsage(
@@ -574,6 +599,7 @@ async def _ainvoke_with_optional_checkpointer(
     thread_id: str | None,
     initial_state: AgentState,
     recursion_limit: int,
+    progress: _TurnProgress | None = None,
 ) -> dict[str, Any]:
     """Invoke the compiled graph, honoring the AD-1 opt-in checkpointer and
     the AD-8 same-turn checkpointer-degradation fallback.
@@ -612,10 +638,10 @@ async def _ainvoke_with_optional_checkpointer(
     ``None`` (distinct from a real, possibly-empty list) instead of
     whatever the retried invocation recorded — ``run_turn_with_usage`` reads
     that sentinel as "genuinely unknown" and reports ``_UNKNOWN_TURN_USAGE``
-    (``model_calls=None``, same as the AD-3 timeout backstop), rather than a
+    (``model_calls=None``), rather than a
     count that looks precise but is not.
     """
-    checkpointer_degraded = False
+    tracker = progress if progress is not None else _TurnProgress()
     if thread_id is not None and checkpointer is not None:
         compiled_with_checkpointer = graph.compile(checkpointer=checkpointer)
         checkpointed_config: RunnableConfig = {
@@ -623,10 +649,8 @@ async def _ainvoke_with_optional_checkpointer(
             "configurable": {"thread_id": thread_id},
         }
         try:
-            return dict(
-                await compiled_with_checkpointer.ainvoke(
-                    initial_state, config=checkpointed_config
-                )
+            return await _run_tracking_progress(
+                compiled_with_checkpointer, initial_state, checkpointed_config, tracker
             )
         except redis.exceptions.RedisError as exc:
             logger.warning(
@@ -634,17 +658,43 @@ async def _ainvoke_with_optional_checkpointer(
                 thread_id=thread_id,
                 error=str(exc),
             )
-            checkpointer_degraded = True
+            tracker.degraded = True
+            # The failed attempt's partial state belongs to a run that is
+            # being redone from scratch; never mix it into the retry's.
+            tracker.state = None
 
     compiled = graph.compile()
-    result = dict(
-        await compiled.ainvoke(
-            initial_state, config={"recursion_limit": recursion_limit}
-        )
+    result = await _run_tracking_progress(
+        compiled, initial_state, {"recursion_limit": recursion_limit}, tracker
     )
-    if checkpointer_degraded:
+    if tracker.degraded:
         result["turn_usage"] = None
     return result
+
+
+async def _run_tracking_progress(
+    compiled: Any,
+    initial_state: AgentState,
+    config: RunnableConfig,
+    tracker: _TurnProgress,
+) -> dict[str, Any]:
+    """Run *compiled* to completion, recording the state after every step.
+
+    ``astream(stream_mode="values")`` yields the full state after each
+    super-step; its last value is exactly what ``ainvoke`` would return. The
+    difference is that a cancellation (the turn budget) now leaves the last
+    completed step in *tracker* instead of losing everything (issue #172).
+    """
+    final: dict[str, Any] | None = None
+    async with aclosing(
+        compiled.astream(initial_state, config=config, stream_mode="values")
+    ) as stream:
+        async for state in stream:
+            final = dict(state)
+            tracker.state = final
+    if final is None:  # pragma: no cover -- a graph always yields its input
+        raise RuntimeError("graph produced no state")
+    return final
 
 
 # ---------------------------------------------------------------------------
@@ -920,6 +970,7 @@ class AgentRuntime:
         # re-raises unchanged -- this adds observability only, it does not
         # change what was already unhandled before this metric existed.
         turn_start = time.monotonic()
+        progress = _TurnProgress()
         try:
             try:
                 async with asyncio.timeout(
@@ -931,6 +982,7 @@ class AgentRuntime:
                         thread_id,
                         initial_state,
                         recursion_limit,
+                        progress,
                     )
             except TimeoutError:
                 logger.warning(
@@ -947,12 +999,27 @@ class AgentRuntime:
                         "total_execution_timeout_s"
                     ],
                 )
-                # #78 Phase 0 -- a timeout cancels the invocation before this
-                # runtime can read back how many call_model invocations actually
-                # completed, so `model_calls` (and every token total) is
-                # genuinely UNKNOWN here -- never reported as 0.
+                # Issue #172 -- the cancelled invocation returns nothing, but
+                # `progress` holds the state after the last step that
+                # completed: keep its messages (the tool calls already made)
+                # and account for the model calls that returned. A request
+                # still in flight reported no usage and is not counted (see
+                # `TurnUsage`). Only a checkpointer degradation leaves usage
+                # unknown, exactly as on a turn that finished.
+                partial = progress.state
+                if partial is not None:
+                    partial_messages = list(partial["messages"])
+                    raw_partial_usage = partial.get("turn_usage", [])
+                else:
+                    partial_messages = all_messages
+                    raw_partial_usage = []
+                timeout_usage = (
+                    _UNKNOWN_TURN_USAGE
+                    if progress.degraded or raw_partial_usage is None
+                    else _aggregate_turn_usage(raw_partial_usage)
+                )
                 return self._finish_turn(
-                    all_messages
+                    partial_messages
                     + [
                         AIMessage(
                             content=(
@@ -960,11 +1027,13 @@ class AgentRuntime:
                             )
                         )
                     ],
-                    usage=_UNKNOWN_TURN_USAGE,
+                    usage=timeout_usage,
                     session_id=session_id,
                     model_id=effective_model_id,
                     outcome="timeout",
                     duration_s=time.monotonic() - turn_start,
+                    timed_out=True,
+                    timeout_s=float(effective_limits["total_execution_timeout_s"]),
                 )
         except Exception:
             record_turn(
@@ -1005,6 +1074,8 @@ class AgentRuntime:
         model_id: str | None,
         outcome: str,
         duration_s: float,
+        timed_out: bool = False,
+        timeout_s: float | None = None,
     ) -> TurnResult:
         """Attach real cost to *usage*, log one `runtime.turn_usage` event
         (issue #78 Phase 0), record this turn's metrics (issue #78 Phase 0
@@ -1044,4 +1115,6 @@ class AgentRuntime:
             output_tokens=usage.output_tokens,
             cost_usd=usage.cost_usd,
         )
-        return TurnResult(messages=messages, usage=usage)
+        return TurnResult(
+            messages=messages, usage=usage, timed_out=timed_out, timeout_s=timeout_s
+        )

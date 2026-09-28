@@ -1115,10 +1115,10 @@ async def test_run_turn_usage_is_none_when_a_model_call_reports_none() -> None:
     assert result.usage.total_tokens is None
 
 
-async def test_run_turn_usage_is_unknown_on_timeout() -> None:
-    """A turn that times out cannot know how many model calls it actually
-    completed -- model_calls is None (genuinely unknown), never a
-    misleading 0."""
+async def test_run_turn_usage_on_timeout_with_no_completed_call_has_no_tokens() -> None:
+    """A turn that times out before any model call returned has completed
+    zero calls (issue #172: a fact, no longer "unknown"), and no tokens or
+    cost -- the provider never reported any for the abandoned request."""
     from agents_system.agent.graph import AgentRuntime
 
     model = _SlowFakeModel(responses=[AIMessage(content="unreachable")])
@@ -1139,9 +1139,10 @@ async def test_run_turn_usage_is_unknown_on_timeout() -> None:
         timeout=2.0,
     )
 
-    assert result.usage.model_calls is None
+    assert result.usage.model_calls == 0
     assert result.usage.total_tokens is None
     assert result.usage.cost_usd is None
+    assert result.timed_out is True
 
 
 async def test_run_turn_computes_cost_from_configured_price_table() -> None:
@@ -2150,3 +2151,257 @@ async def test_session_id_never_reaches_exported_metrics_text() -> None:
 
     output = generate_latest(metrics.registry).decode()
     assert phone_like_session_id not in output
+
+
+# ---------------------------------------------------------------------------
+# Issue #172 -- a timed-out turn keeps what it accumulated before the budget
+# ran out, and says that it timed out
+# ---------------------------------------------------------------------------
+
+
+def _tool_call_response(name: str, call_id: str, usage: bool = True) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{"id": call_id, "name": name, "args": {}, "type": "tool_call"}],
+        usage_metadata=(
+            {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}
+            if usage
+            else None
+        ),
+    )
+
+
+class _ToolThenSlowModel(ToolAwareFakeModel):
+    """Answers its first call from `responses`, then hangs on every later one:
+    a turn whose second provider call outlives the turn budget."""
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]
+        if getattr(self, "_answered_once", False):
+            await asyncio.sleep(10)
+            return AIMessage(content="unreachable")
+        object.__setattr__(self, "_answered_once", True)
+        return await super().ainvoke(*args, **kwargs)
+
+
+def _timeout_runtime(total_s: float, tools: tuple[ToolSpec, ...]) -> EquippedRuntime:
+    return EquippedRuntime(
+        definition=_fake_definition(
+            execution_limits={"total_execution_timeout_s": total_s}
+        ),
+        system_prompt="You are a helpful assistant.",
+        tools=tools,
+        denied_tools=(),
+        skills=(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_timed_out_turn_keeps_the_usage_of_its_completed_model_calls() -> None:
+    """Issue #172: the first model call (and its tool round trip) completed
+    before the budget ran out. Its tokens must survive in `TurnResult.usage`
+    instead of being replaced by an all-unknown value."""
+    from agents_system.agent.graph import AgentRuntime
+
+    model = _ToolThenSlowModel(
+        responses=[_tool_call_response("catalog_search", "call_172_a")]
+    )
+    agent = AgentRuntime(_timeout_runtime(0.4, (_catalog_spec(),)), model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn_with_usage(
+            [HumanMessage(content="Hi")], session_id="s1", permissions=("read:catalog",)
+        ),
+        timeout=3.0,
+    )
+
+    assert result.timed_out is True
+    assert result.timeout_s == pytest.approx(0.4)
+    assert result.usage.model_calls == 1
+    assert result.usage.input_tokens == 100
+    assert result.usage.output_tokens == 20
+    assert result.usage.total_tokens == 120
+
+
+@pytest.mark.asyncio
+async def test_timed_out_turn_keeps_the_messages_it_accumulated() -> None:
+    """The tool calls made before the timeout stay in the transcript, in
+    order, followed by the sendable timeout reply -- not just the caller's
+    input plus the reply."""
+    from agents_system.agent.graph import AgentRuntime
+
+    model = _ToolThenSlowModel(
+        responses=[_tool_call_response("catalog_search", "call_172_b")]
+    )
+    agent = AgentRuntime(_timeout_runtime(0.4, (_catalog_spec(),)), model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn_with_usage(
+            [HumanMessage(content="Hi")], session_id="s1", permissions=("read:catalog",)
+        ),
+        timeout=3.0,
+    )
+
+    kinds = [type(m).__name__ for m in result.messages]
+    assert kinds == ["HumanMessage", "AIMessage", "ToolMessage", "AIMessage"]
+    assert result.messages[1].tool_calls[0]["name"] == "catalog_search"  # type: ignore[attr-defined]
+    assert result.messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_timeout_during_tool_execution_keeps_the_completed_model_call() -> None:
+    """The budget can also run out inside a tool call. The model call that
+    requested it had already completed and must still be counted."""
+    from agents_system.agent.graph import AgentRuntime
+
+    async def slow_connector(
+        inputs: dict[str, Any], *, session: Any = None
+    ) -> dict[str, Any]:
+        await asyncio.sleep(10)
+        return {}
+
+    slow_spec = ToolSpec(
+        name="slow_tool",
+        required_permissions=(),
+        connector=slow_connector,
+        tier=Tier.T0,
+    )
+    model = ToolAwareFakeModel(
+        responses=[_tool_call_response("slow_tool", "call_172_c")]
+    )
+    agent = AgentRuntime(_timeout_runtime(0.3, (slow_spec,)), model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn_with_usage(
+            [HumanMessage(content="Hi")], session_id="s1", permissions=()
+        ),
+        timeout=3.0,
+    )
+
+    assert result.timed_out is True
+    assert result.usage.model_calls == 1
+    assert result.usage.total_tokens == 120
+    assert any(isinstance(m, AIMessage) and m.tool_calls for m in result.messages)
+
+
+@pytest.mark.asyncio
+async def test_timed_out_turn_still_exports_the_usage_it_accumulated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`runtime.turn_usage` and the metrics counters carry the tokens of the
+    calls that completed before the timeout (issue #172), and the turn is
+    still recorded as outcome="timeout"."""
+    from agents_system.agent.graph import AgentRuntime
+
+    metrics = _fresh_metrics()
+    model = _ToolThenSlowModel(
+        responses=[_tool_call_response("catalog_search", "call_172_d")]
+    )
+    agent = AgentRuntime(
+        _timeout_runtime(0.4, (_catalog_spec(),)),
+        model,
+        runtime_id="acme__sales-agent",
+        metrics=metrics,
+    )
+
+    await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Hi")], session_id="s1", permissions=("read:catalog",)
+        ),
+        timeout=3.0,
+    )
+
+    usage_lines = [
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if "runtime.turn_usage" in line
+    ]
+    assert len(usage_lines) == 1
+    assert "model_calls=1" in usage_lines[0]
+    assert "input_tokens=100" in usage_lines[0]
+    assert "input_tokens=None" not in usage_lines[0]
+    assert (
+        metrics.turns_total.labels(
+            runtime_id="acme__sales-agent", outcome="timeout"
+        )._value.get()
+        == 1
+    )
+    assert (
+        metrics.tokens_total.labels(
+            runtime_id="acme__sales-agent", direction="input"
+        )._value.get()
+        == 100
+    )
+    assert (
+        metrics.tokens_total.labels(
+            runtime_id="acme__sales-agent", direction="output"
+        )._value.get()
+        == 20
+    )
+
+
+@pytest.mark.asyncio
+async def test_timed_out_turn_with_an_unreported_call_keeps_tokens_unknown() -> None:
+    """The honesty rule still holds: a completed call that reported no
+    usage_metadata makes the tokens unknown, though the call is counted."""
+    from agents_system.agent.graph import AgentRuntime
+
+    model = _ToolThenSlowModel(
+        responses=[_tool_call_response("catalog_search", "call_172_e", usage=False)]
+    )
+    agent = AgentRuntime(_timeout_runtime(0.4, (_catalog_spec(),)), model)
+
+    result = await asyncio.wait_for(
+        agent.run_turn_with_usage(
+            [HumanMessage(content="Hi")], session_id="s1", permissions=("read:catalog",)
+        ),
+        timeout=3.0,
+    )
+
+    assert result.usage.model_calls == 1
+    assert result.usage.total_tokens is None
+
+
+@pytest.mark.asyncio
+async def test_timed_out_turn_under_a_checkpointer_keeps_its_usage() -> None:
+    """Same accounting when a checkpointer is engaged for the turn."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agents_system.agent.graph import AgentRuntime
+
+    model = _ToolThenSlowModel(
+        responses=[_tool_call_response("catalog_search", "call_172_f")]
+    )
+    agent = AgentRuntime(
+        _timeout_runtime(0.4, (_catalog_spec(),)),
+        model,
+        checkpointer=InMemorySaver(),
+    )
+
+    result = await asyncio.wait_for(
+        agent.run_turn_with_usage(
+            [HumanMessage(content="Hi")],
+            session_id="s1",
+            permissions=("read:catalog",),
+            thread_id="+5491100000172",
+        ),
+        timeout=3.0,
+    )
+
+    assert result.timed_out is True
+    assert result.usage.model_calls == 1
+    assert result.usage.total_tokens == 120
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_finishes_is_not_marked_timed_out() -> None:
+    from agents_system.agent.graph import AgentRuntime
+
+    model = FakeMessagesListChatModel(responses=[AIMessage(content="hi")])
+    agent = AgentRuntime(_make_runtime(), model)
+
+    result = await agent.run_turn_with_usage(
+        [HumanMessage(content="hi")], session_id="s1"
+    )
+
+    assert result.timed_out is False
+    assert result.timeout_s is None
