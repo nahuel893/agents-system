@@ -28,6 +28,7 @@ from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMes
 
 from agents_system.agent.graph import AgentRuntime, TurnUsage
 from agents_system.audit.sink import AuditSink
+from agents_system.config import get_settings
 from agents_system.evals.schema import (
     CATEGORY_GUARDRAIL,
     CATEGORY_HAPPY_PATH,
@@ -726,10 +727,10 @@ class _CapturingAuditSink(AuditSink):
     A live-eval run has no FastAPI lifespan to construct the app's real,
     DB-backed sink. Without ANY sink registered, every audit-emitting call
     along the way (`interceptor.intercept`, `injector.resolve_tool_surface`,
-    ...) hits `AuditSink.current()`'s `RuntimeError` -- silently swallowed by
-    `injector._emit`, so the failure mode was not a crash, it was every
-    audit event for every eval run being quietly dropped. `run_scenario`
-    registers one of these for the run's duration instead.
+    ...) is dropped (since #166 reported once per process as
+    `audit.sink_not_registered`), so every audit event for every eval run
+    would be lost. `run_scenario` registers one of these for the run's
+    duration instead.
 
     `session_factory=None` is safe here because `_flush_batch` is overridden
     below and never touches it -- the real `AuditSink` only reads it to open
@@ -836,6 +837,11 @@ async def run_scenario(
 
     roots = roots if roots is not None else RootConfig()
 
+    # Issue #166 -- AgentRuntime no longer reads Settings for prices; the
+    # eval harness, like create_app, hands it the operator's MODEL_PRICES
+    # explicitly, so a live run's cost report is unchanged.
+    model_prices = get_settings().model_prices
+
     # Registered BEFORE resolve()/build_runtime() below, not just before the
     # run loop: build_runtime() itself emits a `record_runtime_built` audit
     # event (`harness/factory.py`), and that call happens before this
@@ -844,10 +850,7 @@ async def run_scenario(
     # same as before this fix -- swallowed by injector._emit, but still lost.
     sink = audit_sink_factory()
     await sink.start()
-    try:
-        previous_sink: AuditSink | None = AuditSink.current()
-    except RuntimeError:
-        previous_sink = None
+    previous_sink = AuditSink.registered()
     AuditSink.set_current(sink)
 
     try:
@@ -918,7 +921,7 @@ async def run_scenario(
             if registry_factory is not None:
                 equipped = _build_equipped(registry_factory())
             assert equipped is not None  # exactly one branch above set it
-            agent = AgentRuntime(equipped, model)
+            agent = AgentRuntime(equipped, model, model_prices=model_prices)
             history: list[AnyMessage] = []
             # #78 Phase 0 (review finding 5) -- one TurnUsage per turn this
             # run makes; summed into the RunOutcome below.
@@ -999,6 +1002,10 @@ async def run_scenario(
         await sink.stop()
         if previous_sink is not None:
             AuditSink.set_current(previous_sink)
+        else:
+            # The registration is process-wide (#166): leave nothing behind
+            # but what was there before this call.
+            AuditSink.clear_current(sink)
 
     return ScenarioResult(
         scenario=scenario.name,

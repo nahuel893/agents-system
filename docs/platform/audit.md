@@ -121,6 +121,29 @@ connector is persisted verbatim.
 the FastAPI lifespan and handed the application's `AsyncEngine`-backed session
 factory.
 
+### Registration is process-wide (#166)
+
+`AuditSink.set_current(sink)` registers the sink for the whole process;
+`AuditSink.registered()` returns it (or `None`, never raising) and
+`AuditSink.clear_current(sink)` removes it — only if that sink is still the
+one registered, so a caller undoes its own registration without clobbering a
+later one. The registration used to live in a `ContextVar`. A context
+variable only reaches tasks created from the context that set it, and uvicorn
+runs the lifespan in its own task and each request in a task that does not
+inherit the lifespan's context: every `/v1` request resolved no sink, and its
+audit events (`tool_call_attempted`, `tool_call_blocked`, `runtime_timeout`)
+were dropped. `tests/test_library_standalone.py` runs a served turn from a
+fresh `contextvars.Context()` to pin this. Because the registration now
+outlives the task that made it, the lifespan also unregisters its sink on
+shutdown, after stopping it, so a stopped sink is never left taking the
+process's events.
+
+With no sink registered — a library user running `AgentRuntime` without
+`create_app` who has not registered one — `_emit_async` does not build the
+event at all and logs `audit.sink_not_registered` once per process. That is a
+legitimate configuration, reported honestly, not an error: no traceback. How
+a library user registers a sink: `docs/platform/library-usage.md`.
+
 | Property | Behaviour |
 |---|---|
 | `record(event)` | `put_nowait` onto a bounded queue. Returns within ~5 ms. **Never raises.** |
@@ -355,6 +378,7 @@ the day anything else writes under `"outbox:*"`.
 |---|---|---|
 | `audit.event_dropped` | Queue full, event lost | Raise `maxsize`, or investigate drainer stalls |
 | `audit.emit_failed` | The emit path raised | Read `exc_info` — the request itself was unaffected |
+| `audit.sink_not_registered` | No `AuditSink` is registered in this process; audit events are not recorded. Logged once per process | Expected in library use without a sink. In the served app it would mean the lifespan did not register one — investigate |
 | `audit.drain_failed` | A batch INSERT failed; those events are gone | Read `error` and `exc_info`. Carries `batch_size`; the batch is added to `dropped_count` |
 | `audit.emit_skipped_no_loop` | No running event loop | Expected in sync tests and CLI entry points |
 | `audit.shutdown_timeout` | `stop()`'s `timeout` elapsed before the drainer exited on its own; it was cancelled as a last resort | Carries `queued_events_dropped` and `in_flight_events_dropped`, both added to `dropped_count`. Investigate what wedged the drainer (usually a stuck DB call); raise `timeout` only if the drainer is simply slow, not stuck |

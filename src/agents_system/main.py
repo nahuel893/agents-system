@@ -232,6 +232,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await audit_sink.start()
         AuditSink.set_current(audit_sink)
         app.state.audit_sink = audit_sink
+        # Issue #166 -- the registration is process-wide, so it ends with
+        # this lifespan: pushed first, it runs after `stop()` below (LIFO),
+        # and a stopped sink is never left taking the process's events.
+        resource_stack.callback(AuditSink.clear_current, audit_sink)
         resource_stack.push_async_callback(audit_sink.stop)
 
         # D-014 — outbound WhatsApp client (design AD-2), built once and shared.
@@ -516,11 +520,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # AGENT_REGISTRATIONS) instead of AgentRuntime's own derived
                 # provider-model-id default (see AgentRuntime's `runtime_id`
                 # parameter docstring in agent/graph.py).
+                #
+                # Issue #166 -- model_prices: the served app prices every turn
+                # from MODEL_PRICES, handed to the runtime here. The runtime
+                # itself never reads Settings, so library use needs no server
+                # environment.
                 runtimes[runtime_id] = AgentRuntime(
                     runtime=equipped,
                     model=runtime_model,
                     checkpointer=checkpointer,
                     runtime_id=runtime_id,
+                    model_prices=settings.model_prices,
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
 

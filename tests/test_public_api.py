@@ -38,6 +38,8 @@ _EXPECTED_EXPORTS: dict[str, str] = {
     "InjectionError": "agents_system.harness.injector",
     "AgentRuntime": "agents_system.agent.graph",
     "Agent": "agents_system.agent.spec",
+    "ModelPrice": "agents_system.config",
+    "AuditSink": "agents_system.audit.sink",
 }
 
 

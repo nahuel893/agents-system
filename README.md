@@ -421,19 +421,42 @@ Notes:
 `agents_system` is not only the runtime behind `/v1` — it is an importable
 library. The package ships the harness and the eight predefined roles; it
 never ships a client's tools or a client's deployment overrides. A consuming
-application supplies both at runtime, by injection:
+application supplies both at runtime, by injection. Running a turn this way
+needs no server environment: no `.env`, no `META_WEBHOOK_SECRET`, no
+database — the runtime never reads the server's `Settings`.
 
+This example runs exactly as written (`tests/test_readme_library_example.py`
+executes it with a scripted model; `scripts/smoke-installed-wheel.sh` runs it
+against the built wheel in an empty environment):
+
+<!-- runnable-example: library -->
 ```python
-import agents_system
-from langchain_anthropic import ChatAnthropic
+import asyncio
 
-# 1. Build your own registry with your own tools (connectors call YOUR services)
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AnyMessage, HumanMessage
+
+import agents_system
+
+# 1. Your own tools. A connector is YOUR code: it can call your database,
+#    your APIs, anything. This one searches a small in-memory catalog.
+CATALOG = [
+    {"id": "item-001", "name": "Item Alpha", "stock": 50},
+    {"id": "item-002", "name": "Item Beta", "stock": 0},
+]
+
+
+def catalog_search(inputs: dict, /) -> dict:
+    query = inputs.get("query", "").lower()
+    return {"results": [item for item in CATALOG if query in item["name"].lower()]}
+
+
 registry = agents_system.ToolRegistry()
 registry.register(
     agents_system.ToolSpec(
         name="catalog_search",
         required_permissions=("read:catalog",),
-        connector=my_catalog_search,
+        connector=catalog_search,
         tier=agents_system.Tier.T1,
         description="Search the product catalog by free-text query.",
         input_schema={
@@ -444,23 +467,78 @@ registry.register(
     )
 )
 
-# 2. Point RootConfig at YOUR deployment tree (never guessed for you)
-roots = agents_system.RootConfig(deployments_root=MY_APP_ROOT / "deployments")
 
-# 3. Build the equipped runtime — a predefined role, optionally narrowed for a client
+# 2. Register EVERY tool the role declares. sales-agent declares five, one of
+#    them (escalation_notifier) inherited from its parent role; build_runtime
+#    raises InjectionError for any declared tool the registry lacks. A tool
+#    you register but do not grant is denied at build time and never reaches
+#    the model, so a stub is enough for the ones this app does not use.
+def not_wired(inputs: dict, /) -> dict:
+    return {"error": "this tool is not wired in this application"}
+
+
+for name, permission, tier in [
+    ("client_lookup", "read:client_registry", agents_system.Tier.T1),
+    ("message_sender", "send:message", agents_system.Tier.T2),
+    ("order_writer", "write:orders", agents_system.Tier.T2),
+    ("escalation_notifier", "send:escalation", agents_system.Tier.T2),
+]:
+    registry.register(
+        agents_system.ToolSpec(
+            name=name,
+            required_permissions=(permission,),
+            connector=not_wired,
+            tier=tier,
+        )
+    )
+
+# 3. Build the equipped runtime: a predefined role, your registry, and the
+#    permissions this caller holds. Only granted tools are equipped.
 equipped = agents_system.build_runtime(
     "sales-agent",
     registry,
-    granted_permissions=["read:catalog", "send:message"],
-    client="my-client",  # omit to use the predefined role unmodified
-    roots=roots,
+    granted_permissions=["read:catalog"],
 )
 
-# 4. Turn it into a live agent
-agent = agents_system.AgentRuntime(
-    equipped, model=ChatAnthropic(model="claude-sonnet-4-5")
+
+# 4. Turn it into a live agent with any LangChain chat model and run a turn.
+async def main(model: BaseChatModel) -> list[AnyMessage]:
+    agent = agents_system.AgentRuntime(equipped, model=model)
+    return await agent.run_turn(
+        [HumanMessage(content="Do you have Item Alpha in stock?")],
+        session_id="demo-session",
+    )
+
+
+if __name__ == "__main__":
+    from langchain_anthropic import ChatAnthropic
+
+    messages = asyncio.run(main(ChatAnthropic(model="claude-sonnet-4-5")))
+    print(messages[-1].content)
+```
+
+To narrow the role with a deployment override of your own, point
+`RootConfig` at your deployment tree and name the client — `deployments_root`
+is never guessed for you:
+
+```python
+equipped = agents_system.build_runtime(
+    "sales-agent",
+    registry,
+    granted_permissions=["read:catalog"],
+    client="my-client",
+    roots=agents_system.RootConfig(deployments_root=MY_APP_ROOT / "deployments"),
 )
 ```
+
+**Cost and audit are opt-in in library use.** Pass
+`model_prices={"claude-sonnet-4-5": agents_system.ModelPrice(input_per_million=3.0, output_per_million=15.0)}`
+to `AgentRuntime` for per-turn cost; without prices, cost is `None`. To record
+audit events, start an `agents_system.AuditSink` and register it with
+`agents_system.AuditSink.set_current(sink)`; without one, the process logs a
+single `audit.sink_not_registered` warning and records nothing. `create_app`
+does both for the served app (from `MODEL_PRICES`, and with a sink on the
+application database).
 
 A custom agent can be defined directly in Python instead of (or as well as) a
 folder, and `extends` a predefined role the same way a deployment override
@@ -561,7 +639,10 @@ keyed by the resolved provider model id. Configure prices with `MODEL_PRICES`:
 export MODEL_PRICES='{"claude-sonnet-4-5": {"input_per_million": 3.0, "output_per_million": 15.0}}'
 ```
 
-A model id with no entry reports cost as `None` rather than guessing.
+A model id with no entry reports cost as `None` rather than guessing. In
+library use (no `create_app`), pass the same table to
+`AgentRuntime(model_prices=...)` instead — the runtime never reads
+`MODEL_PRICES` itself.
 
 Full reference: [`docs/platform/policy.md`](docs/platform/policy.md).
 
@@ -764,6 +845,10 @@ uv run mypy src/
 
 # Linting
 uv run ruff check src/
+
+# The built wheel, installed outside the repo, run as a library with an
+# empty environment (see docs/operations/release-process.md)
+scripts/smoke-installed-wheel.sh
 ```
 
 Two opt-in suites run against real infrastructure and are never part of CI:
@@ -823,7 +908,7 @@ Full reference: [`docs/architecture/adr-004-library-first-agents.md`](docs/archi
 |------|------|----------|
 | Agent Platform Architecture | [`docs/architecture/`](docs/architecture/) | EN |
 | Platform Specification | [`docs/platform/`](docs/platform/) | EN |
-| Library Usage (integrating `agents_system` into your app) | [`docs/platform/library-usage.md`](docs/platform/library-usage.md) | EN |
+| Library Usage (integrating `agents_system` into your app) | [`docs/platform/library-usage.md`](docs/platform/library-usage.md), [`docs/platform_es/library-usage.md`](docs/platform_es/library-usage.md) | EN + ES |
 | Especificación de Plataforma | [`docs/platform_es/`](docs/platform_es/) | ES |
 | Production Operations (deployment, systemd, sandboxing) | [`docs/operations/`](docs/operations/) | EN + ES |
 | Delivery Workflow | [`docs/delivery/`](docs/delivery/) | EN + ES |

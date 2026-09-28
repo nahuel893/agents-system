@@ -37,7 +37,13 @@ disponibles localmente.
 
 2. **Revisá y mergeá la PR de release** (squash merge). Como quedó abierta
    bajo tu propia cuenta, los checks requeridos corren como en cualquier
-   otra PR.
+   otra PR. Antes de mergear, corré el smoke test del wheel instalado sobre
+   la rama del release (ver [Smoke test del wheel como
+   biblioteca](#smoke-test-del-wheel-como-biblioteca)):
+
+   ```sh
+   scripts/smoke-installed-wheel.sh
+   ```
 
 3. **Creá el tag y el GitHub Release:**
 
@@ -48,6 +54,36 @@ disponibles localmente.
    Esto corre `npx --yes release-please github-release` con los mismos
    argumentos, creando el tag `vX.Y.Z` y el GitHub Release a partir de la
    sección mergeada de `CHANGELOG.md`.
+
+## Smoke test del wheel como biblioteca
+
+La suite offline importa `agents_system` desde el árbol de código fuente, con
+el manejo de `.env` del repositorio y los fixtures de test alrededor. Nada de
+eso es lo que recibe quien lo importa. `scripts/smoke-installed-wheel.sh`
+verifica lo que sí recibe (issue #166):
+
+1. Construye el wheel (`uv build --wheel`) en un directorio descartable fuera
+   del repositorio.
+2. Lo instala ahí en un virtualenv nuevo, con las dependencias de terceros
+   fijadas a los pins de `uv.lock` (el build de torch solo-CPU viene de su
+   propio índice explícito, como en `pyproject.toml`).
+3. Corre el ejemplo de biblioteca del README — el bloque marcado con
+   `<!-- runnable-example: library -->` — con un entorno **vacío** (`env -i`:
+   sin `.env`, sin variables del servidor, ni siquiera `PATH` o `HOME`),
+   pasándole un modelo de chat guionado al `main(model)` del ejemplo.
+4. Falla salvo que el turno se complete (una llamada a `catalog_search` y
+   después la respuesta), el paquete se haya importado desde el virtualenv
+   descartable, no se haya impreso ningún traceback, y la falta de
+   `AuditSink` se haya reportado exactamente una vez
+   (`audit.sink_not_registered`).
+5. Borra el directorio descartable al salir, con éxito o con error.
+
+Solo necesita `uv` y no hace ninguna llamada a un proveedor. Corrélo antes de
+mergear una PR de release, y después de cualquier cambio en la API pública, en
+el empaquetado (los targets de wheel de `pyproject.toml`) o en el ejemplo del
+README. `tests/test_readme_library_example.py` corre el mismo ejemplo offline
+en cada corrida de `pytest`; este script es la verificación de que el paquete
+*construido e instalado* se comporta igual.
 
 ## Qué determina un bump de versión
 

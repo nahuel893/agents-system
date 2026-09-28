@@ -36,7 +36,13 @@ available locally.
 
 2. **Review and merge the release PR** (squash merge). Because it was opened
    under the maintainer's own account, the required checks run like any
-   other PR.
+   other PR. Before merging, run the installed-wheel smoke test on the
+   release branch (see [Smoke-testing the wheel as a
+   library](#smoke-testing-the-wheel-as-a-library)):
+
+   ```sh
+   scripts/smoke-installed-wheel.sh
+   ```
 
 3. **Create the tag and GitHub Release:**
 
@@ -47,6 +53,35 @@ available locally.
    This runs `npx --yes release-please github-release` with the same
    arguments, creating the `vX.Y.Z` tag and the GitHub Release from the
    merged `CHANGELOG.md` section.
+
+## Smoke-testing the wheel as a library
+
+The offline suite imports `agents_system` from the source tree, with the
+repository's `.env` handling and test fixtures around it. None of that is
+what an importer gets. `scripts/smoke-installed-wheel.sh` checks what they
+do get (issue #166):
+
+1. Builds the wheel (`uv build --wheel`) into a throwaway directory outside
+   the repository.
+2. Installs it into a fresh virtualenv there, with third-party dependencies
+   held to `uv.lock`'s pins (the CPU-only torch build comes from its own
+   explicit index, as in `pyproject.toml`).
+3. Runs the README's library example — the block marked
+   `<!-- runnable-example: library -->` — with an **empty** environment
+   (`env -i`: no `.env`, no server variables, not even `PATH` or `HOME`),
+   passing a scripted chat model to the example's `main(model)`.
+4. Fails unless the turn completes (one `catalog_search` call, then the
+   answer), the package was imported from the throwaway virtualenv, no
+   traceback was printed, and the missing `AuditSink` was reported exactly
+   once (`audit.sink_not_registered`).
+5. Removes the throwaway directory on exit, success or failure.
+
+It needs only `uv`, and makes no provider call. Run it before merging a
+release PR, and after any change to the public API, the packaging
+(`pyproject.toml`'s wheel targets), or the README example.
+`tests/test_readme_library_example.py` runs the same example offline on
+every `pytest` run; this script is the check that the *built and installed*
+package behaves the same.
 
 ## What drives a version bump
 
