@@ -113,7 +113,9 @@ class EscalationNotDelivered(_AuditEventBase):
 
     The default (``harness/defaults.py``, issue #168) exists so an in-process
     agent builds without an escalation channel. It reaches no human, so every
-    escalation it receives is recorded here as not delivered.
+    escalation it receives is recorded here as not delivered. ``reason`` is
+    the capped, redacted value; the details are recorded only as their
+    length (``payload["details_chars"]``), never their text.
     """
 
     event_type: Literal["escalation_not_delivered"] = "escalation_not_delivered"

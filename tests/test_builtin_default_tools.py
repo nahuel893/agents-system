@@ -27,6 +27,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 import agents_system
 from agents_system.audit.events import AuditEvent, EscalationNotDelivered
+from agents_system.audit.recorder import record_escalation_not_delivered
 from agents_system.audit.sink import AuditSink
 from agents_system.harness.defaults import builtin_default_tools, is_builtin_default
 from agents_system.harness.injector import InjectionError
@@ -205,7 +206,7 @@ async def test_a_granted_default_escalation_reaches_no_human_and_says_so(
     assert warnings[0]["role"] == "word-counter"
     # `details` is free text about the customer, so it stays out of the log
     # line, as it does for the real tool (`escalation.failed` logs only the
-    # reason); the audit event carries it through the audit redactor.
+    # reason), and out of the audit event (see the tests below).
     assert "wants a person" not in str(warnings[0]), warnings[0]
     assert warnings[0]["details_chars"] == len("wants a person")
 
@@ -220,6 +221,99 @@ async def test_a_granted_default_escalation_reaches_no_human_and_says_so(
     assert event.tool_name == "escalation_notifier"
     assert event.role == "word-counter"
     assert event.payload["reason"] == "user_request"
+
+
+# Customer data the Redactor has no pattern for: no phone, no email. Every
+# value here is fictional (4111... is the standard test card number).
+PRIVATE_DETAILS = (
+    "Jane Roe, national ID 30.123.456, lives at 742 Evergreen Terrace, "
+    "card 4111 1111 1111 1111"
+)
+
+
+async def _escalate_through_the_default(
+    sink: CapturingSink, inputs: dict[str, Any]
+) -> tuple[EscalationNotDelivered, dict[str, Any]]:
+    """Call the granted default once; return its audit event and log line."""
+    equipped = agents_system.build_runtime(
+        AGENT, _registry(), granted_permissions=["send:escalation"]
+    )
+    [escalation] = [t for t in equipped.tools if t.name == "escalation_notifier"]
+
+    with structlog.testing.capture_logs() as logs:
+        await escalation.connector(inputs, session=None)
+
+    for _ in range(50):
+        delivered = [e for e in sink.captured if isinstance(e, EscalationNotDelivered)]
+        if delivered:
+            break
+        await asyncio.sleep(0.02)
+    assert len(delivered) == 1, sink.captured
+    warnings = [e for e in logs if e["event"] == "escalation.not_delivered"]
+    assert len(warnings) == 1, logs
+    return delivered[0], warnings[0]
+
+
+async def test_the_default_policy_never_persists_the_escalation_details(
+    sink: CapturingSink,
+) -> None:
+    event, log_line = await _escalate_through_the_default(
+        sink, {"reason": "user_request", "details": PRIVATE_DETAILS}
+    )
+
+    stored = event.model_dump_json()
+    for fragment in ("Jane Roe", "30.123.456", "Evergreen", "4111"):
+        assert fragment not in stored, stored
+        assert fragment not in str(log_line), log_line
+    # Only the length survives, as in the log line.
+    assert event.payload == {
+        "tool_name": "escalation_notifier",
+        "reason": "user_request",
+        "details_chars": len(PRIVATE_DETAILS),
+    }
+
+
+async def test_the_escalation_reason_is_capped_in_the_event_and_the_log(
+    sink: CapturingSink,
+) -> None:
+    event, log_line = await _escalate_through_the_default(
+        sink, {"reason": "x" * 200_000, "details": "wants a person"}
+    )
+
+    assert event.reason == "x" * 200
+    assert event.payload["reason"] == event.reason
+    assert log_line["reason"] == event.reason
+
+
+async def test_the_escalation_reason_goes_through_the_redactor_everywhere(
+    sink: CapturingSink,
+) -> None:
+    event, log_line = await _escalate_through_the_default(
+        sink, {"reason": "reach me at jane.roe@example.com", "details": "d"}
+    )
+
+    # The top-level `reason` field used to bypass the redactor that the
+    # payload went through.
+    assert event.payload["reason"] == "[REDACTED:email]"
+    assert event.reason == "[REDACTED:email]"
+    assert "reason" in event.pii_keys
+    assert log_line["reason"] == "[REDACTED:email]"
+
+
+async def test_the_recorder_caps_the_reason_for_any_caller() -> None:
+    event = await record_escalation_not_delivered(
+        agents_system.resolve(AGENT),
+        "escalation_notifier",
+        reason="x" * 1_000,
+        details_chars=12,
+    )
+
+    assert event.reason == "x" * 200
+    assert event.payload == {
+        "tool_name": "escalation_notifier",
+        "reason": "x" * 200,
+        "details_chars": 12,
+    }
 
 
 def test_the_audit_event_round_trips_through_the_union() -> None:

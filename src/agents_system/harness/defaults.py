@@ -12,7 +12,9 @@ lacks it. The default is honest about what it is:
   uses when no escalation channel is configured, so it cannot promise the
   user a callback.
 - Every call logs a WARNING (``escalation.not_delivered``) and records an
-  ``escalation_not_delivered`` audit event.
+  ``escalation_not_delivered`` audit event. Neither carries the text of
+  ``details`` (free text about the customer), only its length; ``reason`` is
+  capped and redacted in both.
 - A tool the caller registers under the same name always wins.
 - The served app never uses it: ``create_app``'s lifespan builds with
   ``builtin_defaults=False`` (a missing tool still fails boot) and refuses to
@@ -29,6 +31,8 @@ from typing import Any
 
 import structlog
 
+from agents_system.audit.recorder import bound_escalation_reason
+from agents_system.audit.redactor import Redactor
 from agents_system.connectors.platform_connectors import (
     ConnectorOutput,
     build_escalation_notifier_tool_spec,
@@ -72,17 +76,20 @@ def _default_escalation_notifier(definition: AgentDefinition) -> ToolSpec:
     async def escalation_notifier(
         inputs: dict[str, Any], *, session: Any = None
     ) -> ConnectorOutput:
-        reason = str(inputs.get("reason") or "").strip()
-        details = str(inputs.get("details") or "").strip()
-        # `details` is free text about the user, so the log line carries
-        # only its length, as the real tool logs only `reason`; the audit
-        # event below records it through the audit policy's redactor.
+        # Both inputs are model-written text about the user. `details` has
+        # no shape the Redactor can recognise (names, IDs, addresses), so
+        # neither the log line nor the audit event carries its text, only
+        # its length. `reason` is capped, then logged through the same
+        # redactor the audit event's payload goes through.
+        reason = bound_escalation_reason(str(inputs.get("reason") or "").strip())
+        details_chars = len(str(inputs.get("details") or "").strip())
+        logged, _ = Redactor().redact({"reason": reason}, dict(definition.audit_policy))
         logger.warning(
             "escalation.not_delivered",
             role=definition.role_name,
             deployment=definition.deployment,
-            reason=reason,
-            details_chars=len(details),
+            reason=logged["reason"],
+            details_chars=details_chars,
             message=(
                 "The built-in default escalation_notifier handled this "
                 "escalation: NO human was notified. Register your own "
@@ -94,7 +101,7 @@ def _default_escalation_notifier(definition: AgentDefinition) -> ToolSpec:
             definition=definition,
             tool_name=ESCALATION_TOOL,
             reason=reason,
-            details=details,
+            details_chars=details_chars,
         )
         result: ConnectorOutput = await unbound.connector(inputs, session=session)
         return result

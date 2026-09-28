@@ -372,10 +372,12 @@ That default:
 - **reaches no human.** It answers the model with the platform's "no
   escalation channel is configured" text, so the model tells the user nobody
   was reached instead of promising a callback;
-- logs a WARNING, `escalation.not_delivered` (role, reason, and the length
-  of the details, never their text), and records an
-  `escalation_not_delivered` audit event, whose payload carries the details
-  through your audit policy's redaction, on every call;
+- logs a WARNING, `escalation.not_delivered`, and records an
+  `escalation_not_delivered` audit event, on every call. Both carry the role,
+  the reason (cut to 200 characters and passed through your audit policy's
+  redactor) and the length of the details. Neither stores the details text:
+  it is free text about the customer, such as names, IDs or addresses, which
+  the redactor has no pattern for;
 - is equipped only when you grant `send:escalation`, and then logs a WARNING,
   `injector.builtin_default_granted`, at build time. The Quickstart grants
   nothing, so there it is denied and never reaches the model;

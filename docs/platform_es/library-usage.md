@@ -382,10 +382,12 @@ construya igual. Ese default:
   plataforma para "no hay canal de escalamiento configurado", así el modelo le
   dice al usuario que no se contactó a nadie en lugar de prometerle que lo van
   a llamar;
-- en cada llamada registra un WARNING, `escalation.not_delivered` (rol,
-  motivo y el largo de los detalles, nunca su texto), y un evento de
-  auditoría `escalation_not_delivered`, cuyo payload lleva los detalles a
-  través de la redacción de tu política de auditoría;
+- en cada llamada registra un WARNING, `escalation.not_delivered`, y un
+  evento de auditoría `escalation_not_delivered`. Ambos llevan el rol, el
+  motivo (cortado a 200 caracteres y pasado por el redactor de tu política de
+  auditoría) y el largo de los detalles. Ninguno guarda el texto de los
+  detalles: es texto libre sobre el cliente, como nombres, documentos o
+  direcciones, para el que el redactor no tiene patrón;
 - solo se equipa si concedés `send:escalation`, y en ese caso registra un
   WARNING, `injector.builtin_default_granted`, al construir. El inicio rápido
   no concede nada, así que ahí se deniega y nunca llega al modelo;
