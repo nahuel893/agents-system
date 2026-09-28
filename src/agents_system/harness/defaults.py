@@ -74,12 +74,15 @@ def _default_escalation_notifier(definition: AgentDefinition) -> ToolSpec:
     ) -> ConnectorOutput:
         reason = str(inputs.get("reason") or "").strip()
         details = str(inputs.get("details") or "").strip()
+        # `details` is free text about the user, so the log line carries
+        # only its length, as the real tool logs only `reason`; the audit
+        # event below records it through the audit policy's redactor.
         logger.warning(
             "escalation.not_delivered",
             role=definition.role_name,
             deployment=definition.deployment,
             reason=reason,
-            details=details,
+            details_chars=len(details),
             message=(
                 "The built-in default escalation_notifier handled this "
                 "escalation: NO human was notified. Register your own "

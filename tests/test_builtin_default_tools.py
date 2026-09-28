@@ -203,6 +203,11 @@ async def test_a_granted_default_escalation_reaches_no_human_and_says_so(
     assert len(warnings) == 1, call_logs
     assert warnings[0]["reason"] == "user_request"
     assert warnings[0]["role"] == "word-counter"
+    # `details` is free text about the customer, so it stays out of the log
+    # line, as it does for the real tool (`escalation.failed` logs only the
+    # reason); the audit event carries it through the audit redactor.
+    assert "wants a person" not in str(warnings[0]), warnings[0]
+    assert warnings[0]["details_chars"] == len("wants a person")
 
     for _ in range(50):
         delivered = [e for e in sink.captured if isinstance(e, EscalationNotDelivered)]
