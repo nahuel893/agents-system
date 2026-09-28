@@ -16,9 +16,16 @@ executed, which calls were blocked and why, which audit events landed, and
 whether a limit or timeout node fired -- never the model's own wording.
 
 Scenario 1 (grant ceiling, Layer 1) and scenario 7 (escalation) are already
-covered by pre-existing scenarios and are not duplicated here:
-scenario 1 by every `evals/scenarios/*_boundary.yaml` file (#171/#178,
-comments corrected for #76), scenario 7 by
+covered by pre-existing scenarios and are not duplicated here. Scenario 1 --
+#162 retargeted every `evals/scenarios/*_boundary.yaml` file into a live
+Layer-2 revalidation scenario (the target tool IS equipped and the model
+attempts it), since a tool excluded at Layer 1 is never offered to the model
+to attempt, so it can never be a meaningful LIVE "exercised" (#81)
+assertion -- the deterministic Layer-1 grant-ceiling fact itself now lives in
+the offline
+`tests/test_platform_tools_integration.py::test_boundary_scenario_permission_grant_excludes_target_tool`
+(one parametrized case per role, pinned independently of the YAML files; see
+that test's own header comment). Scenario 7 by
 `data_agent_escalation.yaml`/`sales_agent_escalation.yaml`/
 `developer_agent_escalation.yaml`/`summary_agent_escalation.yaml`
 (`category: guardrail`, `escalation_expected: true`, already gated by #81's

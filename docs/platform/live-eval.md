@@ -47,7 +47,7 @@ ChatOllama's own host resolution) — an unconfigured run is unchanged.
 provider keys. Every other test is the opposite case (#158) — an autouse
 fixture in `tests/conftest.py` makes the offline suite build every
 `Settings()` as if `.env` did not exist, and clears ambient
-`WHATSAPP_*`/`ADAPTER_*`/`AGENT_REGISTRATIONS`/`DEPLOY_GRANTS`/
+`WHATSAPP_*`/`ADAPTER_*`/`META_*`/`AGENT_REGISTRATIONS`/`DEPLOY_GRANTS`/
 `REGISTRY_FACTORY`/provider-credential env vars before each test. Before
 this fixture existed, a checkout whose `.env` set `WHATSAPP_TOKEN`/
 `WHATSAPP_PHONE_NUMBER_ID` with no matching `WHATSAPP_RUNTIME_ID` — the

@@ -66,6 +66,26 @@ def test_release_please_config_targets_this_package() -> None:
     assert package["package-name"] == "agents-system"
 
 
+def test_release_please_config_bumps_uv_lock_via_the_corrected_jsonpath() -> None:
+    """#164 fixed the `extra-files` jsonpath that keeps `uv.lock`'s own
+    `agents-system` entry in sync with `pyproject.toml` on every release PR
+    (issue #150). A regression here would silently stop bumping `uv.lock`
+    again, exactly the drift `test_pyproject_and_uv_lock_versions_match`
+    above exists to catch -- but only on the NEXT release PR, not at review
+    time. Pin the jsonpath itself so a hand-edit fails immediately.
+    """
+    config = json.loads((_REPO_ROOT / "release-please-config.json").read_text())
+    extra_files = config["packages"]["."]["extra-files"]
+    uv_lock_entries = [entry for entry in extra_files if entry["path"] == "uv.lock"]
+    assert len(uv_lock_entries) == 1, (
+        f"expected exactly one uv.lock entry in extra-files, found "
+        f"{len(uv_lock_entries)}"
+    )
+    entry = uv_lock_entries[0]
+    assert entry["type"] == "toml"
+    assert entry["jsonpath"] == "$.package[?(@.name.value == 'agents-system')].version"
+
+
 def test_pyproject_and_uv_lock_versions_match() -> None:
     pyproject_version = _pyproject_version()
     uv_lock_version = _uv_lock_version()
