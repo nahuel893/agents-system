@@ -84,8 +84,9 @@ else stays in `payload`.
 | `unknown_tool` | `harness/injector.py` | A role named a tool that is not in the registry |
 | `tool_call_attempted` | `harness/interceptor.py` | A call reached Layer 2 |
 | `tool_call_blocked` | `harness/interceptor.py` | Layer 2 refused the call |
+| `escalation_not_delivered` | `harness/defaults.py` | The built-in default `escalation_notifier` handled an escalation: no human was reached (in-process library use only, never the served app) |
 
-Twelve call sites for ten event types. `tool_call_blocked` is emitted from three
+Thirteen call sites for eleven event types. `tool_call_blocked` is emitted from three
 distinct branches of the interceptor — `not_in_surface`, `revalidation_required`,
 and `permission_revoked` — which is why the counts differ.
 

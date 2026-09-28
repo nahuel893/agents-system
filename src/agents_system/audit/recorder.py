@@ -24,6 +24,7 @@ from agents_system.audit.redactor import Redactor
 
 if TYPE_CHECKING:
     from agents_system.audit.events import (
+        EscalationNotDelivered,
         RuntimeBuilt,
         RuntimeInitialized,
         RuntimeTimeout,
@@ -410,6 +411,37 @@ async def record_runtime_timeout(
         deployment=deployment,
         actor=actor,
         total_execution_timeout_s=total_execution_timeout_s,
+        payload=redacted_payload,
+        pii_keys=pii_keys,
+    )
+
+
+async def record_escalation_not_delivered(
+    definition: Any,
+    tool_name: str,
+    reason: str,
+    details: str,
+) -> EscalationNotDelivered:
+    """Build an EscalationNotDelivered event (issue #168)."""
+    from agents_system.audit.events import EscalationNotDelivered
+
+    correlation_id = _correlation_id_from_context()
+    sequence = PLACEHOLDER_SEQUENCE
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {"tool_name": tool_name, "reason": reason, "details": details}
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
+    return EscalationNotDelivered(
+        event_id=uuid.uuid4(),
+        occurred_at=_now_utc(),
+        correlation_id=correlation_id,
+        sequence=sequence,
+        role=role,
+        deployment=deployment,
+        actor=actor,
+        tool_name=tool_name,
+        reason=reason,
         payload=redacted_payload,
         pii_keys=pii_keys,
     )

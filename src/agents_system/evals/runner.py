@@ -878,6 +878,9 @@ async def run_scenario(
                 granted_permissions,
                 client=scenario.client,
                 roots=roots,
+                # Issue #168 -- evaluate what is served: no in-process
+                # default stands in for a missing escalation_notifier.
+                builtin_defaults=False,
             )
             # #76 -- merge this scenario's execution_limits_override (if any)
             # over whatever the resolved role's own manifest declares. Never

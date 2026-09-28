@@ -3022,6 +3022,67 @@ async def test_registration_still_applies_r4_at_grant_time() -> None:
         await _boot(app, _registration_settings())
 
 
+def _one_tool_registry(*extra: Any) -> Any:
+    from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="word_count",
+            required_permissions=(),
+            connector=lambda inputs, /: {"words": 0},
+            tier=Tier.T0,
+        )
+    )
+    for spec in extra:
+        registry.register(spec)
+    return registry
+
+
+@pytest.mark.asyncio
+async def test_served_boot_gets_no_builtin_escalation_default() -> None:
+    """Issue #168 -- in-process `build_runtime` fills a missing
+    `escalation_notifier` with a default that reaches no human. The served
+    app must not: a WhatsApp or /v1 customer asking for a person would be
+    told nobody is coming while the operator believes escalation is wired.
+    A registry without the tool keeps failing boot, as before #168."""
+    from agents_system.agent.spec import Agent
+    from agents_system.harness.injector import InjectionError
+
+    app = create_test_app(
+        registry_factory=lambda *a, **k: _one_tool_registry(),
+        agents={"counter": Agent(name="counter", tools=("word_count",))},
+        grants={"counter": ["send:escalation"]},
+    )
+
+    with pytest.raises(InjectionError, match="Unknown tool: escalation_notifier"):
+        await _boot(app, _registration_settings())
+
+    assert not hasattr(app.state, "runtimes")
+
+
+@pytest.mark.asyncio
+async def test_served_boot_refuses_a_builtin_default_placed_in_the_registry() -> None:
+    """Issue #168 -- the same default, registered by hand in the caller's
+    registry, is refused at boot rather than served."""
+    from agents_system.agent.spec import Agent
+    from agents_system.harness.defaults import builtin_default_tools
+    from agents_system.harness.loader import resolve
+
+    agent = Agent(name="counter", tools=("word_count",))
+    default = builtin_default_tools(resolve(agent))["escalation_notifier"]
+    app = create_test_app(
+        registry_factory=lambda *a, **k: _one_tool_registry(default),
+        agents={"counter": agent},
+        grants={"counter": []},
+    )
+
+    with pytest.raises(DefinitionError, match="escalation_notifier"):
+        await _boot(app, _registration_settings())
+
+    assert not hasattr(app.state, "runtimes")
+
+
 # ---------------------------------------------------------------------------
 # ADR-004 PR4b — the Settings-driven boot reads AGENT_REGISTRATIONS
 #

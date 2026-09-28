@@ -54,12 +54,15 @@ import re
 import shutil
 import stat
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 import yaml
 
 from agents_system.harness.registry import Tier
+
+if TYPE_CHECKING:
+    from agents_system.agent.spec import Agent
 
 logger = structlog.get_logger()
 
@@ -3741,7 +3744,7 @@ def _merge_validated(
 
 
 def resolve(
-    locator: RoleLocator,
+    locator: RoleLocator | Agent,
     *,
     client: str | None = None,
     roots: RootConfig | None = None,
@@ -3756,7 +3759,8 @@ def resolve(
     ----------
     locator:
         A predefined-role name (``str``, e.g. ``"sales-agent"``), an
-        importer-supplied folder (``FolderLocator``), or an already-built
+        ``Agent`` (issue #168: resolved through its own ``_to_locator()``),
+        an importer-supplied folder (``FolderLocator``), or an already-built
         definition (``InlineLocator`` — design.md D1).
     client:
         Optional deployment client name.  Only valid together with a ``str``
@@ -3768,6 +3772,13 @@ def resolve(
     roots:
         Injectable path config.  Defaults to the real repo roots.
     """
+    if not isinstance(locator, str | FolderLocator | InlineLocator):
+        # Deferred: `agent.spec` imports this module.
+        from agents_system.agent.spec import Agent
+
+        if isinstance(locator, Agent):
+            locator = locator._to_locator()
+
     if client is not None and not isinstance(locator, str):
         raise DefinitionError(
             "Invariant violation — client: a deployment override (client=) "

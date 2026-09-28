@@ -86,8 +86,9 @@ permanece en `payload`.
 | `runtime_timeout` | `agent/graph.py` | El turno excedió `total_execution_timeout_s` |
 | `tool_call_attempted` | `harness/interceptor.py` | Una llamada alcanzó la Capa 2 |
 | `tool_call_blocked` | `harness/interceptor.py` | La Capa 2 rechazó la llamada |
+| `escalation_not_delivered` | `harness/defaults.py` | El `escalation_notifier` por defecto incorporado atendió un escalamiento: no se contactó a ningún humano (solo en uso como biblioteca en proceso, nunca en la app servida) |
 
-Doce sitios de llamada para diez tipos de evento. `tool_call_blocked` se emite
+Trece sitios de llamada para once tipos de evento. `tool_call_blocked` se emite
 desde tres ramas distintas del interceptor — `not_in_surface`,
 `revalidation_required` y `permission_revoked` — y por eso los conteos difieren.
 

@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from agents_system.harness.defaults import builtin_default_tools
 from agents_system.harness.injector import (
     _emit,
     resolve_command_tool_surface,
@@ -493,14 +494,15 @@ def build_runtime(
     roots: RootConfig | None = None,
     session_provider: async_sessionmaker[AsyncSession] | None = None,
     definition: AgentDefinition | None = None,
+    builtin_defaults: bool = True,
 ) -> EquippedRuntime:
     """Assemble an ``EquippedRuntime`` for a role (optionally a client deployment).
 
     Parameters
     ----------
     role_type:
-        A predefined-role name (e.g. ``"sales-agent"``), or an importer
-        locator (``FolderLocator``/``InlineLocator`` — what
+        A predefined-role name (e.g. ``"sales-agent"``), an ``Agent``, or an
+        importer locator (``FolderLocator``/``InlineLocator`` — what
         ``Agent._to_locator()`` returns). Passed unchanged to ``resolve()``,
         which already accepts every ``RoleLocator`` and is where each
         importer invariant is enforced (the safety ceiling, R4, ``extends:``
@@ -541,6 +543,14 @@ def build_runtime(
         ``Agent.from_folder`` folder could in principle disagree with each
         other. ``None`` (the default) resolves exactly as before, unchanged
         for every existing caller.
+    builtin_defaults:
+        Issue #168. True (the default, for in-process library use) fills a
+        base-role tool the registry lacks -- ``escalation_notifier`` -- with
+        the built-in default from ``harness.defaults``: it reaches no human,
+        says so to the model, and logs a WARNING plus an audit event on
+        every call. A tool the registry has always wins. ``create_app``'s
+        lifespan passes False, so a served deployment without its own
+        escalation tool keeps failing boot with ``InjectionError``.
     """
     if roots is None:
         roots = RootConfig()
@@ -626,7 +636,12 @@ def build_runtime(
         if any(covers(granted_cls, declared_cls) for granted_cls in raw_grant_classes)
     ]
 
-    surface = resolve_tool_surface(definition, registry, covered_declared_names)
+    surface = resolve_tool_surface(
+        definition,
+        registry,
+        covered_declared_names,
+        defaults=builtin_default_tools(definition) if builtin_defaults else None,
+    )
     command_surface = resolve_command_tool_surface(definition, covered_declared_names)
     skills = _load_skills(definition, client, roots)
     system_prompt = _compose_prompt(definition, skills)

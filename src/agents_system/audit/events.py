@@ -108,6 +108,19 @@ class RuntimeTimeout(_AuditEventBase):
     total_execution_timeout_s: float
 
 
+class EscalationNotDelivered(_AuditEventBase):
+    """Emitted when the built-in default ``escalation_notifier`` handles a call.
+
+    The default (``harness/defaults.py``, issue #168) exists so an in-process
+    agent builds without an escalation channel. It reaches no human, so every
+    escalation it receives is recorded here as not delivered.
+    """
+
+    event_type: Literal["escalation_not_delivered"] = "escalation_not_delivered"
+    tool_name: str
+    reason: str
+
+
 # Discriminator dispatch table — used by AuditEvent.model_validate
 _EVENT_DISPATCH: dict[str, type[_AuditEventBase]] = {
     "tool_call_attempted": ToolCallAttempted,
@@ -120,6 +133,7 @@ _EVENT_DISPATCH: dict[str, type[_AuditEventBase]] = {
     "runtime_built": RuntimeBuilt,
     "runtime_initialized": RuntimeInitialized,
     "runtime_timeout": RuntimeTimeout,
+    "escalation_not_delivered": EscalationNotDelivered,
 }
 
 
