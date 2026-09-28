@@ -83,6 +83,8 @@ from agents_system.permissions.permission_registry import permission_registry
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from agents_system.agent.spec import Agent
+
 
 logger = structlog.get_logger()
 
@@ -486,7 +488,7 @@ def _compose_prompt(
 
 
 def build_runtime(
-    role_type: RoleLocator,
+    role_type: RoleLocator | Agent,
     registry: ToolRegistry,
     granted_permissions: Iterable[str | type[Permission]],
     *,
