@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/nahuel893/agents-system/compare/v0.3.1...v0.4.0) (2026-09-28)
+
+
+### Features
+
+* **channels:** extract a channel port behind the webhook route and worker ([#163](https://github.com/nahuel893/agents-system/issues/163)) ([027a898](https://github.com/nahuel893/agents-system/commit/027a89892e6393a6a5928612c6f1249d97018e58)), refs [#22](https://github.com/nahuel893/agents-system/issues/22)
+* **harness:** run a one-tool agent in about ten lines with a built-in escalation default ([#168](https://github.com/nahuel893/agents-system/issues/168)) ([#178](https://github.com/nahuel893/agents-system/issues/178)) ([01e72da](https://github.com/nahuel893/agents-system/commit/01e72da395f03c0ff6e9643941e8d662f3b64563))
+
+
+### Bug Fixes
+
+* close the sixth-batch review follow-ups and reconcile ADR-002 status ([#165](https://github.com/nahuel893/agents-system/issues/165)) ([#180](https://github.com/nahuel893/agents-system/issues/180)) ([90aec40](https://github.com/nahuel893/agents-system/commit/90aec40085a40fef478a9eb885de5b7d6e9562a5)), refs [#177](https://github.com/nahuel893/agents-system/issues/177)
+* **evals:** build the live-eval model once per test ([#155](https://github.com/nahuel893/agents-system/issues/155)) ([eb2af93](https://github.com/nahuel893/agents-system/commit/eb2af93820aff9bf55fa5515c450bff09983173e))
+* **evals:** make the seven *_boundary scenarios exercisable ([#162](https://github.com/nahuel893/agents-system/issues/162)) ([68f360f](https://github.com/nahuel893/agents-system/commit/68f360fc23a1051110d9dc557c805a0cff978c94)), refs [#156](https://github.com/nahuel893/agents-system/issues/156)
+* **library:** run turns in-process without the server environment ([#167](https://github.com/nahuel893/agents-system/issues/167)) ([4387aec](https://github.com/nahuel893/agents-system/commit/4387aec5ff029d4c4fb49934f5d7191fc0493586)), refs [#166](https://github.com/nahuel893/agents-system/issues/166)
+* **release:** correct the uv.lock jsonpath so release-please bumps it ([#164](https://github.com/nahuel893/agents-system/issues/164)) ([0a9bf19](https://github.com/nahuel893/agents-system/commit/0a9bf193b9abb8dabb66c1ef7769e1c500ca1e0c)), refs [#150](https://github.com/nahuel893/agents-system/issues/150)
+* **runtime:** report a timed-out turn as a timeout and keep its usage ([#172](https://github.com/nahuel893/agents-system/issues/172)) ([#179](https://github.com/nahuel893/agents-system/issues/179)) ([be63151](https://github.com/nahuel893/agents-system/commit/be63151661d90f783b2ecf12e304c1a12469247a))
+* **tests:** isolate the offline suite from .env and ambient env vars ([#161](https://github.com/nahuel893/agents-system/issues/161)) ([108467c](https://github.com/nahuel893/agents-system/commit/108467cae49a27d79a7ff74189a4b22c655e28c3)), refs [#158](https://github.com/nahuel893/agents-system/issues/158)
+
 ## [0.3.1](https://github.com/nahuel893/agents-system/compare/v0.3.0...v0.3.1) (2026-09-27)
 
 
