@@ -45,6 +45,11 @@ The injection flow, end to end::
     )
 
     # 4. Turn it into a live, running agent with any LangChain chat model.
+    #    This needs no server environment: the runtime never reads the
+    #    server Settings. Pass `model_prices={...: agents_system.ModelPrice(
+    #    ...)}` for per-turn cost, and register an `agents_system.AuditSink`
+    #    (`AuditSink.set_current`) to record audit events -- without one,
+    #    the process logs `audit.sink_not_registered` once.
     agent = agents_system.AgentRuntime(equipped, model=my_chat_model)
     reply = await agent.run_turn(messages, session_id="s1")
 
@@ -93,6 +98,12 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "InjectionError": ("agents_system.harness.injector", "InjectionError"),
     "AgentRuntime": ("agents_system.agent.graph", "AgentRuntime"),
     "Agent": ("agents_system.agent.spec", "Agent"),
+    # Issue #166 -- what a library user needs to run turns without the
+    # server: a price table for `AgentRuntime(model_prices=...)`, and the
+    # sink to register (`AuditSink.set_current`) if audit events should be
+    # recorded.
+    "ModelPrice": ("agents_system.config", "ModelPrice"),
+    "AuditSink": ("agents_system.audit.sink", "AuditSink"),
 }
 
 # PLE0605/PLE0604 false positive: ruff's static check cannot see that

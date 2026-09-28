@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import Counter
-from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 from sqlalchemy import text
@@ -42,9 +41,14 @@ _RESERVE_SEQUENCE_RANGE_SQL = text(
     """
 )
 
-# App-state contextvar for the singleton. No shared mutable default: every
-# `.get(...)` call site below supplies its own fresh `{}`.
-_app_ctx: ContextVar[dict[str, Any]] = ContextVar("audit_sink_ctx")
+# The process-wide registration (issue #166). `AuditSink` is a process-wide
+# singleton, so its registration is a plain module attribute -- visible to
+# every task in the process. It used to live in a `ContextVar`, and a
+# context variable only reaches tasks created from the context that set it:
+# uvicorn runs the lifespan (which registers the sink) in its own task and
+# each request in a task that does not inherit the lifespan's context, so a
+# /v1 request never saw the sink and its audit events were dropped.
+_registered_sink: AuditSink | None = None
 
 
 class AuditSink:
@@ -60,8 +64,10 @@ class AuditSink:
     All events in a drainer batch use ONE ``AsyncSession`` transaction
     (REQ-AUDIT-33).
 
-    The singleton is resolved via ``AuditSink.current()`` which returns
-    ``_app_ctx.get("audit_sink")``.
+    The process-wide singleton is registered with ``AuditSink.set_current()``
+    (``create_app``'s lifespan does this for the served app; a library user
+    does it for their own process) and resolved with ``AuditSink.current()``
+    or, without raising, ``AuditSink.registered()``.
     """
 
     def __init__(
@@ -89,25 +95,49 @@ class AuditSink:
     # ---------------------------------------------------------------------------
 
     @classmethod
+    def registered(cls) -> AuditSink | None:
+        """The registered sink, or ``None`` when this process has none.
+
+        Never raises: running with no sink is a legitimate state (a library
+        user who has not registered one), which the emit path reports once
+        per process as ``audit.sink_not_registered`` -- not an error.
+        """
+        return _registered_sink
+
+    @classmethod
     def current(cls) -> AuditSink:
-        """Return the current AuditSink from the app context."""
-        ctx = _app_ctx.get({})
-        sink = ctx.get("audit_sink")
+        """Return the registered sink; raise ``RuntimeError`` if there is none."""
+        sink = _registered_sink
         if sink is None:
             raise RuntimeError(
-                "AuditSink.current() called but no sink is registered in app.state. "
-                "Ensure AuditSink is constructed in main.py lifespan and assigned "
-                "to app.state.audit_sink."
+                "AuditSink.current() called but no sink is registered. "
+                "Register one with AuditSink.set_current(sink) -- create_app's "
+                "lifespan does this for the served app."
             )
-        assert isinstance(sink, AuditSink)
         return sink
 
     @classmethod
     def set_current(cls, sink: AuditSink) -> None:
-        """Register ``sink`` as the current singleton in the app context."""
-        ctx = _app_ctx.get({}).copy()
-        ctx["audit_sink"] = sink
-        _app_ctx.set(ctx)
+        """Register ``sink`` for the whole process.
+
+        Every task records into it -- the caller's, a request's, a
+        background worker's -- whichever context it runs in. Start the sink
+        (``await sink.start()``) before audit events can reach it.
+        """
+        global _registered_sink
+        _registered_sink = sink
+
+    @classmethod
+    def clear_current(cls, sink: AuditSink | None = None) -> None:
+        """Unregister the process's sink.
+
+        With ``sink`` given, only if that sink is the one registered, so a
+        caller can undo its own registration without removing one that
+        somebody else registered after it.
+        """
+        global _registered_sink
+        if sink is None or _registered_sink is sink:
+            _registered_sink = None
 
     # ---------------------------------------------------------------------------
     # Lifecycle

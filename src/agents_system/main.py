@@ -516,11 +516,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # AGENT_REGISTRATIONS) instead of AgentRuntime's own derived
                 # provider-model-id default (see AgentRuntime's `runtime_id`
                 # parameter docstring in agent/graph.py).
+                #
+                # Issue #166 -- model_prices: the served app prices every turn
+                # from MODEL_PRICES, handed to the runtime here. The runtime
+                # itself never reads Settings, so library use needs no server
+                # environment.
                 runtimes[runtime_id] = AgentRuntime(
                     runtime=equipped,
                     model=runtime_model,
                     checkpointer=checkpointer,
                     runtime_id=runtime_id,
+                    model_prices=settings.model_prices,
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
 

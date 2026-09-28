@@ -15,11 +15,44 @@ from agents_system.permissions import UnknownPermissionNameError, covers, resolv
 logger = structlog.get_logger()
 
 
+#: Issue #166 -- whether this process has already reported that no
+#: `AuditSink` is registered. Once per process: whether a sink exists does
+#: not change from one event to the next, so saying it per event is noise.
+_warned_no_audit_sink = False
+
+
+def _warn_no_audit_sink_once() -> None:
+    """Say once, as a structured warning, that audit events are not recorded.
+
+    A library user running `AgentRuntime` without `create_app` has no sink
+    unless they register one. That is a legitimate choice, not a failure, so
+    it gets one honest line -- never a traceback per event.
+    """
+    global _warned_no_audit_sink
+    if _warned_no_audit_sink:
+        return
+    _warned_no_audit_sink = True
+    logger.warning(
+        "audit.sink_not_registered",
+        message=(
+            "No AuditSink is registered in this process, so audit events are "
+            "not being recorded. Register one with "
+            "agents_system.AuditSink.set_current(sink); create_app's lifespan "
+            "registers one for the served app."
+        ),
+    )
+
+
 async def _emit_async(recorder_name: str, **kwargs: Any) -> None:
     """Fire-and-forget audit event — never blocks the caller."""
     try:
         from agents_system.audit import recorder
         from agents_system.audit.sink import AuditSink
+
+        sink = AuditSink.registered()
+        if sink is None:
+            _warn_no_audit_sink_once()
+            return
 
         fn = getattr(recorder, recorder_name, None)
         if fn is None:
@@ -31,7 +64,7 @@ async def _emit_async(recorder_name: str, **kwargs: Any) -> None:
         else:
             event = fn(**kwargs)
         if event is not None:
-            await AuditSink.current().record(event)
+            await sink.record(event)
     except Exception:
         logger.debug("audit.emit_failed", recorder=recorder_name, exc_info=True)
 

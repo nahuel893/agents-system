@@ -104,6 +104,22 @@ def _isolate_settings_from_developer_env(
             monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_audit_sink_registration() -> Generator[None, None, None]:
+    """Autouse: every test starts and ends with no `AuditSink` registered.
+
+    The registration is process-wide (#166 -- it has to reach every task,
+    the way uvicorn runs requests), so a sink one test registers and never
+    unregisters -- often already stopped -- would otherwise be the sink of
+    every test after it.
+    """
+    from agents_system.audit.sink import AuditSink
+
+    AuditSink.clear_current()
+    yield
+    AuditSink.clear_current()
+
+
 @pytest.fixture
 def reset_permission_registry() -> Generator[None, None, None]:
     """Snapshot the package-global `permission_registry` before a test and

@@ -41,7 +41,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
 from agents_system.agent.state import AgentState
-from agents_system.config import Settings, get_settings
+from agents_system.config import ModelPrice
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.interceptor import CallResult, PolicyViolation, intercept
@@ -89,8 +89,10 @@ class TurnUsage:
       of this turn's model calls reported no `usage_metadata`: a partial sum
       is never reported as if it were the whole turn's total.
     - `cost_usd` is `None` whenever any token total above is `None`, no
-      `model_id` was given, or `model_id` has no entry in
-      `Settings.model_prices` -- a missing price is never guessed at.
+      `model_id` was given, or `model_id` has no entry in the runtime's
+      `model_prices` (issue #166: an explicit `AgentRuntime` argument, which
+      `create_app` fills from `MODEL_PRICES`) -- a missing price is never
+      guessed at.
     """
 
     model_calls: int | None
@@ -139,7 +141,7 @@ def model_display_name(model: BaseChatModel) -> str:
     expose it as `model`. Falls back to the class name so a result is always
     reportable even for a provider shape not seen before -- never raises.
 
-    This is `AgentRuntime`'s own default `Settings.model_prices` lookup key
+    This is `AgentRuntime`'s own default `model_prices` lookup key
     (see `AgentRuntime.__init__`) -- prices belong to the provider model
     actually billing the tokens, not to whichever runtime id a caller used
     to select this agent. Originally defined in `evals/provider.py`; moved
@@ -214,16 +216,21 @@ def _is_plausible_token_count(value: int) -> bool:
 
 
 def _compute_turn_cost(
-    usage: TurnUsage, model_id: str | None, settings: Settings
+    usage: TurnUsage, model_id: str | None, model_prices: Mapping[str, ModelPrice]
 ) -> float | None:
-    """Cost in USD for *usage*, from `Settings.model_prices` only.
+    """Cost in USD for *usage*, from *model_prices* only.
 
     Returns `None` -- never a guessed number, and never a crash -- whenever
     `model_id` is unset, the token totals themselves are unknown or outside
     the plausible range a real provider could report (see
     `_MAX_PLAUSIBLE_TURN_TOKENS`), or `model_id` has no entry in
-    `Settings.model_prices` (design AD note: a price table is opt-in per
-    model id, not a global default).
+    *model_prices* (design AD note: a price table is opt-in per model id,
+    not a global default).
+
+    Issue #166: the table is passed in, never read from the server
+    `Settings` -- constructing those fails closed without the server's
+    environment, which crashed every in-process library turn at this point,
+    after the model and tools had already run.
     """
     if model_id is None or usage.input_tokens is None or usage.output_tokens is None:
         return None
@@ -231,7 +238,7 @@ def _compute_turn_cost(
         usage.input_tokens
     ) or not _is_plausible_token_count(usage.output_tokens):
         return None
-    price = settings.model_prices.get(model_id)
+    price = model_prices.get(model_id)
     if price is None:
         return None
     return (
@@ -681,6 +688,15 @@ class AgentRuntime:
         serves); a test passes its own throw-away set built from a fresh
         ``CollectorRegistry`` instead, so recorded values are isolated and
         assertable without touching process-wide state.
+    model_prices:
+        Issue #166 -- the price table each turn's ``TurnUsage.cost_usd`` is
+        computed from, keyed by provider model id (see ``run_turn``'s
+        ``model_id``). ``None`` (default) means no prices: every turn's cost
+        is ``None``, never a guessed number. ``create_app``'s lifespan fills
+        it from ``MODEL_PRICES`` (``Settings.model_prices``); a library user
+        passes their own, or nothing. The runtime never reads the server
+        ``Settings`` itself -- they fail closed without the server's
+        environment.
     """
 
     def __init__(
@@ -690,6 +706,7 @@ class AgentRuntime:
         checkpointer: BaseCheckpointSaver[Any] | None = None,
         runtime_id: str | None = None,
         metrics: Metrics | None = None,
+        model_prices: Mapping[str, ModelPrice] | None = None,
     ) -> None:
         self._runtime = runtime
         self._equipped = runtime
@@ -701,7 +718,7 @@ class AgentRuntime:
         # #78 Phase 0 (review finding 4) -- derived from the ORIGINAL,
         # unbound `model` (bind_tools's return value, e.g. a RunnableBinding,
         # no longer exposes `model_name`/`model`). This runtime's own default
-        # Settings.model_prices lookup key: a caller's `run_turn(model_id=...)`
+        # model_prices lookup key: a caller's `run_turn(model_id=...)`
         # is at most an optional override, never required for this runtime's
         # usage to be priced.
         self._model_id = model_display_name(model)
@@ -709,6 +726,9 @@ class AgentRuntime:
         # docs above.
         self._runtime_id = runtime_id if runtime_id is not None else self._model_id
         self._metrics = metrics if metrics is not None else DEFAULT_METRICS
+        # Issue #166 -- copied, so a caller mutating its own dict later cannot
+        # reprice turns behind this runtime's back.
+        self._model_prices: dict[str, ModelPrice] = dict(model_prices or {})
         logger.info(
             "runtime.initialized",
             tools=len(self._schemas),
@@ -815,8 +835,8 @@ class AgentRuntime:
             was constructed without a ``checkpointer``.
         model_id:
             OPTIONAL OVERRIDE (issue #78 review finding 4) of the model id
-            this turn's usage is priced under, looked up in
-            ``Settings.model_prices``. ``None`` (default) uses this
+            this turn's usage is priced under, looked up in this runtime's
+            ``model_prices``. ``None`` (default) uses this
             runtime's OWN derived default instead --
             ``model_display_name(model)``, computed once from the provider
             model this ``AgentRuntime`` was constructed with (e.g.
@@ -1003,7 +1023,7 @@ class AgentRuntime:
         outcome, which never reaches here (it is recorded and re-raised
         before this method could be called).
         """
-        cost_usd = _compute_turn_cost(usage, model_id, get_settings())
+        cost_usd = _compute_turn_cost(usage, model_id, self._model_prices)
         usage = dataclasses.replace(usage, cost_usd=cost_usd)
         logger.info(
             "runtime.turn_usage",

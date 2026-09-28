@@ -299,26 +299,56 @@ class TestAuditSinkCurrent:
 
     def test_current_raises_when_not_registered(self):
         """AuditSink.current() raises RuntimeError when no sink is registered."""
-        from agents_system.audit.sink import _app_ctx
-
-        # Isolate by clearing context
-        _app_ctx.set({})
+        AuditSink.clear_current()
 
         with pytest.raises(RuntimeError, match="no sink is registered"):
             AuditSink.current()
+        assert AuditSink.registered() is None
 
     @pytest.mark.asyncio
     async def test_set_and_get_current(self):
         """AuditSink.set_current() + current() work as a singleton."""
-        from agents_system.audit.sink import _app_ctx
-
-        _app_ctx.set({})
+        AuditSink.clear_current()
 
         mock_factory = MagicMock()
         sink = AuditSink(session_factory=mock_factory)
         AuditSink.set_current(sink)
 
         assert AuditSink.current() is sink
+        assert AuditSink.registered() is sink
+
+    @pytest.mark.asyncio
+    async def test_registration_is_process_wide_not_per_context(self):
+        """Issue #166: a sink registered in one task is the sink of every
+        task -- uvicorn runs each request in a task that does not inherit
+        the lifespan's context, so a per-context registration never reached
+        a request."""
+        import asyncio
+        import contextvars
+
+        sink = AuditSink(session_factory=MagicMock())
+        AuditSink.set_current(sink)
+
+        async def seen_from_a_fresh_context() -> AuditSink | None:
+            return AuditSink.registered()
+
+        seen = await asyncio.get_running_loop().create_task(
+            seen_from_a_fresh_context(), context=contextvars.Context()
+        )
+        assert seen is sink
+
+    def test_clear_current_with_a_sink_only_removes_that_sink(self):
+        """`clear_current(sink)` undoes the caller's own registration and
+        leaves a sink somebody registered after it alone."""
+        mine = AuditSink(session_factory=MagicMock())
+        theirs = AuditSink(session_factory=MagicMock())
+
+        AuditSink.set_current(theirs)
+        AuditSink.clear_current(mine)
+        assert AuditSink.registered() is theirs
+
+        AuditSink.clear_current(theirs)
+        assert AuditSink.registered() is None
 
 
 class TestAuditSinkSlowDB:

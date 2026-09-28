@@ -1144,24 +1144,16 @@ async def test_run_turn_usage_is_unknown_on_timeout() -> None:
     assert result.usage.cost_usd is None
 
 
-async def test_run_turn_computes_cost_from_configured_price_table(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """cost_usd is computed only from Settings.model_prices, keyed by the
-    model_id run_turn was given -- never a hardcoded rate."""
-    from agents_system.agent import graph as graph_module
+async def test_run_turn_computes_cost_from_configured_price_table() -> None:
+    """cost_usd is computed only from the runtime's `model_prices` (issue
+    #166: passed in, never read from Settings), keyed by the model_id
+    run_turn was given -- never a hardcoded rate."""
     from agents_system.agent.graph import AgentRuntime
-    from agents_system.config import ModelPrice, Settings
+    from agents_system.config import ModelPrice
 
-    priced_settings = Settings(
-        _env_file=None,
-        model_prices={
-            "acme__sales-agent": ModelPrice(
-                input_per_million=1.0, output_per_million=2.0
-            )
-        },
-    )
-    monkeypatch.setattr(graph_module, "get_settings", lambda: priced_settings)
+    model_prices = {
+        "acme__sales-agent": ModelPrice(input_per_million=1.0, output_per_million=2.0)
+    }
 
     model = FakeMessagesListChatModel(
         responses=[
@@ -1176,7 +1168,7 @@ async def test_run_turn_computes_cost_from_configured_price_table(
         ]
     )
     runtime = _make_runtime()
-    agent = AgentRuntime(runtime, model)
+    agent = AgentRuntime(runtime, model, model_prices=model_prices)
 
     result = await agent.run_turn_with_usage(
         [HumanMessage(content="hi")], session_id="s1", model_id="acme__sales-agent"
@@ -1186,16 +1178,15 @@ async def test_run_turn_computes_cost_from_configured_price_table(
     assert result.usage.cost_usd == pytest.approx(2.0)
 
 
-async def test_run_turn_cost_is_none_without_a_configured_price(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A model_id with no entry in Settings.model_prices yields cost_usd=None
-    -- a missing price is never guessed at."""
-    from agents_system.agent import graph as graph_module
+async def test_run_turn_cost_is_none_without_a_configured_price() -> None:
+    """A model_id with no entry in the runtime's `model_prices` yields
+    cost_usd=None -- a missing price is never guessed at."""
     from agents_system.agent.graph import AgentRuntime
-    from agents_system.config import Settings
+    from agents_system.config import ModelPrice
 
-    monkeypatch.setattr(graph_module, "get_settings", lambda: Settings(_env_file=None))
+    model_prices = {
+        "some-other-model": ModelPrice(input_per_million=1.0, output_per_million=1.0)
+    }
 
     model = FakeMessagesListChatModel(
         responses=[
@@ -1210,7 +1201,7 @@ async def test_run_turn_cost_is_none_without_a_configured_price(
         ]
     )
     runtime = _make_runtime()
-    agent = AgentRuntime(runtime, model)
+    agent = AgentRuntime(runtime, model, model_prices=model_prices)
 
     result = await agent.run_turn_with_usage(
         [HumanMessage(content="hi")], session_id="s1", model_id="unpriced-model"
@@ -1226,17 +1217,16 @@ async def test_run_turn_cost_is_none_without_a_configured_price(
 # ---------------------------------------------------------------------------
 
 
-async def test_run_turn_prices_under_the_runtimes_own_derived_model_id_by_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_run_turn_prices_under_the_runtimes_own_derived_model_id_by_default() -> (
+    None
+):
     """Review finding 4 (PR #87) -- no `model_id` override given at all: the
     runtime must still price this turn's usage, keyed by
     `model_display_name(model)` (this fake model exposes no `model_name`/
     `model` attribute, so its derived id is its class name). This is what
     fixes the WhatsApp webhook worker, which never passes `model_id`."""
-    from agents_system.agent import graph as graph_module
     from agents_system.agent.graph import AgentRuntime, model_display_name
-    from agents_system.config import ModelPrice, Settings
+    from agents_system.config import ModelPrice
 
     model = FakeMessagesListChatModel(
         responses=[
@@ -1251,16 +1241,12 @@ async def test_run_turn_prices_under_the_runtimes_own_derived_model_id_by_defaul
         ]
     )
     derived_id = model_display_name(model)
-    priced_settings = Settings(
-        _env_file=None,
-        model_prices={
-            derived_id: ModelPrice(input_per_million=3.0, output_per_million=0.0)
-        },
-    )
-    monkeypatch.setattr(graph_module, "get_settings", lambda: priced_settings)
+    model_prices = {
+        derived_id: ModelPrice(input_per_million=3.0, output_per_million=0.0)
+    }
 
     runtime = _make_runtime()
-    agent = AgentRuntime(runtime, model)
+    agent = AgentRuntime(runtime, model, model_prices=model_prices)
 
     result = await agent.run_turn_with_usage(
         [HumanMessage(content="hi")], session_id="s1"
@@ -1269,15 +1255,12 @@ async def test_run_turn_prices_under_the_runtimes_own_derived_model_id_by_defaul
     assert result.usage.cost_usd == pytest.approx(3.0)
 
 
-async def test_run_turn_explicit_model_id_overrides_the_derived_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_run_turn_explicit_model_id_overrides_the_derived_default() -> None:
     """Review finding 4 (PR #87) -- an explicit `model_id` argument still
     wins over the runtime's own derived default (e.g. a live-eval comparing
     several runtime configurations under one shared label)."""
-    from agents_system.agent import graph as graph_module
     from agents_system.agent.graph import AgentRuntime
-    from agents_system.config import ModelPrice, Settings
+    from agents_system.config import ModelPrice
 
     model = FakeMessagesListChatModel(
         responses=[
@@ -1291,18 +1274,12 @@ async def test_run_turn_explicit_model_id_overrides_the_derived_default(
             )
         ]
     )
-    priced_settings = Settings(
-        _env_file=None,
-        model_prices={
-            "explicit-override": ModelPrice(
-                input_per_million=5.0, output_per_million=0.0
-            )
-        },
-    )
-    monkeypatch.setattr(graph_module, "get_settings", lambda: priced_settings)
+    model_prices = {
+        "explicit-override": ModelPrice(input_per_million=5.0, output_per_million=0.0)
+    }
 
     runtime = _make_runtime()
-    agent = AgentRuntime(runtime, model)
+    agent = AgentRuntime(runtime, model, model_prices=model_prices)
 
     result = await agent.run_turn_with_usage(
         [HumanMessage(content="hi")], session_id="s1", model_id="explicit-override"
@@ -1627,7 +1604,7 @@ def test_compute_turn_cost_returns_none_for_implausibly_large_token_counts() -> 
     """A huge attacker/compromised-backend-supplied input_tokens value must
     not raise OverflowError out of _compute_turn_cost."""
     from agents_system.agent.graph import TurnUsage, _compute_turn_cost
-    from agents_system.config import ModelPrice, Settings
+    from agents_system.config import ModelPrice
 
     malicious_usage = TurnUsage(
         model_calls=1,
@@ -1635,16 +1612,13 @@ def test_compute_turn_cost_returns_none_for_implausibly_large_token_counts() -> 
         output_tokens=10,
         total_tokens=10**320 + 10,
     )
-    settings = Settings(
-        _env_file=None,
-        model_prices={
-            "evil-backend-model": ModelPrice(
-                input_per_million=0.14, output_per_million=0.28
-            )
-        },
-    )
+    model_prices = {
+        "evil-backend-model": ModelPrice(
+            input_per_million=0.14, output_per_million=0.28
+        )
+    }
 
-    cost = _compute_turn_cost(malicious_usage, "evil-backend-model", settings)
+    cost = _compute_turn_cost(malicious_usage, "evil-backend-model", model_prices)
 
     assert cost is None
 
@@ -1653,17 +1627,14 @@ def test_compute_turn_cost_returns_none_for_negative_token_counts() -> None:
     """A negative token count is equally untrustworthy -- it must never be
     fed into the cost formula either."""
     from agents_system.agent.graph import TurnUsage, _compute_turn_cost
-    from agents_system.config import ModelPrice, Settings
+    from agents_system.config import ModelPrice
 
     usage = TurnUsage(model_calls=1, input_tokens=-5, output_tokens=10, total_tokens=5)
-    settings = Settings(
-        _env_file=None,
-        model_prices={
-            "some-model": ModelPrice(input_per_million=1.0, output_per_million=1.0)
-        },
-    )
+    model_prices = {
+        "some-model": ModelPrice(input_per_million=1.0, output_per_million=1.0)
+    }
 
-    assert _compute_turn_cost(usage, "some-model", settings) is None
+    assert _compute_turn_cost(usage, "some-model", model_prices) is None
 
 
 def test_aggregate_turn_usage_treats_negative_per_call_tokens_as_unknown() -> None:
@@ -1741,7 +1712,7 @@ def test_compute_turn_cost_still_prices_ordinary_plausible_usage() -> None:
     """Sanity check: the new bounds check does not disturb an ordinary
     turn's cost computation."""
     from agents_system.agent.graph import TurnUsage, _compute_turn_cost
-    from agents_system.config import ModelPrice, Settings
+    from agents_system.config import ModelPrice
 
     usage = TurnUsage(
         model_calls=1,
@@ -1749,14 +1720,11 @@ def test_compute_turn_cost_still_prices_ordinary_plausible_usage() -> None:
         output_tokens=500_000,
         total_tokens=1_500_000,
     )
-    settings = Settings(
-        _env_file=None,
-        model_prices={
-            "some-model": ModelPrice(input_per_million=1.0, output_per_million=2.0)
-        },
-    )
+    model_prices = {
+        "some-model": ModelPrice(input_per_million=1.0, output_per_million=2.0)
+    }
 
-    assert _compute_turn_cost(usage, "some-model", settings) == pytest.approx(2.0)
+    assert _compute_turn_cost(usage, "some-model", model_prices) == pytest.approx(2.0)
 
 
 # ---------------------------------------------------------------------------
