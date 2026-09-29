@@ -189,6 +189,24 @@ class TestAllEventFamilies:
         assert isinstance(event, RuntimeTimeout)
         assert event.total_execution_timeout_s == 30.0
 
+    def test_context_trimmed(self) -> None:
+        from agents_system.audit.events import AuditEvent, ContextTrimmed
+
+        payload = self._full_payload(
+            "context_trimmed",
+            dropped_messages=12,
+            kept_messages=8,
+            tokens_before=9000,
+            tokens_after=3000,
+            max_context_tokens=4000,
+            over_budget=False,
+        )
+        event = AuditEvent.model_validate(payload)
+        assert isinstance(event, ContextTrimmed)
+        assert event.dropped_messages == 12
+        assert event.max_context_tokens == 4000
+        assert event.over_budget is False
+
 
 class TestAuditEventPayload:
     """T-16 RED: payload field must exist on all event sub-models (REQ-AUDIT-31)."""

@@ -2,6 +2,7 @@
 
 from agents_system.audit.events import (
     AuditEvent,
+    ContextTrimmed,
     EscalationNotDelivered,
     RuntimeBuilt,
     RuntimeInitialized,
@@ -15,6 +16,7 @@ from agents_system.audit.events import (
     UnknownTool,
 )
 from agents_system.audit.recorder import (
+    record_context_trimmed,
     record_escalation_not_delivered,
     record_runtime_built,
     record_runtime_initialized,
@@ -31,6 +33,7 @@ from agents_system.audit.redactor import Redactor
 
 __all__ = [
     "AuditEvent",
+    "ContextTrimmed",
     "EscalationNotDelivered",
     "Redactor",
     "RuntimeBuilt",
@@ -43,6 +46,7 @@ __all__ = [
     "ToolDenied",
     "ToolGranted",
     "UnknownTool",
+    "record_context_trimmed",
     "record_escalation_not_delivered",
     "record_runtime_built",
     "record_runtime_initialized",

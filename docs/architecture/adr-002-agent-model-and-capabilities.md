@@ -29,7 +29,7 @@
 | 21 | Stale: `permission-model.md` open decision (resolved by 10) + pgvector | F. Stale docs | ✅ done | `ec1e979`, `0348771` |
 | 22 | Durable chat history | G. Persistence & memory | ⚠️ partial (same as 4) | #24 |
 | 23 | `ConversationRecorder` reference implementation | G. Persistence & memory | ⚠️ partial (port + test fake only, no production impl) | #27 |
-| 24 | Context-size control (trimming/compaction) | G. Persistence & memory | ⏳ pending | #28 |
+| 24 | Context-size control (trimming/compaction) | G. Persistence & memory | ✅ done | #28 |
 | 25 | Agent-own memory (`remember`/`recall`) | G. Persistence & memory | ⏳ pending | #29 (blocked by #15 and #25) |
 | 26 | Reasoning persistence — explicit decision | G. Persistence & memory | ⏳ pending | #30 |
 | 27 | Integration tests that never run | H. CI | ✅ done | `729e2d9` |
@@ -1689,7 +1689,7 @@ summarizes older context.
 not *message count* or *token count*; a very active conversation can exceed
 a context window well within 24 hours.
 
-**Status.** ⏳ pending. **Planned slice:** new PR, tracked by #28.
+**Status.** ✅ done (#28). The mechanism is **trimming**, not compaction: it is deterministic, costs no provider call, cannot invent facts, and no data yet shows that trimming drops something that matters. `agent/context.py:trim_history` trims only the model-input projection built in `_call_model` and never the persisted history. It always keeps the system prompt, the tool schemas and the latest user message, and never splits an assistant tool call from its tool replies (#181). The budget is `execution_limits.max_context_tokens`, so the existing tighten-only rule applies. The default is 64,000 tokens: an assumed 128,000-token window (the smallest hosted window in use) times a 0.5 share that leaves room for the reply and for estimator error. No production traffic exists, so the threshold is derived from the window and only sanity-checked against a baseline measured from `evals/results/` and the operational logs (largest single request about 2.6k tokens). A trim is logged, audited (`context_trimmed`) and counted (`agent_limit_trips_total{limit="max_context_tokens"}`). Compaction, bounding the checkpoint store and a per-model window lookup remain follow-ups. Full record: `docs/platform/context-size.md`.
 
 ---
 

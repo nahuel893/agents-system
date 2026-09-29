@@ -37,10 +37,12 @@ import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
 from langchain_core.messages.ai import UsageMetadata
+from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
+from agents_system.agent.context import ContextTrim, trim_history
 from agents_system.agent.models import build_agent_model, declared_model
 from agents_system.agent.state import AgentState
 from agents_system.config import ModelPrice
@@ -68,6 +70,7 @@ _ENFORCED_LIMIT_KEYS = (
     "max_tool_calls",
     "total_execution_timeout_s",
     "tool_call_timeout_s",
+    "max_context_tokens",
 )
 
 
@@ -335,7 +338,13 @@ def _effective_limits(execution_limits: Mapping[str, Any] | None) -> dict[str, A
 
 
 async def _call_model(
-    state: AgentState, bound_model: Any, system_prompt: str
+    state: AgentState,
+    bound_model: Any,
+    system_prompt: str,
+    max_context_tokens: int | None = None,
+    tool_schemas: Sequence[dict[str, Any]] = (),
+    definition: Any = None,
+    metrics: Metrics | None = None,
 ) -> dict[str, Any]:
     """Invoke the bound model with the current message history.
 
@@ -356,7 +365,21 @@ async def _call_model(
         state["messages"],
         reason="the tool did not return a result in an earlier turn",
     )
-    model_input = [SystemMessage(content=system_prompt), *history]
+    system_message = SystemMessage(content=system_prompt)
+    if max_context_tokens is not None:
+        # Issue #28 -- bound the request. Like the repair above, this shapes
+        # what the model SEES; `state["messages"]` is never rewritten, so a
+        # checkpointed thread keeps its full history.
+        fixed_tokens = count_tokens_approximately(
+            [system_message], tools=list(tool_schemas) or None
+        )
+        trim = trim_history(
+            history, max_tokens=max_context_tokens, fixed_tokens=fixed_tokens
+        )
+        if trim.trimmed or trim.over_budget:
+            _report_context_trim(trim, max_context_tokens, definition, metrics)
+        history = trim.messages
+    model_input = [system_message, *history]
     retried_after_tool_format_error = False
     try:
         response: AIMessage = await bound_model.ainvoke(model_input)
@@ -393,6 +416,44 @@ async def _call_model(
     )
     turn_usage = [*state.get("turn_usage", []), *new_entries]
     return {"messages": [response], "turn_usage": turn_usage}
+
+
+def _report_context_trim(
+    trim: ContextTrim,
+    max_context_tokens: int,
+    definition: Any,
+    metrics: Metrics | None,
+) -> None:
+    """Log, audit and count one trimmed or over-budget model input (issue #28).
+
+    Counts only: no message text reaches the log, the audit event or the
+    metric. `over_budget` marks the case where even the minimum (system
+    prompt, tools, latest user message, newest tool round) exceeds the
+    budget; it is reported even when nothing was dropped.
+    """
+    logger.warning(
+        "runtime.context_trimmed",
+        dropped_messages=trim.dropped_messages,
+        kept_messages=len(trim.messages),
+        tokens_before=trim.tokens_before,
+        tokens_after=trim.tokens_after,
+        max_context_tokens=max_context_tokens,
+        over_budget=trim.over_budget,
+    )
+    record_limit_trip(
+        metrics if metrics is not None else DEFAULT_METRICS,
+        limit="max_context_tokens",
+    )
+    _emit(
+        "record_context_trimmed",
+        definition=definition,
+        dropped_messages=trim.dropped_messages,
+        kept_messages=len(trim.messages),
+        tokens_before=trim.tokens_before,
+        tokens_after=trim.tokens_after,
+        max_context_tokens=max_context_tokens,
+        over_budget=trim.over_budget,
+    )
 
 
 #: The fixed `tool` label value recorded for a "denied"/not_in_surface tool
@@ -604,6 +665,7 @@ def _build_graph(
     max_tool_calls: int,
     tool_call_timeout_s: float,
     metrics: Metrics,
+    max_context_tokens: int | None = None,
 ) -> StateGraph[AgentState]:
     """Build the StateGraph with call_model, execute_tools and limit_reached nodes."""
     graph = StateGraph(AgentState)
@@ -611,7 +673,13 @@ def _build_graph(
     graph.add_node(
         "call_model",
         partial(
-            _call_model, bound_model=bound_model, system_prompt=equipped.system_prompt
+            _call_model,
+            bound_model=bound_model,
+            system_prompt=equipped.system_prompt,
+            max_context_tokens=max_context_tokens,
+            tool_schemas=[spec.to_langchain_tool_schema() for spec in equipped.tools],
+            definition=equipped.definition,
+            metrics=metrics,
         ),
     )
     graph.add_node(
@@ -1086,6 +1154,7 @@ class AgentRuntime:
             max_tool_calls=max_tool_calls,
             tool_call_timeout_s=effective_limits["tool_call_timeout_s"],
             metrics=self._metrics,
+            max_context_tokens=int(effective_limits["max_context_tokens"]),
         )
         # D-014 S4 (design AD-1): the system prompt is no longer prepended
         # here — _call_model prepends it to the MODEL INPUT on every call and

@@ -115,6 +115,24 @@ class RuntimeTimeout(_AuditEventBase):
     total_execution_timeout_s: float
 
 
+class ContextTrimmed(_AuditEventBase):
+    """Emitted when a model call's input was trimmed to the context budget.
+
+    Issue #28. Only counts are recorded, never message text. The persisted
+    history is not changed: this records what the MODEL was not shown.
+    """
+
+    event_type: Literal["context_trimmed"] = "context_trimmed"
+    dropped_messages: int
+    kept_messages: int
+    tokens_before: int
+    tokens_after: int
+    max_context_tokens: int
+    #: The kept minimum (system prompt, tools and the latest user message)
+    #: still exceeds the budget, so the input was sent above it.
+    over_budget: bool = False
+
+
 class EscalationNotDelivered(_AuditEventBase):
     """Emitted when the built-in default ``escalation_notifier`` handles a call.
 
@@ -142,6 +160,7 @@ _EVENT_DISPATCH: dict[str, type[_AuditEventBase]] = {
     "runtime_built": RuntimeBuilt,
     "runtime_initialized": RuntimeInitialized,
     "runtime_timeout": RuntimeTimeout,
+    "context_trimmed": ContextTrimmed,
     "escalation_not_delivered": EscalationNotDelivered,
 }
 

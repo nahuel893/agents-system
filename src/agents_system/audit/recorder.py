@@ -24,6 +24,7 @@ from agents_system.audit.redactor import Redactor
 
 if TYPE_CHECKING:
     from agents_system.audit.events import (
+        ContextTrimmed,
         EscalationNotDelivered,
         RuntimeBuilt,
         RuntimeInitialized,
@@ -424,6 +425,51 @@ async def record_runtime_timeout(
         deployment=deployment,
         actor=actor,
         total_execution_timeout_s=total_execution_timeout_s,
+        payload=redacted_payload,
+        pii_keys=pii_keys,
+    )
+
+
+async def record_context_trimmed(
+    definition: Any,
+    dropped_messages: int,
+    kept_messages: int,
+    tokens_before: int,
+    tokens_after: int,
+    max_context_tokens: int,
+    over_budget: bool = False,
+) -> ContextTrimmed:
+    """Build a ContextTrimmed event (issue #28). Counts only, no message text."""
+    from agents_system.audit.events import ContextTrimmed
+
+    correlation_id = _correlation_id_from_context()
+    sequence = PLACEHOLDER_SEQUENCE
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+
+    raw_payload = {
+        "dropped_messages": dropped_messages,
+        "kept_messages": kept_messages,
+        "tokens_before": tokens_before,
+        "tokens_after": tokens_after,
+        "max_context_tokens": max_context_tokens,
+        "over_budget": over_budget,
+    }
+    redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
+
+    return ContextTrimmed(
+        event_id=uuid.uuid4(),
+        occurred_at=_now_utc(),
+        correlation_id=correlation_id,
+        sequence=sequence,
+        role=role,
+        deployment=deployment,
+        actor=actor,
+        dropped_messages=dropped_messages,
+        kept_messages=kept_messages,
+        tokens_before=tokens_before,
+        tokens_after=tokens_after,
+        max_context_tokens=max_context_tokens,
+        over_budget=over_budget,
         payload=redacted_payload,
         pii_keys=pii_keys,
     )
