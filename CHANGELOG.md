@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.5.0](https://github.com/nahuel893/agents-system/compare/v0.4.0...v0.5.0) (2026-09-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **checkpointer:** the served app keeps conversations in PostgreSQL and refuses to boot until alembic upgrade head has created the checkpoint tables (revision 007); the server extra no longer installs langgraph-checkpoint-redis, and threads held in Redis are not migrated.
+* a plain install no longer brings the server, database, SQL, embeddings or provider packages. Install agents-system[all], or the extras you need, to get them back.
+
+### Features
+
+* **agent:** trim the model input to a per-agent context budget ([#28](https://github.com/nahuel893/agents-system/issues/28)) ([#194](https://github.com/nahuel893/agents-system/issues/194)) ([c960704](https://github.com/nahuel893/agents-system/commit/c960704e67f10e0060401aad04674be808bfd634))
+* **checkpointer:** keep conversations durable in Postgres with a separate retention ([#24](https://github.com/nahuel893/agents-system/issues/24)) ([#197](https://github.com/nahuel893/agents-system/issues/197)) ([b448c70](https://github.com/nahuel893/agents-system/commit/b448c703e044db2e9b63fa316a4e47a2d1f7f134))
+* make a plain install the light core, with the rest as extras ([#188](https://github.com/nahuel893/agents-system/issues/188)) ([#196](https://github.com/nahuel893/agents-system/issues/196)) ([d4a2509](https://github.com/nahuel893/agents-system/commit/d4a2509d3580acbea140bec6d8ff59d17622d196))
+* **runtime:** build the model an Agent declares in process ([#186](https://github.com/nahuel893/agents-system/issues/186)) ([#192](https://github.com/nahuel893/agents-system/issues/192)) ([c0cd0c8](https://github.com/nahuel893/agents-system/commit/c0cd0c813b26b6fa4edc86aa883a08aca69ecb87))
+
+
+### Bug Fixes
+
+* **agent:** repair unanswered tool calls in checkpointed threads after a mid-tool timeout ([#181](https://github.com/nahuel893/agents-system/issues/181)) ([#190](https://github.com/nahuel893/agents-system/issues/190)) ([3bce681](https://github.com/nahuel893/agents-system/commit/3bce6811ffbb75c92e92daca73d9e6134002e1a2))
+* close the stage 0-1 review follow-ups ([#182](https://github.com/nahuel893/agents-system/issues/182)) ([#193](https://github.com/nahuel893/agents-system/issues/193)) ([09ecfff](https://github.com/nahuel893/agents-system/commit/09ecfffd32e151810bb973c78bbbf1e5a5f1dc91))
+* **roles:** escalate on failed developer tasks, stop data-agent loops, gemini reference model ([#157](https://github.com/nahuel893/agents-system/issues/157)) ([#184](https://github.com/nahuel893/agents-system/issues/184)) ([7620c1f](https://github.com/nahuel893/agents-system/commit/7620c1fa2b34b87ad2f463ff8b3adbe6fed42f1c))
+
+
+### Documentation
+
+* add a feature reference page ([#200](https://github.com/nahuel893/agents-system/issues/200)) ([#201](https://github.com/nahuel893/agents-system/issues/201)) ([4ca19c9](https://github.com/nahuel893/agents-system/commit/4ca19c988ad1f267d8e46fa6aeeeb2fc549f4a2e))
+* present agents-system as a development kit for building agents ([#187](https://github.com/nahuel893/agents-system/issues/187)) ([#195](https://github.com/nahuel893/agents-system/issues/195)) ([147c15c](https://github.com/nahuel893/agents-system/commit/147c15c5e087840da91d36fc6227e725cb1e6c38))
+
 ## [0.4.0](https://github.com/nahuel893/agents-system/compare/v0.3.1...v0.4.0) (2026-09-28)
 
 
