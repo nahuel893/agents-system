@@ -89,6 +89,8 @@ metric objects live in `src/agents_system/observability/metrics.py`.
 | `agent_audit_events_dropped` | Gauge | none | Current process-local `AuditSink.dropped_count`, sampled when `GET /metrics` is served. |
 | `agent_provider_requests_total` | Counter | `provider`, `status` | Every raw HTTP attempt the chat model's own async client makes (issue #145) — see "Provider observability, and the issue #145 investigation" below. |
 | `agent_provider_retries_total` | Counter | `provider` | Every attempt the provider SDK's OWN retry loop re-sends after an earlier attempt on the same call failed (issue #145). |
+| `agent_checkpointer_degraded_total` | Counter | `operation` (`read`/`write`) | A turn is answered although reading its thread or saving it failed or timed out (issue #24). Such a turn still counts as `ok` in `agent_turns_total`, so this is the only metric that shows a checkpointer failing for every turn. Never labelled by thread id. |
+| `agent_checkpoint_purges_total` | Counter | `outcome` (`ok`/`error`) | Every conversation retention purge run (issue #24). Runs that keep failing mean conversations outlive `CHECKPOINTER_RETENTION_S`. |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total`, and the rest of `prometheus_client`'s default `ProcessCollector` | Gauge/Counter | none | Always, for the running process — confirmed present on Linux by `tests/test_observability_metrics.py`, not merely assumed from the library's docs. |
 
 **Turn outcomes**: `ok` also covers a turn that legitimately ended at the
@@ -295,7 +297,12 @@ backend. A healthy history reaches the model unchanged.
 answered despite a checkpointer failure; its `operation` says whether reading
 the thread (`read`) or saving the turn (`write`) failed. `checkpointer.purged`
 (info) reports each retention purge with counts only, and
-`checkpointer.purge_failed` (warning) a purge that the next interval retries.
+`checkpointer.purge_failed` (warning) a purge that the next interval retries,
+with `consecutive_failures`. Both are also counted:
+`agent_checkpointer_degraded_total{operation}` and
+`agent_checkpoint_purges_total{outcome}`. Alert on either one rising steadily,
+for example `increase(agent_checkpoint_purges_total{outcome="ok"}[3h]) == 0`
+with the default one-hour purge interval.
 See `docs/platform/conversation-memory.md`.
 
 **Account sizing guidance for operators.** `max_concurrent_turns` (default

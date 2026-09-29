@@ -35,6 +35,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 import structlog
 
 from agents_system.extras import raise_missing_extra
+from agents_system.observability.metrics import (
+    DEFAULT_METRICS,
+    Metrics,
+    record_checkpoint_purge,
+)
 
 try:
     from sqlalchemy.engine import make_url
@@ -356,14 +361,25 @@ class CheckpointPurger:
     A failed purge is logged and retried at the next interval: retention is
     enforced eventually, never at the cost of the process. The retention a
     purge enforces is exactly ``retention_s``, whatever backend runs it.
+
+    Every run is counted by outcome (``agent_checkpoint_purges_total``) and a
+    failure logs how many runs in a row have failed: a purge that keeps
+    failing means conversations outlive their retention, which must be
+    visible and alertable, not only a warning line per interval.
     """
 
     def __init__(
-        self, purge: PurgeFn, *, retention_s: int | None, interval_s: float
+        self,
+        purge: PurgeFn,
+        *,
+        retention_s: int | None,
+        interval_s: float,
+        metrics: Metrics | None = None,
     ) -> None:
         self._purge = purge
         self._retention_s = retention_s
         self._interval_s = interval_s
+        self._metrics = metrics if metrics is not None else DEFAULT_METRICS
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -379,16 +395,23 @@ class CheckpointPurger:
             await task
 
     async def _run(self) -> None:
+        consecutive_failures = 0
         while True:
             try:
                 result = await self._purge(retention_s=self._retention_s)
             except Exception as exc:
+                consecutive_failures += 1
+                record_checkpoint_purge(self._metrics, outcome="error")
                 logger.warning(
                     "checkpointer.purge_failed",
                     error_type=type(exc).__name__,
                     error=str(exc),
+                    consecutive_failures=consecutive_failures,
+                    retention_s=self._retention_s,
                 )
             else:
+                consecutive_failures = 0
+                record_checkpoint_purge(self._metrics, outcome="ok")
                 logger.info(
                     "checkpointer.purged",
                     threads_deleted=result.threads_deleted,

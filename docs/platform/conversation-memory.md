@@ -65,8 +65,11 @@ user passes to `AgentRuntime(checkpointer=...)`.
 | Saving the turn, or the save does not answer within `CHECKPOINTER_TIMEOUT_S` | The finished answer, as it is | It stays at its previous turn. Nothing runs again: no model call is repeated and no tool call is replayed. A save abandoned at its timeout can still complete if the database was already writing it; the thread then holds the turn, whole. |
 
 Both are logged as `runtime.checkpointer_degraded`, with `operation` (`read`
-or `write`), `thread_id`, `error_type` and `error`. The turn's token usage
-stays exact, because nothing is ever re-run.
+or `write`), `thread_id`, `error_type` and `error`, and counted in
+`agent_checkpointer_degraded_total{operation}` (see
+`docs/platform/observability.md`). The turn itself still reports `ok`, so
+that counter is what shows a checkpointer failing for every turn. The turn's
+token usage stays exact, because nothing is ever re-run.
 
 This replaces the policy the Redis checkpointer had. It caught only Redis's
 own errors and retried the whole turn without the checkpointer. A save that
@@ -115,7 +118,10 @@ A conversation idle for longer than the retention is therefore deleted within
 `CHECKPOINTER_RETENTION_S + CHECKPOINTER_PURGE_INTERVAL_S`. Each run logs
 `checkpointer.purged` with counts only (`threads_deleted`,
 `checkpoints_pruned`, `retention_s`), never a thread id. A failed run logs
-`checkpointer.purge_failed`, and the next interval tries again.
+`checkpointer.purge_failed` with `consecutive_failures`, and the next interval
+tries again. Every run is counted in
+`agent_checkpoint_purges_total{outcome}`: runs that keep failing mean
+conversations outlive their retention, so alert on them.
 
 ## Personal data
 

@@ -60,6 +60,7 @@ from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS
 from agents_system.observability.metrics import (
     DEFAULT_METRICS,
     Metrics,
+    record_checkpointer_degraded,
     record_limit_trip,
     record_tool_call,
     record_turn,
@@ -798,6 +799,7 @@ class _Thread:
     compiled: Any
     thread_id: str
     timeout_s: float
+    metrics: Metrics
     #: What the read returned; ``None`` until a read succeeds.
     history: list[AnyMessage] | None = None
 
@@ -853,6 +855,10 @@ class _Thread:
             error_type=type(exc).__name__,
             error=str(exc),
         )
+        # Counted as well: a checkpointer that fails for every turn (a role
+        # that cannot save, a database that stopped answering) would
+        # otherwise show only as turns that all report "ok".
+        record_checkpointer_degraded(self.metrics, operation=operation)
 
 
 async def _run_tracking_progress(
@@ -1250,6 +1256,7 @@ class AgentRuntime:
                 graph.compile(checkpointer=self._checkpointer),
                 thread_id,
                 timeout_s=self._checkpointer_timeout_s,
+                metrics=self._metrics,
             )
             if thread_id is not None and self._checkpointer is not None
             else None

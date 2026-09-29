@@ -553,6 +553,48 @@ async def test_a_driver_slow_to_cancel_does_not_hold_the_turn() -> None:
     await asyncio.wait_for(saver.cancelled.wait(), timeout=3.0)
 
 
+# ---------------------------------------------------------------------------
+# A degraded thread is counted, not only logged
+# ---------------------------------------------------------------------------
+
+
+async def test_every_degraded_read_and_save_is_counted_by_operation() -> None:
+    """A role that cannot save, or a database that stops answering, degrades
+    every turn: without a counter that is one warning line per turn, and
+    nothing to alert on."""
+    from prometheus_client import CollectorRegistry
+
+    from agents_system.observability.metrics import build_metrics
+
+    metrics = build_metrics(CollectorRegistry())
+    unreadable, unsavable = "+549110000013", "+549110000014"
+    saver = _Saver(
+        broken_reads=frozenset({unreadable}), broken_writes=frozenset({unsavable})
+    )
+    agent = AgentRuntime(
+        _runtime(),
+        _CountingModel(responses=[_answer("a"), _answer("b"), _answer("c")]),
+        checkpointer=saver,
+        metrics=metrics,
+    )
+
+    for thread in (unreadable, unsavable, unsavable):
+        await agent.run_turn(
+            [HumanMessage(content="Hi")],
+            session_id="s1",
+            permissions=(),
+            thread_id=thread,
+        )
+
+    def degraded(operation: str) -> float | None:
+        return metrics.registry.get_sample_value(
+            "agent_checkpointer_degraded_total", {"operation": operation}
+        )
+
+    assert degraded("read") == 1
+    assert degraded("write") == 2
+
+
 @pytest.mark.parametrize("timeout_s", [0, -1.0])
 def test_a_checkpointer_timeout_must_be_positive(timeout_s: float) -> None:
     with pytest.raises(ValueError, match="checkpointer_timeout_s"):

@@ -68,8 +68,12 @@ usuario de la librería pase a `AgentRuntime(checkpointer=...)`.
 | Al guardar el turno, o el guardado no responde dentro de `CHECKPOINTER_TIMEOUT_S` | La respuesta terminada, tal cual | Queda en su turno anterior. No se vuelve a ejecutar nada: no se repite ninguna llamada al modelo ni se reejecuta ninguna herramienta. Un guardado abandonado por su tope todavía puede completarse si la base ya lo estaba escribiendo; el hilo queda entonces con el turno, completo. |
 
 Ambos casos se registran como `runtime.checkpointer_degraded`, con
-`operation` (`read` o `write`), `thread_id`, `error_type` y `error`. El uso de
-tokens del turno sigue siendo exacto, porque nunca se vuelve a ejecutar nada.
+`operation` (`read` o `write`), `thread_id`, `error_type` y `error`, y se
+cuentan en `agent_checkpointer_degraded_total{operation}` (ver
+`docs/platform_es/observability.md`). El turno mismo igual informa `ok`, así
+que ese contador es lo que muestra un checkpointer que falla en cada turno. El
+uso de tokens del turno sigue siendo exacto, porque nunca se vuelve a
+ejecutar nada.
 
 Esto reemplaza la política que tenía el checkpointer de Redis. Esa política
 atrapaba solo los errores propios de Redis y reintentaba el turno entero sin
@@ -122,7 +126,11 @@ Una conversación inactiva por más tiempo que la retención se borra, entonces,
 dentro de `CHECKPOINTER_RETENTION_S + CHECKPOINTER_PURGE_INTERVAL_S`. Cada
 corrida registra `checkpointer.purged` solo con conteos (`threads_deleted`,
 `checkpoints_pruned`, `retention_s`), nunca un id de hilo. Una corrida fallida
-registra `checkpointer.purge_failed`, y el intervalo siguiente lo reintenta.
+registra `checkpointer.purge_failed` con `consecutive_failures`, y el
+intervalo siguiente lo reintenta. Cada corrida se cuenta en
+`agent_checkpoint_purges_total{outcome}`: corridas que siguen fallando
+significan conversaciones que sobreviven a su retención, así que alertá
+sobre ellas.
 
 ## Datos personales
 

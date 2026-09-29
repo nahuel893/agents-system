@@ -79,6 +79,16 @@ PROVIDER_REQUEST_STATUSES = (
 #: string reaching a label.
 PROVIDER_NAMES = ("groq", "anthropic", "openai_compatible", "ollama")
 
+#: issue #24 -- the two points where a conversation thread touches its
+#: checkpointer (`agent/graph.py::_Thread`): reading its history before the
+#: turn, saving the turn after it. NEVER the thread id itself, which is a
+#: customer's phone number.
+CHECKPOINTER_OPERATIONS = ("read", "write")
+
+#: issue #24 -- what one retention purge run (`services/checkpointer.py`'s
+#: `CheckpointPurger`) ended in.
+CHECKPOINT_PURGE_OUTCOMES = ("ok", "error")
+
 
 @dataclasses.dataclass(frozen=True)
 class Metrics:
@@ -100,6 +110,8 @@ class Metrics:
     audit_events_dropped: Gauge
     provider_requests_total: Counter
     provider_retries_total: Counter
+    checkpointer_degraded_total: Counter
+    checkpoint_purges_total: Counter
 
 
 def build_metrics(registry: CollectorRegistry) -> Metrics:
@@ -187,6 +199,24 @@ def build_metrics(registry: CollectorRegistry) -> Metrics:
             ["provider"],
             registry=registry,
         ),
+        # issue #24 -- a checkpointer that fails never fails the turn (see
+        # `_Thread`), so a role that cannot save, or a database that stops
+        # answering, degrades EVERY turn while each still reports "ok". These
+        # make that, and a retention purge that keeps failing (conversations
+        # outliving their retention), something an operator can alert on.
+        checkpointer_degraded_total=Counter(
+            "agent_checkpointer_degraded",
+            "Turns answered although reading their thread or saving it failed, "
+            "by operation (read/write).",
+            ["operation"],
+            registry=registry,
+        ),
+        checkpoint_purges_total=Counter(
+            "agent_checkpoint_purges",
+            "Conversation retention purge runs, by outcome (ok/error).",
+            ["outcome"],
+            registry=registry,
+        ),
     )
 
 
@@ -263,3 +293,15 @@ def record_provider_retry(metrics: Metrics, *, provider: str) -> None:
     attempt.
     """
     metrics.provider_retries_total.labels(provider=provider).inc()
+
+
+def record_checkpointer_degraded(metrics: Metrics, *, operation: str) -> None:
+    """Record one turn answered despite a failed thread read or save (issue
+    #24). *operation* is one of `CHECKPOINTER_OPERATIONS`."""
+    metrics.checkpointer_degraded_total.labels(operation=operation).inc()
+
+
+def record_checkpoint_purge(metrics: Metrics, *, outcome: str) -> None:
+    """Record one retention purge run (issue #24). *outcome* is one of
+    `CHECKPOINT_PURGE_OUTCOMES`."""
+    metrics.checkpoint_purges_total.labels(outcome=outcome).inc()

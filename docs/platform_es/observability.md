@@ -94,6 +94,8 @@ objetos de métricas viven en `src/agents_system/observability/metrics.py`.
 | `agent_audit_events_dropped` | Gauge | ninguno | `AuditSink.dropped_count` actual y local al proceso, muestreado al servir `GET /metrics`. |
 | `agent_provider_requests_total` | Counter | `provider`, `status` | Cada intento HTTP crudo que hace el cliente async del chat model (issue #145) -- ver "Observabilidad del proveedor, y la investigación del issue #145" más abajo. |
 | `agent_provider_retries_total` | Counter | `provider` | Cada intento que el PROPIO loop de reintentos del SDK del proveedor reenvía después de que un intento anterior de la misma llamada falló (issue #145). |
+| `agent_checkpointer_degraded_total` | Counter | `operation` (`read`/`write`) | Un turno se responde aunque leer su hilo o guardarlo falló o agotó su tiempo (issue #24). Ese turno igual cuenta como `ok` en `agent_turns_total`, así que esta es la única métrica que muestra un checkpointer que falla en cada turno. Nunca lleva el id del hilo como etiqueta. |
+| `agent_checkpoint_purges_total` | Counter | `outcome` (`ok`/`error`) | Cada corrida de la purga de retención de conversaciones (issue #24). Corridas que siguen fallando significan conversaciones que sobreviven a `CHECKPOINTER_RETENTION_S`. |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total`, y el resto del `ProcessCollector` por defecto de `prometheus_client` | Gauge/Counter | ninguno | Siempre, para el proceso corriendo -- confirmado presente en Linux por `tests/test_observability_metrics.py`, no meramente asumido de la documentación de la librería. |
 
 **Outcomes de turno**: `ok` también cubre un turno que terminó
@@ -325,7 +327,13 @@ turno respondido pese a una falla del checkpointer; su `operation` indica si
 falló la lectura del hilo (`read`) o el guardado del turno (`write`).
 `checkpointer.purged` (info) informa cada purga de retención solo con conteos,
 y `checkpointer.purge_failed` (warning) una purga que el intervalo siguiente
-reintenta. Ver `docs/platform_es/conversation-memory.md`.
+reintenta, con `consecutive_failures`. Ambos también se cuentan:
+`agent_checkpointer_degraded_total{operation}` y
+`agent_checkpoint_purges_total{outcome}`. Alertá cuando cualquiera de los dos
+crezca de forma sostenida, por ejemplo
+`increase(agent_checkpoint_purges_total{outcome="ok"}[3h]) == 0` con el
+intervalo de purga por defecto de una hora.
+Ver `docs/platform_es/conversation-memory.md`.
 
 **Guía de dimensionamiento de cuenta para operadores.** `max_concurrent_turns`
 (default 10) acota cuántos turnos corre este proceso a la vez, pero NO acota

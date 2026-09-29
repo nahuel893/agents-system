@@ -281,6 +281,37 @@ async def test_a_failed_purge_is_logged_and_the_next_one_still_runs(
     assert "checkpointer.purged" in out
 
 
+async def test_every_purge_is_counted_by_outcome(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A purge that keeps failing (a role that cannot delete, a database that
+    is gone) means conversations outlive their retention. That must be
+    visible on /metrics, not only in a warning line per interval."""
+    from prometheus_client import CollectorRegistry
+
+    from agents_system.observability.metrics import build_metrics
+
+    metrics = build_metrics(CollectorRegistry())
+    purge = _RecordingPurge(failures=2)
+    purger = CheckpointPurger(
+        purge, retention_s=86_400, interval_s=0.01, metrics=metrics
+    )
+
+    await purger.start()
+    await asyncio.wait_for(purge.ran.wait(), timeout=2.0)
+    await purger.stop()
+
+    def purges(outcome: str) -> float | None:
+        return metrics.registry.get_sample_value(
+            "agent_checkpoint_purges_total", {"outcome": outcome}
+        )
+
+    assert purges("error") == 2
+    assert (purges("ok") or 0) >= 1
+    # The warning says how long retention has not been enforced.
+    assert _logged(capsys.readouterr().out, "consecutive_failures", 2)
+
+
 async def test_stopping_the_purger_twice_or_before_start_is_harmless() -> None:
     purger = CheckpointPurger(_RecordingPurge(), retention_s=1, interval_s=1)
     await purger.stop()
