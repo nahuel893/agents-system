@@ -354,6 +354,18 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
 
         async def remembers_across_a_second_webhook_turn() -> None:
             phone = f"+1555{uuid.uuid4().int % 10_000_000:07d}"
+
+            # Only this conversation's replies: `outbound.sent` is shared by
+            # every scenario and run of this boot, so counting all of it let
+            # an earlier run's late reply stand in for this one's (#24).
+            def replies() -> list[str]:
+                digits = "".join(filter(str.isdigit, phone))
+                return [
+                    entry["text"]["body"]
+                    for entry in harness.outbound.sent
+                    if "".join(filter(str.isdigit, entry.get("to", ""))) == digits
+                ]
+
             first = await harness.deliver_webhook(
                 phone=phone,
                 text=(
@@ -362,10 +374,7 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
                 ),
             )
             assert first.status_code == 200, first.text
-            await harness.wait_until(
-                lambda: len(harness.outbound.sent) >= 1, timeout=60.0
-            )
-            first_reply_count = len(harness.outbound.sent)
+            await harness.wait_until(lambda: len(replies()) >= 1, timeout=60.0)
 
             second = await harness.deliver_webhook(
                 phone=phone,
@@ -374,11 +383,9 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
                 ),
             )
             assert second.status_code == 200, second.text
-            await harness.wait_until(
-                lambda: len(harness.outbound.sent) > first_reply_count, timeout=60.0
-            )
+            await harness.wait_until(lambda: len(replies()) >= 2, timeout=60.0)
 
-            reply = harness.outbound.sent[-1]["text"]["body"]
+            reply = replies()[-1]
             assert _DEMO_SKU in reply, (
                 f"second turn's reply did not recall {_DEMO_SKU!r}: {reply!r}"
             )
