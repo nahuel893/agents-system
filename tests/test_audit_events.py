@@ -244,6 +244,7 @@ class TestAuditEventPayload:
             "elapsed_ms": 42.5,
             "revalidated": True,
             "error": None,
+            "builtin_default": False,
         }
 
     def test_audit_event_model_validate_with_payload_round_trip(self) -> None:

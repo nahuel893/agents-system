@@ -36,6 +36,7 @@ from typing import Any
 
 import structlog
 
+from agents_system.harness.defaults import is_builtin_default
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.registry import Tier, ToolSpec
@@ -203,6 +204,7 @@ async def intercept(
         executed=True,
         elapsed_ms=round(elapsed_ms, 2),
         revalidated=revalidated,
+        builtin_default=is_builtin_default(spec),
     )
 
     return CallResult(tool_name=tool_name, output=output, revalidated=revalidated)

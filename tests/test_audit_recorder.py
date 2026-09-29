@@ -106,6 +106,49 @@ class TestRecorderEventFamilies:
         assert event.tool_name == "catalog_search"
 
     @pytest.mark.asyncio
+    async def test_record_tool_granted_marks_a_builtin_default(self) -> None:
+        """Issue #182: the marker defaults to False and lands in the payload."""
+        from agents_system.audit.recorder import record_tool_granted
+
+        definition = MockDefinition()
+        plain = await record_tool_granted(definition, tool_name="catalog_search")
+        marked = await record_tool_granted(
+            definition, tool_name="escalation_notifier", builtin_default=True
+        )
+        assert plain.builtin_default is False
+        assert plain.payload["builtin_default"] is False
+        assert marked.builtin_default is True
+        assert marked.payload["builtin_default"] is True
+
+    @pytest.mark.asyncio
+    async def test_record_tool_call_attempted_marks_a_builtin_default(self) -> None:
+        from agents_system.audit.recorder import record_tool_call_attempted
+
+        definition = MockDefinition()
+        plain = await record_tool_call_attempted(definition, "catalog_search")
+        marked = await record_tool_call_attempted(
+            definition, "escalation_notifier", builtin_default=True
+        )
+        assert plain.builtin_default is False
+        assert marked.builtin_default is True
+        assert marked.payload["builtin_default"] is True
+
+    @pytest.mark.asyncio
+    async def test_record_runtime_built_lists_the_builtin_defaults(self) -> None:
+        from agents_system.audit.recorder import record_runtime_built
+
+        definition = MockDefinition()
+        event = await record_runtime_built(
+            definition,
+            tools_count=2,
+            denied_count=0,
+            skills_count=0,
+            builtin_defaults=("escalation_notifier",),
+        )
+        assert event.builtin_defaults == ["escalation_notifier"]
+        assert event.payload["builtin_defaults"] == ["escalation_notifier"]
+
+    @pytest.mark.asyncio
     async def test_record_tool_denied(self) -> None:
         """record_tool_denied produces a ToolDenied event."""
         from agents_system.audit.events import ToolDenied

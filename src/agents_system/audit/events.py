@@ -37,6 +37,9 @@ class ToolCallAttempted(_AuditEventBase):
     elapsed_ms: float | None = None
     revalidated: bool = False
     error: str | None = None
+    builtin_default: bool = False
+    """The tool is the platform's built-in default, not one the caller
+    registered (issue #182), so the call did none of the real work."""
 
 
 class ToolCallBlocked(_AuditEventBase):
@@ -52,6 +55,8 @@ class ToolGranted(_AuditEventBase):
 
     event_type: Literal["tool_granted"] = "tool_granted"
     tool_name: str
+    builtin_default: bool = False
+    """The granted spec is the platform's built-in default (issue #182)."""
 
 
 class ToolDenied(_AuditEventBase):
@@ -91,6 +96,8 @@ class RuntimeBuilt(_AuditEventBase):
     tools: int
     denied: int
     skills: int
+    builtin_defaults: list[str] = Field(default_factory=list)
+    """Names of the granted tools that are built-in defaults (issue #182)."""
 
 
 class RuntimeInitialized(_AuditEventBase):

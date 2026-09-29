@@ -112,6 +112,7 @@ async def record_tool_call_attempted(
     revalidated: bool = False,
     error: str | None = None,
     tool_input: dict[str, Any] | None = None,
+    builtin_default: bool = False,
 ) -> ToolCallAttempted:
     """Build a ToolCallAttempted event."""
     from agents_system.audit.events import ToolCallAttempted
@@ -127,6 +128,7 @@ async def record_tool_call_attempted(
         "elapsed_ms": elapsed_ms,
         "revalidated": revalidated,
         "error": error,
+        "builtin_default": builtin_default,
     }
     if tool_input is not None:
         raw_payload["tool_input"] = tool_input
@@ -147,6 +149,7 @@ async def record_tool_call_attempted(
         elapsed_ms=elapsed_ms,
         revalidated=revalidated,
         error=error,
+        builtin_default=builtin_default,
         payload=redacted_payload,
         pii_keys=pii_keys,
     )
@@ -185,6 +188,8 @@ async def record_tool_call_blocked(
 async def record_tool_granted(
     definition: Any,
     tool_name: str,
+    *,
+    builtin_default: bool = False,
 ) -> ToolGranted:
     """Build a ToolGranted event."""
     from agents_system.audit.events import ToolGranted
@@ -193,7 +198,7 @@ async def record_tool_granted(
     sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
-    raw_payload = {"tool_name": tool_name}
+    raw_payload = {"tool_name": tool_name, "builtin_default": builtin_default}
     redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
 
     return ToolGranted(
@@ -205,6 +210,7 @@ async def record_tool_granted(
         deployment=deployment,
         actor=actor,
         tool_name=tool_name,
+        builtin_default=builtin_default,
         payload=redacted_payload,
         pii_keys=pii_keys,
     )
@@ -331,6 +337,7 @@ async def record_runtime_built(
     tools_count: int,
     denied_count: int,
     skills_count: int,
+    builtin_defaults: tuple[str, ...] = (),
 ) -> RuntimeBuilt:
     """Build a RuntimeBuilt event."""
     from agents_system.audit.events import RuntimeBuilt
@@ -339,7 +346,12 @@ async def record_runtime_built(
     sequence = PLACEHOLDER_SEQUENCE
     role, deployment, actor, audit_policy = _extract_role_deployment(definition)
 
-    raw_payload = {"tools": tools_count, "denied": denied_count, "skills": skills_count}
+    raw_payload = {
+        "tools": tools_count,
+        "denied": denied_count,
+        "skills": skills_count,
+        "builtin_defaults": list(builtin_defaults),
+    }
     redacted_payload, pii_keys = _build_and_redact(raw_payload, audit_policy)
 
     return RuntimeBuilt(
@@ -353,6 +365,7 @@ async def record_runtime_built(
         tools=tools_count,
         denied=denied_count,
         skills=skills_count,
+        builtin_defaults=list(builtin_defaults),
         payload=redacted_payload,
         pii_keys=pii_keys,
     )

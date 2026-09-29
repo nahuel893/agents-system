@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from agents_system.harness.defaults import builtin_default_tools
+from agents_system.harness.defaults import builtin_default_tools, is_builtin_default
 from agents_system.harness.injector import (
     _emit,
     resolve_command_tool_surface,
@@ -128,6 +128,11 @@ class EquippedRuntime:
     tools: tuple[ToolSpec, ...]
     denied_tools: tuple[tuple[str, str], ...]
     skills: tuple[LoadedSkill, ...]
+    builtin_defaults: tuple[str, ...] = ()
+    """Names of the granted tools that are the platform's built-in defaults
+    (issue #168), not tools the caller registered. Empty for a served app,
+    which builds with ``builtin_defaults=False``. A default that was denied
+    is not listed: it never reaches the model (issue #182)."""
     session_provider: async_sessionmaker[AsyncSession] | None = None
     deploy_grant_ceiling: frozenset[type[Permission]] = frozenset()
     """The deploy-time grant ceiling (issue #38, design.md Resolved Decision
@@ -659,6 +664,7 @@ def build_runtime(
         denied=len(denied_tools),
         skills=len(skills),
     )
+    builtin_names = tuple(t.name for t in granted_tools if is_builtin_default(t))
     # D-007: record runtime_built event
     _emit(
         "record_runtime_built",
@@ -666,6 +672,7 @@ def build_runtime(
         tools_count=len(granted_tools),
         denied_count=len(denied_tools),
         skills_count=len(skills),
+        builtin_defaults=builtin_names,
     )
 
     return EquippedRuntime(
@@ -674,6 +681,7 @@ def build_runtime(
         tools=granted_tools,
         denied_tools=denied_tools,
         skills=skills,
+        builtin_defaults=builtin_names,
         session_provider=session_provider,
         deploy_grant_ceiling=deploy_grant_ceiling,
     )
