@@ -403,6 +403,19 @@ escalation_notifier`, and a registry that holds the default (registered by
 hand) is refused at boot. Pass `builtin_defaults=False` yourself for the same
 fail-closed behaviour in-process.
 
+**Why the default stays on, and how to see it (issue #182).** The defaults are
+on by default so that the Quickstart runs in about ten lines with no
+registration. That is a deliberate trade-off, not an oversight, and the answer
+to "it is easy to forget they are on" is a louder signal rather than an opt-in:
+
+- the build logs `injector.builtin_default_granted` (above);
+- `EquippedRuntime.builtin_defaults` lists the granted built-in defaults of the
+  runtime (a default that was denied is not listed), so a deployment can assert
+  on it in a test or a startup check;
+- the audit trail marks them: `tool_granted`, `tool_call_attempted` and
+  `runtime_built` carry `builtin_default` (`runtime_built` carries the list
+  `builtin_defaults`), see `docs/platform/audit.md`.
+
 ---
 
 ## Two traps

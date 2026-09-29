@@ -54,6 +54,15 @@ An adapter whose provider verifies the webhook URL with a GET (Meta does) also
 implements `SubscriptionHandshake.verify_subscription(params) -> str`; for any
 other channel, `GET /webhook/{name}` answers 405.
 
+WhatsApp's handshake compares `hub.verify_token` with `WHATSAPP_VERIFY_TOKEN` in
+constant time, over UTF-8 bytes (so a non-ASCII token is a plain 403, never a
+crash). The setting has no usable default: with the WhatsApp channel enabled
+(`WHATSAPP_RUNTIME_ID` set) an empty `WHATSAPP_VERIFY_TOKEN` stops the boot,
+because an empty configured token would match a request that sends an empty or
+missing `hub.verify_token`. The adapter also refuses an empty configured token
+by itself, whatever the boot check let through (`ALLOW_INSECURE=true` skips
+only the boot check, for local development).
+
 ## Registering a channel
 
 ```python

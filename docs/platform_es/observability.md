@@ -275,6 +275,24 @@ por cada runtime sobre el proveedor `openai_compatible` cuyo presupuesto de turn
 sea menor que el timeout de request. Nunca frena el arranque: un presupuesto
 ajustado puede ser deliberado.
 
+A qué roles incluidos alcanza y si es intencional:
+
+| Rol | `total_execution_timeout_s` | Avisa bajo `openai_compatible` |
+|---|---|---|
+| `sales-agent`, `data-agent` | 60 (el default de la plataforma, `PLATFORM_DEFAULT_LIMITS`; los roles no definen nada) | No: 60 s supera el timeout de request de 45 s |
+| `developer-agent` | 120 (definido a propósito) | No |
+| `operator-agent` | 30 (definido a propósito: el rol puede modificar el host, así que sus límites se ajustan) | Sí, en cada arranque |
+
+Los 60 s de `sales-agent` y `data-agent` son el default intencional, no un
+descuido, y es lo que mantiene silencioso su arranque. El aviso de
+`operator-agent` es esperado, no una falla: se repite en cada arranque mientras
+el rol corra sobre `openai_compatible` con el timeout de request de 45 s por
+defecto, y es la señal de que una sola llamada lenta al proveedor puede consumir
+el turno entero. Subí el presupuesto del rol en su `policy.md`, o bajá
+`OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` solo si el proveedor es lo bastante
+rápido para seguir siendo útil. Ambos casos están probados contra el lifespan
+(`tests/test_main.py`).
+
 **Qué reporta un turno que agotó el tiempo.** El turno termina con la respuesta
 fija "This is taking longer than expected. Please try again." y
 `outcome="timeout"`. Sus mensajes conservan todo lo que el grafo había producido

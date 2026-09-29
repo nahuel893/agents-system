@@ -413,6 +413,20 @@ tool: escalation_notifier`, y un registro que contiene el default (registrado
 a mano) se rechaza al arrancar. Pasá `builtin_defaults=False` vos mismo para
 tener el mismo comportamiento de falla cerrada en proceso.
 
+**Por qué el default queda activado y cómo verlo (issue #182).** Los defaults
+vienen activados para que el Quickstart corra en unas diez líneas sin
+registrar nada. Es un trade-off deliberado, no un descuido, y la respuesta a
+"es fácil olvidar que están activos" es una señal más fuerte en lugar de un
+opt-in:
+
+- el build registra `injector.builtin_default_granted` (arriba);
+- `EquippedRuntime.builtin_defaults` lista los defaults incluidos otorgados del
+  runtime (un default denegado no aparece), así que un despliegue puede
+  afirmarlo en un test o en un chequeo de arranque;
+- la auditoría los marca: `tool_granted`, `tool_call_attempted` y
+  `runtime_built` llevan `builtin_default` (`runtime_built` lleva la lista
+  `builtin_defaults`), ver `docs/platform_es/audit.md`.
+
 ---
 
 ## Dos trampas
