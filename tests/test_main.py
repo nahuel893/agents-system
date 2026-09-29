@@ -406,6 +406,94 @@ async def test_lifespan_skips_checkpointer_when_disabled() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue #182 -- the lifespan warns when a runtime's turn budget cannot hold one
+# provider call. `tests/test_turn_budget_invariant.py` tests the function; this
+# tests that the boot actually calls it for every runtime it builds.
+# ---------------------------------------------------------------------------
+
+
+async def _boot_and_capture_logs(
+    total_execution_timeout_s: float, capsys: pytest.CaptureFixture[str]
+) -> list[dict[str, Any]]:
+    """Boot the lifespan and return the JSON log lines it wrote to stdout.
+
+    Read from stdout, not `structlog.testing.capture_logs`: the app configures
+    structlog with cached loggers, which `capture_logs` cannot intercept.
+    """
+    import json
+
+    test_settings = _make_settings(
+        adapter_provider="openai_compatible",
+        openai_compatible_base_url="https://example.test/v1",
+        openai_compatible_model="test-model",
+        openai_compatible_api_key="test-key",
+        openai_compatible_request_timeout_s=45.0,
+    )
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.model = None
+    fake_definition.execution_limits = {
+        "total_execution_timeout_s": total_execution_timeout_s
+    }
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agents_system.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agents_system.harness.loader.resolve", return_value=fake_definition),
+        patch("agents_system.harness.factory.build_runtime", return_value=MagicMock()),
+        patch("agents_system.agent.graph.AgentRuntime"),
+    ):
+        app = create_test_app()
+        async with lifespan(app):
+            assert app.state.runtimes
+    entries: list[dict[str, Any]] = []
+    for line in capsys.readouterr().out.splitlines():
+        try:
+            entries.append(json.loads(line))
+        except ValueError:
+            continue
+    return entries
+
+
+@pytest.mark.asyncio
+async def test_lifespan_warns_when_the_turn_budget_is_below_the_request_timeout(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    logs = await _boot_and_capture_logs(30, capsys)
+
+    [warning] = [
+        entry
+        for entry in logs
+        if entry["event"] == "runtime.turn_budget_below_request_timeout"
+    ]
+    assert warning["level"] == "warning"
+    assert warning["runtime_id"] == "sales"
+    assert warning["total_execution_timeout_s"] == 30
+    assert warning["openai_compatible_request_timeout_s"] == 45.0
+
+
+@pytest.mark.asyncio
+async def test_lifespan_is_quiet_when_the_turn_budget_holds_a_provider_call(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    logs = await _boot_and_capture_logs(60, capsys)
+
+    assert not [
+        entry
+        for entry in logs
+        if entry["event"] == "runtime.turn_budget_below_request_timeout"
+    ]
+
+
+# ---------------------------------------------------------------------------
 # D-037 (issue #13, ADR-004) — a resolved definition's own `model:` builds a
 # dedicated per-runtime chat model; no declaration keeps the existing
 # single, global `ADAPTER_PROVIDER`-driven model (zero behavior change).
