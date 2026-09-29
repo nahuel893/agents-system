@@ -922,6 +922,7 @@ Full reference: [`docs/architecture/adr-004-library-first-agents.md`](docs/archi
 | Agent Platform Architecture | [`docs/architecture/`](docs/architecture/) | EN |
 | Platform Specification | [`docs/platform/`](docs/platform/) | EN |
 | Context-size control (model-input trimming, `max_context_tokens`) | [`docs/platform/context-size.md`](docs/platform/context-size.md), [`docs/platform_es/context-size.md`](docs/platform_es/context-size.md) | EN + ES |
+| Conversation memory (durable Postgres checkpointer, retention, personal data) | [`docs/platform/conversation-memory.md`](docs/platform/conversation-memory.md), [`docs/platform_es/conversation-memory.md`](docs/platform_es/conversation-memory.md) | EN + ES |
 | Library Usage (integrating `agents_system` into your app) | [`docs/platform/library-usage.md`](docs/platform/library-usage.md), [`docs/platform_es/library-usage.md`](docs/platform_es/library-usage.md) | EN + ES |
 | Especificación de Plataforma | [`docs/platform_es/`](docs/platform_es/) | ES |
 | Production Operations (deployment, systemd, sandboxing) | [`docs/operations/`](docs/operations/) | EN + ES |

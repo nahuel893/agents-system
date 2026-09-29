@@ -155,8 +155,10 @@ the conversations, a budget that never trims is either right or too generous.
 
 - **Compaction / summarization** of trimmed turns (see the decision above).
 - **Persisted growth.** Trimming bounds what the model sees, not what the
-  checkpointer stores. A very active thread still grows in Redis until its
-  retention window expires. Bounding storage is a separate concern (#24).
+  checkpointer stores. Since #24 the retention purge keeps only each thread's
+  latest checkpoint and deletes a thread once it is idle for longer than
+  `CHECKPOINTER_RETENTION_S`, but a very active thread still holds its whole
+  history (`docs/platform/conversation-memory.md`).
 - **A per-model window lookup** to derive the budget from the configured model
   automatically, instead of the fixed assumed window.
 - **Exact token counting** per provider.

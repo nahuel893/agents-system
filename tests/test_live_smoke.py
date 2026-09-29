@@ -1,7 +1,7 @@
 """Live smoke test for the #78 Phase 0 Slice 3 harness (opt-in, `-m live`).
 
 Proves `boot_live_harness` end to end against a REAL model, a real throwaway
-Postgres database, and a real Redis checkpointer: one turn through the HTTP
+Postgres database, and the real Postgres checkpointer: one turn through the HTTP
 API and one turn through the WhatsApp webhook -> deferred worker path, each
 asserted the way the live-test plan's Principle demands -- against what the
 SYSTEM did (audit rows, `/metrics` counters, the message the fake WhatsApp
@@ -143,6 +143,6 @@ async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> Non
 
     # The webhook worker only enables the checkpointer's thread_id when
     # `whatsapp_checkpointer_enabled` (the harness's default) -- confirms
-    # the real Redis checkpointer, not just the fake outbound send.
+    # the real Postgres checkpointer, not just the fake outbound send.
     thread = await live_harness.read_thread(phone)
     assert thread is not None

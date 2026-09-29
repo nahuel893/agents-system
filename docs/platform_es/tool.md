@@ -266,7 +266,7 @@ Escribe un pedido confirmado y sus correspondientes líneas de detalle en la bas
 | Salidas | `value` (string o null). |
 | Manejo de errores | `on_connector_unavailable: fail_open`, `on_permission_denied: fail_closed`, `retries: 0`. |
 
-Lee y escribe estados de sesión efímeros en Redis. Utilizado para el almacenamiento de puntos de control (*checkpointing*) de conversaciones en LangGraph y para estados de deduplicación de vida corta. Falla de forma abierta (*fail open*): perder el estado efímero degrada ligeramente la experiencia del usuario, pero no corrompe la integridad de los datos de negocio.
+Lee y escribe estados de sesión efímeros en Redis, como estados de deduplicación de vida corta. El almacenamiento de puntos de control (*checkpointing*) de conversaciones no lo usa: los hilos de conversación se guardan en Postgres desde #24 (`docs/platform_es/conversation-memory.md`). Falla de forma abierta (*fail open*): perder el estado efímero degrada ligeramente la experiencia del usuario, pero no corrompe la integridad de los datos de negocio.
 
 ---
 

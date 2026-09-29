@@ -10,7 +10,7 @@ and drives it through `LiveHarness.send_chat_completion` (`POST
 `evals/runner.py::run_scenario` does. Every assertion targets what the
 SYSTEM did (audit rows in the real `audit_event` table, a tool's own
 recorded arguments/result, `/metrics` counters, the fake WhatsApp server's
-recorded sends, the real Redis checkpointer's thread state) -- the model's
+recorded sends, the real Postgres checkpointer's thread state) -- the model's
 own final wording is at most a soft signal, consistent with the live-test
 plan's own Principle.
 
@@ -282,7 +282,7 @@ async def test_data_agent_reads_the_real_seeded_demo_database() -> None:
 # ---------------------------------------------------------------------------
 # sales-agent: order_writer, message_sender, escalation
 # (customer_not_registered), and conversation memory across two webhook
-# turns via the real Redis checkpointer. One boot (seed_demo=True).
+# turns via the real Postgres checkpointer. One boot (seed_demo=True).
 # ---------------------------------------------------------------------------
 
 
@@ -386,7 +386,7 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
             thread = await harness.read_thread(phone)
             assert thread is not None, (
                 "no checkpointed thread found for the conversation's phone "
-                "number -- the Redis checkpointer did not persist it"
+                "number -- the Postgres checkpointer did not persist it"
             )
 
         await _run_gated(

@@ -101,7 +101,7 @@ legítimamente en el nodo `_limit_reached` -- eso es una finalización
 normal, no una falla; el límite disparándose es su propia muestra de
 `agent_limit_trips_total`. `timeout` es `total_execution_timeout_s`
 disparándose. `error` es cualquier otra cosa que el turno lance (una falla
-real del proveedor, un error inesperado del checkpointer) -- se registra y
+real del proveedor) -- se registra y
 luego se vuelve a lanzar sin cambios, así que esta métrica agrega
 observabilidad sin cambiar ningún comportamiento de manejo de errores
 existente.
@@ -132,8 +132,9 @@ informa el uso de las llamadas al modelo que terminaron antes de agotar su
 presupuesto (issue #172): es una cota inferior real, así que sus muestras de
 token y costo sí se registran; una llamada cortada a mitad de vuelo no informó
 nada y no se cuenta. Solo un turno con timeout cuyo uso no pudo determinarse
-(una degradación del checkpointer lo reinició, o no se produjo estado) no
-registra muestra de token ni de costo.
+(no se produjo estado) no registra muestra de token ni de costo. Una falla del
+checkpointer nunca vuelve desconocido el uso: nunca vuelve a ejecutar un turno
+(issue #24, `docs/platform_es/conversation-memory.md`).
 
 ## Observabilidad del proveedor, y la investigación del issue #145
 
@@ -302,21 +303,29 @@ costo también se registran. Una llamada cortada a mitad de vuelo todavía no ti
 uso, así que los totales son una cota inferior. Una llamada a herramienta que
 el timeout interrumpió queda en los mensajes, respondida con un `ToolMessage` de
 error, así que los mensajes devueltos son un historial válido para enviar de
-vuelta como el del turno siguiente. Si el checkpointer se degradó y el
-turno arrancó de nuevo, o nunca se produjo estado, el uso es desconocido
-(`None`), nunca un valor inventado. `TurnResult.timed_out` y
+vuelta como el del turno siguiente. Si nunca se produjo estado, el uso es
+desconocido (`None`), nunca un valor inventado. `TurnResult.timed_out` y
 `TurnResult.timeout_s` permiten distinguir el timeout de un turno normal.
 
-En un hilo con checkpointer (`thread_id` dado), el estado persistido de un turno
-que expiró dentro de una herramienta sigue terminando con el mensaje del asistente
-que pidió la herramienta. El runtime no reescribe el almacén: antes de cada
-llamada al modelo responde toda llamada a herramienta sin respuesta con un
-`ToolMessage` de error (`Tool call interrupted: the tool did not return a result
-in an earlier turn`), ubicado justo después del mensaje que la pidió. Así el
-modelo siempre recibe una secuencia de llamadas a herramientas válida, en todos
-los canales y con cualquier backend de checkpointer, y una sola llamada lenta no
-puede dejar una conversación inutilizable hasta que venza su checkpoint. Un
-historial sano llega al modelo sin cambios.
+En un hilo con checkpointer (`thread_id` dado), un turno que agotó el tiempo se
+guarda tal como lo recibió el cliente (issue #24): sus llamadas a herramientas
+interrumpidas respondidas con un error, y después la respuesta de timeout. Un
+hilo todavía puede contener una llamada a herramienta sin respuesta: un turno
+que se detuvo en `max_tool_calls`, o un hilo guardado antes de #24. El runtime
+no reescribe el almacén por eso: antes de cada llamada al modelo responde toda
+llamada a herramienta sin respuesta con un `ToolMessage` de error (`Tool call
+interrupted: the tool did not return a result in an earlier turn`), ubicado
+justo después del mensaje que la pidió. Así el modelo siempre recibe una
+secuencia de llamadas a herramientas válida, en todos los canales y con
+cualquier backend de checkpointer. Un historial sano llega al modelo sin
+cambios.
+
+**Eventos del checkpointer.** `runtime.checkpointer_degraded` (warning) marca un
+turno respondido pese a una falla del checkpointer; su `operation` indica si
+falló la lectura del hilo (`read`) o el guardado del turno (`write`).
+`checkpointer.purged` (info) informa cada purga de retención solo con conteos,
+y `checkpointer.purge_failed` (warning) una purga que el intervalo siguiente
+reintenta. Ver `docs/platform_es/conversation-memory.md`.
 
 **Guía de dimensionamiento de cuenta para operadores.** `max_concurrent_turns`
 (default 10) acota cuántos turnos corre este proceso a la vez, pero NO acota

@@ -217,7 +217,7 @@ Writes a confirmed order and its line items to the local database. Fails closed 
 | Outputs | `value` (string or null) |
 | Error handling | `on_connector_unavailable: fail_open`, `on_permission_denied: fail_closed`, `retries: 0` |
 
-Reads and writes ephemeral session state from Redis. Used for LangGraph conversation checkpointing and short-lived deduplication state. Fails open — session state loss degrades experience but does not corrupt business data.
+Reads and writes ephemeral session state from Redis, such as short-lived deduplication state. Conversation checkpointing does not use it: conversation threads are kept in Postgres since #24 (`docs/platform/conversation-memory.md`). Fails open — session state loss degrades experience but does not corrupt business data.
 
 ---
 

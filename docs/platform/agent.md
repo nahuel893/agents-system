@@ -121,8 +121,9 @@ platform already has or is explicitly aiming for:
 
 - **A process restart loses the object and everything it held in memory that
   wasn't separately persisted.** ADR-001 already establishes that working
-  memory (the Redis checkpointer) is the one piece of state that does survive
-  a restart today, precisely *because* it lives outside the process. Anything
+  memory (the checkpointer, in Postgres since #24) is the one piece of state
+  that does survive a restart today, precisely *because* it lives outside the
+  process. Anything
   kept only on the Python object — including "which `AgentRuntime` instance
   belongs to this user" — does not survive.
 - **Multiple uvicorn workers or multiple server processes split the same
@@ -160,7 +161,7 @@ viable instead of a performance liability.
 
 | Kind | What it holds | Isolation | STATUS |
 |---|---|---|---|
-| **Working memory** | The current conversation's message history — what lets a multi-turn exchange stay coherent within one thread. | By `thread_id` | ⚠️ partial — the LangGraph Redis checkpointer holds this, keyed by `thread_id` (a customer's phone number in WhatsApp, `webhook.py:246`, when `whatsapp_checkpointer_enabled`). See ADR-002 §D.4/G for its durability gap (no persistence backing Redis) and TTL. |
+| **Working memory** | The current conversation's message history — what lets a multi-turn exchange stay coherent within one thread. | By `thread_id` | ✅ durable — the LangGraph Postgres checkpointer holds this, keyed by `thread_id` (a customer's phone number in WhatsApp, when `whatsapp_checkpointer_enabled`). It survives restarts, and an idle conversation is deleted after `CHECKPOINTER_RETENTION_S` (#24, ADR-002 A.4). See `docs/platform/conversation-memory.md`. |
 | **Agent-own long-term memory** | Durable facts *about this agent's principal*, accumulated and curated across conversations — not the raw transcript, but what the agent decided was worth keeping ("this customer prefers delivery on Tuesdays"). | By `agent_id` | ⏳ pending — does not exist. No `remember`/`recall` tool, no storage, no schema. See ADR-002 §G.25. |
 | **Organization-shared knowledge** | Facts the organization holds that are not any one agent's private memory — the product catalog, policy documents, a wiki. Not owned by the agent; the agent *queries* it via a tool. | By org, gated by the querying agent's permissions | ⚠️ partial — `KnowledgeBase` (`services/knowledge.py:23`) is a `Protocol` port with no concrete implementation shipped anywhere in the repository, not even a test fake; `platform_connectors.py` binds it as a fail-closed tool ("no knowledge base is available on this deployment") when nothing is wired in. |
 

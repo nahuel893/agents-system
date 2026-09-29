@@ -550,6 +550,35 @@ finally:
 El registro es de todo el proceso: cada task registra en el mismo sink, sin
 importar qué task lo registró.
 
+### Memoria de conversación: pasá un `checkpointer`
+
+Por defecto un runtime no tiene estado: enviás todo el historial en cada
+`run_turn`. Para que conserve una conversación entre turnos, pasá cualquier
+saver de LangGraph como `checkpointer=` y un `thread_id` por conversación;
+cada turno lleva entonces solo su(s) mensaje(s) nuevo(s). El hilo se lee
+antes del turno y se guarda una vez después, y un saver que falla degrada el
+turno (respondido sin historial, o respondido y no recordado) en vez de
+hacerlo fallar.
+
+```python
+from agents_system.services.checkpointer import open_postgres_checkpointer
+
+async with open_postgres_checkpointer(
+    MY_DATABASE_URL, pool_size=5, timeout_s=5.0
+) as saver:
+    agent = agents_system.AgentRuntime(equipped, model=model, checkpointer=saver)
+    await agent.run_turn(
+        [HumanMessage("Hola, soy Ana")], session_id="s1", thread_id="cliente-42"
+    )
+```
+
+`open_postgres_checkpointer` es el saver durable de la app servida; rechaza
+una base sin sus tablas, que crea `apply_checkpoint_migrations(url)` (o el
+`setup()` propio del saver). Cualquier otro saver también sirve, como el
+`InMemorySaver` de LangGraph para tests. Cuánto tiempo se conservan los
+hilos, y qué implica eso para los datos personales, está en
+`docs/platform_es/conversation-memory.md`.
+
 ### Escalamiento: el default incorporado
 
 Todo agente definido por rol hereda `escalation_notifier` (`send:escalation`,
@@ -670,6 +699,7 @@ confirmar que un override efectivamente se aplicó.
 - Esquema de archivos de rol/manifest/policy: `docs/platform_es/role.md`, `docs/platform_es/policy.md`
 - Contrato de tools (`ToolSpec`, firma del connector): `docs/platform_es/tool.md`
 - Sink, eventos y almacenamiento de auditoría: `docs/platform_es/audit.md`
+- Memoria de conversación (checkpointer, retención, política ante fallas): `docs/platform_es/conversation-memory.md`
 - Uso de tokens y costo (`MODEL_PRICES`): `docs/platform_es/live-eval.md`
 - Backends de referencia para los cuatro puertos genéricos de la plataforma (conocimiento, resumen, escalamiento, escritor de pedidos): `docs/platform_es/reference-backends.md`
 - Código fuente: `src/agents_system/harness/{registry,loader,injector,factory,defaults}.py`, `src/agents_system/agent/graph.py`, `src/agents_system/audit/sink.py`, `src/agents_system/__init__.py`

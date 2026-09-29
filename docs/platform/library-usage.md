@@ -534,6 +534,33 @@ finally:
 The registration is process-wide: every task records into the same sink,
 whichever task registered it.
 
+### Conversation memory: pass a `checkpointer`
+
+By default a runtime is stateless: you send the whole history on every
+`run_turn`. To let it keep a conversation between turns, pass any LangGraph
+saver as `checkpointer=` and a `thread_id` per conversation; each turn then
+only carries its new message(s). The thread is read before the turn and saved
+once after it, and a saver that fails degrades the turn (answered without
+history, or answered and not remembered) instead of failing it.
+
+```python
+from agents_system.services.checkpointer import open_postgres_checkpointer
+
+async with open_postgres_checkpointer(
+    MY_DATABASE_URL, pool_size=5, timeout_s=5.0
+) as saver:
+    agent = agents_system.AgentRuntime(equipped, model=model, checkpointer=saver)
+    await agent.run_turn(
+        [HumanMessage("Hi, I'm Ana")], session_id="s1", thread_id="customer-42"
+    )
+```
+
+`open_postgres_checkpointer` is the served app's durable saver; it refuses a
+database without its tables, which `apply_checkpoint_migrations(url)` (or the
+saver's own `setup()`) creates. Any other saver works too, such as
+LangGraph's `InMemorySaver` for tests. How long threads are kept, and what
+that means for personal data, is in `docs/platform/conversation-memory.md`.
+
 ### Escalation: the built-in default
 
 Every role-defined agent inherits `escalation_notifier` (`send:escalation`,
@@ -650,6 +677,7 @@ so you know to check `AgentDefinition.deployment is not None` (or log
 - Role/manifest/policy file schema: `docs/platform/role.md`, `docs/platform/policy.md`
 - Tool contract (`ToolSpec`, connector signature): `docs/platform/tool.md`
 - Audit sink, events and storage: `docs/platform/audit.md`
+- Conversation memory (checkpointer, retention, failure policy): `docs/platform/conversation-memory.md`
 - Token usage and cost (`MODEL_PRICES`): `docs/platform/live-eval.md`
 - Reference backends for the four platform-generic ports (knowledge, summarizer, escalation, order writer): `docs/platform/reference-backends.md`
 - Source: `src/agents_system/harness/{registry,loader,injector,factory,defaults}.py`, `src/agents_system/agent/graph.py`, `src/agents_system/audit/sink.py`, `src/agents_system/__init__.py`
