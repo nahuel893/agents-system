@@ -47,7 +47,7 @@ Nunca llamar a `_emit_async` directamente desde un sitio de llamada. Usar `_emit
 
 ## Eventos
 
-Diez tipos de evento, modelados como unión discriminada de Pydantic v2 sobre
+Once tipos de evento, modelados como unión discriminada de Pydantic v2 sobre
 `event_type`. Todos comparten una base común:
 
 | Campo | Tipo | Significado |
@@ -97,9 +97,37 @@ dispara en el injector cuando un manifiesto de rol nombra una herramienta que el
 registry no tiene, inmediatamente antes de lanzar `InjectionError`; el runtime
 nunca arranca. La única excepción es `escalation_notifier` en el uso como
 biblioteca en proceso, donde `build_runtime` lo completa con el default
-incorporado (ver `escalation_not_delivered` arriba). No es el caso `not_in_surface` del interceptor, que es un *modelo*
-nombrando una herramienta en tiempo de llamada contra un runtime que sí se
-construyó.
+incorporado (ver `escalation_not_delivered` arriba). No es el caso
+`not_in_surface` del interceptor, que es un *modelo* nombrando una herramienta
+en tiempo de llamada contra un runtime que sí se construyó.
+
+#### Los defaults incorporados quedan marcados (issue #182)
+
+Una herramienta que la plataforma aportó porque el registry no la tenía (el
+default de `escalation_notifier`) es visible en el registro, para que un
+operador distinga un build que corre con un reemplazo de uno que corre con
+herramientas reales:
+
+- `tool_granted` y `tool_call_attempted` llevan `builtin_default` (`true` solo
+  para el default, `false` para toda herramienta registrada), como campo del
+  evento y como clave del payload.
+- `runtime_built` lleva `builtin_defaults`, los nombres de las herramientas
+  concedidas que son defaults, y `EquippedRuntime.builtin_defaults` expone la
+  misma tupla en proceso. Un default denegado no figura: nunca llega al modelo.
+
+Consultar `payload->>'builtin_default' = 'true'` encuentra toda llamada que
+llegó a un reemplazo.
+
+#### El `reason` del escalamiento y la política de auditoría
+
+`escalation_not_delivered.reason` es texto escrito por el modelo. Se corta a 200
+caracteres y pasa por el redactor, que solo enmascara teléfonos y correos. **No**
+se restringe a un slug: un nombre o un ID escrito en `reason` se guarda tal
+cual. El texto de `details`, donde ese dato corresponde, nunca se guarda (solo
+`details_chars`). Si tu despliegue debe mantener otros identificadores fuera de
+`reason`, eso lo cubre la política de auditoría del llamador: lista `reason` en
+`audit_policy.redact_keys` del rol del agente para enmascararlo por completo, en
+el payload y en el campo `reason` del evento.
 
 ## Redacción
 
@@ -444,6 +472,6 @@ puede saber si una fila aterrizó en una.
 ## Referencias cruzadas
 
 - Requisitos del registro de auditoría: `docs/platform_es/harness.md` (sección de auditoría)
-- Control de Capa 2, que emite cuatro de los diez eventos: `docs/platform/interceptor.md`
+- Control de Capa 2, que emite dos de los once tipos de evento (`tool_call_attempted`, `tool_call_blocked`) desde cuatro sitios de llamada: `docs/platform/interceptor.md`
 - Campos de `audit_policy` (`retention_days`, `capture_tool_input`, `redact_keys`): `docs/platform_es/policy.md`
 - Modelo de permisos y RBAC: `docs/architecture/permission-model.md`

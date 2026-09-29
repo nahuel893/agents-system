@@ -124,10 +124,16 @@ igual que el outcome `error` a nivel turno.
 
 **Regla de honestidad para tokens/costo** -- mismo contrato que el
 `TurnUsage` del Slice 1: `agent_tokens_total`/`agent_cost_usd_total` sólo
-se incrementan cuando el valor es realmente conocido. Un turno que
-expiró por timeout o falló incrementa
+se incrementan cuando el valor es realmente conocido. Un turno que lanzó una
+excepción (`outcome="error"`) incrementa
 `agent_turns_total`/`agent_turn_duration_seconds` pero nunca una muestra
-de token o costo adivinada en `0`.
+de token o costo adivinada en `0`. Un turno con timeout (`outcome="timeout"`)
+informa el uso de las llamadas al modelo que terminaron antes de agotar su
+presupuesto (issue #172): es una cota inferior real, así que sus muestras de
+token y costo sí se registran; una llamada cortada a mitad de vuelo no informó
+nada y no se cuenta. Solo un turno con timeout cuyo uso no pudo determinarse
+(una degradación del checkpointer lo reinició, o no se produjo estado) no
+registra muestra de token ni de costo.
 
 ## Observabilidad del proveedor, y la investigación del issue #145
 

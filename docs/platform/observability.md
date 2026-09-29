@@ -115,9 +115,14 @@ unchanged, same as the turn-level `error` outcome.
 
 **Honesty rule for tokens/cost** — same contract as slice 1's `TurnUsage`:
 `agent_tokens_total`/`agent_cost_usd_total` are only incremented when the
-value is actually known. A timed-out or errored turn increments
+value is actually known. A turn that raised (`outcome="error"`) increments
 `agent_turns_total`/`agent_turn_duration_seconds` but never a guessed `0`
-token or cost sample.
+token or cost sample. A timed-out turn (`outcome="timeout"`) reports the usage
+of the model calls that completed before its budget ran out (issue #172): that
+is a real lower bound, so its token and cost samples are recorded; a call cut
+off mid-flight reported nothing and is not counted. Only a timed-out turn whose
+usage could not be determined at all (a checkpointer degradation restarted it,
+or no state was produced) records no token or cost sample.
 
 ## Provider observability, and the issue #145 investigation
 

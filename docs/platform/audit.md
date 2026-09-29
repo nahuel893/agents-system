@@ -45,7 +45,7 @@ Never call `_emit_async` directly from a call site. Use `_emit`.
 
 ## Events
 
-Ten event types, modelled as a Pydantic v2 discriminated union over
+Eleven event types, modelled as a Pydantic v2 discriminated union over
 `event_type`. All share a common base:
 
 | Field | Type | Meaning |
@@ -93,11 +93,38 @@ and `permission_revoked` — which is why the counts differ.
 Note that `unknown_tool` is a **build-time** event. It fires in the injector when
 a role manifest names a tool the registry does not have, immediately before
 `InjectionError` is raised; the runtime never starts. The one exception is
-`escalation_notifier` in in-process library use, where `build_runtime`
-fills it with the built-in default instead (see `escalation_not_delivered`
-above). It is not the
-interceptor's `not_in_surface` case, which is a *model* naming a tool at call
-time against a runtime that built successfully.
+`escalation_notifier` in in-process library use, where `build_runtime` fills it
+with the built-in default instead (see `escalation_not_delivered` above). It is
+not the interceptor's `not_in_surface` case, which is a *model* naming a tool at
+call time against a runtime that built successfully.
+
+#### Built-in defaults are marked (issue #182)
+
+A tool the platform supplied because the registry lacked it (the
+`escalation_notifier` default) is visible in the trail, so an operator can tell
+a build that runs on a stand-in from one that runs on real tools:
+
+- `tool_granted` and `tool_call_attempted` carry `builtin_default` (`true` only
+  for the default, `false` for every registered tool), as an event field and as
+  a payload key.
+- `runtime_built` carries `builtin_defaults`, the names of the granted tools
+  that are defaults, and `EquippedRuntime.builtin_defaults` exposes the same
+  tuple in process. A default that was denied is not listed: it never reaches
+  the model.
+
+Query `payload->>'builtin_default' = 'true'` to find every call that reached a
+stand-in.
+
+#### The escalation `reason` and the audit policy
+
+`escalation_not_delivered.reason` is model-written text. It is cut to 200
+characters and passed through the redactor, which masks phone numbers and email
+addresses only. It is **not** restricted to a slug: a name or an ID typed into
+`reason` is stored as written. The `details` text, where such data belongs, is
+never stored (only `details_chars`). If your deployment must keep other
+identifiers out of `reason`, that is the caller's audit policy to cover: list
+`reason` in `audit_policy.redact_keys` for the agent's role to mask it entirely,
+in the payload and in the event's `reason` field alike.
 
 ## Redaction
 
@@ -425,6 +452,6 @@ partitions, so no in-memory test can tell whether a row landed in one.
 ## Cross-references
 
 - Audit trail requirements: `docs/platform/harness.md` (Audit trail section)
-- Layer 2 enforcement, which emits four of the ten events: `docs/platform/interceptor.md`
+- Layer 2 enforcement, which emits two of the eleven event types (`tool_call_attempted`, `tool_call_blocked`) from four call sites: `docs/platform/interceptor.md`
 - `audit_policy` fields (`retention_days`, `capture_tool_input`, `redact_keys`): `docs/platform/policy.md`
 - Permission model and RBAC: `docs/architecture/permission-model.md`
