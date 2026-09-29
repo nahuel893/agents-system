@@ -558,7 +558,9 @@ saver de LangGraph como `checkpointer=` y un `thread_id` por conversación;
 cada turno lleva entonces solo su(s) mensaje(s) nuevo(s). El hilo se lee
 antes del turno y se guarda una vez después, y un saver que falla degrada el
 turno (respondido sin historial, o respondido y no recordado) en vez de
-hacerlo fallar.
+hacerlo fallar. Lo mismo pasa con uno que deja de responder: cada lectura y
+cada guardado se abandonan pasado `checkpointer_timeout_s` (5 segundos por
+defecto).
 
 ```python
 from agents_system.services.checkpointer import open_postgres_checkpointer

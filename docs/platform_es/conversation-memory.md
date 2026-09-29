@@ -48,8 +48,13 @@ turno una vez después, como un único checkpoint. Por eso:
   con un error, seguidas por la respuesta de timeout. El turno siguiente
   continúa desde la conversación que vio el cliente.
 - **El presupuesto por turno (`total_execution_timeout_s`) acota el trabajo
-  del propio agente.** Leer y guardar el hilo quedan acotados por el timeout
-  propio del checkpointer, `CHECKPOINTER_TIMEOUT_S`.
+  del propio agente.** Leer el hilo y guardar el turno tienen cada uno su
+  propio tope, `CHECKPOINTER_TIMEOUT_S`, que el runtime aplica del lado del
+  cliente. Una base que deja de responder sin rechazar nada, como un servidor
+  congelado o una partición de red, se abandona pasado ese tiempo y se trata
+  como una lectura o un guardado fallidos. No puede retener el turno, su lugar
+  de admisión ni su lease del outbox. La llamada abandonada se cancela en
+  segundo plano.
 
 ## La política ante fallas
 
@@ -59,8 +64,8 @@ usuario de la librería pase a `AgentRuntime(checkpointer=...)`.
 
 | Dónde falla | Qué recibe el cliente | Qué pasa con el hilo |
 |---|---|---|
-| Al leer el hilo: la base está caída, el pool está agotado, o el checkpoint guardado de este hilo no se puede cargar | Una respuesta a este turno, sin el historial anterior | No se guarda nada. Un hilo que no se pudo leer nunca se sobrescribe con uno al que le faltan sus turnos anteriores. |
-| Al guardar el turno | La respuesta terminada, tal cual | Queda en su turno anterior. No se vuelve a ejecutar nada: no se repite ninguna llamada al modelo ni se reejecuta ninguna herramienta. |
+| Al leer el hilo: la base está caída o no responde dentro de `CHECKPOINTER_TIMEOUT_S`, el pool está agotado, o el checkpoint guardado de este hilo no se puede cargar | Una respuesta a este turno, sin el historial anterior | No se guarda nada. Un hilo que no se pudo leer nunca se sobrescribe con uno al que le faltan sus turnos anteriores. |
+| Al guardar el turno, o el guardado no responde dentro de `CHECKPOINTER_TIMEOUT_S` | La respuesta terminada, tal cual | Queda en su turno anterior. No se vuelve a ejecutar nada: no se repite ninguna llamada al modelo ni se reejecuta ninguna herramienta. Un guardado abandonado por su tope todavía puede completarse si la base ya lo estaba escribiendo; el hilo queda entonces con el turno, completo. |
 
 Ambos casos se registran como `runtime.checkpointer_degraded`, con
 `operation` (`read` o `write`), `thread_id`, `error_type` y `error`. El uso de
@@ -96,7 +101,7 @@ tiempo se conservan.
 | `CHECKPOINTER_RETENTION_S` | `86400` (24 h) | Cuánto tiempo se conserva una conversación después de su último turno. `never` las conserva sin límite. Debe ser positivo. |
 | `CHECKPOINTER_PURGE_INTERVAL_S` | `3600` | Cada cuánto corre la purga. También corre una vez al arrancar. |
 | `CHECKPOINTER_POOL_SIZE` | `5` | Las conexiones propias del checkpointer. Se suman a los demás pools de la app frente al `max_connections` de PostgreSQL. |
-| `CHECKPOINTER_TIMEOUT_S` | `5.0` | Tope para obtener una conexión y para cada sentencia del checkpointer. |
+| `CHECKPOINTER_TIMEOUT_S` | `5.0` | Tope para una lectura del hilo y para un guardado, que aplica el runtime. También acota obtener una conexión del pool, abrir una (`connect_timeout`, al menos 2 segundos), cada sentencia (`statement_timeout`) y los datos de red sin confirmar (`tcp_user_timeout`). |
 
 El valor por defecto conserva la ventana de 24 horas que tenía el TTL de
 Redis. Es un valor por defecto de la plataforma, no una política: cuánto
@@ -211,7 +216,8 @@ conversaciones guardadas en PostgreSQL quedan en sus tablas hasta que
 `langgraph-checkpoint-redis`; el checkpointer de Postgres viene con el extra
 `postgres`, que `server` incluye. `AgentRuntime(checkpointer=...)` acepta
 cualquier saver de LangGraph, y la política ante fallas de arriba se aplica a
-todos. Para
+todos. Cada lectura y cada guardado quedan acotados por
+`AgentRuntime(checkpointer_timeout_s=...)`, 5 segundos por defecto. Para
 guardar los hilos en Redis, instalá ese paquete vos mismo y pasá su saver.
 Para usar PostgreSQL fuera de la app servida,
 `services.checkpointer.open_postgres_checkpointer(database_url,
@@ -224,9 +230,11 @@ saver.
 - `tests/test_checkpointer_failure_policy.py`: la política ante fallas con
   excepciones simples y sin backend (una lectura fallida, un guardado
   fallido, un hilo roto, un guardado por turno, un turno que agotó su tiempo,
-  un checkpoint que se decodifica en algo que no es una lista de mensajes).
-- `tests/test_checkpointer_service.py`: el string de conexión, la alarma de
-  versión del esquema, el ciclo de purga, y la ausencia de un `DeltaChannel`
+  un checkpoint que se decodifica en algo que no es una lista de mensajes,
+  una lectura o un guardado que nunca responden, y un driver lento para
+  cancelar que no retiene el turno).
+- `tests/test_checkpointer_service.py`: el string de conexión, los timeouts
+  de conexión, la alarma de versión del esquema, el ciclo de purga, y la ausencia de un `DeltaChannel`
   que haría insegura la poda.
 - `tests/test_checkpointer_integration.py`, contra un PostgreSQL real (job de
   CI `checkpointer-integration`, `CHECKPOINTER_TEST_DATABASE_URL`): la

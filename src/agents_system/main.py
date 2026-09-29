@@ -590,6 +590,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     checkpointer=checkpointer,
                     runtime_id=runtime_id,
                     model_prices=settings.model_prices,
+                    # Issue #24 -- the pool's statement_timeout is enforced by
+                    # the server; this bounds each thread read and save on the
+                    # client, so a database that stops answering cannot hold
+                    # the turn, its admission slot or its outbox lease.
+                    checkpointer_timeout_s=settings.checkpointer_timeout_s,
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
 

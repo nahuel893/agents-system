@@ -235,8 +235,10 @@ class Settings(ProviderSettings):
     checkpointer_purge_interval_s: float = Field(default=3_600.0, gt=0)
     # The checkpointer's own connection pool (psycopg, not the SQLAlchemy
     # engine), so its connections add to the database's total. The timeout
-    # bounds both taking a connection and each statement: a checkpointer that
-    # cannot answer in time degrades the turn instead of stalling it.
+    # bounds each thread read and save (enforced by the runtime, on the
+    # client) as well as taking a connection, opening one and each statement:
+    # a checkpointer that cannot answer in time degrades the turn instead of
+    # stalling it.
     checkpointer_pool_size: int = Field(default=5, gt=0)
     checkpointer_timeout_s: float = Field(default=5.0, gt=0)
     # Deprecated: the Redis checkpointer's TTL, read as the retention it

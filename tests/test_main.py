@@ -363,6 +363,9 @@ async def test_lifespan_injects_checkpointer_into_runtimes() -> None:
         mock_build_checkpointer_cm.assert_called_once()
         _, kwargs = mock_agent_runtime.call_args
         assert kwargs["checkpointer"] is fake_checkpointer
+        # Issue #24 review -- every read and save is bounded by the same
+        # CHECKPOINTER_TIMEOUT_S the pool uses, on the client side.
+        assert kwargs["checkpointer_timeout_s"] == test_settings.checkpointer_timeout_s
 
 
 @pytest.mark.asyncio

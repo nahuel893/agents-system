@@ -29,7 +29,7 @@ import dataclasses
 import itertools
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from contextlib import aclosing, nullcontext
 from functools import partial
 from typing import Any
@@ -714,6 +714,53 @@ def _build_graph(
 # Conversation threads and the checkpointer failure policy (issue #24)
 # ---------------------------------------------------------------------------
 
+#: How long a thread read or save may take when the caller sets no bound:
+#: the same default as the served app's ``CHECKPOINTER_TIMEOUT_S``.
+DEFAULT_CHECKPOINTER_TIMEOUT_S = 5.0
+
+#: Checkpointer calls abandoned at their timeout and still being cancelled.
+#: Held so the event loop keeps a strong reference until they finish.
+_ABANDONED_CALLS: set[asyncio.Future[Any]] = set()
+
+
+def _forget_abandoned(call: asyncio.Future[Any]) -> None:
+    _ABANDONED_CALLS.discard(call)
+    if not call.cancelled():
+        # Retrieved, so asyncio does not report it as never retrieved; the
+        # failure was already handled as a timeout.
+        call.exception()
+
+
+async def _within[T](timeout_s: float, call: Awaitable[T]) -> T:
+    """Await *call*, giving up after *timeout_s* seconds with ``TimeoutError``.
+
+    A database that stops answering without refusing anything -- a frozen
+    server, a network partition -- raises nothing, and a server-side
+    ``statement_timeout`` cannot end the wait either. This bound is on the
+    client, so it holds for any saver.
+
+    An abandoned call is cancelled but not awaited: a driver can take a
+    while to cancel a request (psycopg waits up to ten seconds for the
+    server), and the turn does not wait for that. The cancellation finishes
+    in the background, which releases the call's connection.
+    """
+    task = asyncio.ensure_future(call)
+    bound = asyncio.timeout(timeout_s)
+    try:
+        async with bound:
+            return await asyncio.shield(task)
+    except TimeoutError:
+        if not bound.expired():
+            raise  # the call's own error, not this bound
+        raise TimeoutError(
+            f"the checkpointer did not answer within {timeout_s}s"
+        ) from None
+    finally:
+        if not task.done():
+            task.cancel()
+            _ABANDONED_CALLS.add(task)
+            task.add_done_callback(_forget_abandoned)
+
 
 @dataclasses.dataclass
 class _Thread:
@@ -737,6 +784,11 @@ class _Thread:
       again, so no model call is repeated and no tool call is replayed; the
       thread stays at its previous turn.
 
+    A backend that never answers -- a frozen or partitioned database server
+    raises nothing -- is a failure too: each read and each save is abandoned
+    after ``timeout_s`` (``_within``) and handled as the failure of that
+    point.
+
     Both are logged as ``runtime.checkpointer_degraded`` with the
     ``operation`` that failed. A broken thread therefore keeps answering
     without its memory and never affects another thread. ``CancelledError``
@@ -745,6 +797,7 @@ class _Thread:
 
     compiled: Any
     thread_id: str
+    timeout_s: float
     #: What the read returned; ``None`` until a read succeeds.
     history: list[AnyMessage] | None = None
 
@@ -755,7 +808,9 @@ class _Thread:
     async def load(self) -> list[AnyMessage]:
         """The thread's history, or ``[]`` when it cannot be read."""
         try:
-            snapshot = await self.compiled.aget_state(self.config)
+            snapshot = await _within(
+                self.timeout_s, self.compiled.aget_state(self.config)
+            )
             history = snapshot.values.get("messages", [])
             # A damaged checkpoint can decode into something that is not a
             # message list at all; that is an unreadable thread too.
@@ -774,13 +829,18 @@ class _Thread:
 
         Saved as if ``call_model`` had written them: the turn always ends
         with a reply that routes to ``END``, so the saved checkpoint has no
-        pending step.
+        pending step. A save abandoned at its timeout can still complete if
+        the database was already writing it; the thread then holds this
+        turn, whole, exactly as if the save had answered in time.
         """
         if self.history is None or not new_messages:
             return
         try:
-            await self.compiled.aupdate_state(
-                self.config, {"messages": list(new_messages)}, as_node="call_model"
+            await _within(
+                self.timeout_s,
+                self.compiled.aupdate_state(
+                    self.config, {"messages": list(new_messages)}, as_node="call_model"
+                ),
             )
         except Exception as exc:
             self._degraded("write", exc)
@@ -943,6 +1003,13 @@ class AgentRuntime:
         app passes the Postgres one (issue #24). The thread is read before
         the turn and saved once after it, and a checkpointer that fails
         degrades the turn instead of failing it (see ``_Thread``).
+    checkpointer_timeout_s:
+        Issue #24 -- the most seconds one thread read or one save may take
+        before it is abandoned and handled as a failed read or save, so a
+        database that stops answering cannot hold a turn. Enforced on the
+        client, for any saver. Defaults to
+        ``DEFAULT_CHECKPOINTER_TIMEOUT_S`` (5 seconds); the served app
+        passes ``CHECKPOINTER_TIMEOUT_S``. Must be positive.
     runtime_id:
         #78 Phase 0 Slice 2 -- the bounded, low-cardinality ``runtime_id``
         label this runtime's metrics are recorded under (see
@@ -981,7 +1048,12 @@ class AgentRuntime:
         runtime_id: str | None = None,
         metrics: Metrics | None = None,
         model_prices: Mapping[str, ModelPrice] | None = None,
+        checkpointer_timeout_s: float = DEFAULT_CHECKPOINTER_TIMEOUT_S,
     ) -> None:
+        if not checkpointer_timeout_s > 0:
+            raise ValueError(
+                f"checkpointer_timeout_s must be positive, got {checkpointer_timeout_s!r}"
+            )
         if model is None:
             model = build_agent_model(runtime.definition)
         else:
@@ -989,6 +1061,7 @@ class AgentRuntime:
         self._runtime = runtime
         self._equipped = runtime
         self._checkpointer = checkpointer
+        self._checkpointer_timeout_s = float(checkpointer_timeout_s)
         self._schemas = [spec.to_langchain_tool_schema() for spec in runtime.tools]
         # Only call bind_tools when there are tools to bind — some fake models
         # raise NotImplementedError for bind_tools even with an empty list.
@@ -1170,10 +1243,14 @@ class AgentRuntime:
         # the turn is saved once at the end (see `_Thread` for the failure
         # policy). The graph itself always runs without a checkpointer.
         # Neither the read nor the save counts against the turn budget: the
-        # budget bounds the agent's own work, and a served deployment bounds
-        # its checkpointer's calls with their own timeouts.
+        # budget bounds the agent's own work, and each of them has its own
+        # bound, `checkpointer_timeout_s`.
         thread = (
-            _Thread(graph.compile(checkpointer=self._checkpointer), thread_id)
+            _Thread(
+                graph.compile(checkpointer=self._checkpointer),
+                thread_id,
+                timeout_s=self._checkpointer_timeout_s,
+            )
             if thread_id is not None and self._checkpointer is not None
             else None
         )

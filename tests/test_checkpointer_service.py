@@ -17,6 +17,7 @@ from agents_system.services.checkpointer import (
     CHECKPOINT_SCHEMA_VERSION,
     CheckpointPurger,
     PurgeResult,
+    _connection_kwargs,
     psycopg_conninfo,
 )
 
@@ -65,6 +66,35 @@ def test_the_app_database_url_becomes_a_libpq_connection_string(
 def test_a_non_postgres_url_is_refused() -> None:
     with pytest.raises(ValueError, match="PostgreSQL"):
         psycopg_conninfo("sqlite+aiosqlite:///local.db")
+
+
+# ---------------------------------------------------------------------------
+# Connection options
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("timeout_s", "connect_timeout", "tcp_user_timeout", "statement_timeout"),
+    [(5.0, 5, 5_000, 5_000), (2.5, 3, 2_500, 2_500), (0.5, 2, 1_000, 500)],
+)
+def test_a_connection_gives_up_on_a_server_that_stops_answering(
+    timeout_s: float,
+    connect_timeout: int,
+    tcp_user_timeout: int,
+    statement_timeout: int,
+) -> None:
+    """``statement_timeout`` is enforced by the server, so it cannot end a
+    wait on a server that is gone. ``connect_timeout`` bounds opening a
+    connection (libpq's minimum is 2 seconds) and ``tcp_user_timeout`` drops
+    a connection whose data the peer stopped acknowledging, such as the
+    background purge's across a network partition."""
+    kwargs = _connection_kwargs(timeout_s)
+
+    assert kwargs["connect_timeout"] == connect_timeout
+    assert kwargs["tcp_user_timeout"] == tcp_user_timeout
+    assert kwargs["options"] == f"-c statement_timeout={statement_timeout}"
+    assert kwargs["autocommit"] is True
+    assert kwargs["prepare_threshold"] == 0
 
 
 # ---------------------------------------------------------------------------

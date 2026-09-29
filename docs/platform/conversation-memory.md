@@ -46,8 +46,12 @@ once after it, as one checkpoint. So:
   the timeout interrupted are answered with an error, followed by the timeout
   reply. The next turn continues from the conversation the customer saw.
 - **The per-turn budget (`total_execution_timeout_s`) bounds the agent's own
-  work.** Reading and saving the thread are bounded by the checkpointer's own
-  timeout, `CHECKPOINTER_TIMEOUT_S`.
+  work.** Reading the thread and saving the turn each have their own bound,
+  `CHECKPOINTER_TIMEOUT_S`, which the runtime enforces on the client. A
+  database that stops answering without refusing anything, such as a frozen
+  server or a network partition, is abandoned after that long and handled as
+  a failed read or save. It cannot hold the turn, its admission slot or its
+  outbox lease. The abandoned call is cancelled in the background.
 
 ## The failure policy
 
@@ -57,8 +61,8 @@ user passes to `AgentRuntime(checkpointer=...)`.
 
 | Where it fails | What the customer gets | What happens to the thread |
 |---|---|---|
-| Reading the thread: the database is down, the pool is exhausted, or this thread's stored checkpoint cannot be loaded | An answer to this turn, without the earlier history | Nothing is saved. A thread that could not be read is never overwritten with one that lacks its earlier turns. |
-| Saving the turn | The finished answer, as it is | It stays at its previous turn. Nothing runs again: no model call is repeated and no tool call is replayed. |
+| Reading the thread: the database is down or does not answer within `CHECKPOINTER_TIMEOUT_S`, the pool is exhausted, or this thread's stored checkpoint cannot be loaded | An answer to this turn, without the earlier history | Nothing is saved. A thread that could not be read is never overwritten with one that lacks its earlier turns. |
+| Saving the turn, or the save does not answer within `CHECKPOINTER_TIMEOUT_S` | The finished answer, as it is | It stays at its previous turn. Nothing runs again: no model call is repeated and no tool call is replayed. A save abandoned at its timeout can still complete if the database was already writing it; the thread then holds the turn, whole. |
 
 Both are logged as `runtime.checkpointer_degraded`, with `operation` (`read`
 or `write`), `thread_id`, `error_type` and `error`. The turn's token usage
@@ -92,7 +96,7 @@ conversations are stored does not change how long they are kept.
 | `CHECKPOINTER_RETENTION_S` | `86400` (24 h) | How long a conversation is kept after its last turn. `never` keeps conversations indefinitely. Must be positive. |
 | `CHECKPOINTER_PURGE_INTERVAL_S` | `3600` | How often the purge runs. It also runs once at startup. |
 | `CHECKPOINTER_POOL_SIZE` | `5` | The checkpointer's own connections. They add to the app's other pools against PostgreSQL's `max_connections`. |
-| `CHECKPOINTER_TIMEOUT_S` | `5.0` | Upper bound for taking a connection and for each checkpointer statement. |
+| `CHECKPOINTER_TIMEOUT_S` | `5.0` | Upper bound for one thread read and one save, enforced by the runtime. Also bounds taking a connection from the pool, opening one (`connect_timeout`, at least 2 seconds), each statement (`statement_timeout`), and unacknowledged network data (`tcp_user_timeout`). |
 
 The default keeps the 24-hour window the Redis TTL had. It is a platform
 default, not a policy: how long a business keeps its customers' conversations
@@ -196,8 +200,9 @@ conversations saved in PostgreSQL stay in their tables until
 `langgraph-checkpoint-redis`; the Postgres checkpointer comes with the
 `postgres` extra, which `server` includes. `AgentRuntime(checkpointer=...)`
 accepts any LangGraph saver, and the failure policy above applies to all of
-them. To keep threads in Redis, install that package yourself and pass its
-saver. To use PostgreSQL outside the served app,
+them. Each read and save is bounded by
+`AgentRuntime(checkpointer_timeout_s=...)`, 5 seconds by default. To keep
+threads in Redis, install that package yourself and pass its saver. To use PostgreSQL outside the served app,
 `services.checkpointer.open_postgres_checkpointer(database_url, pool_size=...,
 timeout_s=...)` opens the same pooled saver. Create its tables with
 `apply_checkpoint_migrations(database_url)` or the saver's own `setup()`.
@@ -207,9 +212,10 @@ timeout_s=...)` opens the same pooled saver. Create its tables with
 - `tests/test_checkpointer_failure_policy.py`: the failure policy with plain
   exceptions and no backend (a failed read, a failed save, one broken
   thread, one save per turn, a timed-out turn, a checkpoint that decodes into
-  something that is not a message list).
-- `tests/test_checkpointer_service.py`: the connection string, the schema
-  version tripwire, the purge loop, and the absence of a `DeltaChannel` that
+  something that is not a message list, a read or save that never answers,
+  and a driver slow to cancel that does not hold the turn).
+- `tests/test_checkpointer_service.py`: the connection string, the
+  connection timeouts, the schema version tripwire, the purge loop, and the absence of a `DeltaChannel` that
   would make pruning unsafe.
 - `tests/test_checkpointer_integration.py`, against a real PostgreSQL (CI job
   `checkpointer-integration`, `CHECKPOINTER_TEST_DATABASE_URL`): revision 007

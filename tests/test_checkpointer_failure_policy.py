@@ -19,6 +19,7 @@ turn is never failed because of the checkpointer. These tests use
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -412,6 +413,155 @@ async def test_a_turn_without_a_thread_id_never_reads_or_writes_the_checkpointer
 
     assert result[-1].content == "ok"
     assert saver.puts == {}
+
+
+# ---------------------------------------------------------------------------
+# A checkpointer that never answers
+# ---------------------------------------------------------------------------
+
+
+class _Unresponsive(_Saver):
+    """A backend that takes the request and never answers: a frozen or
+    partitioned database server, which refuses nothing and so raises
+    nothing. ``cancel_s`` stands in for a driver that spends a while
+    cancelling an abandoned request (psycopg waits up to ten seconds for
+    the server); ``cancelled`` is set once it has."""
+
+    def __init__(
+        self,
+        *,
+        hang_reads: bool = False,
+        hang_writes: bool = False,
+        cancel_s: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.hang_reads = hang_reads
+        self.hang_writes = hang_writes
+        self.cancel_s = cancel_s
+        self.cancelled = asyncio.Event()
+
+    async def _never_answer(self) -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await asyncio.sleep(self.cancel_s)
+            self.cancelled.set()
+            raise
+
+    async def aget_tuple(self, config: Any) -> Any:
+        if self.hang_reads:
+            await self._never_answer()
+        return await super().aget_tuple(config)
+
+    async def aput(
+        self,
+        config: Any,
+        checkpoint: Checkpoint,
+        metadata: CheckpointMetadata,
+        new_versions: ChannelVersions,
+    ) -> Any:
+        if self.hang_writes:
+            await self._never_answer()
+        return await super().aput(config, checkpoint, metadata, new_versions)
+
+
+async def test_a_read_that_never_answers_is_abandoned_and_the_turn_answered(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    thread = "+549110000010"
+    saver = _Unresponsive(hang_reads=True)
+    agent = AgentRuntime(
+        _runtime(),
+        _CountingModel(responses=[_answer("Still here.")]),
+        checkpointer=saver,
+        checkpointer_timeout_s=0.2,
+    )
+
+    result = await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Hello")],
+            session_id="s1",
+            permissions=(),
+            thread_id=thread,
+        ),
+        timeout=3.0,
+    )
+
+    assert [m.content for m in result] == ["Hello", "Still here."]
+    # A read that timed out is a failed read: the thread is not overwritten.
+    assert saver.puts.get(thread, 0) == 0
+    out = capsys.readouterr().out
+    assert _logged(out, "operation", "read")
+    assert _logged(out, "error_type", "TimeoutError")
+
+
+async def test_a_save_that_never_answers_is_abandoned_and_the_answer_returned(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spec, executions = _counting_tool()
+    saver = _Unresponsive(hang_writes=True)
+    agent = AgentRuntime(
+        _runtime((spec,)),
+        _CountingModel(
+            responses=[_tool_call("place_order", "call_1"), _answer("Order placed.")]
+        ),
+        checkpointer=saver,
+        checkpointer_timeout_s=0.2,
+    )
+
+    result = await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Two boxes, please")],
+            session_id="s1",
+            permissions=(),
+            thread_id="+549110000011",
+        ),
+        timeout=3.0,
+    )
+
+    assert result[-1].content == "Order placed."
+    assert len(executions) == 1
+    out = capsys.readouterr().out
+    assert _logged(out, "operation", "write")
+    assert _logged(out, "error_type", "TimeoutError")
+
+
+async def test_a_driver_slow_to_cancel_does_not_hold_the_turn() -> None:
+    """The bound is on the turn, not on the driver's clean-up: an abandoned
+    call is cancelled in the background, and the turn goes on at once."""
+    saver = _Unresponsive(hang_reads=True, cancel_s=1.5)
+    agent = AgentRuntime(
+        _runtime(),
+        _CountingModel(responses=[_answer("ok")]),
+        checkpointer=saver,
+        checkpointer_timeout_s=0.1,
+    )
+
+    started = time.monotonic()
+    await asyncio.wait_for(
+        agent.run_turn(
+            [HumanMessage(content="Hi")],
+            session_id="s1",
+            permissions=(),
+            thread_id="+549110000012",
+        ),
+        timeout=3.0,
+    )
+
+    assert time.monotonic() - started < 1.0
+    # The abandoned read is still cancelled, so its connection is released.
+    await asyncio.wait_for(saver.cancelled.wait(), timeout=3.0)
+
+
+@pytest.mark.parametrize("timeout_s", [0, -1.0])
+def test_a_checkpointer_timeout_must_be_positive(timeout_s: float) -> None:
+    with pytest.raises(ValueError, match="checkpointer_timeout_s"):
+        AgentRuntime(
+            _runtime(),
+            _CountingModel(responses=[_answer("ok")]),
+            checkpointer=_Saver(),
+            checkpointer_timeout_s=timeout_s,
+        )
 
 
 async def test_a_thread_that_decodes_into_something_else_is_an_unreadable_thread(

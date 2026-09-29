@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import math
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any, Protocol
@@ -127,6 +128,29 @@ async def verify_checkpoint_schema(pool: AsyncConnectionPool[Any]) -> None:
         )
 
 
+def _connection_kwargs(timeout_s: float) -> dict[str, Any]:
+    """The options of every connection in the checkpointer's pool.
+
+    Autocommit, and no server-side prepared statements, as the saver
+    requires. ``statement_timeout`` ends a slow statement, but the server
+    enforces it, so it cannot end a wait on a server that is gone:
+    ``connect_timeout`` bounds opening a connection (libpq's minimum is two
+    whole seconds) and ``tcp_user_timeout`` drops a connection whose data
+    the peer stopped acknowledging, as across a network partition -- which
+    also frees the background purge, whose statements have no timeout.
+    """
+    from psycopg.rows import dict_row
+
+    return {
+        "autocommit": True,
+        "prepare_threshold": 0,
+        "row_factory": dict_row,
+        "options": f"-c statement_timeout={int(timeout_s * 1000)}",
+        "connect_timeout": max(2, math.ceil(timeout_s)),
+        "tcp_user_timeout": max(1_000, int(timeout_s * 1000)),
+    }
+
+
 @asynccontextmanager
 async def open_postgres_checkpointer(
     database_url: str, *, pool_size: int, timeout_s: float
@@ -136,11 +160,12 @@ async def open_postgres_checkpointer(
     A pool, not the single connection ``from_conn_string`` holds: turns save
     concurrently, and a broken connection (a database restart, a network
     drop) is replaced on the next checkout instead of failing every later
-    turn. ``timeout_s`` bounds both waiting for a connection and each
-    statement. Connections use autocommit, as the saver requires.
+    turn. ``timeout_s`` bounds waiting for a connection, opening one, and
+    each statement (see ``_connection_kwargs``). A server that stops
+    answering altogether is cut off on the client, by the runtime's own
+    bound on each read and save (``AgentRuntime(checkpointer_timeout_s=)``).
     """
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-    from psycopg.rows import dict_row
     from psycopg_pool import AsyncConnectionPool
 
     pool: AsyncConnectionPool[Any] = AsyncConnectionPool(
@@ -149,12 +174,7 @@ async def open_postgres_checkpointer(
         max_size=pool_size,
         timeout=timeout_s,
         check=AsyncConnectionPool.check_connection,
-        kwargs={
-            "autocommit": True,
-            "prepare_threshold": 0,
-            "row_factory": dict_row,
-            "options": f"-c statement_timeout={int(timeout_s * 1000)}",
-        },
+        kwargs=_connection_kwargs(timeout_s),
         open=False,
     )
     await pool.open(wait=True, timeout=timeout_s)

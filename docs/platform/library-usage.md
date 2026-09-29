@@ -541,7 +541,9 @@ By default a runtime is stateless: you send the whole history on every
 saver as `checkpointer=` and a `thread_id` per conversation; each turn then
 only carries its new message(s). The thread is read before the turn and saved
 once after it, and a saver that fails degrades the turn (answered without
-history, or answered and not remembered) instead of failing it.
+history, or answered and not remembered) instead of failing it. So does one
+that stops answering: each read and save is abandoned after
+`checkpointer_timeout_s` (5 seconds by default).
 
 ```python
 from agents_system.services.checkpointer import open_postgres_checkpointer
