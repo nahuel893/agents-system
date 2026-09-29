@@ -1,4 +1,4 @@
-# Agent System — Multi-Agent Runtime Platform
+# agents-system — a development kit for building AI agents
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-00a393)](https://fastapi.tiangolo.com)
@@ -6,7 +6,9 @@
 [![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-336791)](https://postgresql.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
 
-**agents-system** is a production-grade runtime platform for instantiating and orchestrating AI agents. It provides a declarative *and* library-first agent-definition system, a pluggable harness for tool registration and permission enforcement, and a two-layer deployment model that lets a consuming application inject its own tools, skills, and per-client overrides — all without modifying the core runtime.
+**agents-system** is a development kit for building AI agents. You describe an agent (a system prompt, the tools it may call, the policy that bounds it), hand it your own tools, and the kit assembles a permission-bound runtime around it. The smallest path is an agent with one tool of your own in about ten lines: see the [Quickstart](docs/platform/library-usage.md#quickstart), which also covers installing the kit from another repository.
+
+Everything else is an optional piece you add when you need it: an OpenAI-compatible **server**, **channels** such as WhatsApp, the eight **predefined roles** (reusable agent archetypes), and **reference backends** (Postgres, Redis, embeddings). Agent definitions can be declarative Markdown folders *and* plain Python; a two-layer deployment model lets your application inject its own tools, skills, and per-client overrides, all without modifying the core.
 
 > 🇪🇸 Documentación en español disponible en [`docs/platform_es/`](docs/platform_es/).
 
@@ -44,7 +46,7 @@
 
 ## Concept
 
-The platform treats agents as **declarative, composable units**. You define:
+The kit treats agents as **declarative, composable units**. You define:
 
 - **What** the agent is (`role.md` — system prompt, purpose, scope)
 - **What tools** it can use (`manifest.md` — tool list, permissions, skills)
@@ -924,5 +926,3 @@ Full reference: [`docs/architecture/adr-004-library-first-agents.md`](docs/archi
 ## License
 
 [MIT](LICENSE) © 2026 — Agents System Contributors.
-
-*Built originally for a regional beverage distributor, as the first client deployment of the platform.*

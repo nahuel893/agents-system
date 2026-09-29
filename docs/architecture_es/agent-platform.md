@@ -1,23 +1,24 @@
 # Arquitectura de la Plataforma de Agentes
 
-Este documento define la arquitectura formal para expandir `agents-acme` desde un sistema de IA único enfocado en ventas hacia una plataforma de agentes reutilizable.
+Este documento define la arquitectura formal de agents-system, un kit de desarrollo para construir agentes de IA. El camino más corto para empezar es el [Inicio rápido](../platform_es/library-usage.md#inicio-rápido) (*Quickstart*): un agente con una herramienta propia en unas diez líneas.
 
 ## Resumen ejecutivo
 
-La plataforma está dividida en dos capas distintas:
+El kit está dividido en tres partes:
 
-1. **Plataforma Core (Core Platform)**: Infraestructura y entorno de ejecución reutilizable, orquestación, ciclo de vida, permisos e inyección de capacidades.
-2. **Alcance de Entrega de ACME (ACME Delivery Scope)**: La implementación concreta del cliente que se entrega actualmente, comenzando con el agente Seller AI / Preventa.
+1. **Kit core**: el harness. Definiciones de agentes declarativas y en Python, orquestación, ciclo de vida, permisos e inyección de capacidades. Es con lo que se construyen los agentes.
+2. **Piezas opcionales**: el **servidor** compatible con OpenAI, los **canales** (WhatsApp es el primero), los **roles predefinidos** (arquetipos de agente reutilizables) y los **backends de referencia** (Postgres, Redis, embeddings). Se toman las que hacen falta y se dejan las demás.
+3. **Tu aplicación**: las herramientas, conectores, reglas de negocio y overrides por cliente que convierten el kit en un agente concreto. Viven en tu propio repositorio, no en este.
 
-Esta separación es intencional. La plataforma es el producto de software reutilizable. ACME es un despliegue de cliente específico de dicho producto.
+Esta separación es intencional. El kit es el producto reutilizable. Cualquier agente construido con él, un asistente de ventas incluido, es una aplicación del kit y nunca el kit en sí.
 
 ---
 
 ## Límites del alcance
 
-### Plataforma Core
+### Kit core
 
-La Plataforma Core es dueña de la infraestructura multi-agente genérica:
+El kit core es dueño de la infraestructura multi-agente genérica:
 - Definiciones declarativas de roles mediante carpetas y archivos en Markdown.
 - Factoría de agentes (*Agent Factory*) y entorno de ejecución del proveedor.
 - Inyección dinámica de herramientas, habilidades, contexto y políticas de ejecución.
@@ -27,18 +28,23 @@ La Plataforma Core es dueña de la infraestructura multi-agente genérica:
 - Persistencia de memoria, registro de auditoría (*audit trail*) y logs de ejecución.
 - Caché activa (*warm cache*) opcional para la creación de agentes con baja latencia.
 
-### Alcance de Entrega de ACME
+### Piezas opcionales
 
-La implementación para ACME es dueña de los comportamientos específicos de la distribuidora:
-- Flujos de trabajo y lógica conversacional de Seller AI / Preventista.
-- Integraciones con los sistemas internos de la empresa: `DeW` y `App Preventas`.
-- Integraciones de consulta y monitoreo con `App Sergio`.
-- Integraciones con la base de conocimiento de `Outline`.
-- Integraciones de mensajería con la red de chat de `Element`.
-- Reglas de negocio del cliente, vocabulario local (jerga cervecera argentina), flujos de aprobación y restricciones comerciales.
+El kit las entrega para que no tengas que construirlas, pero nada del core depende de ellas:
+- El servidor compatible con OpenAI y sus canales.
+- Los roles predefinidos bajo `platform/roles/`.
+- Los backends de referencia para persistencia, checkpointing y embeddings.
 
-### No incluido en el alcance por defecto
-Las siguientes capacidades se consideran módulos de plataforma futuros y no forman parte de la entrega comprometida inicial para ACME, a menos que se acuerde formalmente lo contrario:
+### Tu aplicación
+
+Una aplicación construida sobre el kit es dueña de todo lo específico de su dominio:
+- Sus flujos de trabajo y su lógica conversacional.
+- Las integraciones con sus propios sistemas, registradas como herramientas.
+- Sus reglas, vocabulario, flujos de aprobación y restricciones de negocio.
+- El estrechamiento por cliente de un rol predefinido.
+
+### No habilitado por defecto
+Las siguientes capacidades se consideran capacidades del kit o módulos futuros; una aplicación las adopta de forma explícita:
 - Agentes de asistencia personal para empleados corporativos.
 - Agentes especializados en resúmenes de reuniones y minutas de conversación.
 - Agentes avanzados de analítica de datos a demanda.
@@ -132,7 +138,7 @@ Esta separación evita mezclar las definiciones, la identidad del runtime y las 
 ### Agentes centrales del MVP
 La topología inicial del sistema incluye:
 - **Orchestrator Agent (Agente Orquestador)**
-- **Preventa Agent (Agente de Preventa / Ventas)**
+- **Sales Agent (Agente de Ventas)**
 - **Data Agent (Agente de Datos)**
 - **Summary Agent (Agente de Resumen)**
 
@@ -225,7 +231,6 @@ Los agentes operan en nombre de identidades reales. Sus accesos están limitados
 
 ## Referencias cruzadas
 
-- Límites de entrega comprometidos para ACME: `docs/delivery_es/acme-seller-ai.md`
 - Esquema de directivas y mezcla de carpetas: `docs/platform_es/deployment.md`
 - Reglas y límites de delegación: `docs/architecture_es/delegation-policy.md`
 - Matriz de control de acceso y RBAC: `docs/architecture_es/permission-model.md`

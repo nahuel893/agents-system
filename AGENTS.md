@@ -4,7 +4,7 @@ Shared instructions for every AI agent working on this repository (Claude Code, 
 
 ## Project
 
-`agents-system` is a reusable AI agent platform (formerly `agents-acme`). The first delivery is a WhatsApp sales bot for a regional beverage distributor. Architecture and specs live in `docs/`. Start with `docs/architecture/agent-platform.md`.
+`agents-system` is a development kit for building AI agents. You describe an agent, hand it your own tools, and the kit assembles a permission-bound runtime around it; the smallest path is the [Quickstart](docs/platform/library-usage.md#quickstart), an agent with one tool in about ten lines. The server, the channels (WhatsApp, for one), the predefined roles and the reference backends are optional pieces of the kit, not the product. Architecture and specs live in `docs/`. Start with `docs/architecture/agent-platform.md`.
 
 ## Golden rule — CodeGraph before you read code
 

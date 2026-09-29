@@ -1,7 +1,8 @@
 # Library Usage
 
-`agents_system` is not only the ACME runtime — it is an importable library. The
-package ships the platform: the harness (loader → injector → factory) and
+`agents_system` is a development kit for building agents, and this document is
+its library entry point: the server is only one optional piece of it. The
+package ships the kit: the harness (loader → injector → factory) and
 the PREDEFINED agent roles (`platform/roles/`). It does **not** ship any
 client's tools or any client's deployment overrides. A consuming application
 supplies both of those itself, at runtime, by injection — the user's own
