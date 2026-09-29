@@ -27,11 +27,11 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core.language_models import BaseChatModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from agents_system import __version__
+from agents_system.agent import models as _models
 from agents_system.agent.spec import Agent
 from agents_system.channels.port import (
     Channel,
@@ -61,7 +61,6 @@ from agents_system.observability.metrics import (
     DEFAULT_REGISTRY,
     Metrics,
 )
-from agents_system.observability.provider_http import MetricsHTTPTransport
 from agents_system.services.admission import TurnAdmissionLimiter
 from agents_system.services.db_role import role_is_read_only
 from agents_system.services.outbox import (
@@ -654,12 +653,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
 
 
-# Sent when no API key is configured. ChatOpenAI rejects an empty key at
-# construction time, but keyless OpenAI-compatible endpoints are legitimate,
-# so the provider needs *something* to hand the client.
-_NO_API_KEY_PLACEHOLDER = "not-required"
-
-
 def _build_chat_model(
     provider: str,
     *,
@@ -668,160 +661,21 @@ def _build_chat_model(
     max_tokens: int | None = None,
     metrics: Metrics | None = None,
 ) -> Any:
-    """Construct the chat model for the given provider.
+    """The served app's chat model for ``provider``.
 
-    Returns a LangChain BaseChatModel instance for the configured provider.
-    Return typed as Any to avoid mypy false-positives from lazy imports.
-
-    D-037 (issue #13, ADR-004) -- ``model_override``/``temperature``/
-    ``max_tokens`` are an OPTIONAL per-agent override (an
-    `AgentDefinition.model` declaration, resolved by
-    `_resolve_model_for_definition`), never a caller requirement: every
-    existing call site that names none keeps building byte-identical to the
-    pre-D-037 defaults (`temperature=0` for ``openai_compatible``/``ollama``,
-    each provider's own hardcoded default model id). Credentials are
-    UNCHANGED by this parameter set -- still read exclusively from
-    ``Settings``/the process environment, never from an override, which is
-    exactly why `harness.loader._validate_model_config` never allows a
-    credential-shaped key into one.
-
-    issue #145 -- ``metrics`` is an OPTIONAL override of the ``Metrics`` set
-    the ``openai_compatible`` branch's provider-request/retry counters are
-    recorded on (`observability/provider_http.py::MetricsHTTPTransport`).
-    ``None`` (default) uses the process-wide ``DEFAULT_METRICS`` -- the set
-    ``GET /metrics`` serves -- so every existing call site is unaffected; a
-    test passes its own throw-away set for isolated assertions, the same
-    pattern ``AgentRuntime(..., metrics=...)`` already uses. Every other
-    provider branch is unaffected by this parameter for now (see the
-    module's #145 investigation notes: the reported timeout/throttling
-    evidence is all from the ``openai_compatible`` provider actually used in
-    production).
+    The implementation is `agent.models.build_chat_model`, shared with the
+    library path (issue #186); this wrapper only points it at the server
+    ``Settings`` (`get_settings`), which the served app has already validated.
+    Kept under this name because the lifespan, the live evals and the test
+    suite all reach the served builder through it.
     """
-    import os
-
-    if provider == "groq":
-        from langchain_groq import ChatGroq
-
-        api_key: str | None = os.getenv("GROQ_API_KEY") or None
-        groq_kwargs: dict[str, Any] = {}
-        if temperature is not None:
-            groq_kwargs["temperature"] = temperature
-        if max_tokens is not None:
-            groq_kwargs["max_tokens"] = max_tokens
-        return ChatGroq(
-            model=model_override or "llama-3.3-70b-versatile",
-            api_key=api_key,  # type: ignore[arg-type]
-            **groq_kwargs,
-        )
-
-    if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-
-        anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY") or None
-        if not anthropic_api_key:
-            # Issue #146 review: unlike groq (`ChatGroq` raises `GroqError`
-            # at construction on a `None` key) and openai_compatible (the
-            # explicit guards below), `ChatAnthropic` validates nothing at
-            # construction time -- it silently builds a client that would
-            # only fail on its first real call, as an opaque authentication
-            # error deep inside a turn instead of a boot failure naming the
-            # missing variable. With per-agent models (#141) a role can now
-            # select its own provider, so this matters more than it used to.
-            raise ValueError(
-                "ANTHROPIC_API_KEY is required when ADAPTER_PROVIDER=anthropic"
-            )
-        anthropic_kwargs: dict[str, Any] = {}
-        if temperature is not None:
-            anthropic_kwargs["temperature"] = temperature
-        if max_tokens is not None:
-            anthropic_kwargs["max_tokens"] = max_tokens
-        return ChatAnthropic(  # type: ignore[call-arg]
-            model=model_override or "claude-3-5-haiku-latest",
-            anthropic_api_key=anthropic_api_key,
-            **anthropic_kwargs,
-        )
-
-    if provider == "openai_compatible":
-        from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI
-
-        # Unlike the branches above, this one reads Settings instead of raw
-        # os.getenv. The divergence is deliberate — unifying all four providers
-        # on Settings belongs to D-016, not here. Please don't "fix" it.
-        settings = get_settings()
-        if not settings.openai_compatible_base_url:
-            raise ValueError(
-                "OPENAI_COMPATIBLE_BASE_URL is required when "
-                "ADAPTER_PROVIDER=openai_compatible"
-            )
-        model_id = model_override or settings.openai_compatible_model
-        if not model_id:
-            raise ValueError(
-                "OPENAI_COMPATIBLE_MODEL is required when "
-                "ADAPTER_PROVIDER=openai_compatible"
-            )
-
-        compatible_api_key = settings.openai_compatible_api_key
-        if not compatible_api_key:
-            # ChatOpenAI refuses to construct with None or "" even though
-            # keyless OpenAI-compatible hosts (vLLM, LM Studio, llama.cpp) are
-            # perfectly normal. Warn so a genuinely forgotten key shows up at
-            # startup rather than as an unexplained 401 much later.
-            structlog.get_logger().warning(
-                "openai_compatible.no_api_key",
-                base_url=settings.openai_compatible_base_url,
-            )
-            compatible_api_key = _NO_API_KEY_PLACEHOLDER
-
-        openai_compatible_kwargs: dict[str, Any] = {}
-        if max_tokens is not None:
-            openai_compatible_kwargs["max_tokens"] = max_tokens
-
-        # issue #145 -- a bounded per-call timeout (previously unset, which
-        # left the openai SDK's own 600s default in effect) plus a transport
-        # that records every raw HTTP attempt's status and the SDK's own
-        # retries on /metrics -- see observability/provider_http.py's module
-        # docstring for the investigation this responds to. connect stays at
-        # the openai SDK's own default (5s); only read/write/pool -- the
-        # generation itself -- are bounded by the configured setting.
-        resolved_metrics = metrics if metrics is not None else DEFAULT_METRICS
-        http_async_client = httpx.AsyncClient(
-            transport=MetricsHTTPTransport(
-                httpx.AsyncHTTPTransport(),
-                provider="openai_compatible",
-                metrics=resolved_metrics,
-            )
-        )
-        return ReasoningSanitizedChatOpenAI(
-            model=model_id,
-            base_url=settings.openai_compatible_base_url,
-            api_key=SecretStr(compatible_api_key),
-            temperature=temperature if temperature is not None else 0,
-            timeout=httpx.Timeout(
-                settings.openai_compatible_request_timeout_s, connect=5.0
-            ),
-            http_async_client=http_async_client,
-            **openai_compatible_kwargs,
-        )
-
-    # Default: ollama. Model + base URL come from Settings (#169, ADR-002
-    # E.18) instead of being hardcoded, so a role can be pointed at a
-    # different local model (e.g. the live-eval pipeline) without a code
-    # change. An empty ollama_base_url becomes None so ChatOllama falls back
-    # to its own default host resolution rather than treating "" as a URL.
-    from langchain_ollama import ChatOllama
-
-    ollama_settings = get_settings()
-    ollama_kwargs: dict[str, Any] = {}
-    if max_tokens is not None:
-        # ChatOllama has no `max_tokens` field -- its equivalent is
-        # `num_predict` (verified against the installed langchain-ollama's
-        # own model fields; do not rename this to `max_tokens`).
-        ollama_kwargs["num_predict"] = max_tokens
-    return ChatOllama(
-        model=model_override or ollama_settings.ollama_model,
-        base_url=ollama_settings.ollama_base_url or None,
-        temperature=temperature if temperature is not None else 0,
-        **ollama_kwargs,
+    return _models.build_chat_model(
+        provider,
+        model_override=model_override,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        metrics=metrics,
+        settings_source=get_settings,
     )
 
 
@@ -829,49 +683,19 @@ def _resolve_model_for_definition(
     definition: Any, settings: Settings, default_model: Any
 ) -> Any:
     """The chat model ``definition``'s own runtime should use (D-037, issue
-    #13, ADR-004).
+    #13, ADR-004): a dedicated one built from its ``model`` declaration, else
+    the shared ``default_model``.
 
-    ``definition.model`` is ``None`` for the overwhelming majority of
-    resolved definitions -- no role/deployment/`Agent` in the chain declared
-    one -- in which case ``default_model`` (already built once from
-    ``settings.adapter_provider``, byte-identical to the pre-D-037 single
-    global model) is reused as-is: zero behavior change for an existing
-    deployment.
-
-    When it IS a mapping (already validated by
-    `harness.loader._validate_model_config` at resolution time -- this
-    function does not re-validate), a DEDICATED model is built fresh from
-    `_build_chat_model`, still reading every credential exclusively from
-    ``settings``/the process environment, never from ``definition.model``
-    itself (that mapping structurally cannot carry one).
-
-    ``isinstance(selection, Mapping)`` (not a truthiness check) deliberately
-    rejects anything that is not a real mapping -- including a `MagicMock`
-    test double's auto-created `.model` attribute, which is truthy but not a
-    mapping, so a test fixture that never explicitly sets `.model` keeps
-    resolving to ``default_model`` exactly as before this function existed.
+    The rule lives in `agent.models.resolve_model_for_definition`, the same
+    function the library path (`AgentRuntime(equipped)`,
+    `agents_system.build_agent_model`) runs; this passes the served builder
+    (`_build_chat_model`), so credentials are still read exclusively from
+    ``settings``/the process environment. ``settings`` is unused: the served
+    builder reads the process-wide ``get_settings``, exactly as before.
     """
-    selection = getattr(definition, "model", None)
-    if not isinstance(selection, Mapping) or not selection:
-        return default_model
-    try:
-        return _build_chat_model(
-            selection["provider"],
-            model_override=selection["model"],
-            temperature=selection.get("temperature"),
-            max_tokens=selection.get("max_tokens"),
-        )
-    except ValueError as error:
-        # Issue #146 review: `_build_chat_model` has no runtime/role
-        # context of its own -- it builds the SAME shared default model
-        # every runtime without its own declaration reuses, so it can only
-        # name the missing credential, never which agent needed it. This is
-        # the one call site that resolves a per-agent `model:` declaration,
-        # so it is the only place that can name the role too.
-        role_name = getattr(definition, "role_name", "<unknown>")
-        raise ValueError(
-            f"Role {role_name!r} failed to build its model: {error}"
-        ) from error
+    return _models.resolve_model_for_definition(
+        definition, default_model, build=_build_chat_model
+    )
 
 
 _PROVIDER_PROBE_TIMEOUT_S = 1.0

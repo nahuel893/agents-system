@@ -88,7 +88,7 @@ en lugar de `ChatAnthropic`.
 | El harness: `ToolRegistry`, `RootConfig`, `resolve`, `build_runtime`, `AgentRuntime` | Tus propios `ToolSpec`s — los connectors que llaman a *tus* servicios |
 | Los roles predefinidos de la plataforma (`platform/roles/*/{role,manifest,policy}.md`) — lo que un `sales-agent`, `orchestrator`, `data-agent` o `summary-agent` *tiene permitido hacer* | Tus propios overrides de deployment (`deployments/{tu-cliente}/`), si querés prompts, skills o una política más estricta por cliente |
 | El enforcement de RBAC (`InjectionError`, `FactoryError`, `DefinitionError`) | Los permisos concedidos a tu caller/identidad, y los `granted_permissions` que le pasás a `build_runtime` |
-| Un `AgentRuntime` sobre LangGraph que convierte un runtime equipado en algo sobre lo que podés llamar `run_turn` | Cualquier `BaseChatModel` de LangChain al que enlazarlo |
+| Un `AgentRuntime` sobre LangGraph que convierte un runtime equipado en algo sobre lo que podés llamar `run_turn` | Cualquier `BaseChatModel` de LangChain al que enlazarlo, salvo que el agente declare su propio `model:` |
 
 La plataforma nunca tiene lógica de negocio específica de un cliente
 incorporada — incluida ACME, el primer deployment de la plataforma. Si
@@ -168,6 +168,7 @@ importa solo lo que ese nombre necesita, nada más:
 | `FactoryError` | `agents_system.harness.factory` | Se lanza cuando no se puede ensamblar un runtime (p. ej. falta un archivo de skill declarado) |
 | `InjectionError` | `agents_system.harness.injector` | Se lanza cuando un rol declara una tool que tu registro no tiene |
 | `AgentRuntime` | `agents_system.agent.graph` | Envuelve un `EquippedRuntime` + un modelo de chat en algo sobre lo que llamás `run_turn` |
+| `build_agent_model` | `agents_system.agent.models` | Construye el modelo de chat que declara el `model:` resuelto de un agente, con credenciales solo de la configuración/entorno. `AgentRuntime(equipped)` lo llama cuando no pasás modelo. Ver "Elegir el modelo" |
 | `Agent` | `agents_system.agent.spec` | Un agente propio definido en Python (`Agent(...)`), desde una carpeta (`Agent.from_folder(path)`), o ambos; pasalo donde va un nombre de rol (`resolve`, `build_runtime`). Ver `docs/platform_es/role.md` |
 | `ModelPrice` | `agents_system.config` | El precio de un modelo por millón de tokens de entrada/salida, para `AgentRuntime(model_prices=...)` |
 | `AuditSink` | `agents_system.audit.sink` | El sink de eventos de auditoría; registrá uno con `AuditSink.set_current(sink)` para registrar eventos (ver "Correr sin el servidor") |
@@ -303,6 +304,79 @@ Tres cosas que el ejemplo muestra a propósito:
       roots=agents_system.RootConfig(deployments_root=MY_APP_ROOT / "deployments"),
   )
   ```
+
+---
+
+## Elegir el modelo: el que declara el agente
+
+Un agente puede declarar su propio modelo (`Agent(model={...})`, o un bloque
+`model:` en su frontmatter, heredado por `extends`; ver
+`docs/platform_es/policy.md`, "Configuración de modelo"). En uso como
+biblioteca esa declaración se respeta: si no pasás modelo, `AgentRuntime` lo
+construye.
+
+```python
+import agents_system
+
+agent = agents_system.Agent(
+    name="summarizer",
+    model={
+        "provider": "openai_compatible",
+        "model": "vendor/model-id",
+        "temperature": 0.2,
+    },
+)
+equipped = agents_system.build_runtime(agent, registry, granted_permissions=[])
+
+runtime = agents_system.AgentRuntime(equipped)  # sin model=: el declarado
+```
+
+`agents_system.build_agent_model(equipped.definition)` es ese mismo paso por
+separado, para cuando querés el modelo de chat en sí (para envolverlo,
+compartirlo o inspeccionarlo). Pasá `default_model=` para recibir un respaldo
+de un agente que no declara nada.
+
+**Las credenciales vienen solo de la configuración y del entorno, nunca de la
+definición del agente** (un bloque `model:` no puede llevarlas). El builder las
+lee con un cargador estrecho, solo de proveedores, así que no hace falta
+ninguna variable del servidor (`META_WEBHOOK_SECRET`, URL de base de datos, ...):
+
+| Proveedor | Variables |
+|---|---|
+| `openai_compatible` | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` |
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `groq` | `GROQ_API_KEY` |
+| `ollama` | `OLLAMA_BASE_URL` |
+
+Una variable obligatoria faltante (`OPENAI_COMPATIBLE_BASE_URL`,
+`ANTHROPIC_API_KEY`) falla al construir, con un error que nombra al agente y a
+la variable. `OPENAI_COMPATIBLE_API_KEY` es opcional, para endpoints locales
+sin clave.
+
+### Cuando pasás un modelo Y el agente declara uno
+
+La regla, a propósito la misma en todo el uso como biblioteca:
+
+| Pasás `model=` | El agente declara `model:` | Resultado |
+|---|---|---|
+| no | sí | Se construye y se usa el modelo declarado. |
+| no | no | `ValueError`: el agente no declara modelo; pasá `model=`. |
+| sí | no | Se usa tu modelo; no se reporta nada. |
+| sí | sí, mismo id de modelo | Se usa tu modelo; no se reporta nada. |
+| sí | sí, otro id de modelo | **Gana tu modelo** y se registra una advertencia `runtime.model_conflict` con el agente, el id declarado y el id pasado. |
+
+Gana el modelo explícito del caller porque pasarlo es un acto deliberado en el
+sitio de la llamada (un doble de test, un cliente compartido, un override
+local), y rechazarlo haría imposible sobrescribir la declaración en tests. La
+advertencia hace visible el desacuerdo en lugar de dejarlo en silencio. El
+modelo declarado no se construye cuando pierde, así que la advertencia no
+necesita credenciales.
+
+La app servida no cambia: construye al arrancar el modelo declarado de cada
+runtime (allí la declaración tiene precedencia; el modelo global de
+`ADAPTER_PROVIDER` es solo el default de los agentes que no declaran ninguno).
+Ambos caminos llaman a una sola implementación, `agents_system.agent.models`,
+así que no pueden divergir.
 
 ---
 

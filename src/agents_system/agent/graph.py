@@ -41,6 +41,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
+from agents_system.agent.models import build_agent_model, declared_model
 from agents_system.agent.state import AgentState
 from agents_system.config import ModelPrice
 from agents_system.harness.factory import EquippedRuntime
@@ -749,6 +750,38 @@ async def _run_tracking_progress(
 # ---------------------------------------------------------------------------
 
 
+def _report_model_conflict(definition: Any, model: BaseChatModel) -> None:
+    """Warn when the caller's ``model`` is not the one the agent declares.
+
+    Issue #186. The caller's model always wins (see ``AgentRuntime``'s
+    ``model`` parameter); this only makes the disagreement visible, so a
+    declaration that is not being honored is never silent. Compared by the
+    provider model id (`model_display_name`), the same identity the runtime
+    already prices and labels by; a declared temperature or ``max_tokens`` is
+    not comparable on an arbitrary model object, so it is not checked.
+    Nothing is built here: the declared model is never constructed just to
+    be compared.
+    """
+    declared = declared_model(definition)
+    if declared is None:
+        return
+    declared_id = declared["model"]
+    passed_id = model_display_name(model)
+    if passed_id == declared_id:
+        return
+    logger.warning(
+        "runtime.model_conflict",
+        agent=getattr(definition, "role_name", "<unknown>"),
+        declared_model=declared_id,
+        passed_model=passed_id,
+        detail=(
+            "the agent declares a model but AgentRuntime was given a different "
+            "one; the passed model is used and the declaration is ignored. "
+            "Drop model= to run on the declared model."
+        ),
+    )
+
+
 class AgentRuntime:
     """Provider-agnostic, async-native agent runtime.
 
@@ -760,6 +793,17 @@ class AgentRuntime:
         Any LangChain BaseChatModel instance. The runtime binds the granted tool
         surface to it at construction time. Swapping providers requires only
         changing this argument — no other runtime code changes.
+
+        Issue #186 -- optional. Omitted (``None``), the runtime builds the
+        model the agent DECLARES (``Agent(model={...})``, or ``model:`` in its
+        frontmatter, inherited through ``extends``) with
+        ``agents_system.build_agent_model``, reading credentials only from the
+        process environment and ``ProviderSettings`` -- never from the server
+        ``Settings``. An agent that declares none raises ``ValueError``.
+        Passed AND different from the declared model id, the passed model wins
+        and a ``runtime.model_conflict`` warning names both: the caller's
+        explicit argument is never silently overridden by configuration, and
+        the declaration is never silently inert.
     checkpointer:
         Optional shared LangGraph checkpointer (design AD-1). Only engaged
         when a ``thread_id`` is also passed to a given ``run_turn`` call —
@@ -799,12 +843,16 @@ class AgentRuntime:
     def __init__(
         self,
         runtime: EquippedRuntime,
-        model: BaseChatModel,
+        model: BaseChatModel | None = None,
         checkpointer: BaseCheckpointSaver[Any] | None = None,
         runtime_id: str | None = None,
         metrics: Metrics | None = None,
         model_prices: Mapping[str, ModelPrice] | None = None,
     ) -> None:
+        if model is None:
+            model = build_agent_model(runtime.definition)
+        else:
+            _report_model_conflict(runtime.definition, model)
         self._runtime = runtime
         self._equipped = runtime
         self._checkpointer = checkpointer

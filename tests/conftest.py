@@ -99,9 +99,10 @@ def _isolate_settings_from_developer_env(
     ):
         return
 
-    from agents_system.config import Settings
+    from agents_system.config import ProviderSettings, Settings
 
     monkeypatch.setitem(Settings.model_config, "env_file", None)
+    monkeypatch.setitem(ProviderSettings.model_config, "env_file", None)
     for name in list(os.environ):
         if name in _ENV_ISOLATED_EXACT_NAMES or name.startswith(_ENV_ISOLATED_PREFIXES):
             monkeypatch.delenv(name, raising=False)
