@@ -159,8 +159,8 @@ uv add "agents-system[server,openai] @ git+https://github.com/nahuel893/agents-s
 
 | Extra | What it enables | What it installs |
 |---|---|---|
-| `server` | The served app (`agents_system.main`, `agents_system.server`): HTTP, the channels, the OpenAI-compatible adapter and the Redis checkpointer. It brings `postgres`, because the app runs on its database. A registered agent also needs a chat model provider; see "What the served app needs" below. | FastAPI, uvicorn, Redis, langgraph-checkpoint-redis |
-| `postgres` | `AuditSink` (recording audit events), the platform tables and their migrations, and the reference backends | SQLAlchemy, asyncpg, Alembic |
+| `server` | The served app (`agents_system.main`, `agents_system.server`): HTTP, the channels and the OpenAI-compatible adapter. It brings `postgres`, because the app runs on its database, which also keeps its conversations. A registered agent also needs a chat model provider; see "What the served app needs" below. | FastAPI, uvicorn, Redis (probed by `GET /health`) |
+| `postgres` | `AuditSink` (recording audit events), the platform tables and their migrations, the reference backends, and the durable conversation checkpointer (`docs/platform/conversation-memory.md`) | SQLAlchemy, asyncpg, Alembic, langgraph-checkpoint-postgres, psycopg |
 | `sql` | The guarded SQL query tool. It brings `postgres`. | sqlglot |
 | `embeddings` | Embeddings for retrieval, local or through the OpenAI API | torch, sentence-transformers, openai |
 | `openai` | The `openai_compatible` provider | langchain-openai |
@@ -555,8 +555,8 @@ async with open_postgres_checkpointer(
     )
 ```
 
-`open_postgres_checkpointer` is the served app's durable saver; it refuses a
-database without its tables, which `apply_checkpoint_migrations(url)` (or the
+`open_postgres_checkpointer` is the served app's durable saver, installed by
+the `postgres` extra; it refuses a database without its tables, which `apply_checkpoint_migrations(url)` (or the
 saver's own `setup()`) creates. Any other saver works too, such as
 LangGraph's `InMemorySaver` for tests. How long threads are kept, and what
 that means for personal data, is in `docs/platform/conversation-memory.md`.

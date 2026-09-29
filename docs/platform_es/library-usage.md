@@ -165,8 +165,8 @@ uv add "agents-system[server,openai] @ git+https://github.com/nahuel893/agents-s
 
 | Extra | Qué habilita | Qué instala |
 |---|---|---|
-| `server` | La app servida (`agents_system.main`, `agents_system.server`): HTTP, los canales, el adaptador compatible con OpenAI y el checkpointer de Redis. Trae `postgres`, porque la app corre sobre su base de datos. Un agente registrado también necesita un proveedor de modelos de chat; ver "Qué necesita la app servida" más abajo. | FastAPI, uvicorn, Redis, langgraph-checkpoint-redis |
-| `postgres` | `AuditSink` (registrar eventos de auditoría), las tablas de la plataforma y sus migraciones, y los backends de referencia | SQLAlchemy, asyncpg, Alembic |
+| `server` | La app servida (`agents_system.main`, `agents_system.server`): HTTP, los canales y el adaptador compatible con OpenAI. Trae `postgres`, porque la app corre sobre su base de datos, que también guarda sus conversaciones. Un agente registrado también necesita un proveedor de modelos de chat; ver "Qué necesita la app servida" más abajo. | FastAPI, uvicorn, Redis (sondeado por `GET /health`) |
+| `postgres` | `AuditSink` (registrar eventos de auditoría), las tablas de la plataforma y sus migraciones, los backends de referencia, y el checkpointer durable de conversaciones (`docs/platform_es/conversation-memory.md`) | SQLAlchemy, asyncpg, Alembic, langgraph-checkpoint-postgres, psycopg |
 | `sql` | La tool de consultas SQL con guarda. Trae `postgres`. | sqlglot |
 | `embeddings` | Embeddings para recuperación, locales o por la API de OpenAI | torch, sentence-transformers, openai |
 | `openai` | El proveedor `openai_compatible` | langchain-openai |
@@ -572,8 +572,8 @@ async with open_postgres_checkpointer(
     )
 ```
 
-`open_postgres_checkpointer` es el saver durable de la app servida; rechaza
-una base sin sus tablas, que crea `apply_checkpoint_migrations(url)` (o el
+`open_postgres_checkpointer` es el saver durable de la app servida, que
+instala el extra `postgres`; rechaza una base sin sus tablas, que crea `apply_checkpoint_migrations(url)` (o el
 `setup()` propio del saver). Cualquier otro saver también sirve, como el
 `InMemorySaver` de LangGraph para tests. Cuánto tiempo se conservan los
 hilos, y qué implica eso para los datos personales, está en

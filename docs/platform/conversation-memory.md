@@ -192,10 +192,12 @@ Rolling back to the previous version: its code uses Redis again. The
 conversations saved in PostgreSQL stay in their tables until
 `alembic downgrade 006` drops them.
 
-**Library users.** `langgraph-checkpoint-redis` is no longer a dependency.
-`AgentRuntime(checkpointer=...)` accepts any LangGraph saver, and the failure
-policy above applies to all of them. To keep threads in Redis, install that
-package yourself and pass its saver. To use PostgreSQL outside the served app,
+**Library users.** The `server` extra no longer installs
+`langgraph-checkpoint-redis`; the Postgres checkpointer comes with the
+`postgres` extra, which `server` includes. `AgentRuntime(checkpointer=...)`
+accepts any LangGraph saver, and the failure policy above applies to all of
+them. To keep threads in Redis, install that package yourself and pass its
+saver. To use PostgreSQL outside the served app,
 `services.checkpointer.open_postgres_checkpointer(database_url, pool_size=...,
 timeout_s=...)` opens the same pooled saver. Create its tables with
 `apply_checkpoint_migrations(database_url)` or the saver's own `setup()`.

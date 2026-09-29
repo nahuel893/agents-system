@@ -207,9 +207,11 @@ Volver a la versión anterior: su código usa Redis otra vez. Las
 conversaciones guardadas en PostgreSQL quedan en sus tablas hasta que
 `alembic downgrade 006` las elimina.
 
-**Usuarios de la librería.** `langgraph-checkpoint-redis` ya no es una
-dependencia. `AgentRuntime(checkpointer=...)` acepta cualquier saver de
-LangGraph, y la política ante fallas de arriba se aplica a todos. Para
+**Usuarios de la librería.** El extra `server` ya no instala
+`langgraph-checkpoint-redis`; el checkpointer de Postgres viene con el extra
+`postgres`, que `server` incluye. `AgentRuntime(checkpointer=...)` acepta
+cualquier saver de LangGraph, y la política ante fallas de arriba se aplica a
+todos. Para
 guardar los hilos en Redis, instalá ese paquete vos mismo y pasá su saver.
 Para usar PostgreSQL fuera de la app servida,
 `services.checkpointer.open_postgres_checkpointer(database_url,
