@@ -55,6 +55,15 @@ def _logged(out: str, key: str, value: object) -> bool:
             "postgresql+asyncpg://app@localhost/agents?ssl=require",
             "postgresql://app@localhost/agents?sslmode=require",
         ),
+        # asyncpg also spells the verify modes with an underscore.
+        (
+            "postgresql+asyncpg://app@localhost/agents?ssl=verify_full",
+            "postgresql://app@localhost/agents?sslmode=verify-full",
+        ),
+        (
+            "postgresql+asyncpg://app@localhost/agents?target_session_attrs=read-write",
+            "postgresql://app@localhost/agents?target_session_attrs=read-write",
+        ),
     ],
 )
 def test_the_app_database_url_becomes_a_libpq_connection_string(
@@ -63,6 +72,58 @@ def test_the_app_database_url_becomes_a_libpq_connection_string(
     """The checkpointer shares the app's database, so it derives its own
     connection string from DATABASE_URL instead of a second setting."""
     assert psycopg_conninfo(url) == expected
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "prepared_statement_cache_size=0",
+        "command_timeout=30",
+        "async_fallback=false",
+        "prepared_statement_cache_size=0&command_timeout=30&ssl=require",
+    ],
+)
+def test_options_of_the_apps_own_engine_are_left_out(query: str) -> None:
+    """These work in DATABASE_URL for the app's asyncpg engine, and libpq
+    refuses them ("invalid URI query parameter"), so a URL the app runs on
+    would stop the app from booting and revision 007 from migrating. They
+    tune the engine's statement cache and its own timeouts; the
+    checkpointer's pool prepares no statements and has its own timeouts."""
+    conninfo = psycopg_conninfo(f"postgresql+asyncpg://app@localhost/agents?{query}")
+
+    assert conninfo.split("?")[0] == "postgresql://app@localhost/agents"
+    for option in (
+        "prepared_statement_cache_size",
+        "command_timeout",
+        "async_fallback",
+    ):
+        assert option not in conninfo
+    if "ssl=require" in query:
+        assert conninfo.endswith("?sslmode=require")
+
+
+@pytest.mark.parametrize(
+    ("query", "named"),
+    [
+        ("direct_tls=true", "direct_tls"),
+        (
+            "statement_cache_size=0&server_settings=x",
+            "server_settings, statement_cache_size",
+        ),
+        # Not an asyncpg ssl value either: the app's own engine refuses it.
+        ("ssl=true", "ssl=true"),
+    ],
+)
+def test_a_url_option_the_checkpointer_cannot_use_is_refused_by_name(
+    query: str, named: str
+) -> None:
+    """Refused before connecting: inside the pool, libpq's error would only
+    surface as a pool that never fills, after the whole timeout."""
+    with pytest.raises(ValueError, match="DATABASE_URL") as refused:
+        psycopg_conninfo(f"postgresql+asyncpg://app:s3cret@localhost/agents?{query}")
+
+    assert named in str(refused.value)
+    assert "s3cret" not in str(refused.value)
 
 
 def test_a_non_postgres_url_is_refused() -> None:

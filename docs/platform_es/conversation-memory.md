@@ -175,6 +175,20 @@ Desde Python, `await saver.adelete_thread("+5491100000000")` hace lo mismo.
 En un canal que no es WhatsApp, el id del hilo lleva como prefijo el nombre
 del canal (`services.outbox.channel_scoped_key`).
 
+## La conexión
+
+El checkpointer abre sus propias conexiones (psycopg, a través de libpq) a
+partir del mismo `DATABASE_URL` que el resto de la app, así que no hay una
+segunda URL que mantener sincronizada. Los parámetros de consulta de esa URL
+se leen así:
+
+| En `DATABASE_URL` | Para el checkpointer |
+|---|---|
+| `ssl=<modo>`, el nombre de asyncpg | Se convierte en el `sslmode` de libpq. El modo es uno de `disable`, `allow`, `prefer`, `require`, `verify-ca` o `verify-full`; también sirven las formas `verify_ca` y `verify_full` de asyncpg. `ssl=true` se rechaza, como también lo rechaza el motor asyncpg de la app. |
+| `prepared_statement_cache_size`, `command_timeout`, `async_fallback` | Se omiten. Ajustan el propio motor asyncpg de la app. El checkpointer no prepara sentencias y tiene sus propios timeouts. |
+| Cualquier otro parámetro de conexión de libpq, como `target_session_attrs` o `passfile` | Se pasa tal cual. |
+| Cualquier otra cosa | Se rechaza al arrancar, y en `alembic upgrade head`, con un error que nombra el parámetro. |
+
 ## Esquema y migraciones
 
 Las tablas pertenecen a `langgraph-checkpoint-postgres`, que versiona su
@@ -249,8 +263,8 @@ saver.
   un checkpoint que se decodifica en algo que no es una lista de mensajes,
   una lectura o un guardado que nunca responden, y un driver lento para
   cancelar que no retiene el turno).
-- `tests/test_checkpointer_service.py`: el string de conexión, los timeouts
-  de conexión, sobre qué se niega a arrancar la app, la alarma de versión del
+- `tests/test_checkpointer_service.py`: el string de conexión y las opciones
+  de `DATABASE_URL` que conserva, omite o rechaza, los timeouts de conexión, sobre qué se niega a arrancar la app, la alarma de versión del
   esquema, el ciclo de purga, y la ausencia de un `DeltaChannel`
   que haría insegura la poda.
 - `tests/test_checkpointer_integration.py`, contra un PostgreSQL real (job de

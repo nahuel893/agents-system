@@ -70,23 +70,60 @@ class CheckpointSchemaError(RuntimeError):
     """The database does not hold the checkpoint schema the saver needs."""
 
 
+#: Options of the app's own asyncpg engine, valid in ``DATABASE_URL`` but not
+#: libpq connection parameters: its statement cache, its statement timeout,
+#: and SQLAlchemy's pool fallback. The checkpointer's pool prepares no
+#: statements and has its own timeouts (``CHECKPOINTER_TIMEOUT_S``), so they
+#: do not apply to it and are left out.
+_ENGINE_ONLY_OPTIONS = frozenset(
+    {"prepared_statement_cache_size", "command_timeout", "async_fallback"}
+)
+
+#: libpq's ``sslmode`` values, which asyncpg's ``ssl`` accepts too.
+_SSL_MODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
+
+
+def _libpq_parameters() -> frozenset[str]:
+    """Every connection parameter the installed libpq accepts."""
+    from psycopg import pq
+
+    return frozenset(option.keyword.decode() for option in pq.Conninfo.get_defaults())
+
+
 def psycopg_conninfo(database_url: str) -> str:
     """Turn the app's SQLAlchemy ``DATABASE_URL`` into a libpq connection
     string for psycopg.
 
     The checkpointer shares the app's database, so it derives its connection
-    from the same setting rather than a second one that could drift. Only the
-    driver changes; asyncpg's ``ssl`` query parameter becomes libpq's
-    ``sslmode``.
+    from the same setting rather than a second one that could drift. The
+    driver changes, asyncpg's ``ssl`` query parameter becomes libpq's
+    ``sslmode``, and the options of the app's own engine are left out (see
+    ``_ENGINE_ONLY_OPTIONS``). Any other query parameter libpq does not accept
+    is refused by name, here, rather than as a connection pool that never
+    fills.
     """
     url = make_url(database_url)
     if url.get_backend_name() != "postgresql":
         raise ValueError(
             f"the checkpointer needs a PostgreSQL DATABASE_URL, got {url.drivername!r}"
         )
-    query = dict(url.query)
+    query = {k: v for k, v in url.query.items() if k not in _ENGINE_ONLY_OPTIONS}
     if "ssl" in query and "sslmode" not in query:
-        query["sslmode"] = query.pop("ssl")
+        ssl = query.pop("ssl")
+        mode = ssl.replace("_", "-") if isinstance(ssl, str) else None
+        if mode not in _SSL_MODES:
+            raise ValueError(
+                f"DATABASE_URL has ssl={ssl}; the checkpointer, like the app's "
+                f"asyncpg engine, needs one of: {', '.join(_SSL_MODES)}"
+            )
+        query["sslmode"] = mode
+    unknown = sorted(set(query) - _libpq_parameters())
+    if unknown:
+        raise ValueError(
+            f"DATABASE_URL has {', '.join(unknown)}, which the checkpointer's "
+            "PostgreSQL connection (libpq) does not accept: remove it, or see "
+            "docs/platform/conversation-memory.md for the supported parameters"
+        )
     return url.set(drivername="postgresql", query=query).render_as_string(
         hide_password=False
     )

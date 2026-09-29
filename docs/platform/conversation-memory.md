@@ -161,6 +161,19 @@ From Python, `await saver.adelete_thread("+5491100000000")` does the same.
 For a channel other than WhatsApp, the thread id is prefixed with the
 channel's name (`services.outbox.channel_scoped_key`).
 
+## The connection
+
+The checkpointer opens its own connections (psycopg, through libpq) from the
+same `DATABASE_URL` as the rest of the app, so there is no second URL to keep
+in sync. The query parameters of that URL are read like this:
+
+| In `DATABASE_URL` | For the checkpointer |
+|---|---|
+| `ssl=<mode>`, asyncpg's name | Becomes libpq's `sslmode`. The mode is one of `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`; asyncpg's `verify_ca` and `verify_full` spellings work too. `ssl=true` is refused, as the app's asyncpg engine also refuses it. |
+| `prepared_statement_cache_size`, `command_timeout`, `async_fallback` | Left out. They tune the app's own asyncpg engine. The checkpointer prepares no statements and has its own timeouts. |
+| Any other libpq connection parameter, such as `target_session_attrs` or `passfile` | Passed through. |
+| Anything else | Refused at boot, and by `alembic upgrade head`, with an error that names the parameter. |
+
 ## Schema and migrations
 
 The tables belong to `langgraph-checkpoint-postgres`, which versions its own
@@ -228,8 +241,8 @@ timeout_s=...)` opens the same pooled saver. Create its tables with
   thread, one save per turn, a timed-out turn, a checkpoint that decodes into
   something that is not a message list, a read or save that never answers,
   and a driver slow to cancel that does not hold the turn).
-- `tests/test_checkpointer_service.py`: the connection string, the
-  connection timeouts, what the app refuses to boot on, the schema version
+- `tests/test_checkpointer_service.py`: the connection string and the
+  `DATABASE_URL` options it keeps, drops or refuses, the connection timeouts, what the app refuses to boot on, the schema version
   tripwire, the purge loop, and the absence of a `DeltaChannel` that
   would make pruning unsafe.
 - `tests/test_checkpointer_integration.py`, against a real PostgreSQL (CI job
