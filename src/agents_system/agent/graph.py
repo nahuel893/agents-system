@@ -16,8 +16,10 @@ commit after run_turn() returns.
 Concurrency note: the tool-call loop remains sequential. A shared AsyncSession
 must not be used concurrently — do not convert the loop to asyncio.gather.
 
-State is NOT persisted internally. The caller supplies the full message history
-per turn and owns cross-turn durability.
+State is NOT persisted by the graph itself. A stateless caller supplies the
+full message history per turn. A caller that passes a ``thread_id`` to a runtime
+built with a checkpointer gets the thread's history read before the turn and
+the turn saved after it (issue #24, see ``_Thread``).
 """
 
 from __future__ import annotations
@@ -27,14 +29,20 @@ import dataclasses
 import itertools
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from contextlib import aclosing, nullcontext
 from functools import partial
 from typing import Any
 
 import structlog
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    BaseMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.runnables import RunnableConfig
@@ -52,6 +60,7 @@ from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS
 from agents_system.observability.metrics import (
     DEFAULT_METRICS,
     Metrics,
+    record_checkpointer_degraded,
     record_limit_trip,
     record_tool_call,
     record_turn,
@@ -59,21 +68,6 @@ from agents_system.observability.metrics import (
 from agents_system.permissions.permission_registry import permission_registry
 
 logger = structlog.get_logger()
-
-
-def _checkpointer_backend_errors() -> tuple[type[Exception], ...]:
-    """The checkpointer backend failures a turn degrades on (AD-8).
-
-    ``redis.RedisError`` when the Redis client is installed (the ``server``
-    extra, which brings the Redis checkpointer). A core install has no Redis
-    client, so no Redis checkpointer, so nothing to degrade on: the empty
-    tuple catches nothing (issue #188).
-    """
-    try:
-        import redis.exceptions
-    except ImportError:
-        return ()
-    return (redis.exceptions.RedisError,)
 
 
 # Terminal node reached when a turn exhausts its max_tool_calls budget.
@@ -102,10 +96,9 @@ class TurnUsage:
     `AIMessage.usage_metadata`, summed across every `call_model` invocation
     this turn made (a turn can make several when the model uses tools).
 
-    - `model_calls` is `None` only when it could not be determined at all
-      (a checkpointer degradation retried the turn from scratch, so the
-      failed attempt's calls are unrecoverable) -- never confused with a
-      genuine `0`.
+    - `model_calls` is always the number of provider calls this turn made.
+      A checkpointer failure never re-runs a turn (issue #24), so no call
+      goes uncounted.
     - A turn that TIMED OUT reports what it accumulated before the budget
       ran out (issue #172): the model calls that completed, and their
       tokens. A request still in flight when the budget expired never
@@ -166,9 +159,6 @@ class _TurnProgress:
     the tool calls, model calls and usage accumulated so far (issue #172)."""
 
     state: dict[str, Any] | None = None
-    #: A checkpointer degradation retried the turn from scratch: the failed
-    #: attempt's spend is unrecoverable, so usage stays unknown.
-    degraded: bool = False
 
 
 def _close_unanswered_tool_calls(
@@ -371,11 +361,13 @@ async def _call_model(
     resumed multi-turn conversation would re-prepend and duplicate it on
     every turn.
     """
-    # Issue #181 -- a persisted thread can end in an assistant message whose
-    # tool call never got its reply (a timeout or a crash inside the tool
-    # round trip). Repair the history the model SEES, not the store: this is
-    # the one place every channel and every checkpointer backend goes
-    # through, and it needs no backend-specific call. State is untouched.
+    # Issue #181 -- a persisted thread can hold an assistant message whose
+    # tool call never got its reply: a turn that stopped at max_tool_calls,
+    # or a thread saved before issue #24 made a timed-out turn save its
+    # interrupted calls answered. Repair the history the model SEES, not the
+    # store: this is the one place every channel and every checkpointer
+    # backend goes through, and it needs no backend-specific call. State is
+    # untouched.
     history = _close_unanswered_tool_calls(
         state["messages"],
         reason="the tool did not return a result in an earlier turn",
@@ -720,87 +712,153 @@ def _build_graph(
 
 
 # ---------------------------------------------------------------------------
-# Checkpointer opt-in invocation (design AD-1, AD-8)
+# Conversation threads and the checkpointer failure policy (issue #24)
 # ---------------------------------------------------------------------------
 
+#: How long a thread read or save may take when the caller sets no bound:
+#: the same default as the served app's ``CHECKPOINTER_TIMEOUT_S``.
+DEFAULT_CHECKPOINTER_TIMEOUT_S = 5.0
 
-async def _ainvoke_with_optional_checkpointer(
-    graph: StateGraph[AgentState],
-    checkpointer: BaseCheckpointSaver[Any] | None,
-    thread_id: str | None,
-    initial_state: AgentState,
-    recursion_limit: int,
-    progress: _TurnProgress | None = None,
-) -> dict[str, Any]:
-    """Invoke the compiled graph, honoring the AD-1 opt-in checkpointer and
-    the AD-8 same-turn checkpointer-degradation fallback.
+#: Checkpointer calls abandoned at their timeout and still being cancelled.
+#: Held so the event loop keeps a strong reference until they finish.
+_ABANDONED_CALLS: set[asyncio.Future[Any]] = set()
 
-    - ``thread_id`` is ``None`` (adapter path, or
-      ``whatsapp_checkpointer_enabled=False``): compiles and invokes WITHOUT
-      a checkpointer — identical to the pre-D-014 stateless behavior.
-    - ``thread_id`` is given AND a ``checkpointer`` is configured: compiles
-      WITH the checkpointer and engages it via
-      ``config["configurable"]["thread_id"]``. If that invoke raises a
-      checkpointer BACKEND failure (``redis.RedisError`` — covers
-      ``ConnectionError``/the redis client's own ``TimeoutError``, which does
-      NOT subclass the builtin ``TimeoutError``), the failure is logged as
-      ``runtime.checkpointer_degraded`` and the SAME turn is retried,
-      compiled WITHOUT a checkpointer, over the original ``initial_state``
-      (i.e. only the caller-supplied messages for this turn — no persisted
-      history for this one turn; see design AD-8).
 
-    ``asyncio.TimeoutError``/the builtin ``TimeoutError`` from the turn-scope
-    budget (AD-3, enforced by the caller wrapping this call in
-    ``asyncio.timeout``) is a DISTINCT failure class and is never caught
-    here — it propagates to run_turn's own timeout handler. ``CancelledError``
-    is never caught either.
+def _forget_abandoned(call: asyncio.Future[Any]) -> None:
+    _ABANDONED_CALLS.discard(call)
+    if not call.cancelled():
+        # Retrieved, so asyncio does not report it as never retrieved; the
+        # failure was already handled as a timeout.
+        call.exception()
 
-    Review finding 3 (PR #87) — usage under checkpointer degradation: the
-    FAILED invocation above may already have made one or more real provider
-    calls before the checkpointer backend error surfaced (LangGraph writes a
-    checkpoint after each super-step, so a failure there can follow a
-    completed ``call_model``). ``ainvoke`` raises without returning any
-    partial state, so exactly how many calls (and their tokens) is
-    unrecoverable. The retried invocation below runs the SAME turn from
-    scratch and its own ``turn_usage`` would silently miss whatever the
-    failed attempt already spent — reporting only the retry's numbers would
-    be a plausible-looking undercount, not an honest one. The chosen fix:
-    when degradation occurred, the returned ``turn_usage`` is the sentinel
-    ``None`` (distinct from a real, possibly-empty list) instead of
-    whatever the retried invocation recorded — ``run_turn_with_usage`` reads
-    that sentinel as "genuinely unknown" and reports ``_UNKNOWN_TURN_USAGE``
-    (``model_calls=None``), rather than a
-    count that looks precise but is not.
+
+async def _within[T](timeout_s: float, call: Awaitable[T]) -> T:
+    """Await *call*, giving up after *timeout_s* seconds with ``TimeoutError``.
+
+    A database that stops answering without refusing anything -- a frozen
+    server, a network partition -- raises nothing, and a server-side
+    ``statement_timeout`` cannot end the wait either. This bound is on the
+    client, so it holds for any saver.
+
+    An abandoned call is cancelled but not awaited: a driver can take a
+    while to cancel a request (psycopg waits up to ten seconds for the
+    server), and the turn does not wait for that. The cancellation finishes
+    in the background, which releases the call's connection.
     """
-    tracker = progress if progress is not None else _TurnProgress()
-    if thread_id is not None and checkpointer is not None:
-        compiled_with_checkpointer = graph.compile(checkpointer=checkpointer)
-        checkpointed_config: RunnableConfig = {
-            "recursion_limit": recursion_limit,
-            "configurable": {"thread_id": thread_id},
-        }
-        try:
-            return await _run_tracking_progress(
-                compiled_with_checkpointer, initial_state, checkpointed_config, tracker
-            )
-        except _checkpointer_backend_errors() as exc:
-            logger.warning(
-                "runtime.checkpointer_degraded",
-                thread_id=thread_id,
-                error=str(exc),
-            )
-            tracker.degraded = True
-            # The failed attempt's partial state belongs to a run that is
-            # being redone from scratch; never mix it into the retry's.
-            tracker.state = None
+    task = asyncio.ensure_future(call)
+    bound = asyncio.timeout(timeout_s)
+    try:
+        async with bound:
+            return await asyncio.shield(task)
+    except TimeoutError:
+        if not bound.expired():
+            raise  # the call's own error, not this bound
+        raise TimeoutError(
+            f"the checkpointer did not answer within {timeout_s}s"
+        ) from None
+    finally:
+        if not task.done():
+            task.cancel()
+            _ABANDONED_CALLS.add(task)
+            task.add_done_callback(_forget_abandoned)
 
-    compiled = graph.compile()
-    result = await _run_tracking_progress(
-        compiled, initial_state, {"recursion_limit": recursion_limit}, tracker
-    )
-    if tracker.degraded:
-        result["turn_usage"] = None
-    return result
+
+@dataclasses.dataclass
+class _Thread:
+    """One conversation thread in the runtime's checkpointer (issue #24).
+
+    The graph always runs WITHOUT a checkpointer. The thread's history is
+    read once before the turn and the turn's new messages are saved once
+    after it, so the checkpointer is touched at exactly two points and a
+    thread only ever holds whole turns: a process that dies in the middle of
+    a turn leaves the thread where the previous turn ended.
+
+    The failure policy keys on which of those two points failed, never on
+    the exception class a particular client library raises, so it is the
+    same for Postgres, Redis, SQLite or any other LangGraph saver:
+
+    - The read fails (the backend is down, the pool is exhausted, or this
+      thread's stored checkpoint cannot be loaded): the turn runs on its own
+      messages only, and it is NOT saved -- a thread that could not be read
+      is never overwritten by one that lacks its earlier turns.
+    - The save fails: the finished answer is returned as it is. Nothing runs
+      again, so no model call is repeated and no tool call is replayed; the
+      thread stays at its previous turn.
+
+    A backend that never answers -- a frozen or partitioned database server
+    raises nothing -- is a failure too: each read and each save is abandoned
+    after ``timeout_s`` (``_within``) and handled as the failure of that
+    point.
+
+    Both are logged as ``runtime.checkpointer_degraded`` with the
+    ``operation`` that failed. A broken thread therefore keeps answering
+    without its memory and never affects another thread. ``CancelledError``
+    is not an ``Exception`` and is never caught here.
+    """
+
+    compiled: Any
+    thread_id: str
+    timeout_s: float
+    metrics: Metrics
+    #: What the read returned; ``None`` until a read succeeds.
+    history: list[AnyMessage] | None = None
+
+    @property
+    def config(self) -> RunnableConfig:
+        return {"configurable": {"thread_id": self.thread_id}}
+
+    async def load(self) -> list[AnyMessage]:
+        """The thread's history, or ``[]`` when it cannot be read."""
+        try:
+            snapshot = await _within(
+                self.timeout_s, self.compiled.aget_state(self.config)
+            )
+            history = snapshot.values.get("messages", [])
+            # A damaged checkpoint can decode into something that is not a
+            # message list at all; that is an unreadable thread too.
+            if not isinstance(history, list) or not all(
+                isinstance(m, BaseMessage) for m in history
+            ):
+                raise TypeError("the stored thread is not a list of messages")
+        except Exception as exc:
+            self._degraded("read", exc)
+            return []
+        self.history = list(history)
+        return self.history
+
+    async def save(self, new_messages: Sequence[AnyMessage]) -> None:
+        """Append this turn's messages to the thread, as one checkpoint.
+
+        Saved as if ``call_model`` had written them: the turn always ends
+        with a reply that routes to ``END``, so the saved checkpoint has no
+        pending step. A save abandoned at its timeout can still complete if
+        the database was already writing it; the thread then holds this
+        turn, whole, exactly as if the save had answered in time.
+        """
+        if self.history is None or not new_messages:
+            return
+        try:
+            await _within(
+                self.timeout_s,
+                self.compiled.aupdate_state(
+                    self.config, {"messages": list(new_messages)}, as_node="call_model"
+                ),
+            )
+        except Exception as exc:
+            self._degraded("write", exc)
+
+    def _degraded(self, operation: str, exc: Exception) -> None:
+        logger.warning(
+            "runtime.checkpointer_degraded",
+            operation=operation,
+            thread_id=self.thread_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        # Counted as well: a checkpointer that fails for every turn (a role
+        # that cannot save, a database that stopped answering) would
+        # otherwise show only as turns that all report "ok".
+        record_checkpointer_degraded(self.metrics, operation=operation)
 
 
 async def _run_tracking_progress(
@@ -947,7 +1005,17 @@ class AgentRuntime:
         when a ``thread_id`` is also passed to a given ``run_turn`` call —
         entry points with their own full-history contract (e.g. the OpenAI
         adapter) never pass a ``thread_id`` and stay byte-identical to the
-        pre-D-014 stateless behavior.
+        pre-D-014 stateless behavior. Any LangGraph saver works; the served
+        app passes the Postgres one (issue #24). The thread is read before
+        the turn and saved once after it, and a checkpointer that fails
+        degrades the turn instead of failing it (see ``_Thread``).
+    checkpointer_timeout_s:
+        Issue #24 -- the most seconds one thread read or one save may take
+        before it is abandoned and handled as a failed read or save, so a
+        database that stops answering cannot hold a turn. Enforced on the
+        client, for any saver. Defaults to
+        ``DEFAULT_CHECKPOINTER_TIMEOUT_S`` (5 seconds); the served app
+        passes ``CHECKPOINTER_TIMEOUT_S``. Must be positive.
     runtime_id:
         #78 Phase 0 Slice 2 -- the bounded, low-cardinality ``runtime_id``
         label this runtime's metrics are recorded under (see
@@ -986,7 +1054,12 @@ class AgentRuntime:
         runtime_id: str | None = None,
         metrics: Metrics | None = None,
         model_prices: Mapping[str, ModelPrice] | None = None,
+        checkpointer_timeout_s: float = DEFAULT_CHECKPOINTER_TIMEOUT_S,
     ) -> None:
+        if not checkpointer_timeout_s > 0:
+            raise ValueError(
+                f"checkpointer_timeout_s must be positive, got {checkpointer_timeout_s!r}"
+            )
         if model is None:
             model = build_agent_model(runtime.definition)
         else:
@@ -994,6 +1067,7 @@ class AgentRuntime:
         self._runtime = runtime
         self._equipped = runtime
         self._checkpointer = checkpointer
+        self._checkpointer_timeout_s = float(checkpointer_timeout_s)
         self._schemas = [spec.to_langchain_tool_schema() for spec in runtime.tools]
         # Only call bind_tools when there are tools to bind — some fake models
         # raise NotImplementedError for bind_tools even with an empty list.
@@ -1171,10 +1245,28 @@ class AgentRuntime:
             metrics=self._metrics,
             max_context_tokens=int(effective_limits["max_context_tokens"]),
         )
+        # Issue #24 -- a thread's history is read here, before the turn, and
+        # the turn is saved once at the end (see `_Thread` for the failure
+        # policy). The graph itself always runs without a checkpointer.
+        # Neither the read nor the save counts against the turn budget: the
+        # budget bounds the agent's own work, and each of them has its own
+        # bound, `checkpointer_timeout_s`.
+        thread = (
+            _Thread(
+                graph.compile(checkpointer=self._checkpointer),
+                thread_id,
+                timeout_s=self._checkpointer_timeout_s,
+                metrics=self._metrics,
+            )
+            if thread_id is not None and self._checkpointer is not None
+            else None
+        )
+        turn_start = time.monotonic()
+        history = await thread.load() if thread is not None else []
         # D-014 S4 (design AD-1): the system prompt is no longer prepended
         # here — _call_model prepends it to the MODEL INPUT on every call and
         # never persists it in state (see _call_model docstring).
-        all_messages = list(messages)
+        all_messages = [*history, *messages]
         initial_state: AgentState = {
             "messages": all_messages,
             "session_id": session_id,
@@ -1199,23 +1291,20 @@ class AgentRuntime:
         # through the final _finish_turn below), the single choke point both
         # the "ok" and "timeout" outcomes already return through. The outer
         # `except Exception` records "error" for anything neither branch
-        # below catches (e.g. a genuine provider failure, or a checkpointer
-        # failure that is not a `redis.exceptions.RedisError`) and then
-        # re-raises unchanged -- this adds observability only, it does not
-        # change what was already unhandled before this metric existed.
-        turn_start = time.monotonic()
+        # below catches (e.g. a genuine provider failure) and then re-raises
+        # unchanged -- this adds observability only, it does not change what
+        # was already unhandled before this metric existed. A checkpointer
+        # failure never reaches it: `_Thread` handles every one.
         progress = _TurnProgress()
         try:
             try:
                 async with asyncio.timeout(
                     effective_limits["total_execution_timeout_s"]
                 ):
-                    result = await _ainvoke_with_optional_checkpointer(
-                        graph,
-                        self._checkpointer,
-                        thread_id,
+                    result = await _run_tracking_progress(
+                        graph.compile(),
                         initial_state,
-                        recursion_limit,
+                        {"recursion_limit": recursion_limit},
                         progress,
                     )
             except TimeoutError:
@@ -1238,8 +1327,7 @@ class AgentRuntime:
                 # completed: keep its messages (the tool calls already made)
                 # and account for the model calls that returned. A request
                 # still in flight reported no usage and is not counted (see
-                # `TurnUsage`). Only a checkpointer degradation leaves usage
-                # unknown, exactly as on a turn that finished.
+                # `TurnUsage`).
                 partial = progress.state
                 if partial is not None:
                     partial_messages = list(partial["messages"])
@@ -1247,27 +1335,26 @@ class AgentRuntime:
                 else:
                     partial_messages = all_messages
                     raw_partial_usage = []
-                timeout_usage = (
-                    _UNKNOWN_TURN_USAGE
-                    if progress.degraded or raw_partial_usage is None
-                    else _aggregate_turn_usage(raw_partial_usage)
+                reason = (
+                    "the turn timed out after "
+                    f"{float(effective_limits['total_execution_timeout_s'])}s"
                 )
-                return self._finish_turn(
-                    _close_unanswered_tool_calls(
-                        partial_messages,
-                        reason=(
-                            "the turn timed out after "
-                            f"{float(effective_limits['total_execution_timeout_s'])}s"
-                        ),
-                    )
-                    + [
-                        AIMessage(
-                            content=(
-                                "This is taking longer than expected. Please try again."
-                            )
+                timeout_reply = AIMessage(
+                    content="This is taking longer than expected. Please try again."
+                )
+                if thread is not None:
+                    # Issue #24 -- the thread keeps the turn as the user got
+                    # it: its interrupted tool calls answered, then the reply.
+                    await thread.save(
+                        _close_unanswered_tool_calls(
+                            partial_messages[len(history) :], reason=reason
                         )
-                    ],
-                    usage=timeout_usage,
+                        + [timeout_reply]
+                    )
+                return self._finish_turn(
+                    _close_unanswered_tool_calls(partial_messages, reason=reason)
+                    + [timeout_reply],
+                    usage=_aggregate_turn_usage(raw_partial_usage),
                     session_id=session_id,
                     model_id=effective_model_id,
                     outcome="timeout",
@@ -1283,22 +1370,12 @@ class AgentRuntime:
                 duration_s=time.monotonic() - turn_start,
             )
             raise
-        # #78 Phase 0 (review finding 3) -- `turn_usage` is the sentinel
-        # `None` (never a real, possibly-empty list) exactly when
-        # `_ainvoke_with_optional_checkpointer` degraded past a checkpointer
-        # backend failure: that failed attempt may have already spent real,
-        # unrecoverable tokens the retried invocation's own turn_usage does
-        # not include, so the whole turn's usage is honestly unknown rather
-        # than a plausible-looking undercount.
-        raw_turn_usage = result.get("turn_usage", [])
-        usage = (
-            _UNKNOWN_TURN_USAGE
-            if raw_turn_usage is None
-            else _aggregate_turn_usage(raw_turn_usage)
-        )
+        final_messages = list(result["messages"])
+        if thread is not None:
+            await thread.save(final_messages[len(history) :])
         return self._finish_turn(
-            list(result["messages"]),
-            usage=usage,
+            final_messages,
+            usage=_aggregate_turn_usage(result.get("turn_usage", [])),
             session_id=session_id,
             model_id=effective_model_id,
             outcome="ok",

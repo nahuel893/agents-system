@@ -709,8 +709,8 @@ el propio modelo de protección de `GET /metrics`.
 levanta la aplicación real. `agents_system.evals.live_harness.
 boot_live_harness` sí: la API HTTP, la ruta del webhook de WhatsApp y su
 worker diferido, una base de datos Postgres real (descartable) migrada con
-`alembic upgrade head`, un checkpointer Redis real, y auditoría persistida en
-la tabla `audit_event` real. La Fase 1 (#79) y la Fase 2 (extiende #76)
+`alembic upgrade head`, el checkpointer real de Postgres sobre esa base
+(#24), y auditoría persistida en la tabla `audit_event` real. La Fase 1 (#79) y la Fase 2 (extiende #76)
 construyen sus propios escenarios en vivo sobre este harness.
 
 ```python
@@ -726,7 +726,8 @@ Requiere, todo local por defecto (los servicios `postgres`/`redis` de
 
 - un Postgres alcanzable que pueda ejecutar `CREATE DATABASE` (la conexión
   admin se puede sobreescribir con `LIVE_HARNESS_ADMIN_DATABASE_URL`);
-- un Redis alcanzable (sobreescribible con `LIVE_HARNESS_REDIS_URL`);
+- un Redis alcanzable (sobreescribible con `LIVE_HARNESS_REDIS_URL`), que
+  sondea el `GET /health` de la app;
 - un modelo real alcanzable a través de lo que nombre `EVAL_PROVIDER` (ver
   "Cambiar de proveedor" arriba) -- el propio `ADAPTER_PROVIDER` del harness
   lo espeja, así que la aplicación levantada sirve exactamente el mismo
@@ -740,11 +741,11 @@ punto de configuración ya existente que este harness apunta a un servidor
 local real (`FakeWhatsAppServer`) que registra cada envío en lugar de
 enviarlo de verdad.
 
-Al finalizar también borra cada hilo de checkpoint de Redis que las
-llamadas a `deliver_webhook` de esta corrida escribieron (#113): un
-checkpoint que quedó de una corrida anterior nunca debe dejar pasar el
-assert de `read_thread` de una corrida posterior sin que el checkpointing
-de ESA corrida haya funcionado de verdad. Sólo una llamada a
+Cada hilo de checkpoint que escribe una corrida vive en la base descartable
+de esa corrida y se elimina con ella (#24), así que un checkpoint que quedó de
+una corrida anterior nunca puede dejar pasar el assert de `read_thread` de
+una corrida posterior sin que el checkpointing de ESA corrida haya
+funcionado de verdad (#113). Sólo una llamada a
 `boot_live_harness()` puede estar activa a la vez por proceso -- levantar
 el harness muta el `os.environ` global del proceso y el caché de
 `get_settings()`, así que toda la vida de una llamada (desde que levanta
@@ -760,7 +761,7 @@ firmado, con el mismo esquema HMAC-SHA256 real que verifica
 ponga al día), `audit_rows` (leer las filas que coincidan de la tabla real
 `audit_event`), `scrape_metrics` / `metric_value` (leer una muestra de
 `/metrics`), y `read_thread` (leer un hilo de LangGraph checkpointeado
-directo desde Redis).
+directo desde las tablas del checkpointer de Postgres).
 
 El escenario smoke (`tests/test_live_smoke.py`, `pytest -m live`) prueba el
 cableado de punta a punta con un turno por la API y un turno por el
@@ -793,7 +794,7 @@ funciones de la plataforma funcionan de punta a punta a través de
 nunca `AgentRuntime.run_turn` directamente. Cada aserción apunta a lo que
 hizo el SISTEMA (una fila ejecutada en la tabla real `audit_event`, los
 argumentos/resultado propios de una herramienta, el estado del hilo del
-checkpointer real de Redis, los envíos que registró el servidor falso de
+checkpointer real de Postgres, los envíos que registró el servidor falso de
 WhatsApp) -- la redacción final del modelo es a lo sumo una señal blanda,
 según el Principio de este documento. Cada escenario corre `EVAL_RUNS`
 veces (3 por defecto) y aprueba cuando al menos `DEFAULT_HAPPY_PATH_THRESHOLD`

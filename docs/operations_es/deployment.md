@@ -15,14 +15,15 @@ Según ADR-001, el despliegue en producción se organiza en dos etapas:
   - El vaciador en proceso de `AuditSink` (worker en segundo plano que escribe eventos de auditoría en PostgreSQL).
   - El worker en segundo plano `DeferredWebhookWorker` (bucle de sondeo que procesa mensajes entrantes durables de WhatsApp desde la tabla `outbox_work`).
   - Dos pools de conexiones asíncronas SQLAlchemy: base de datos operativa y base de datos BI de solo lectura opcional.
+  - El pool psycopg propio del checkpointer de conversaciones sobre la base operativa, y su purga de retención en proceso (#24, [memoria de conversación](../platform_es/conversation-memory.md)).
 - **Etapa B (Objetivo — 100 conversaciones concurrentes):** Escalamiento horizontal con múltiples procesos de servidor detrás de un proxy inverso o balanceador de carga, utilizando un proveedor de embeddings remoto (como OpenAI o un microservicio dedicado) para evitar copias duplicadas del modelo BGE-M3 en memoria.
 
 ### Orden de Inicio de Procesos
 
 Los servicios deben iniciar estrictamente en esta secuencia de dependencias:
 1. **PostgreSQL:** Inicia y reporta estado saludable mediante `pg_isready`.
-2. **Redis:** Inicia y reporta estado saludable mediante `redis-cli ping` (requiere Redis 8+ por el motor de búsqueda RediSearch).
-3. **Migraciones de Base de Datos:** Tarea puntual que ejecuta `alembic upgrade head`. Si las migraciones fallan, el despliegue aborta de inmediato con código de salida distinto de cero.
+2. **Redis:** Inicia y reporta estado saludable mediante `redis-cli ping`. `GET /health` lo informa; ya no guarda el estado de las conversaciones, que está en PostgreSQL desde #24.
+3. **Migraciones de Base de Datos:** Tarea puntual que ejecuta `alembic upgrade head`, que también crea las tablas de checkpoints de conversaciones (revisión 007). Si las migraciones fallan, el despliegue aborta de inmediato con código de salida distinto de cero. La app se niega a arrancar mientras falte el esquema de checkpoints, o mientras su rol de base no pueda escribir y borrar en las tablas de checkpoints (ver [memoria de conversación](../platform_es/conversation-memory.md#esquema-y-migraciones)).
 4. **Servidor de Aplicación (App):** Inicia únicamente después de verificar que la base de datos, Redis y las migraciones están completos y saludables.
 
 ---
@@ -55,6 +56,7 @@ Cada turno conversacional admitido retiene como máximo una conexión durante su
 | `DATABASE_POOL_TIMEOUT_S` | `30` | Tiempo de espera para obtener una conexión del pool |
 | `BI_POOL_SIZE` / `BI_MAX_OVERFLOW` | `3` / `0` | Pool dedicado para reportes de solo lectura |
 | `SQL_POOL_SIZE` / `SQL_MAX_OVERFLOW` | `2` / `0` | Pool dedicado para la herramienta de consulta SQL |
+| `CHECKPOINTER_POOL_SIZE` | `5` | Pool del checkpointer de conversaciones (psycopg, sin desbordamiento). Un turno retiene una conexión solo mientras lee o guarda su hilo |
 | `max_connections` en PostgreSQL | `100` | Configuración mínima recomendada en PostgreSQL |
 
 ---
@@ -196,6 +198,7 @@ Las migraciones de base de datos son administradas mediante Alembic y se ejecuta
       condition: service_completed_successfully
   ```
   Si un script de migración falla o encuentra un conflicto de locks, el contenedor finaliza con error y Docker Compose detiene el despliegue antes de arrancar `app`.
+- **Las tablas de checkpoints (revisión 007):** pertenecen a `langgraph-checkpoint-postgres`; la revisión ejecuta las migraciones propias de esa librería en vez de copiar su DDL. Cómo actualizar desde el checkpointer de Redis, y qué significan los nuevos settings de retención para los datos personales, está descrito en [memoria de conversación](../platform_es/conversation-memory.md#actualizar-desde-el-checkpointer-de-redis).
 
 ---
 
@@ -241,7 +244,7 @@ Si una actualización introduce regresiones:
    # O revertir a una revisión específica:
    uv run alembic downgrade <id_revision>
    ```
-   *Nota: Solo aplicar downgrade si la migración fue diseñada como reversible y no eliminó datos irreversibles.*
+   *Nota: Solo aplicar downgrade si la migración fue diseñada como reversible y no eliminó datos irreversibles.* Bajar de la revisión 007 elimina todos los hilos de conversación.
 
 ---
 

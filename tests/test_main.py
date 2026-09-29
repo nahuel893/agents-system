@@ -363,6 +363,9 @@ async def test_lifespan_injects_checkpointer_into_runtimes() -> None:
         mock_build_checkpointer_cm.assert_called_once()
         _, kwargs = mock_agent_runtime.call_args
         assert kwargs["checkpointer"] is fake_checkpointer
+        # Issue #24 review -- every read and save is bounded by the same
+        # CHECKPOINTER_TIMEOUT_S the pool uses, on the client side.
+        assert kwargs["checkpointer_timeout_s"] == test_settings.checkpointer_timeout_s
 
 
 @pytest.mark.asyncio
@@ -406,6 +409,118 @@ async def test_lifespan_skips_checkpointer_when_disabled() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Issue #24 -- durable Postgres checkpointer; retention is its own setting
+# ---------------------------------------------------------------------------
+
+
+def test_the_checkpointer_is_postgres_on_the_app_database() -> None:
+    from agents_system.main import _build_checkpointer_cm
+
+    settings = _make_settings(checkpointer_pool_size=3, checkpointer_timeout_s=2.5)
+    with patch(
+        "agents_system.services.checkpointer.open_postgres_checkpointer"
+    ) as mock_open:
+        _build_checkpointer_cm(settings)
+
+    mock_open.assert_called_once_with(settings.database_url, pool_size=3, timeout_s=2.5)
+
+
+def test_retention_never_reaches_the_checkpointer_itself() -> None:
+    """Durability and retention are separate: the saver is built the same
+    way whatever the retention, so changing the backend cannot silently
+    change how long conversations are kept."""
+    from agents_system.main import _build_checkpointer_cm
+
+    calls = []
+    for retention in (3_600, 2_592_000, None):
+        with patch(
+            "agents_system.services.checkpointer.open_postgres_checkpointer"
+        ) as mock_open:
+            _build_checkpointer_cm(_make_settings(checkpointer_retention_s=retention))
+        calls.append(mock_open.call_args)
+
+    assert calls[0] is not None
+    assert calls[0] == calls[1] == calls[2]
+
+
+async def _boot_with_postgres_checkpointer(settings: Settings, fake_saver: Any) -> Any:
+    """Boot the lifespan with a fake saver; return the patched purger class."""
+    fake_definition = MagicMock()
+    fake_definition.permissions = ("read:catalog",)
+    fake_definition.execution_limits = None
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+    purger = MagicMock()
+    purger.return_value.start = AsyncMock()
+    purger.return_value.stop = AsyncMock()
+
+    with (
+        patch("agents_system.main.get_settings", return_value=settings),
+        patch("agents_system.main.get_engine", return_value=mock_engine),
+        patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+        patch("agents_system.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agents_system.main._build_checkpointer_cm",
+            side_effect=_fake_checkpointer_cm_factory(fake_saver),
+        ),
+        patch(
+            "agents_system.services.embeddings.get_embedding_provider",
+            return_value=MagicMock(),
+        ),
+        patch("agents_system.harness.loader.resolve", return_value=fake_definition),
+        patch("agents_system.harness.factory.build_runtime", return_value=MagicMock()),
+        patch("agents_system.agent.graph.AgentRuntime"),
+        patch("agents_system.services.checkpointer.CheckpointPurger", purger),
+    ):
+        app = create_test_app()
+        async with lifespan(app):
+            purger.return_value.start.assert_awaited_once()
+            purger.return_value.stop.assert_not_awaited()
+    return purger
+
+
+@pytest.mark.asyncio
+async def test_lifespan_enforces_the_configured_retention_with_a_purger() -> None:
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+    from agents_system.services.checkpointer import purge_checkpoints
+
+    fake_saver = MagicMock(spec=AsyncPostgresSaver)
+    fake_saver.conn = MagicMock(name="pool")
+    settings = _make_settings(
+        checkpointer_retention_s=7_200, checkpointer_purge_interval_s=60.0
+    )
+
+    purger = await _boot_with_postgres_checkpointer(settings, fake_saver)
+
+    purger.assert_called_once()
+    (purge,), kwargs = purger.call_args
+    assert kwargs == {"retention_s": 7_200, "interval_s": 60.0}
+    assert purge.func is purge_checkpoints
+    assert purge.args == (fake_saver.conn,)
+    purger.return_value.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_warns_that_the_legacy_ttl_setting_is_deprecated(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+    settings = _make_settings(checkpointer_ttl_s=3_600)
+
+    fake_saver = MagicMock(spec=AsyncPostgresSaver)
+    fake_saver.conn = MagicMock(name="pool")
+
+    purger = await _boot_with_postgres_checkpointer(settings, fake_saver)
+
+    assert purger.call_args.kwargs["retention_s"] == 3_600
+    out = capsys.readouterr().out
+    assert "checkpointer.deprecated_setting" in out
+    assert "CHECKPOINTER_RETENTION_S" in out
+
+
+# ---------------------------------------------------------------------------
 # Issue #182 -- the lifespan warns when a runtime's turn budget cannot hold one
 # provider call. `tests/test_turn_budget_invariant.py` tests the function; this
 # tests that the boot actually calls it for every runtime it builds.
@@ -443,6 +558,10 @@ async def _boot_and_capture_logs(
         patch("agents_system.main.get_engine", return_value=mock_engine),
         patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch("agents_system.main._build_chat_model", return_value=MagicMock()),
+        patch(
+            "agents_system.main._build_checkpointer_cm",
+            side_effect=_fake_checkpointer_cm_factory(MagicMock()),
+        ),
         patch(
             "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
@@ -1151,7 +1270,11 @@ async def test_lifespan_enforces_the_outbox_lease_for_a_non_whatsapp_channel() -
 
     from agents_system.channels.port import Channel
 
-    test_settings = _make_settings(adapter_runtimes=[], whatsapp_runtime_id="")
+    test_settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_runtime_id="",
+        whatsapp_checkpointer_enabled=False,
+    )
     fake_definition = MagicMock()
     fake_definition.permissions = ("read:catalog",)
     fake_definition.execution_limits = {"total_execution_timeout_s": 540}

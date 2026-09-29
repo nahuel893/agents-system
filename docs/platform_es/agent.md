@@ -127,9 +127,9 @@ condiciones que esta plataforma ya tiene o busca explícitamente:
 
 - **Un reinicio del proceso pierde el objeto y todo lo que retenía en
   memoria que no se haya persistido por separado.** ADR-001 ya establece
-  que la memoria de trabajo (el checkpointer de Redis) es la única pieza de
-  estado que hoy sí sobrevive a un reinicio, precisamente *porque* vive
-  fuera del proceso. Todo lo que solo esté en el objeto Python — incluyendo
+  que la memoria de trabajo (el checkpointer, en Postgres desde #24) es la
+  única pieza de estado que hoy sí sobrevive a un reinicio, precisamente
+  *porque* vive fuera del proceso. Todo lo que solo esté en el objeto Python — incluyendo
   "qué instancia de `AgentRuntime` pertenece a este usuario" — no sobrevive.
 - **Múltiples workers de uvicorn o múltiples procesos servidor dividen al
   mismo usuario entre procesos.** El §2 de ADR-001 ("Etapa B — objetivo, 100
@@ -171,7 +171,7 @@ lastre de rendimiento.
 
 | Tipo | Qué guarda | Aislamiento | ESTADO |
 |---|---|---|---|
-| **Memoria de trabajo** | El historial de mensajes de la conversación actual — lo que permite que un intercambio multi-turno se mantenga coherente dentro de un mismo hilo. | Por `thread_id` | ⚠️ parcial — el checkpointer de Redis de LangGraph guarda esto, indexado por `thread_id` (el número de teléfono de un cliente en WhatsApp, `webhook.py:246`, cuando `whatsapp_checkpointer_enabled`). Ver ADR-002 §D.4/G para su falta de durabilidad (no hay persistencia detrás de Redis) y su TTL. |
+| **Memoria de trabajo** | El historial de mensajes de la conversación actual — lo que permite que un intercambio multi-turno se mantenga coherente dentro de un mismo hilo. | Por `thread_id` | ✅ durable — el checkpointer de Postgres de LangGraph guarda esto, indexado por `thread_id` (el número de teléfono de un cliente en WhatsApp, cuando `whatsapp_checkpointer_enabled`). Sobrevive a los reinicios, y una conversación inactiva se borra pasado `CHECKPOINTER_RETENTION_S` (#24, ADR-002 A.4). Ver `docs/platform_es/conversation-memory.md`. |
 | **Memoria propia de largo plazo del agente** | Hechos durables *sobre el principal de este agente*, acumulados y curados a través de conversaciones — no la transcripción cruda, sino lo que el agente decidió que valía la pena retener ("este cliente prefiere entregas los martes"). | Por `agent_id` | ⏳ pendiente — no existe. No hay herramienta `remember`/`recall`, ni almacenamiento, ni esquema. Ver ADR-002 §G.25. |
 | **Conocimiento compartido de la organización** | Hechos que la organización posee y que no son memoria privada de ningún agente en particular — el catálogo de productos, documentos de política, una wiki. No es propiedad del agente; el agente la *consulta* mediante una herramienta. | Por organización, filtrado por los permisos del agente que consulta | ⚠️ parcial — `KnowledgeBase` (`services/knowledge.py:23`) es un puerto `Protocol` sin implementación concreta en ninguna parte del repositorio, ni siquiera un doble de prueba; `platform_connectors.py` la vincula como una herramienta que falla en modo cerrado ("no knowledge base is available on this deployment") cuando no hay nada conectado. |
 

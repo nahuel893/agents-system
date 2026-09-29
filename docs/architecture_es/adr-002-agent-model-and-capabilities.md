@@ -9,7 +9,7 @@
 | 1 | Rol = clase; agente = identidad durable + memoria, activación efímera | A. Modelo de agentes | ⏳ pendiente (definición entregada en `bcca9a0`; ver `docs/platform/agent.md`) | #23 |
 | 2 | Identidad por principal en `granted_permissions` | A. Modelo de agentes | ⏳ pendiente | #15 |
 | 3 | Tres tipos de memoria, aislamiento por `agent_id` impuesto por la plataforma | A. Modelo de agentes | ⏳ pendiente | #25 (bloqueado por #15 y #29) |
-| 4 | Memoria de trabajo durable (persistencia del checkpointer) | A. Modelo de agentes | ⚠️ parcial (el checkpointer existe, no es durable) | #24 |
+| 4 | Memoria de trabajo durable (persistencia del checkpointer) | A. Modelo de agentes | ✅ hecho | #24 |
 | 5 | `memory_policy` mezclada pero sin aplicarse | A. Modelo de agentes | ⏳ pendiente | #26 (bloqueado por #25 y #29) |
 | 6 | Delegación declarada, no ejecutable | A. Modelo de agentes | ⏳ pendiente | #15 (identidad por principal); #170 (ADR-006, delegación agente a agente) |
 | 7 | `agent.md` como definición de referencia | A. Modelo de agentes | ✅ hecho | `bcca9a0` |
@@ -27,7 +27,7 @@
 | 19 | Desactualizado: `role.md`/`manifesto.md` dicen `agents/`, la ruta real es `platform/roles/` | F. Documentación desactualizada | ✅ hecho | `ec1e979` |
 | 20 | Desactualizado: descripción de `sensitive:` en `tool.md`, descripción de RAG con pgvector | F. Documentación desactualizada | ✅ hecho | `ec1e979` |
 | 21 | Desactualizado: decisión abierta de `permission-model.md` (resuelta por 10) + pgvector | F. Documentación desactualizada | ✅ hecho | `ec1e979`, `0348771` |
-| 22 | Historial de chat durable | G. Persistencia y memoria | ⚠️ parcial (mismo que 4) | #24 |
+| 22 | Historial de chat durable | G. Persistencia y memoria | ✅ hecho (mismo que 4) | #24 |
 | 23 | Implementación de referencia de `ConversationRecorder` | G. Persistencia y memoria | ⚠️ parcial (puerto + doble de prueba solamente, sin implementación de producción) | #27 |
 | 24 | Control del tamaño de contexto (recorte/compactación) | G. Persistencia y memoria | ✅ hecho | #28 |
 | 25 | Memoria propia del agente (`remember`/`recall`) | G. Persistencia y memoria | ⏳ pendiente | #29 (bloqueado por #15 y #25) |
@@ -318,8 +318,8 @@ aceptación del diseño de almacenamiento de G.25.
 
 #### A.4 — Memoria de trabajo durable
 
-**Estado actual.** El checkpointer que respalda la memoria de trabajo
-(`_build_checkpointer_cm`, `main.py:53-`) es un `AsyncRedisSaver`
+**Estado antes de #24.** El checkpointer que respaldaba la memoria de trabajo
+(`_build_checkpointer_cm`, `main.py:53-`) era un `AsyncRedisSaver`
 configurado con un TTL: `checkpointer_ttl_s: int | None = 86400`
 (`src/agents_system/config.py:100`, es decir, 24 horas), convertido de segundos
 a los minutos que espera el paquete por `_checkpointer_ttl_config`
@@ -366,9 +366,23 @@ ya usa `agents/preventa/policy.md` para `audit_policy.retention_days: 90`
 en el ejemplo de `docs/platform/role.md:152-157`) en vez de un efecto
 secundario accidental del TTL por defecto de Redis.
 
-**Estado.** ⚠️ parcial (el checkpointer existe y funciona; la durabilidad
-no). **Etapa planificada:** PR nuevo — Redis AOF + volumen, o Postgres como
-fuente de verdad; mismo PR que G.22 (misma brecha de fondo). Seguido en #24.
+**Resolución (#24).** Postgres es la fuente de verdad, reutilizando el
+backend que ya eligieron el inbox y el outbox durables de webhooks (archive
+#43/#44/#46, revisiones de Alembic 002-004, `services/outbox.py`) en vez de
+sumar un segundo almacenamiento durable. El checkpointer de la app servida es
+el `AsyncPostgresSaver` de LangGraph sobre la propia base de la app; la
+revisión 007 crea sus tablas ejecutando las migraciones propias del saver, y
+la app se niega a arrancar sin ellas. Se quita el checkpointer de Redis. La
+retención es un setting propio, `CHECKPOINTER_RETENTION_S` (por defecto 24 h,
+la ventana anterior; `never` para conservar las conversaciones sin límite),
+aplicado por una purga periódica que borra los hilos inactivos y poda los
+checkpoints reemplazados: el saver no tiene vencimiento propio. Un
+checkpointer que falla degrada el turno en vez de hacerlo fallar, sea cual
+sea el backend: una lectura fallida responde sin historial y no se guarda,
+un guardado fallido devuelve la respuesta y no vuelve a ejecutar nada. Ver
+`docs/platform_es/conversation-memory.md`.
+
+**Estado.** ✅ hecho (#24), junto con G.22.
 
 ---
 
@@ -1774,8 +1788,8 @@ necesita reenviar o recordar:
 
 | Tipo de contexto | Estado actual |
 |---|---|
-| **Historial de chat** | ⚠️ Parcial. El checkpointer de Redis (A.4) lo transporta por `thread_id` — el número de teléfono normalizado del cliente en WhatsApp, cuando `whatsapp_checkpointer_enabled` (`config.py:99`; el webhook pasa `thread_id=phone if settings.whatsapp_checkpointer_enabled else None`, `webhook.py:246`). El adaptador de OpenAI no tiene estado del lado del servidor en absoluto — el cliente que llama es responsable de reenviar el historial en cada solicitud, el contrato ordinario de la API de OpenAI. `ConversationRecorder` (G.23) es un puerto con un doble de prueba, sin implementación de producción, así que no hay un registro durable independiente del historial fuera del propio checkpointer. |
-| **Herramientas y acciones** | ⚠️ Parcial. Los `ToolMessage` viven dentro de `state["messages"]`, heredando la misma fragilidad del checkpointer que el resto del historial de chat (A.4) — sin durabilidad separada. Los `audit_event` en Postgres son durables y detallados (`audit/events.py:30-48`: `tool_name`, `sensitive`, `executed`, `elapsed_ms`, `revalidated`, `error` en `ToolCallAttempted`; `reason` en `ToolCallBlocked`) — pero esto es un *registro de lo que ocurrió*, escrito para auditoría/cumplimiento, no una memoria que el propio agente pueda consultar para informar una decisión futura. |
+| **Historial de chat** | ⚠️ Parcial. El checkpointer de Postgres (A.4, durable desde #24) lo transporta por `thread_id` — el número de teléfono normalizado del cliente en WhatsApp, cuando `whatsapp_checkpointer_enabled` (`config.py:99`; el webhook pasa `thread_id=phone if settings.whatsapp_checkpointer_enabled else None`, `webhook.py:246`). El adaptador de OpenAI no tiene estado del lado del servidor en absoluto — el cliente que llama es responsable de reenviar el historial en cada solicitud, el contrato ordinario de la API de OpenAI. `ConversationRecorder` (G.23) es un puerto con un doble de prueba, sin implementación de producción, así que no hay un registro durable independiente del historial fuera del propio checkpointer. |
+| **Herramientas y acciones** | ⚠️ Parcial. Los `ToolMessage` viven dentro de `state["messages"]`, con la misma durabilidad del checkpointer que el resto del historial de chat (A.4, #24) — sin almacenamiento separado. Los `audit_event` en Postgres son durables y detallados (`audit/events.py:30-48`: `tool_name`, `sensitive`, `executed`, `elapsed_ms`, `revalidated`, `error` en `ToolCallAttempted`; `reason` en `ToolCallBlocked`) — pero esto es un *registro de lo que ocurrió*, escrito para auditoría/cumplimiento, no una memoria que el propio agente pueda consultar para informar una decisión futura. |
 | **Razonamiento del modelo** | ⏳ No se persiste. `ReasoningSanitizedChatOpenAI` (`agent/reasoning.py:140`) elimina los bloques `<think>...</think>` de cadena de razonamiento embebidos en `message.content` antes de que lleguen al resto del pipeline — nada río abajo los registra tampoco, ni antes ni después de eliminarlos. |
 | **Memoria propia del agente** | ⏳ No existe (A.3, G.25). |
 
@@ -1803,7 +1817,8 @@ pregunta de seguimiento podría necesitar).
 Misma brecha de fondo que A.4 (el checkpointer no es durable) — no se
 repite aquí para evitar que dos descripciones de una misma corrección se
 desincronicen entre sí. Ver A.4 para el análisis completo. **Estado:**
-⚠️ parcial. **Etapa planificada:** mismo PR que A.4 (#24).
+✅ hecho con A.4 (#24): el historial de chat vive en el mismo checkpointer
+durable.
 
 ---
 

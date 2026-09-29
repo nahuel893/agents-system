@@ -84,10 +84,16 @@ def test_turn_metrics_label_schema_is_bounded() -> None:
     # issue #145 -- provider-side 429/retry observability.
     assert metrics.provider_requests_total._labelnames == ("provider", "status")
     assert metrics.provider_retries_total._labelnames == ("provider",)
+    # issue #24 -- a degraded thread read/save and each retention purge,
+    # never labelled by thread id (a customer's phone number).
+    assert metrics.checkpointer_degraded_total._labelnames == ("operation",)
+    assert metrics.checkpoint_purges_total._labelnames == ("outcome",)
     families = {family.name for family in registry.collect()}
     assert "agent_audit_events_dropped" in families
     assert "agent_provider_requests" in families
     assert "agent_provider_retries" in families
+    assert "agent_checkpointer_degraded" in families
+    assert "agent_checkpoint_purges" in families
 
 
 def test_no_unbounded_label_ever_reaches_the_exported_text() -> None:

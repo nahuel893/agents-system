@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # inventory would make it propose dropping the tables it could not see.
 from agents_system.config import get_settings
 from agents_system.models import Base
+from agents_system.services.checkpointer import CHECKPOINT_TABLES
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -69,6 +70,16 @@ config.set_main_option("sqlalchemy.url", _database_url())
 target_metadata = Base.metadata
 
 
+def include_name(name: str | None, type_: str, parent_names: object) -> bool:
+    """Leave the checkpoint tables out of autogenerate (issue #24).
+
+    ``langgraph-checkpoint-postgres`` owns them and revision 007 creates them
+    through the library; they are not ORM models, so without this filter
+    autogenerate would propose dropping them.
+    """
+    return not (type_ == "table" and name in CHECKPOINT_TABLES)
+
+
 # --- offline mode ---
 
 
@@ -77,6 +88,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=_database_url(),
         target_metadata=target_metadata,
+        include_name=include_name,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -107,6 +119,7 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
+        include_name=include_name,
     )
     with context.begin_transaction():
         context.run_migrations()

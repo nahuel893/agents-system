@@ -444,6 +444,48 @@ jobs:
       - name: Verify the durable inbox/outbox migration
         run: uv run pytest -m integration tests/test_outbox_migration_integration.py -v
 
+  # Issue #24 -- the conversation checkpointer on Postgres: revision 007
+  # creates its tables, a conversation survives a process restart, the
+  # retention purge deletes idle threads and prunes superseded checkpoints,
+  # and a corrupt thread or a dropped connection degrades only its own turn.
+  # Its own disposable database, like outbox-migration above: the tests run
+  # `alembic downgrade base`.
+  checkpointer-integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: checkpointer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d checkpointer_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CHECKPOINTER_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/checkpointer_test
+      ALLOW_INSECURE: "true"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Verify the durable checkpointer
+        run: uv run pytest -m integration tests/test_checkpointer_integration.py -v
+
   # ADR-002 C.14 — tests/test_sandbox_integration.py needs a REAL `bwrap` and
   # actually spawns sandboxed subprocesses (network probes, filesystem-escape
   # attempts, a memory-limit breach, a killed-at-timeout hang), so it is

@@ -15,14 +15,15 @@ Per ADR-001, production deployment is organized into two stages:
   - In-process `AuditSink` drainer (background worker writing audit logs to PostgreSQL).
   - In-process `DeferredWebhookWorker` (poll loop processing durable inbound WhatsApp messages from the `outbox_work` table).
   - Two SQLAlchemy async connection pools: operational database and optional read-only BI database.
+  - The conversation checkpointer's own psycopg pool on the operational database, and its in-process retention purge (#24, [conversation memory](../platform/conversation-memory.md)).
 - **Stage B (Target — 100 concurrent conversations):** Horizontal scaling with multiple server processes behind a reverse proxy/load balancer, utilizing a remote embedding provider (such as OpenAI or a dedicated microservice) to prevent duplicate in-memory BGE-M3 models.
 
 ### Process Startup Ordering
 
 Services must start strictly in this dependency sequence:
 1. **PostgreSQL:** Starts and reports healthy via `pg_isready`.
-2. **Redis:** Starts and reports healthy via `redis-cli ping` (Redis 8+ required for RediSearch query engine).
-3. **Database Migrations:** One-shot migration job executes `alembic upgrade head`. If migrations fail, the deployment immediately aborts with non-zero exit code.
+2. **Redis:** Starts and reports healthy via `redis-cli ping`. `GET /health` reports it; it no longer holds conversation state, which is in PostgreSQL since #24.
+3. **Database Migrations:** One-shot migration job executes `alembic upgrade head`, which also creates the conversation checkpoint tables (revision 007). If migrations fail, the deployment immediately aborts with non-zero exit code. The app refuses to start while the checkpoint schema is missing, or while its database role cannot write and delete in the checkpoint tables (see [conversation memory](../platform/conversation-memory.md#schema-and-migrations)).
 4. **App Server:** Starts only after database, Redis, and migrations are verified healthy and complete.
 
 ---
@@ -55,6 +56,7 @@ Each admitted conversation turn holds at most one connection during query rounds
 | `DATABASE_POOL_TIMEOUT_S` | `30` | Connection checkout timeout |
 | `BI_POOL_SIZE` / `BI_MAX_OVERFLOW` | `3` / `0` | Dedicated read-only reporting pool |
 | `SQL_POOL_SIZE` / `SQL_MAX_OVERFLOW` | `2` / `0` | Dedicated SQL tool pool |
+| `CHECKPOINTER_POOL_SIZE` | `5` | Conversation checkpointer pool (psycopg, no overflow). A turn holds one only while its thread is read or saved |
 | PostgreSQL `max_connections` | `100` | Minimum recommended PostgreSQL configuration |
 
 ---
@@ -196,6 +198,7 @@ Database migrations are managed via Alembic and run automatically on every deplo
       condition: service_completed_successfully
   ```
   If a migration script encounters an error or lock conflict, the container exits with non-zero status and Docker Compose halts the deployment before starting `app`.
+- **The checkpoint tables (revision 007):** they belong to `langgraph-checkpoint-postgres`; the revision runs that library's own migrations instead of copying their DDL. Upgrading from the Redis checkpointer, and what the new retention settings mean for personal data, is described in [conversation memory](../platform/conversation-memory.md#upgrading-from-the-redis-checkpointer).
 
 ---
 
@@ -241,7 +244,7 @@ If an upgrade introduces regressions:
    # Or downgrade to specific revision:
    uv run alembic downgrade <revision_id>
    ```
-   *Note: Only downgrade if the migration was written as reversible and did not perform destructive data drops.*
+   *Note: Only downgrade if the migration was written as reversible and did not perform destructive data drops.* Downgrading below revision 007 drops every conversation thread.
 
 ---
 

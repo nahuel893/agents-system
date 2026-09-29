@@ -36,7 +36,8 @@ services:
         max-file: "5"
 
   redis:
-    # Redis 8 bundles RediSearch Query Engine required by langgraph-checkpoint-redis
+    # Conversation state is in postgres (postgres_data volume, #24); Redis stays
+    # for the GET /health probe.
     image: redis:8-alpine
     restart: unless-stopped
     command: ["redis-server", "--save", "60", "1", "--loglevel", "notice"]

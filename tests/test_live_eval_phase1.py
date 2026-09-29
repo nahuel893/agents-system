@@ -10,7 +10,7 @@ and drives it through `LiveHarness.send_chat_completion` (`POST
 `evals/runner.py::run_scenario` does. Every assertion targets what the
 SYSTEM did (audit rows in the real `audit_event` table, a tool's own
 recorded arguments/result, `/metrics` counters, the fake WhatsApp server's
-recorded sends, the real Redis checkpointer's thread state) -- the model's
+recorded sends, the real Postgres checkpointer's thread state) -- the model's
 own final wording is at most a soft signal, consistent with the live-test
 plan's own Principle.
 
@@ -282,7 +282,7 @@ async def test_data_agent_reads_the_real_seeded_demo_database() -> None:
 # ---------------------------------------------------------------------------
 # sales-agent: order_writer, message_sender, escalation
 # (customer_not_registered), and conversation memory across two webhook
-# turns via the real Redis checkpointer. One boot (seed_demo=True).
+# turns via the real Postgres checkpointer. One boot (seed_demo=True).
 # ---------------------------------------------------------------------------
 
 
@@ -354,6 +354,18 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
 
         async def remembers_across_a_second_webhook_turn() -> None:
             phone = f"+1555{uuid.uuid4().int % 10_000_000:07d}"
+
+            # Only this conversation's replies: `outbound.sent` is shared by
+            # every scenario and run of this boot, so counting all of it let
+            # an earlier run's late reply stand in for this one's (#24).
+            def replies() -> list[str]:
+                digits = "".join(filter(str.isdigit, phone))
+                return [
+                    entry["text"]["body"]
+                    for entry in harness.outbound.sent
+                    if "".join(filter(str.isdigit, entry.get("to", ""))) == digits
+                ]
+
             first = await harness.deliver_webhook(
                 phone=phone,
                 text=(
@@ -362,10 +374,7 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
                 ),
             )
             assert first.status_code == 200, first.text
-            await harness.wait_until(
-                lambda: len(harness.outbound.sent) >= 1, timeout=60.0
-            )
-            first_reply_count = len(harness.outbound.sent)
+            await harness.wait_until(lambda: len(replies()) >= 1, timeout=60.0)
 
             second = await harness.deliver_webhook(
                 phone=phone,
@@ -374,11 +383,9 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
                 ),
             )
             assert second.status_code == 200, second.text
-            await harness.wait_until(
-                lambda: len(harness.outbound.sent) > first_reply_count, timeout=60.0
-            )
+            await harness.wait_until(lambda: len(replies()) >= 2, timeout=60.0)
 
-            reply = harness.outbound.sent[-1]["text"]["body"]
+            reply = replies()[-1]
             assert _DEMO_SKU in reply, (
                 f"second turn's reply did not recall {_DEMO_SKU!r}: {reply!r}"
             )
@@ -386,7 +393,7 @@ async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
             thread = await harness.read_thread(phone)
             assert thread is not None, (
                 "no checkpointed thread found for the conversation's phone "
-                "number -- the Redis checkpointer did not persist it"
+                "number -- the Postgres checkpointer did not persist it"
             )
 
         await _run_gated(

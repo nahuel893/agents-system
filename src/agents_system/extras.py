@@ -28,7 +28,17 @@ __all__ = ["EXTRA_MODULES", "MissingExtraError", "raise_missing_extra"]
 
 _DISTRIBUTION = "agents-system"
 
-_POSTGRES = frozenset({"sqlalchemy", "asyncpg", "alembic"})
+#: The database, and the durable conversation checkpointer on it (#24).
+_POSTGRES = frozenset(
+    {
+        "sqlalchemy",
+        "asyncpg",
+        "alembic",
+        "psycopg",
+        "psycopg_pool",
+        "langgraph.checkpoint.postgres",
+    }
+)
 
 #: Each extra, and the top-level modules it provides. A missing module that is
 #: not listed under the extra a guard names is re-raised unchanged: it is a
@@ -37,10 +47,7 @@ _POSTGRES = frozenset({"sqlalchemy", "asyncpg", "alembic"})
 #: ``server`` and ``sql`` include the ``postgres`` extra, because the served
 #: app and the SQL query tool both run on a database.
 EXTRA_MODULES: dict[str, frozenset[str]] = {
-    "server": frozenset(
-        {"fastapi", "starlette", "uvicorn", "redis", "langgraph.checkpoint.redis"}
-    )
-    | _POSTGRES,
+    "server": frozenset({"fastapi", "starlette", "uvicorn", "redis"}) | _POSTGRES,
     "postgres": _POSTGRES,
     "sql": frozenset({"sqlglot"}) | _POSTGRES,
     "embeddings": frozenset(

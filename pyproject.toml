@@ -35,21 +35,24 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The served app: HTTP, the channels, and the Redis checkpointer. It runs on
-# its database, so it brings `postgres` too.
+# The served app: HTTP and the channels. It runs on its database, which also
+# keeps its conversations, so it brings `postgres` too. Redis is only probed
+# by GET /health since #24.
 server = [
     "agents-system[postgres]",
     "fastapi>=0.115,<1.0",
     "uvicorn[standard]>=0.53.0",
     "redis>=5.0,<9.0",
-    "langgraph-checkpoint-redis>=0.5.2",
 ]
-# The database: the audit sink, the platform tables and their migrations, and
-# the reference backends.
+# The database: the audit sink, the platform tables and their migrations, the
+# reference backends, and the durable conversation checkpointer (#24), whose
+# tables a migration creates.
 postgres = [
     "sqlalchemy[asyncio]>=2.0.54,<3.0",
     "asyncpg>=0.30",
     "alembic>=1.13",
+    "langgraph-checkpoint-postgres>=3.1.2,<4.0",
+    "psycopg[binary,pool]>=3.2,<4.0",
 ]
 # The guarded SQL query tool (it runs its queries on a database).
 sql = [

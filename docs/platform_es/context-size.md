@@ -167,8 +167,10 @@ nunca recorta es correcto o demasiado holgado.
 
 - **Compactación / resumen** de los turnos recortados (ver la decisión arriba).
 - **Crecimiento persistido.** El recorte acota lo que ve el modelo, no lo que
-  guarda el checkpointer. Un hilo muy activo sigue creciendo en Redis hasta que
-  vence su ventana de retención. Acotar el almacenamiento es otro tema (#24).
+  guarda el checkpointer. Desde #24 la purga de retención conserva solo el
+  último checkpoint de cada hilo y borra un hilo cuando lleva inactivo más de
+  `CHECKPOINTER_RETENTION_S`, pero un hilo muy activo sigue conteniendo todo su
+  historial (`docs/platform_es/conversation-memory.md`).
 - **Una consulta de ventana por modelo** para derivar el presupuesto del modelo
   configurado automáticamente, en lugar de la ventana asumida fija.
 - **Conteo exacto de tokens** por proveedor.

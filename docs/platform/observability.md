@@ -89,14 +89,15 @@ metric objects live in `src/agents_system/observability/metrics.py`.
 | `agent_audit_events_dropped` | Gauge | none | Current process-local `AuditSink.dropped_count`, sampled when `GET /metrics` is served. |
 | `agent_provider_requests_total` | Counter | `provider`, `status` | Every raw HTTP attempt the chat model's own async client makes (issue #145) — see "Provider observability, and the issue #145 investigation" below. |
 | `agent_provider_retries_total` | Counter | `provider` | Every attempt the provider SDK's OWN retry loop re-sends after an earlier attempt on the same call failed (issue #145). |
+| `agent_checkpointer_degraded_total` | Counter | `operation` (`read`/`write`) | A turn is answered although reading its thread or saving it failed or timed out (issue #24). Such a turn still counts as `ok` in `agent_turns_total`, so this is the only metric that shows a checkpointer failing for every turn. Never labelled by thread id. |
+| `agent_checkpoint_purges_total` | Counter | `outcome` (`ok`/`error`) | Every conversation retention purge run (issue #24). Runs that keep failing mean conversations outlive `CHECKPOINTER_RETENTION_S`. |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total`, and the rest of `prometheus_client`'s default `ProcessCollector` | Gauge/Counter | none | Always, for the running process — confirmed present on Linux by `tests/test_observability_metrics.py`, not merely assumed from the library's docs. |
 
 **Turn outcomes**: `ok` also covers a turn that legitimately ended at the
 `_limit_reached` node — that is a normal completion, not a failure; the
 limit firing is its own `agent_limit_trips_total` sample. `timeout` is
 `total_execution_timeout_s` firing. `error` is anything else the turn
-raises (a genuine provider failure, an unexpected checkpointer error) —
-recorded, then re-raised unchanged, so this metric adds observability
+raises (a genuine provider failure) — recorded, then re-raised unchanged, so this metric adds observability
 without changing any existing error-handling behavior.
 
 **Tool-call outcomes**: `denied` is a `PolicyViolation` for a tool that was
@@ -121,8 +122,9 @@ token or cost sample. A timed-out turn (`outcome="timeout"`) reports the usage
 of the model calls that completed before its budget ran out (issue #172): that
 is a real lower bound, so its token and cost samples are recorded; a call cut
 off mid-flight reported nothing and is not counted. Only a timed-out turn whose
-usage could not be determined at all (a checkpointer degradation restarted it,
-or no state was produced) records no token or cost sample.
+usage could not be determined at all (no state was produced) records no token
+or cost sample. A checkpointer failure never makes usage unknown: it never
+re-runs a turn (issue #24, `docs/platform/conversation-memory.md`).
 
 ## Provider observability, and the issue #145 investigation
 
@@ -276,19 +278,32 @@ so `runtime.turn_usage` and the token and cost metrics are logged for it too.
 A call cut off mid-flight has no usage yet, so the totals are a lower bound. A
 tool call the timeout interrupted stays in the messages, answered with an error
 `ToolMessage`, so the returned messages are a valid history to send back as the
-next turn's. If the checkpointer degraded and the turn restarted, or no state was ever
-produced, the usage is unknown (`None`), never a guess. `TurnResult.timed_out`
+next turn's. If no state was ever produced, the usage is unknown (`None`), never
+a guess. `TurnResult.timed_out`
 and `TurnResult.timeout_s` let a caller tell the timeout from a normal turn.
 
-On a checkpointed thread (`thread_id` given), the persisted state of a turn
-that timed out inside a tool call still ends with the assistant message that
-requested the tool. The runtime does not rewrite the store: before every model
+On a checkpointed thread (`thread_id` given), a turn that timed out is saved
+as the customer received it (issue #24): its interrupted tool calls answered
+with an error, then the timeout reply. A thread can still hold a tool call
+without a reply: a turn that stopped at `max_tool_calls`, or a thread saved
+before #24. The runtime does not rewrite the store for it: before every model
 call it answers any tool call that has no reply with an error `ToolMessage`
 (`Tool call interrupted: the tool did not return a result in an earlier turn`),
 placed right after the message that requested it. The model therefore always
 receives a valid tool-call sequence, on every channel and with any checkpointer
-backend, and one slow tool call cannot make a conversation unusable until its
-checkpoint expires. A healthy history reaches the model unchanged.
+backend. A healthy history reaches the model unchanged.
+
+**Checkpointer events.** `runtime.checkpointer_degraded` (warning) marks a turn
+answered despite a checkpointer failure; its `operation` says whether reading
+the thread (`read`) or saving the turn (`write`) failed. `checkpointer.purged`
+(info) reports each retention purge with counts only, and
+`checkpointer.purge_failed` (warning) a purge that the next interval retries,
+with `consecutive_failures`. Both are also counted:
+`agent_checkpointer_degraded_total{operation}` and
+`agent_checkpoint_purges_total{outcome}`. Alert on either one rising steadily,
+for example `increase(agent_checkpoint_purges_total{outcome="ok"}[3h]) == 0`
+with the default one-hour purge interval.
+See `docs/platform/conversation-memory.md`.
 
 **Account sizing guidance for operators.** `max_concurrent_turns` (default
 10) bounds how many turns this process runs at once, but it does NOT bound

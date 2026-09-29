@@ -7,6 +7,8 @@ exercised by the opt-in `tests/test_live_smoke.py` (`pytest -m live`).
 from __future__ import annotations
 
 import asyncio
+from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -132,12 +134,11 @@ async def test_fake_whatsapp_server_records_every_send_in_order() -> None:
 async def test_fake_whatsapp_server_stop_swallows_non_cancellation_errors() -> None:
     """`stop()` must never let a non-cancellation exception from its own
     `serve()` task escape (PR #113 review): `boot_live_harness`'s teardown
-    `finally` calls `outbound.stop()` before `_delete_redis_threads`/
-    `_drop_database` -- if `stop()` re-raises (e.g. the real `serve()`
-    failing with an `OSError` for a port already in use), that exception
-    aborts the `finally` block before the throwaway database is dropped,
-    masking the real startup error in the process. Mirrors `_drop_database`'s
-    /`_delete_redis_threads`'s own never-raise teardown contract."""
+    `finally` calls `outbound.stop()` before `_drop_database` -- if `stop()`
+    re-raises (e.g. the real `serve()` failing with an `OSError` for a port
+    already in use), that exception aborts the `finally` block before the
+    throwaway database is dropped, masking the real startup error in the
+    process. Mirrors `_drop_database`'s own never-raise teardown contract."""
     server = FakeWhatsAppServer()
 
     async def _boom() -> None:
@@ -395,85 +396,57 @@ async def test_deliver_webhook_tracks_the_normalized_phone_as_the_thread_id() ->
 
 
 # ---------------------------------------------------------------------------
-# _delete_redis_threads (#113 review, high-severity finding)
+# LiveHarness.read_thread -- the Postgres checkpointer (#24)
 # ---------------------------------------------------------------------------
 
 
-async def test_delete_redis_threads_deletes_every_tracked_thread(monkeypatch) -> None:
-    import langgraph.checkpoint.redis as redis_checkpoint
+async def test_read_thread_reads_the_run_database_through_the_postgres_saver(
+    monkeypatch,
+) -> None:
+    """The threads live in this run's throwaway database (dropped at
+    teardown), read with the same saver the app writes them with."""
+    import langgraph.checkpoint.postgres.aio as postgres_checkpoint
 
-    from agents_system.evals import live_harness
-
-    deleted: list[str] = []
+    connected: list[str] = []
+    asked: list[Any] = []
 
     class _FakeSaver:
-        async def adelete_thread(self, thread_id: str) -> None:
-            deleted.append(thread_id)
+        async def aget_tuple(self, config: Any) -> str:
+            asked.append(config)
+            return "checkpoint"
 
     class _FakeSaverContext:
-        async def __aenter__(self):
+        async def __aenter__(self) -> _FakeSaver:
             return _FakeSaver()
 
         async def __aexit__(self, *exc_info: object) -> None:
             return None
 
-    class _FakeAsyncRedisSaver:
+    class _FakeAsyncPostgresSaver:
         @staticmethod
         def from_conn_string(conn_string: str) -> _FakeSaverContext:
+            connected.append(conn_string)
             return _FakeSaverContext()
 
-    monkeypatch.setattr(redis_checkpoint, "AsyncRedisSaver", _FakeAsyncRedisSaver)
-
-    await live_harness._delete_redis_threads(
-        "redis://127.0.0.1:6379/0", {"+15550001111", "+15550002222"}
+    monkeypatch.setattr(
+        postgres_checkpoint, "AsyncPostgresSaver", _FakeAsyncPostgresSaver
+    )
+    harness = LiveHarness(
+        app=MagicMock(),
+        client=MagicMock(),
+        engine=MagicMock(),
+        redis_url="redis://127.0.0.1:6379/0",
+        outbound=MagicMock(),
+        runtime_id="sales",
+        model_name="fake",
+        meta_webhook_secret="secret",
+        metrics_api_key="key",
+        database_url="postgresql+asyncpg://postgres:pw@127.0.0.1:5432/live_harness_x",
     )
 
-    assert sorted(deleted) == ["+15550001111", "+15550002222"]
-
-
-async def test_delete_redis_threads_is_a_no_op_for_an_empty_set(monkeypatch) -> None:
-    import langgraph.checkpoint.redis as redis_checkpoint
-
-    from agents_system.evals import live_harness
-
-    def _fail_from_conn_string(conn_string: str) -> None:
-        raise AssertionError(
-            "must not connect to Redis when there is nothing to delete"
-        )
-
-    class _FakeAsyncRedisSaver:
-        from_conn_string = staticmethod(_fail_from_conn_string)
-
-    monkeypatch.setattr(redis_checkpoint, "AsyncRedisSaver", _FakeAsyncRedisSaver)
-
-    # Must not raise, and must not touch Redis at all.
-    await live_harness._delete_redis_threads("redis://127.0.0.1:6379/0", set())
-
-
-async def test_delete_redis_threads_swallows_errors_like_drop_database(
-    monkeypatch,
-) -> None:
-    """Mirrors `_drop_database`'s never-raise contract: a teardown that fails
-    must not hide the test's own result."""
-    import langgraph.checkpoint.redis as redis_checkpoint
-
-    from agents_system.evals import live_harness
-
-    class _FakeSaverContext:
-        async def __aenter__(self):
-            raise ConnectionError("redis unreachable")
-
-        async def __aexit__(self, *exc_info: object) -> None:
-            return None
-
-    class _FakeAsyncRedisSaver:
-        @staticmethod
-        def from_conn_string(conn_string: str) -> _FakeSaverContext:
-            return _FakeSaverContext()
-
-    monkeypatch.setattr(redis_checkpoint, "AsyncRedisSaver", _FakeAsyncRedisSaver)
-
-    await live_harness._delete_redis_threads("redis://127.0.0.1:6379/0", {"+1555"})
+    assert await harness.read_thread("+15550001111") == "checkpoint"
+    assert connected == ["postgresql://postgres:pw@127.0.0.1:5432/live_harness_x"]
+    assert asked == [{"configurable": {"thread_id": "+15550001111"}}]
 
 
 # ---------------------------------------------------------------------------

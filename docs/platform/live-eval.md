@@ -655,9 +655,9 @@ counters, and `GET /metrics`'s own protection model.
 `run_scenario` above calls `AgentRuntime.run_turn` directly -- it never boots
 the real application. `agents_system.evals.live_harness.boot_live_harness`
 does: the HTTP API, the WhatsApp webhook route and its deferred worker, a
-real (throwaway) Postgres database migrated to `alembic upgrade head`, a
-real Redis checkpointer, and audit persisted to the real `audit_event`
-table. Phase 1 (#79) and Phase 2 (extends #76) build their own live
+real (throwaway) Postgres database migrated to `alembic upgrade head`, the
+real Postgres checkpointer on that database (#24), and audit persisted to the
+real `audit_event` table. Phase 1 (#79) and Phase 2 (extends #76) build their own live
 scenarios on top of it.
 
 ```python
@@ -673,7 +673,8 @@ services):
 
 - a reachable Postgres able to `CREATE DATABASE` (override the admin
   connection with `LIVE_HARNESS_ADMIN_DATABASE_URL`);
-- a reachable Redis (override with `LIVE_HARNESS_REDIS_URL`);
+- a reachable Redis (override with `LIVE_HARNESS_REDIS_URL`), which the
+  app's `GET /health` probes;
 - a real model reachable through whatever `EVAL_PROVIDER` names (see
   "Switching providers" above) -- the harness's own `ADAPTER_PROVIDER`
   mirrors it, so the same provider a manual eval run uses is what the
@@ -686,10 +687,10 @@ Meta: `WhatsAppClient` posts to `Settings.whatsapp_graph_api_url`, an
 existing configuration seam this harness points at a real local server
 (`FakeWhatsAppServer`) that records every send instead.
 
-Teardown also deletes every Redis checkpoint thread this run's own
-`deliver_webhook` calls wrote (#113): a checkpoint left behind by an earlier
-run must never let a later run's `read_thread` assertion pass without that
-run's own checkpointing genuinely having worked. Only one `boot_live_harness()`
+Every checkpoint thread a run writes lives in that run's throwaway database
+and is dropped with it (#24), so a checkpoint left behind by an earlier run can
+never let a later run's `read_thread` assertion pass without that run's own
+checkpointing genuinely having worked (#113). Only one `boot_live_harness()`
 call can be "up" at a time per process -- booting mutates the process-global
 `os.environ` and `get_settings()` cache, so a whole call's lifetime (boot
 through teardown) is serialized on a module-level lock; a second concurrent
@@ -703,7 +704,8 @@ message, HMAC-SHA256'd with the real scheme `verify_signature` checks),
 `wait_until` (poll for the deferred worker to catch up), `audit_rows` (read
 matching rows from the real `audit_event` table), `scrape_metrics` /
 `metric_value` (read one `/metrics` sample), and `read_thread` (read a
-checkpointed LangGraph thread straight out of Redis).
+checkpointed LangGraph thread straight out of the Postgres checkpointer's
+tables).
 
 The smoke scenario (`tests/test_live_smoke.py`, `pytest -m live`) proves the
 wiring end to end with one API turn and one webhook turn, both driving the
@@ -734,7 +736,7 @@ features work end to end through `boot_live_harness` -- the real HTTP API
 or the real WhatsApp webhook, never `AgentRuntime.run_turn` directly.  Every
 assertion targets what the SYSTEM did (an executed row in the real
 `audit_event` table, a tool's own recorded arguments/result, the real
-Redis checkpointer's thread state, the fake WhatsApp server's recorded
+Postgres checkpointer's thread state, the fake WhatsApp server's recorded
 sends) -- the model's final wording is at most a soft signal, per this
 document's Principle. Each scenario runs `EVAL_RUNS` times (default 3) and
 passes when at least `DEFAULT_HAPPY_PATH_THRESHOLD` (80%, #81) of runs

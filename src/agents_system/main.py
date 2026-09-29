@@ -18,6 +18,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import AsyncExitStack, asynccontextmanager
+from functools import partial
 from typing import Annotated, Any, Literal
 
 import httpx
@@ -82,38 +83,47 @@ from agents_system.services.participants import (
 from agents_system.services.redis import close_redis_pool, get_redis_client
 
 
-def _checkpointer_ttl_config(checkpointer_ttl_s: int | None) -> dict[str, Any] | None:
-    """Convert AD-7's ``checkpointer_ttl_s`` (seconds) into the
-    langgraph-checkpoint-redis package's ``ttl`` dict shape, whose
-    ``default_ttl`` is expressed in MINUTES."""
-    if checkpointer_ttl_s is None:
-        return None
-    return {"default_ttl": checkpointer_ttl_s / 60, "refresh_on_read": True}
-
-
 def _build_checkpointer_cm(settings: Settings) -> Any:
-    """Build the ``AsyncRedisSaver`` async context manager (design AD-1/AD-7).
+    """Build the checkpointer's async context manager (design AD-1, issue #24).
 
-    Deferred import — the checkpoint-redis package is only needed when there
-    is at least one runtime to inject it into. Builds its OWN Redis
-    connection from ``redis_url``: the shared pool in ``services/redis.py``
-    uses ``decode_responses=True``, which corrupts binary checkpoint
-    payloads — do NOT reuse ``get_redis_client`` here.
+    LangGraph's ``AsyncPostgresSaver`` on its own psycopg pool, in the app's
+    PostgreSQL database -- the store that already holds the durable webhook
+    inbox and outbox -- so a restart or a container recreation keeps every
+    conversation. Entering it opens the pool and checks the checkpoint schema
+    (created by ``alembic upgrade head``, revision 007); it is held open for
+    the app's lifetime through the lifespan's ``AsyncExitStack``.
 
-    ``AsyncRedisSaver.from_conn_string(...)`` (confirmed against the
-    installed ``langgraph-checkpoint-redis==0.5.2``, issue #32's langgraph
-    1.x migration) is itself an
-    ``@asynccontextmanager`` classmethod: entering it constructs the saver
-    and calls ``asetup()`` (idempotent index creation) + ``aset_client_info()``
-    via ``__aenter__``; it must be held open for the app's lifetime and torn
-    down via its ``__aexit__`` at shutdown — the caller does this through the
-    lifespan's ``AsyncExitStack``.
+    Only durability is configured here. How long an idle conversation is kept
+    is ``checkpointer_retention_s``, enforced by the purger the lifespan
+    starts next to it (``_build_checkpoint_purger``), never by the saver.
     """
-    from langgraph.checkpoint.redis import AsyncRedisSaver
+    from agents_system.services.checkpointer import open_postgres_checkpointer
 
-    return AsyncRedisSaver.from_conn_string(
-        settings.redis_url,
-        ttl=_checkpointer_ttl_config(settings.checkpointer_ttl_s),
+    return open_postgres_checkpointer(
+        settings.database_url,
+        pool_size=settings.checkpointer_pool_size,
+        timeout_s=settings.checkpointer_timeout_s,
+    )
+
+
+def _build_checkpoint_purger(checkpointer: Any, settings: Settings) -> Any:
+    """The periodic job enforcing ``checkpointer_retention_s`` (issue #24).
+
+    Deletes every conversation idle for longer than the retention and prunes
+    each thread's superseded checkpoints, on ``checkpointer_purge_interval_s``.
+    The purge is SQL on the saver's own tables, so it exists only for the
+    Postgres saver; any other checkpointer (a test double) gets none.
+    """
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+    from agents_system.services import checkpointer as checkpointer_service
+
+    if not isinstance(checkpointer, AsyncPostgresSaver):
+        return None
+    return checkpointer_service.CheckpointPurger(
+        partial(checkpointer_service.purge_checkpoints, checkpointer.conn),
+        retention_s=settings.checkpointer_retention_s,
+        interval_s=settings.checkpointer_purge_interval_s,
     )
 
 
@@ -403,9 +413,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # via thread_id (design AD-1).
             checkpointer = None
             if settings.whatsapp_checkpointer_enabled:
+                if settings.checkpointer_ttl_s is not None:
+                    _logger.warning(
+                        "checkpointer.deprecated_setting",
+                        setting="CHECKPOINTER_TTL_S",
+                        replacement="CHECKPOINTER_RETENTION_S",
+                        retention_s=settings.checkpointer_retention_s,
+                    )
                 checkpointer = await resource_stack.enter_async_context(
                     _build_checkpointer_cm(settings)
                 )
+                # Issue #24 -- retention is enforced here, apart from the
+                # saver: pushed after the checkpointer's own exit, so it is
+                # stopped (LIFO) before the pool it purges through closes.
+                purger = _build_checkpoint_purger(checkpointer, settings)
+                if purger is not None:
+                    await purger.start()
+                    resource_stack.push_async_callback(purger.stop)
 
             roots: RootConfig | None = getattr(app.state, "roots", None)
 
@@ -566,6 +590,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     checkpointer=checkpointer,
                     runtime_id=runtime_id,
                     model_prices=settings.model_prices,
+                    # Issue #24 -- the pool's statement_timeout is enforced by
+                    # the server; this bounds each thread read and save on the
+                    # client, so a database that stops answering cannot hold
+                    # the turn, its admission slot or its outbox lease.
+                    checkpointer_timeout_s=settings.checkpointer_timeout_s,
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
 
