@@ -177,6 +177,8 @@ def test_verify_subscription_compares_the_token_in_constant_time(
     ("params", "status"),
     [
         ({"hub.mode": "subscribe", "hub.verify_token": VERIFY_TOKEN}, 400),
+        # #182 -- no ``hub.verify_token`` at all: a 403, never a crash.
+        ({"hub.mode": "subscribe", "hub.challenge": "c"}, 403),
         (
             {"hub.mode": "subscribe", "hub.verify_token": "no", "hub.challenge": "c"},
             403,
@@ -279,3 +281,48 @@ async def test_send_text_without_a_sender_fails_loudly() -> None:
 def test_inbound_verification_without_settings_fails_loudly() -> None:
     with pytest.raises(RuntimeError):
         WhatsAppChannel(sender=MagicMock()).verify_inbound(b"{}", Headers({}))
+
+
+def test_verify_subscription_accepts_a_non_ascii_token() -> None:
+    """The comparison is over UTF-8 bytes, so a non-ASCII secret works and
+    never raises (``hmac.compare_digest`` rejects non-ASCII ``str``)."""
+    channel = _channel(verify_token="tökén-ñandú-日本")
+
+    params = {
+        "hub.mode": "subscribe",
+        "hub.verify_token": "tökén-ñandú-日本",
+        "hub.challenge": "abc",
+    }
+
+    assert channel.verify_subscription(params) == "abc"
+
+
+def test_verify_subscription_rejects_a_wrong_non_ascii_token() -> None:
+    channel = _channel(verify_token="tökén")
+
+    params = {
+        "hub.mode": "subscribe",
+        "hub.verify_token": "token",
+        "hub.challenge": "abc",
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        channel.verify_subscription(params)
+
+    assert exc_info.value.status_code == 403
+
+
+def test_verify_subscription_never_matches_an_empty_configured_token() -> None:
+    """An unset token must not make the empty string a valid credential,
+    even where the boot validator was bypassed (``ALLOW_INSECURE``)."""
+    channel = _channel(verify_token="")
+
+    for supplied in ("", "anything"):
+        params = {
+            "hub.mode": "subscribe",
+            "hub.verify_token": supplied,
+            "hub.challenge": "abc",
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            channel.verify_subscription(params)
+        assert exc_info.value.status_code == 403

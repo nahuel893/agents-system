@@ -251,6 +251,28 @@ async def test_get_challenge_wrong_token(client: AsyncClient) -> None:
     assert response.status_code == 403
 
 
+async def test_get_challenge_missing_token_is_403(client: AsyncClient) -> None:
+    """#182: no ``hub.verify_token`` at all is a refusal, not a crash."""
+    response = await client.get(
+        "/webhook",
+        params={"hub.mode": "subscribe", "hub.challenge": "challenge_value"},
+    )
+    assert response.status_code == 403
+
+
+async def test_get_challenge_non_ascii_token_is_403(client: AsyncClient) -> None:
+    """#182: a non-ASCII token compares as bytes and is refused, not a 500."""
+    response = await client.get(
+        "/webhook",
+        params={
+            "hub.mode": "subscribe",
+            "hub.verify_token": "tökén-日本",
+            "hub.challenge": "challenge_value",
+        },
+    )
+    assert response.status_code == 403
+
+
 async def test_get_challenge_missing_challenge(client: AsyncClient) -> None:
     """GET /webhook without hub.challenge returns 400 or 403."""
     response = await client.get(

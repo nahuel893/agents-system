@@ -3,13 +3,17 @@
 The eval's own provider choice is deliberately independent of
 `Settings.adapter_provider`: flipping which model a manual eval run uses
 must never change what the running application actually serves.
-`Settings.eval_provider` (env var `EVAL_PROVIDER`, default `"ollama"`) is a
+`Settings.eval_provider` (env var `EVAL_PROVIDER`, no default) is a
 separate switch, accepting the exact same values `main._build_chat_model`
 dispatches on -- `"ollama"`, `"groq"`, `"anthropic"`, `"openai_compatible"`.
 The `openai_compatible` branch reads the SAME `OPENAI_COMPATIBLE_BASE_URL` /
 `OPENAI_COMPATIBLE_MODEL` / `OPENAI_COMPATIBLE_API_KEY` settings every other
 role already uses -- see `docs/platform/live-eval.md` for an OpenRouter
 worked example.
+
+There is deliberately no default provider (#182): a run that forgot
+`EVAL_PROVIDER` used to measure a local model without saying so, so
+`build_eval_model` now raises `EvalProviderNotConfiguredError` instead.
 """
 
 from __future__ import annotations
@@ -27,7 +31,17 @@ from agents_system.main import _build_chat_model
 #: apart. Every existing `from agents_system.evals.provider import
 #: model_display_name` (this module, `evals/__init__.py`, the test suite)
 #: keeps working unmodified.
-__all__ = ["build_eval_model", "model_display_name"]
+__all__ = [
+    "EvalProviderNotConfiguredError",
+    "build_eval_model",
+    "model_display_name",
+]
+
+_PROVIDERS = ("ollama", "groq", "anthropic", "openai_compatible")
+
+
+class EvalProviderNotConfiguredError(RuntimeError):
+    """`EVAL_PROVIDER` is unset, and there is no provider to fall back to."""
 
 
 def build_eval_model() -> tuple[BaseChatModel, str]:
@@ -37,6 +51,19 @@ def build_eval_model() -> tuple[BaseChatModel, str]:
     Reuses `main._build_chat_model` -- the exact provider dispatch every
     real role is built with -- so an eval run exercises a genuinely
     supported provider, never a bespoke construction path of its own.
+
+    Raises `EvalProviderNotConfiguredError` when `EVAL_PROVIDER` is unset:
+    picking a model silently would report a measurement of something the
+    caller never chose.
     """
-    model = _build_chat_model(get_settings().eval_provider)
+    provider = get_settings().eval_provider
+    if provider is None:
+        raise EvalProviderNotConfiguredError(
+            "EVAL_PROVIDER is not set, and there is no default provider: a live "
+            "eval or the demo entrypoint would otherwise pick a model without "
+            f"telling you. Set EVAL_PROVIDER to one of {', '.join(_PROVIDERS)} "
+            "(openai_compatible for a remote model such as OpenRouter; see "
+            "docs/platform/live-eval.md) together with that provider's variables."
+        )
+    model = _build_chat_model(provider)
     return model, model_display_name(model)

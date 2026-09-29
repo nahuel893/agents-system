@@ -15,11 +15,16 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from langchain_ollama import ChatOllama
 
 from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI
 from agents_system.config import Settings
-from agents_system.evals.provider import build_eval_model, model_display_name
+from agents_system.evals.provider import (
+    EvalProviderNotConfiguredError,
+    build_eval_model,
+    model_display_name,
+)
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -38,8 +43,8 @@ def _patched_settings(settings: Settings) -> tuple[Any, Any]:
     )
 
 
-def test_build_eval_model_defaults_to_ollama_with_the_configured_model() -> None:
-    settings = _settings(ollama_model="qwen2.5:3b")
+def test_build_eval_model_uses_ollama_when_it_is_chosen_explicitly() -> None:
+    settings = _settings(eval_provider="ollama", ollama_model="qwen2.5:3b")
     provider_patch, main_patch = _patched_settings(settings)
 
     with provider_patch, main_patch:
@@ -47,6 +52,31 @@ def test_build_eval_model_defaults_to_ollama_with_the_configured_model() -> None
 
     assert isinstance(model, ChatOllama)
     assert name == "qwen2.5:3b"
+
+
+def test_build_eval_model_fails_fast_when_the_provider_is_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#182: no silent default. A run that forgot EVAL_PROVIDER stops with a
+    message naming the variable and the accepted values, before any model is
+    built, instead of measuring a local model."""
+    monkeypatch.delenv("EVAL_PROVIDER", raising=False)
+    settings = _settings()
+    provider_patch, main_patch = _patched_settings(settings)
+
+    with (
+        provider_patch,
+        main_patch,
+        patch("agents_system.main._build_chat_model") as build_chat_model,
+        pytest.raises(EvalProviderNotConfiguredError) as excinfo,
+    ):
+        build_eval_model()
+
+    build_chat_model.assert_not_called()
+    message = str(excinfo.value)
+    assert "EVAL_PROVIDER" in message
+    for provider in ("ollama", "groq", "anthropic", "openai_compatible"):
+        assert provider in message
 
 
 def test_build_eval_model_is_independent_of_adapter_provider() -> None:

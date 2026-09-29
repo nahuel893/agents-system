@@ -1066,6 +1066,9 @@ async def boot_live_harness(
                 "DATABASE_URL": database_url,
                 "REDIS_URL": redis_url,
                 "META_WEBHOOK_SECRET": secrets.token_hex(16),
+                # #182 -- a served WhatsApp channel needs a non-empty verify
+                # token, or Settings refuses to boot.
+                "WHATSAPP_VERIFY_TOKEN": secrets.token_hex(16),
                 "WHATSAPP_TOKEN": "live-harness-test-token",
                 "WHATSAPP_PHONE_NUMBER_ID": "live-harness-test-phone-id",
                 "WHATSAPP_GRAPH_API_URL": outbound.base_url,
