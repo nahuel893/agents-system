@@ -165,7 +165,7 @@ uv add "agents-system[server,openai] @ git+https://github.com/nahuel893/agents-s
 
 | Extra | Qué habilita | Qué instala |
 |---|---|---|
-| `server` | La app servida (`agents_system.main`, `agents_system.server`): HTTP, los canales, el adaptador compatible con OpenAI y el checkpointer de Redis. Trae `postgres`, porque la app corre sobre su base de datos. | FastAPI, uvicorn, Redis, langgraph-checkpoint-redis |
+| `server` | La app servida (`agents_system.main`, `agents_system.server`): HTTP, los canales, el adaptador compatible con OpenAI y el checkpointer de Redis. Trae `postgres`, porque la app corre sobre su base de datos. Un agente registrado también necesita un proveedor de modelos de chat; ver "Qué necesita la app servida" más abajo. | FastAPI, uvicorn, Redis, langgraph-checkpoint-redis |
 | `postgres` | `AuditSink` (registrar eventos de auditoría), las tablas de la plataforma y sus migraciones, y los backends de referencia | SQLAlchemy, asyncpg, Alembic |
 | `sql` | La tool de consultas SQL con guarda. Trae `postgres`. | sqlglot |
 | `embeddings` | Embeddings para recuperación, locales o por la API de OpenAI | torch, sentence-transformers, openai |
@@ -179,6 +179,26 @@ Un extra de proveedor hace falta cuando el runtime construye el modelo que
 declara un agente (`AgentRuntime(equipped)` sin `model=`, o
 `build_agent_model`; ver "Elegir el modelo"). Un modelo que construís y pasás
 vos necesita su propio paquete de integración, lo instales como lo instales.
+
+**Qué necesita la app servida.** `server` solo arranca la app y corre un
+agente registrado, con dos condiciones:
+
+- **Un modelo de chat.** La app construye su modelo por defecto a partir de
+  `ADAPTER_PROVIDER` (`ollama` si no lo configurás), así que instalá también
+  el extra de ese proveedor, por ejemplo `agents-system[server,openai]` para
+  `openai_compatible`. O pasá tu propio modelo a `create_app(chat_model=...)`,
+  que no necesita ningún extra de proveedor.
+- **Embeddings, solo si una tool tuya los usa.** La app le pasa a tu registry
+  factory un embedder (`EMBEDDING_PROVIDER`, `local` por defecto). Con el
+  extra `embeddings` instalado, se construye al arrancar, así que el modelo
+  local se carga en ese momento y no dentro de un turno. Sin él, la app
+  arranca igual y registra un warning `embeddings.unavailable`, y una tool que
+  llama al embedder recibe un `MissingExtraError` que nombra `embeddings`. La
+  recuperación de catálogo de la plataforma (`search_catalog`) cae a búsqueda
+  por palabras clave ante cualquier error del embedder, este incluido, así que
+  instalá `embeddings` si querés búsqueda vectorial.
+
+`all` instala todo lo que la app servida puede usar.
 
 Usar una funcionalidad sin su extra falla de inmediato, con un error que
 nombra el extra en lugar de un simple `No module named 'fastapi'`:

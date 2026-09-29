@@ -320,6 +320,137 @@ def test_a_feature_without_its_extra_fails_naming_the_extra(
     assert blocked[0] in result.stdout, "the message names the missing module"
 
 
+# ---------------------------------------------------------------------------
+# The served app boots a registered agent with `server` alone
+# ---------------------------------------------------------------------------
+#: What a `pip install "agents-system[server]"` leaves out: every optional
+#: module except the served app's own and the database it brings.
+_NOT_IN_SERVER = tuple(
+    sorted(
+        {
+            module
+            for extra, modules in OPTIONAL_MODULES.items()
+            if extra not in {"server", "postgres"}
+            for module in modules
+        }
+    )
+)
+
+_BOOT_SERVED_AGENT = """
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from langchain_core.language_models.fake_chat_models import (
+    FakeMessagesListChatModel,
+)
+from langchain_core.messages import AIMessage
+from structlog.testing import capture_logs
+
+import agents_system
+from agents_system.config import Settings
+from agents_system.connectors.platform_connectors import (
+    build_escalation_notifier_tool_spec,
+)
+from agents_system.extras import MissingExtraError
+from agents_system.main import create_app, lifespan
+
+
+class ScriptedModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def word_count(inputs, /):
+    return {"words": len(inputs["text"].split())}
+
+
+handed = {}
+
+
+def registry_factory(settings, embedder=None, bi_engine=None):
+    handed["embedder"] = embedder
+    registry = agents_system.ToolRegistry()
+    registry.register(
+        agents_system.ToolSpec(
+            name="word_count",
+            required_permissions=(),
+            connector=word_count,
+            tier=agents_system.Tier.T0,
+        )
+    )
+    registry.register(build_escalation_notifier_tool_spec(None))
+    return registry
+
+
+# The defaults a served app boots with: EMBEDDING_PROVIDER=local.
+settings = Settings(
+    _env_file=None,
+    allow_insecure=True,
+    whatsapp_checkpointer_enabled=False,
+    adapter_runtimes=["counter"],
+)
+assert settings.embedding_provider == "local"
+
+engine = MagicMock()
+engine.dispose = AsyncMock()
+
+
+async def boot():
+    app = create_app(
+        registry_factory=registry_factory,
+        agents={
+            "counter": agents_system.Agent(name="counter", tools=("word_count",))
+        },
+        grants={"counter": []},
+        # The caller's own model: no provider extra is installed either.
+        chat_model=ScriptedModel(responses=[AIMessage(content="hi")]),
+    )
+    with capture_logs() as logs:
+        async with lifespan(app):
+            runtimes = sorted(app.state.runtimes)
+    return runtimes, logs
+
+
+with (
+    patch("agents_system.main.get_settings", return_value=settings),
+    patch("agents_system.main.get_engine", return_value=engine),
+    patch("agents_system.audit.sink.AuditSink") as sink_class,
+    patch("agents_system.main.close_redis_pool", new=AsyncMock()),
+):
+    sink_class.return_value.start = AsyncMock()
+    sink_class.return_value.stop = AsyncMock()
+    runtimes, logs = asyncio.run(boot())
+
+print("BOOTED", runtimes)
+warnings = [log for log in logs if log["event"] == "embeddings.unavailable"]
+print("WARNED", [log.get("extra") for log in warnings])
+
+# The embedder the registry factory got names the missing extra when a
+# tool uses it, instead of the boot failing for an agent that never does.
+try:
+    asyncio.run(handed["embedder"].embed(["a query"]))
+except MissingExtraError as error:
+    print("EMBED-MISSING-EXTRA", error.extra)
+    print(error)
+else:
+    print("EMBED-NO-ERROR")
+"""
+
+
+def test_the_served_app_boots_a_registered_agent_with_the_server_extra_alone() -> None:
+    """Review of #188: the lifespan built the default local embedder for
+    every registered agent, so `agents-system[server]` failed at startup
+    with a MissingExtraError naming `embeddings`, even for an agent whose
+    tools never embed anything."""
+    result = _run_probe(_NOT_IN_SERVER, _BOOT_SERVED_AGENT)
+
+    assert result.returncode == 0, result.stderr[-4000:]
+    assert "BOOTED ['counter']" in result.stdout, result.stdout
+    assert "WARNED ['embeddings']" in result.stdout, result.stdout
+    assert "EMBED-MISSING-EXTRA embeddings" in result.stdout, result.stdout
+    assert "agents-system[embeddings]" in result.stdout
+
+
 def test_an_unrelated_missing_module_is_not_reported_as_a_missing_extra() -> None:
     from agents_system.extras import MissingExtraError, raise_missing_extra
 

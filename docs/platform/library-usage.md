@@ -159,7 +159,7 @@ uv add "agents-system[server,openai] @ git+https://github.com/nahuel893/agents-s
 
 | Extra | What it enables | What it installs |
 |---|---|---|
-| `server` | The served app (`agents_system.main`, `agents_system.server`): HTTP, the channels, the OpenAI-compatible adapter and the Redis checkpointer. It brings `postgres`, because the app runs on its database. | FastAPI, uvicorn, Redis, langgraph-checkpoint-redis |
+| `server` | The served app (`agents_system.main`, `agents_system.server`): HTTP, the channels, the OpenAI-compatible adapter and the Redis checkpointer. It brings `postgres`, because the app runs on its database. A registered agent also needs a chat model provider; see "What the served app needs" below. | FastAPI, uvicorn, Redis, langgraph-checkpoint-redis |
 | `postgres` | `AuditSink` (recording audit events), the platform tables and their migrations, and the reference backends | SQLAlchemy, asyncpg, Alembic |
 | `sql` | The guarded SQL query tool. It brings `postgres`. | sqlglot |
 | `embeddings` | Embeddings for retrieval, local or through the OpenAI API | torch, sentence-transformers, openai |
@@ -173,6 +173,24 @@ A provider extra is needed when the runtime builds the model an agent
 declares (`AgentRuntime(equipped)` with no `model=`, or `build_agent_model`;
 see "Choosing the model"). A model you build and pass yourself needs its own
 integration package, whichever way you install it.
+
+**What the served app needs.** `server` alone boots the app and runs a
+registered agent, given two things:
+
+- **A chat model.** The app builds its default model from `ADAPTER_PROVIDER`
+  (`ollama` unless you set it), so install that provider's extra too, for
+  example `agents-system[server,openai]` for `openai_compatible`. Or pass your
+  own model to `create_app(chat_model=...)`, which needs no provider extra.
+- **Embeddings, only if a tool of yours uses them.** The app hands your
+  registry factory an embedder (`EMBEDDING_PROVIDER`, `local` by default).
+  With the `embeddings` extra installed, it is built at boot, so the local
+  model loads then and not inside a turn. Without it, the app still boots and
+  logs an `embeddings.unavailable` warning, and a tool that calls the embedder
+  gets a `MissingExtraError` naming `embeddings`. The platform's catalog
+  retrieval (`search_catalog`) falls back to keyword search on any embedder
+  error, this one included, so install `embeddings` if you want vector search.
+
+`all` installs everything the served app can use.
 
 Using a feature without its extra fails at once, with an error that names the
 extra instead of a bare `No module named 'fastapi'`:
