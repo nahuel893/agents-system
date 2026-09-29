@@ -23,8 +23,14 @@ from typing import Any
 import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncEngine
+except ImportError as exc:
+    raise_missing_extra("postgres", "The reference backend module", exc)
 
 from agents_system.connectors.report_connector import build_report_tool_spec
 from agents_system.connectors.sales_reports import CATALOG

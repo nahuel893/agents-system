@@ -7,7 +7,7 @@ Este documento define la arquitectura formal de agents-system, un kit de desarro
 El kit está dividido en tres partes:
 
 1. **Kit core**: el harness. Definiciones de agentes declarativas y en Python, orquestación, ciclo de vida, permisos e inyección de capacidades. Es con lo que se construyen los agentes.
-2. **Piezas opcionales**: el **servidor** compatible con OpenAI, los **canales** (WhatsApp es el primero), los **roles predefinidos** (arquetipos de agente reutilizables) y los **backends de referencia** (Postgres, Redis, embeddings). Son opcionales en tiempo de ejecución, no al instalar: se activan solo las que hacen falta, pero al instalar el kit igual se traen las dependencias de todas (fastapi, asyncpg, redis y torch) hasta que #188, una instalación liviana del core, cambie el empaquetado.
+2. **Piezas opcionales**: el **servidor** compatible con OpenAI, los **canales** (WhatsApp es el primero), los **roles predefinidos** (arquetipos de agente reutilizables) y los **backends de referencia** (Postgres, Redis, embeddings). Se activan solo las que hacen falta y se instalan solo las que se usan: una instalación simple es el core, y el servidor, los canales y los backends de referencia son extras (`server`, `postgres`, `sql`, `embeddings` y uno por cada proveedor de modelos de chat). Los roles predefinidos vienen con el core.
 3. **Tu aplicación**: las herramientas, conectores, reglas de negocio y overrides por cliente que convierten el kit en un agente concreto. Viven en tu propio repositorio, no en este.
 
 Esta separación es intencional. El kit es el producto reutilizable. Cualquier agente construido con él, un asistente de ventas incluido, es una aplicación del kit y nunca el kit en sí.
@@ -30,10 +30,10 @@ El kit core es dueño de la infraestructura multi-agente genérica:
 
 ### Piezas opcionales
 
-El kit las entrega para que no tengas que construirlas, y nada del core depende de ellas en tiempo de ejecución. Al instalar el kit igual se traen sus dependencias:
-- El servidor compatible con OpenAI y sus canales.
-- Los roles predefinidos bajo `platform/roles/`.
-- Los backends de referencia para persistencia, checkpointing y embeddings.
+El kit las entrega para que no tengas que construirlas, y nada del core depende de ellas. Los roles predefinidos vienen con una instalación simple; el resto son extras que se instalan cuando se usan:
+- El servidor compatible con OpenAI y sus canales (el extra `server`).
+- Los roles predefinidos bajo `platform/roles/` (en toda instalación).
+- Los backends de referencia para persistencia, checkpointing y embeddings (los extras `postgres`, `server` y `embeddings`).
 
 ### Tu aplicación
 

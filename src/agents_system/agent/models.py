@@ -35,6 +35,7 @@ import structlog
 from pydantic import SecretStr
 
 from agents_system.config import ProviderSettings
+from agents_system.extras import raise_missing_extra
 from agents_system.observability.metrics import DEFAULT_METRICS, Metrics
 from agents_system.observability.provider_http import MetricsHTTPTransport
 
@@ -112,8 +113,13 @@ def build_chat_model(
     """
     source = settings_source if settings_source is not None else get_provider_settings
 
+    # Each provider's integration is an extra of its own (issue #188); a
+    # missing one fails here, naming it, before any credential is checked.
     if provider == "groq":
-        from langchain_groq import ChatGroq
+        try:
+            from langchain_groq import ChatGroq
+        except ImportError as exc:
+            raise_missing_extra("groq", "The groq provider", exc)
 
         api_key: str | None = os.getenv("GROQ_API_KEY") or None
         groq_kwargs: dict[str, Any] = {}
@@ -128,7 +134,10 @@ def build_chat_model(
         )
 
     if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError as exc:
+            raise_missing_extra("anthropic", "The anthropic provider", exc)
 
         anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY") or None
         if not anthropic_api_key:
@@ -221,7 +230,10 @@ def build_chat_model(
     # different local model (e.g. the live-eval pipeline) without a code
     # change. An empty ollama_base_url becomes None so ChatOllama falls back
     # to its own default host resolution rather than treating "" as a URL.
-    from langchain_ollama import ChatOllama
+    try:
+        from langchain_ollama import ChatOllama
+    except ImportError as exc:
+        raise_missing_extra("ollama", "The ollama provider", exc)
 
     ollama_settings = source()
     ollama_kwargs: dict[str, Any] = {}

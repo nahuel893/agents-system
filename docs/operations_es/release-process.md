@@ -65,16 +65,20 @@ verifica lo que sí recibe (issue #166):
 1. Construye el wheel (`uv build --wheel`) en un directorio descartable fuera
    del repositorio.
 2. Lo instala ahí en un virtualenv nuevo, con las dependencias de terceros
-   fijadas a los pins de `uv.lock` (el build de torch solo-CPU viene de su
-   propio índice explícito, como en `pyproject.toml`).
-3. Corre el ejemplo de biblioteca del README — el bloque marcado con
-   `<!-- runnable-example: library -->` — con un entorno **vacío** (`env -i`:
-   sin `.env`, sin variables del servidor, ni siquiera `PATH` o `HOME`),
-   pasándole un modelo de chat guionado al `main(model)` del ejemplo.
-4. Falla salvo que el turno se complete (una llamada a `catalog_search` y
-   después la respuesta), el paquete se haya importado desde el virtualenv
+   fijadas a los pins de `uv.lock`. Es una instalación simple, sin ningún
+   extra: solo el núcleo (issue #188). El script falla si se puede importar
+   algo que provee un extra (`agents_system.extras.EXTRA_MODULES`), y registra
+   el tamaño del virtualenv.
+3. Corre el ejemplo de biblioteca del README (el bloque marcado con
+   `<!-- runnable-example: library -->`) y el Inicio rápido de
+   `docs/platform_es/library-usage.md` (`<!-- runnable-example: quickstart -->`),
+   cada uno en su propio proceso con un entorno **vacío** (`env -i`: sin
+   `.env`, sin variables del servidor, ni siquiera `PATH` o `HOME`), pasándole
+   un modelo de chat guionado al `main(model)` del ejemplo.
+4. Falla salvo que cada turno se complete (una llamada a una tool y después
+   la respuesta), el paquete se haya importado desde el virtualenv
    descartable, no se haya impreso ningún traceback, y la falta de
-   `AuditSink` se haya reportado exactamente una vez
+   `AuditSink` se haya reportado exactamente una vez por proceso
    (`audit.sink_not_registered`).
 5. Borra el directorio descartable al salir, con éxito o con error.
 

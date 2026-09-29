@@ -5,14 +5,19 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import ClassVar
 
-from sqlalchemy import DateTime, Table
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-from sqlalchemy.orm import DeclarativeBase
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy import DateTime, Table
+    from sqlalchemy.ext.asyncio import (
+        AsyncEngine,
+        AsyncSession,
+        async_sessionmaker,
+        create_async_engine,
+    )
+    from sqlalchemy.orm import DeclarativeBase
+except ImportError as exc:
+    raise_missing_extra("postgres", "The platform database layer", exc)
 
 from agents_system.config import Settings, get_settings
 

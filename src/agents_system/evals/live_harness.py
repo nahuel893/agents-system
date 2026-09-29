@@ -85,13 +85,19 @@ from typing import Any
 
 import httpx
 import structlog
-import uvicorn
-from fastapi import FastAPI
 from langchain_core.language_models import BaseChatModel
 from prometheus_client.parser import text_string_to_metric_families
-from sqlalchemy import Select, select, text
-from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    import uvicorn
+    from fastapi import FastAPI
+    from sqlalchemy import Select, select, text
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+except ImportError as exc:
+    raise_missing_extra("server", "The live evaluation harness", exc)
 
 from agents_system.agent.spec import Agent
 from agents_system.config import get_settings

@@ -49,7 +49,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
-from sqlalchemy.exc import SQLAlchemyError
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy.exc import SQLAlchemyError
+except ImportError as exc:
+    raise_missing_extra("sql", "The SQL query tool", exc)
 
 from agents_system.harness.registry import Tier, ToolSpec
 from agents_system.services.db_role import UNWRAPPED_CONNECT_ERRORS

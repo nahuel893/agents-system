@@ -13,8 +13,11 @@ WORKDIR /app
 # Copy dependency specifications first to leverage layer caching
 COPY pyproject.toml uv.lock ./
 
-# Install production dependencies only into the system environment
-RUN uv sync --frozen --no-dev --no-install-project
+# Install production dependencies only into the system environment. A plain
+# install of agents-system is the library core (issue #188); the served app
+# needs its extras, and `all` is every one of them (the server, the database,
+# the SQL tool, embeddings and every chat model provider).
+RUN uv sync --frozen --no-dev --no-install-project --extra all
 
 # Runtime stage
 FROM python:3.12-slim-bookworm AS runner

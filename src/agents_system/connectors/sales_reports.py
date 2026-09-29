@@ -51,7 +51,12 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, bindparam, text
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy import DateTime, Integer, bindparam, text
+except ImportError as exc:
+    raise_missing_extra("postgres", "The sales report connector", exc)
 
 from agents_system.services.reports import ParamSpec, ReportSpec
 

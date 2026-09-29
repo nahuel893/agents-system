@@ -1,4 +1,11 @@
-"""Observability package — logging configuration, request middleware, metrics."""
+"""Observability package — logging configuration, request middleware, metrics.
+
+``RequestIdMiddleware`` is resolved on first access: it is an HTTP middleware
+(the ``server`` extra), while logging and metrics are core and imported by the
+in-process runtime (issue #188).
+"""
+
+from typing import Any
 
 from agents_system.observability.logging import (
     request_id_ctx,
@@ -16,7 +23,6 @@ from agents_system.observability.metrics import (
     record_tool_call,
     record_turn,
 )
-from agents_system.observability.middleware import RequestIdMiddleware
 from agents_system.observability.provider_http import (
     MetricsHTTPTransport,
     classify_provider_status,
@@ -39,3 +45,11 @@ __all__ = [
     "setup_logging",
     "thread_id_ctx",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "RequestIdMiddleware":
+        from agents_system.observability.middleware import RequestIdMiddleware
+
+        return RequestIdMiddleware
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

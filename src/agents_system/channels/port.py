@@ -27,7 +27,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from starlette.datastructures import Headers
+from agents_system.extras import raise_missing_extra
+
+try:
+    from starlette.datastructures import Headers
+except ImportError as exc:
+    raise_missing_extra("server", "The channel port", exc)
 
 if TYPE_CHECKING:
     from agents_system.config import Settings

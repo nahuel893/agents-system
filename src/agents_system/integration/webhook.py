@@ -13,8 +13,14 @@ signature schemes, payload shapes and outbound sends all live in adapters.
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request
-from starlette.responses import PlainTextResponse
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from fastapi import APIRouter, Depends, HTTPException, Request
+    from starlette.responses import PlainTextResponse
+except ImportError as exc:
+    raise_missing_extra("server", "The WhatsApp webhook", exc)
 
 from agents_system.channels.port import (
     ChannelAdapter,

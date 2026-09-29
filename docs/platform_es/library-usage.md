@@ -70,8 +70,9 @@ if __name__ == "__main__":
 
 `tests/test_quickstart_example.py` ejecuta este bloque tal como está escrito,
 y `scripts/smoke-installed-wheel.sh` lo corre contra el wheel construido,
-instalado fuera del repositorio. Cualquier modelo de chat de LangChain sirve
-en lugar de `ChatAnthropic`.
+instalado fuera del repositorio, solo con el núcleo: sin ningún extra.
+Cualquier modelo de chat de LangChain sirve en lugar de `ChatAnthropic`, que
+viene de `langchain-anthropic` (el extra `anthropic`; ver "Extras" más abajo).
 
 - `Agent(...)` extiende el rol básico `agent` (conversación más escalamiento)
   salvo que pases `extends=`. Pasalo directamente a `build_runtime` o a
@@ -117,9 +118,11 @@ con acceso al repositorio, es la forma SSH:
 uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@v0.4.0"
 ```
 
-Esperá un entorno de unos 1,2 GB, en su mayoría `torch` (ver la nota sobre
-`torch` más abajo, y #188, "A light core install", que apunta a hacerlo
-opcional).
+Desde el primer release posterior a v0.4.0, eso es una instalación simple: el
+núcleo liviano, de unos 76 MB, que es todo lo que necesita el Inicio rápido. El
+servidor, la base de datos, la tool SQL, los embeddings y los proveedores de
+modelos de chat son extras (ver "Extras" más abajo); hasta v0.4.0 el mismo
+comando traía todo eso, alrededor de 1 GB más, casi todo `torch`.
 
 Fijá un tag y no una rama, así cada actualización es un cambio
 deliberado en tu `pyproject.toml`; uv registra el commit resuelto en tu
@@ -142,13 +145,89 @@ La imagen necesita entonces el wheel en su contexto de build antes de
 instalar dependencias (por ejemplo `COPY wheels/ wheels/` antes de
 `uv sync --frozen`).
 
-El paquete depende de `torch` para los embeddings locales. Este repositorio lo
-dirige al índice de PyTorch solo-CPU en su propio `[tool.uv.sources]`; agregá
-las mismas entradas `[tool.uv.sources]` y `[[tool.uv.index]]` al
-`pyproject.toml` de tu aplicación si querés lo mismo.
+### Extras
 
-En ambos casos el nombre de importación es `agents_system` (con guion bajo);
-solo el nombre de distribución en el índice lleva guion.
+Una instalación simple es el **núcleo**: la API de agentes (`Agent`), el
+harness (`ToolRegistry`, `ToolSpec`, `build_runtime`, el injector y el
+interceptor), el runtime en proceso (`AgentRuntime`) y las interfaces de
+auditoría y métricas. Es todo lo que usan el Inicio rápido y el ejemplo
+completo de más abajo. No instala ningún servidor web, ningún driver de base
+de datos, ningún proveedor de modelos de chat ni `torch`: un virtualenv solo
+con el núcleo mide unos 76 MB, mientras que una instalación completa pasa de
+1 GB, casi todo `torch`.
+
+Todo lo demás es un extra. Nombrá los que uses en el requisito:
+
+```bash
+uv add "agents-system[anthropic] @ git+https://github.com/nahuel893/agents-system@vX.Y.Z"
+uv add "agents-system[server,openai] @ git+https://github.com/nahuel893/agents-system@vX.Y.Z"
+```
+
+| Extra | Qué habilita | Qué instala |
+|---|---|---|
+| `server` | La app servida (`agents_system.main`, `agents_system.server`): HTTP, los canales, el adaptador compatible con OpenAI y el checkpointer de Redis. Trae `postgres`, porque la app corre sobre su base de datos. Un agente registrado también necesita un proveedor de modelos de chat; ver "Qué necesita la app servida" más abajo. | FastAPI, uvicorn, Redis, langgraph-checkpoint-redis |
+| `postgres` | `AuditSink` (registrar eventos de auditoría), las tablas de la plataforma y sus migraciones, y los backends de referencia | SQLAlchemy, asyncpg, Alembic |
+| `sql` | La tool de consultas SQL con guarda. Trae `postgres`. | sqlglot |
+| `embeddings` | Embeddings para recuperación, locales o por la API de OpenAI | torch, sentence-transformers, openai |
+| `openai` | El proveedor `openai_compatible` | langchain-openai |
+| `anthropic` | El proveedor `anthropic` | langchain-anthropic |
+| `groq` | El proveedor `groq` | langchain-groq |
+| `ollama` | El proveedor `ollama` | langchain-ollama |
+| `all` | Todos los extras de arriba. Es lo que instala la imagen Docker de la app servida. | |
+
+Un extra de proveedor hace falta cuando el runtime construye el modelo que
+declara un agente (`AgentRuntime(equipped)` sin `model=`, o
+`build_agent_model`; ver "Elegir el modelo"). Un modelo que construís y pasás
+vos necesita su propio paquete de integración, lo instales como lo instales.
+
+**Qué necesita la app servida.** `server` solo arranca la app y corre un
+agente registrado, con dos condiciones:
+
+- **Un modelo de chat.** La app construye su modelo por defecto a partir de
+  `ADAPTER_PROVIDER` (`ollama` si no lo configurás), así que instalá también
+  el extra de ese proveedor, por ejemplo `agents-system[server,openai]` para
+  `openai_compatible`. O pasá tu propio modelo a `create_app(chat_model=...)`,
+  que no necesita ningún extra de proveedor.
+- **Embeddings, solo si una tool tuya los usa.** La app le pasa a tu registry
+  factory un embedder (`EMBEDDING_PROVIDER`, `local` por defecto). Con el
+  extra `embeddings` instalado, se construye al arrancar, así que el modelo
+  local se carga en ese momento y no dentro de un turno. Sin él, la app
+  arranca igual y registra un warning `embeddings.unavailable`, y una tool que
+  llama al embedder recibe un `MissingExtraError` que nombra `embeddings`. La
+  recuperación de catálogo de la plataforma (`search_catalog`) cae a búsqueda
+  por palabras clave ante cualquier error del embedder, este incluido, así que
+  instalá `embeddings` si querés búsqueda vectorial.
+
+`all` instala todo lo que la app servida puede usar.
+
+Usar una funcionalidad sin su extra falla de inmediato, con un error que
+nombra el extra en lugar de un simple `No module named 'fastapi'`:
+
+```text
+agents_system.extras.MissingExtraError: The served app needs the 'server' extra,
+which is not installed (no module named 'fastapi'). Install the package with it:
+agents-system[server]. The install section of docs/platform/library-usage.md
+lists every extra.
+```
+
+`MissingExtraError` es un `ModuleNotFoundError`: su `name` es el módulo que
+falta y su `extra`, el extra a instalar. `agents_system.extras.EXTRA_MODULES`
+asocia cada extra con los módulos que provee.
+
+Hasta v0.4.0 una instalación simple traía todo lo anterior. Una aplicación que
+use el servidor, la base de datos, la tool SQL, los embeddings o el proveedor
+del modelo que declara un agente nombra los extras correspondientes al
+actualizar más allá de esa versión.
+
+El extra `embeddings` instala `torch`. Este repositorio lo dirige al índice de
+PyTorch solo-CPU en su propio `[tool.uv.sources]`; agregá las mismas entradas
+`[tool.uv.sources]` y `[[tool.uv.index]]` al `pyproject.toml` de tu aplicación
+si querés lo mismo.
+
+### Nombre de importación y roles de la plataforma
+
+Lo instales como lo instales, el nombre de importación es `agents_system` (con
+guion bajo); solo el nombre de distribución en el índice lleva guion.
 
 Instalar el paquete alcanza para tener los roles predefinidos de la
 plataforma: viajan dentro del wheel (`platform/roles/**` se empaqueta como
@@ -348,6 +427,11 @@ separado, para cuando querés el modelo de chat en sí (para envolverlo,
 compartirlo o inspeccionarlo). Pasá `default_model=` para recibir un respaldo
 de un agente que no declara nada.
 
+La integración de cada proveedor es un extra: `openai` para
+`openai_compatible`, y `anthropic`, `groq` y `ollama` para los proveedores de
+esos nombres (ver "Extras"). Un modelo declarado cuyo extra no está instalado
+falla al construirse el modelo, con un error que nombra el extra.
+
 **Las credenciales vienen solo de la configuración y del entorno, nunca de la
 definición del agente** (un bloque `model:` no puede llevarlas). El builder las
 lee con un cargador estrecho, solo de proveedores, así que no hace falta
@@ -441,8 +525,9 @@ registres vos, y el proceso emite una única advertencia estructurada,
 `audit.sink_not_registered`, la primera vez que un evento no tiene adónde ir —
 una vez por proceso, nunca un traceback por evento.
 
-Para registrarlos, construí el sink sobre una session factory asíncrona de
-SQLAlchemy cuya base de datos tenga las tablas de auditoría de la plataforma
+Para registrarlos (con el extra `postgres`, a través del cual escribe el sink),
+construí el sink sobre una session factory asíncrona de SQLAlchemy cuya base de
+datos tenga las tablas de auditoría de la plataforma
 (creadas por las migraciones de Alembic de este repositorio — ver
 `docs/platform_es/audit.md`), inicialo y registralo para todo el proceso:
 

@@ -6,9 +6,14 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Text, Uuid, func, text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy import DateTime, ForeignKey, Index, Text, Uuid, func, text
+    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy.orm import Mapped, mapped_column
+except ImportError as exc:
+    raise_missing_extra("postgres", "The platform database layer", exc)
 
 from agents_system.models.base import ALEMBIC_OWNED, Base
 

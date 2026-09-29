@@ -15,41 +15,85 @@ name = "agents-system"
 version = "0.4.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
+    { name = "langchain-core" },
+    { name = "langgraph" },
+    { name = "phonenumbers" },
+    { name = "prometheus-client" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "structlog" },
+]
+
+[package.optional-dependencies]
+all = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "fastapi" },
-    { name = "httpx" },
     { name = "langchain-anthropic" },
     { name = "langchain-groq" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
-    { name = "langgraph" },
     { name = "langgraph-checkpoint-redis" },
     { name = "openai" },
-    { name = "phonenumbers" },
-    { name = "prometheus-client" },
-    { name = "pydantic-settings" },
-    { name = "python-dotenv" },
     { name = "redis" },
     { name = "sentence-transformers" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sqlglot" },
-    { name = "structlog" },
     { name = "torch", version = "2.14.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "uvicorn", extra = ["standard"] },
 ]
-
-[package.optional-dependencies]
+anthropic = [
+    { name = "langchain-anthropic" },
+]
 dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
+embeddings = [
+    { name = "openai" },
+    { name = "sentence-transformers" },
+    { name = "torch", version = "2.14.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.14.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
+]
+groq = [
+    { name = "langchain-groq" },
+]
+ollama = [
+    { name = "langchain-ollama" },
+]
+openai = [
+    { name = "langchain-openai" },
+]
+postgres = [
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+server = [
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "fastapi" },
+    { name = "langgraph-checkpoint-redis" },
+    { name = "redis" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "uvicorn", extra = ["standard"] },
+]
+sql = [
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "sqlglot" },
+]
 
 [package.dev-dependencies]
 dev = [
+    { name = "agents-system", extra = ["all"] },
     { name = "aiosqlite" },
     { name = "mypy" },
     { name = "pre-commit" },
@@ -61,37 +105,44 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "alembic", specifier = ">=1.13" },
-    { name = "asyncpg", specifier = ">=0.30" },
-    { name = "fastapi", specifier = ">=0.115,<1.0" },
+    { name = "agents-system", extras = ["postgres"], marker = "extra == 'server'" },
+    { name = "agents-system", extras = ["postgres"], marker = "extra == 'sql'" },
+    { name = "agents-system", extras = ["server", "postgres", "sql", "embeddings", "openai", "anthropic", "groq", "ollama"], marker = "extra == 'all'" },
+    { name = "alembic", marker = "extra == 'postgres'", specifier = ">=1.13" },
+    { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.30" },
+    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115,<1.0" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "langchain-anthropic", specifier = ">=1.4.6,<2.0" },
-    { name = "langchain-groq", specifier = ">=0.3.8" },
-    { name = "langchain-ollama", specifier = ">=0.3.10" },
-    { name = "langchain-openai", specifier = ">=1.1.14,<2.0" },
+    { name = "langchain-anthropic", marker = "extra == 'anthropic'", specifier = ">=1.4.6,<2.0" },
+    { name = "langchain-core", specifier = ">=1.0,<2.0" },
+    { name = "langchain-groq", marker = "extra == 'groq'", specifier = ">=0.3.8" },
+    { name = "langchain-ollama", marker = "extra == 'ollama'", specifier = ">=0.3.10" },
+    { name = "langchain-openai", marker = "extra == 'openai'", specifier = ">=1.1.14,<2.0" },
     { name = "langgraph", specifier = ">=1.0.10,<2.0" },
-    { name = "langgraph-checkpoint-redis", specifier = ">=0.5.2" },
+    { name = "langgraph-checkpoint-redis", marker = "extra == 'server'", specifier = ">=0.5.2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
-    { name = "openai", specifier = ">=1.50" },
+    { name = "openai", marker = "extra == 'embeddings'", specifier = ">=1.50" },
     { name = "phonenumbers", specifier = ">=8.13" },
     { name = "prometheus-client", specifier = ">=0.20,<1.0" },
+    { name = "pydantic", specifier = ">=2.0,<3.0" },
     { name = "pydantic-settings", specifier = ">=2.0,<3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "redis", specifier = ">=5.0,<9.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "redis", marker = "extra == 'server'", specifier = ">=5.0,<9.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
-    { name = "sentence-transformers", specifier = ">=3.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.54,<3.0" },
-    { name = "sqlglot", specifier = ">=30.19,<31" },
+    { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=3.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], marker = "extra == 'postgres'", specifier = ">=2.0.54,<3.0" },
+    { name = "sqlglot", marker = "extra == 'sql'", specifier = ">=30.19,<31" },
     { name = "structlog", specifier = ">=24.0" },
-    { name = "torch", specifier = ">=2.0,<3.0", index = "https://download.pytorch.org/whl/cpu" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.53.0" },
+    { name = "torch", marker = "extra == 'embeddings'", specifier = ">=2.0,<3.0", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.53.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["server", "postgres", "sql", "embeddings", "openai", "anthropic", "groq", "ollama", "all", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "agents-system", extras = ["all"] },
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pre-commit", specifier = ">=3.2" },

@@ -15,7 +15,12 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy.ext.asyncio import AsyncSession
+except ImportError as exc:
+    raise_missing_extra("postgres", "Catalog retrieval", exc)
 
 from agents_system.config import Settings
 

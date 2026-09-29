@@ -32,7 +32,6 @@ from contextlib import aclosing, nullcontext
 from functools import partial
 from typing import Any
 
-import redis.exceptions
 import structlog
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
@@ -60,6 +59,22 @@ from agents_system.observability.metrics import (
 from agents_system.permissions.permission_registry import permission_registry
 
 logger = structlog.get_logger()
+
+
+def _checkpointer_backend_errors() -> tuple[type[Exception], ...]:
+    """The checkpointer backend failures a turn degrades on (AD-8).
+
+    ``redis.RedisError`` when the Redis client is installed (the ``server``
+    extra, which brings the Redis checkpointer). A core install has no Redis
+    client, so no Redis checkpointer, so nothing to degrade on: the empty
+    tuple catches nothing (issue #188).
+    """
+    try:
+        import redis.exceptions
+    except ImportError:
+        return ()
+    return (redis.exceptions.RedisError,)
+
 
 # Terminal node reached when a turn exhausts its max_tool_calls budget.
 _LIMIT_REACHED_NODE = "limit_reached"
@@ -768,7 +783,7 @@ async def _ainvoke_with_optional_checkpointer(
             return await _run_tracking_progress(
                 compiled_with_checkpointer, initial_state, checkpointed_config, tracker
             )
-        except redis.exceptions.RedisError as exc:
+        except _checkpointer_backend_errors() as exc:
             logger.warning(
                 "runtime.checkpointer_degraded",
                 thread_id=thread_id,

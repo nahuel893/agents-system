@@ -9,10 +9,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Select, exists, func, or_, select, tuple_
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy import Select, exists, func, or_, select, tuple_
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import aliased
+except ImportError as exc:
+    raise_missing_extra("postgres", "The webhook outbox", exc)
 
 from agents_system.models.audit_event import AuditEvent
 from agents_system.models.outbox import LEGACY_CHANNEL, InboundMessage, OutboxWork

@@ -61,12 +61,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from sqlglot import Token, TokenType, exp
-from sqlglot.dialects.dialect import Dialect
-from sqlglot.errors import ParseError
-from sqlglot.generators.postgres import PostgresGenerator
-from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
-from sqlglot.optimizer.scope import traverse_scope
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlglot import Token, TokenType, exp
+    from sqlglot.dialects.dialect import Dialect
+    from sqlglot.errors import ParseError
+    from sqlglot.generators.postgres import PostgresGenerator
+    from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
+    from sqlglot.optimizer.scope import traverse_scope
+except ImportError as exc:
+    raise_missing_extra("sql", "The SQL query guard", exc)
 
 _DIALECT = "postgres"
 _POSTGRES = Dialect.get_or_raise(_DIALECT)

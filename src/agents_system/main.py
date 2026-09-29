@@ -22,13 +22,19 @@ from typing import Annotated, Any, Literal
 
 import httpx
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core.language_models import BaseChatModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from agents_system.extras import MissingExtraError, raise_missing_extra
+
+try:
+    from fastapi import Depends, FastAPI, HTTPException, Request
+    from fastapi.responses import JSONResponse, Response
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+except ImportError as exc:
+    raise_missing_extra("server", "The served app", exc)
 
 from agents_system import __version__
 from agents_system.agent import models as _models
@@ -272,9 +278,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from agents_system.agent.graph import AgentRuntime
             from agents_system.harness.factory import build_runtime
             from agents_system.harness.loader import resolve
-            from agents_system.services.embeddings import get_embedding_provider
+            from agents_system.services.embeddings import (
+                UnavailableEmbeddingProvider,
+                get_embedding_provider,
+            )
 
-            embedder = get_embedding_provider(settings)
+            # Built here, at boot, when the `embeddings` extra is installed:
+            # the local model loads now, never inside a turn. Without the
+            # extra the boot goes on (issue #188): the registry factory may
+            # never use the embedder, so only a tool that does fails, with the
+            # error naming the extra.
+            try:
+                embedder = get_embedding_provider(settings)
+            except MissingExtraError as error:
+                if error.extra != "embeddings":
+                    raise
+                _logger.warning(
+                    "embeddings.unavailable",
+                    extra=error.extra,
+                    message=(
+                        f"{error} Booting anyway: a tool that embeds text "
+                        "fails with this error when it is called."
+                    ),
+                )
+                embedder = UnavailableEmbeddingProvider(error)
 
             # D-023 — resolve the BI engine BEFORE the registry, so the
             # registry has a single registration point for `run_report`.

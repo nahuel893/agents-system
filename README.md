@@ -8,7 +8,7 @@
 
 **agents-system** is a development kit for building AI agents. You describe an agent (a system prompt, the tools it may call, the policy that bounds it), hand it your own tools, and the kit assembles a permission-bound runtime around it. The smallest path is an agent with one tool of your own in about ten lines: see the [Quickstart](docs/platform/library-usage.md#quickstart), which also covers installing the kit from another repository.
 
-Everything else is an optional piece you turn on at runtime, only when you need it: an OpenAI-compatible **server**, **channels** such as WhatsApp, the eight **predefined roles** (reusable agent archetypes), and **reference backends** (Postgres, Redis, embeddings). They are optional at runtime, not at install time: installing the kit brings all of their dependencies (about 1.2 GB, mostly `torch`, until [#188](https://github.com/nahuel893/agents-system/issues/188) makes the install lighter). Agent definitions can be declarative Markdown folders *and* plain Python; a two-layer deployment model lets your application inject its own tools, skills, and per-client overrides, all without modifying the core.
+Everything else is an optional piece you turn on at runtime, only when you need it: an OpenAI-compatible **server**, **channels** such as WhatsApp, the eight **predefined roles** (reusable agent archetypes), and **reference backends** (Postgres, Redis, embeddings). A plain install is the light core that runs the Quickstart (about 76 MB); the server, the channels and the reference backends are extras you install when you use them (`agents-system[server]`, `[postgres]`, `[embeddings]`, ...), and the predefined roles ship with the core. Agent definitions can be declarative Markdown folders *and* plain Python; a two-layer deployment model lets your application inject its own tools, skills, and per-client overrides, all without modifying the core.
 
 > 🇪🇸 Documentación en español disponible en [`docs/platform_es/`](docs/platform_es/).
 
@@ -259,7 +259,8 @@ Enforced invariants — additive for capability, subtractive for safety:
 git clone https://github.com/nahuel893/agents-system.git
 cd agents-system
 
-# Create environment and install dependencies
+# Create environment and install dependencies (every extra, through the
+# dev group: see "Library-First Usage" for what a plain install brings)
 uv sync
 
 # Copy config and edit
@@ -430,7 +431,10 @@ database — the runtime never reads the server's `Settings`.
 For the smallest start, an agent with one tool of your own in about ten
 lines, see the Quickstart in
 [`docs/platform/library-usage.md`](docs/platform/library-usage.md#quickstart),
-which also covers installing from another repository.
+which also covers installing from another repository. A plain install is the
+light core this needs; the served app, the database, the SQL tool, embeddings
+and the chat model providers are extras (`agents-system[server]`, ...), listed
+under "Extras" there.
 
 This example runs exactly as written (`tests/test_readme_library_example.py`
 executes it with a scripted model; `scripts/smoke-installed-wheel.sh` runs it

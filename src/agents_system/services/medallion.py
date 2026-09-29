@@ -9,8 +9,14 @@ from __future__ import annotations
 from functools import lru_cache
 
 from pydantic import model_validator
-from sqlalchemy import URL
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy import URL
+    from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+except ImportError as exc:
+    raise_missing_extra("postgres", "The medallion warehouse configuration", exc)
 
 from agents_system.config import Settings
 

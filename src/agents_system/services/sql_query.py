@@ -47,7 +47,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import text
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy import text
+except ImportError as exc:
+    raise_missing_extra("sql", "The SQL query tool", exc)
 
 from agents_system.services.db_role import check_query_role
 from agents_system.services.sql_guard import GuardedQuery

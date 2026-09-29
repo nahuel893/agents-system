@@ -30,8 +30,13 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import TextClause
-from sqlalchemy.ext.asyncio import AsyncEngine
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy import TextClause
+    from sqlalchemy.ext.asyncio import AsyncEngine
+except ImportError as exc:
+    raise_missing_extra("postgres", "The report service", exc)
 
 HARD_ROW_CEILING = 500
 """Absolute ceiling on rows returned by any report, enforced in code (AD-5).

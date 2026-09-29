@@ -5,8 +5,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 
-from fastapi import HTTPException
-from starlette.datastructures import Headers
+from agents_system.extras import raise_missing_extra
+
+try:
+    from fastapi import HTTPException
+    from starlette.datastructures import Headers
+except ImportError as exc:
+    raise_missing_extra("server", "The Meta webhook signature check", exc)
 
 _HEADER_NAME = "x-hub-signature-256"
 

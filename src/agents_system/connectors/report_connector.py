@@ -25,7 +25,13 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import structlog
-from sqlalchemy.ext.asyncio import AsyncEngine
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+except ImportError as exc:
+    raise_missing_extra("postgres", "The report tool", exc)
 
 from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 from agents_system.services.db_role import DATABASE_UNAVAILABLE_ERRORS

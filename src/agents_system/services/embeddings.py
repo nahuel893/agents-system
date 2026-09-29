@@ -1,10 +1,12 @@
 """Embedding service abstraction.
 
 Provides a Protocol so the rest of the codebase doesn't depend on any
-concrete provider. Three implementations:
+concrete provider. Implementations:
 
 - ``OpenAIEmbeddingProvider`` — cloud (text-embedding-3-small, requires API key)
 - ``LocalBGEEmbeddingProvider`` — self-hosted BGE-M3 via sentence-transformers
+- ``UnavailableEmbeddingProvider`` — the served app's embedder when the
+  ``embeddings`` extra is not installed; every call names the extra
 - ``FakeEmbeddingProvider`` — deterministic vectors for tests
 
 A factory ``get_embedding_provider(settings)`` selects the implementation
@@ -16,11 +18,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import struct
-from typing import Any, Protocol
-
-from openai import AsyncOpenAI
+from typing import TYPE_CHECKING, Any, Protocol
 
 from agents_system.config import Settings
+from agents_system.extras import MissingExtraError, raise_missing_extra
+
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
 # Module-level placeholder so tests can patch ``embeddings.SentenceTransformer``.
 # Real import is lazy inside ``LocalBGEEmbeddingProvider.__init__`` to avoid
@@ -43,7 +47,12 @@ class OpenAIEmbeddingProvider:
         model: str = "text-embedding-3-small",
         dimensions: int = 512,
     ) -> None:
-        self._client = AsyncOpenAI(api_key=api_key)
+        # Imported here: the `embeddings` extra, not the core (issue #188).
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:
+            raise_missing_extra("embeddings", "The OpenAI embedding provider", exc)
+        self._client: AsyncOpenAI = AsyncOpenAI(api_key=api_key)
         self._model = model
         self._dimensions = dimensions
 
@@ -75,7 +84,10 @@ class LocalBGEEmbeddingProvider:
     ) -> None:
         global SentenceTransformer
         if SentenceTransformer is None:
-            from sentence_transformers import SentenceTransformer as _ST
+            try:
+                from sentence_transformers import SentenceTransformer as _ST
+            except ImportError as exc:
+                raise_missing_extra("embeddings", "The local embedding provider", exc)
 
             SentenceTransformer = _ST
         self._model = SentenceTransformer(model_name)
@@ -91,6 +103,25 @@ class LocalBGEEmbeddingProvider:
         )
         # Truncate native dims to configured dims (Matryoshka)
         return [list(v[: self._dimensions]) for v in vectors]
+
+
+class UnavailableEmbeddingProvider:
+    """Stands in for an embedder whose extra is not installed.
+
+    The served app resolves its embedder at boot and hands it to the registry
+    factory, which may never use it: an agent whose tools do not retrieve
+    anything needs no embeddings. So a missing ``embeddings`` extra does not
+    fail the boot; every ``embed`` call fails instead, with the same
+    ``MissingExtraError`` the boot would have raised.
+    """
+
+    def __init__(self, error: MissingExtraError) -> None:
+        self._extra = error.extra
+        self._feature = error.feature
+        self._missing = error.name or ""
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        raise MissingExtraError(self._extra, self._feature, self._missing)
 
 
 class FakeEmbeddingProvider:

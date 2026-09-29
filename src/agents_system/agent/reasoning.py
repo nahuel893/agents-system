@@ -39,7 +39,13 @@ from langchain_core.callbacks import (
 )
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_openai import ChatOpenAI
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError as exc:
+    raise_missing_extra("openai", "The openai_compatible provider", exc)
 
 _OPEN = "<think>"
 _CLOSE = "</think>"
