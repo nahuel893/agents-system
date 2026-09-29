@@ -99,13 +99,24 @@ that assumes ACME, that is a bug, not a feature.
 The package is not published to PyPI. Install it from a release tag with uv:
 
 ```bash
-uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
+uv add "agents-system @ git+https://github.com/nahuel893/agents-system@v0.4.0"
 ```
 
-This works while the repository is private, for anyone whose SSH key has
-access to it; once it is public again,
-`git+https://github.com/nahuel893/agents-system@vX.Y.Z` works without
-credentials. Pin a tag rather than a branch, so every upgrade is a deliberate
+Replace `v0.4.0` with the release you want. Over HTTPS this needs no SSH setup
+and works without credentials once the repository is public; while it is
+private, git must be able to authenticate over HTTPS (a credential helper, or
+`gh auth setup-git`). The alternative, for anyone whose SSH key has access to
+the repository, is the SSH form:
+
+```bash
+uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@v0.4.0"
+```
+
+Expect the environment to be about 1.2 GB, most of it `torch` (see the note on
+`torch` below, and #188, "A light core install", which aims to make it
+optional).
+
+Pin a tag rather than a branch, so every upgrade is a deliberate
 change to your `pyproject.toml`; uv records the resolved commit in your
 `uv.lock`. When no tag holds a change you need yet, pin its full commit hash
 the same way (`...agents-system@<commit-sha>`) and move to the tag once it

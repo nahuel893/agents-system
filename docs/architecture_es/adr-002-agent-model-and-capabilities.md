@@ -2231,9 +2231,15 @@ nueva para pasar este gate.
 
 #### H.34 — Que CI esté en verde no condiciona el merge
 
-**Estado actual.** Nada exige que los jobs de CI pasen antes de mergear un
-PR a `main`, y la configuración del repositorio vive fuera del control de
-versiones (issues #20 y #21). Los checks son solo informativos.
+**Estado actual.** Mientras el repositorio es privado, nada aplica una barrera
+de merge sobre `main`. La protección de rama se aplicó bajo #21 (cerrado el
+2026-09-24) cuando el repositorio era público; la configuración que la contiene
+vive fuera del control de versiones, y con el repositorio privado la API de
+protección responde 403 y `main` figura sin protección. GitHub Actions tampoco
+puede ejecutarse por ahora, así que todo job de CI falla sin iniciarse. Un CI
+en verde es entonces solo informativo, y las verificaciones locales (`ruff`,
+`mypy`, `pytest`) son el registro de verificación. La Decisión de abajo es el
+estado final buscado, no el actual; ver Estado.
 
 **Decisión.** Protección de rama (o un ruleset del repositorio) sobre `main`
 que exija `ci`, `bi-readonly`, `audit-migration` y `demo-reports`, más los

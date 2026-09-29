@@ -2015,8 +2015,15 @@ script needed a code fix or a new suppression to pass this gate.
 
 #### H.34 — Green CI does not gate a merge
 
-**Current state.** Nothing requires the CI jobs to pass before a PR merges
-into `main`, and repository settings live outside version control (issues #20 and #21). The checks are informative only.
+**Current state.** While the repository is private, nothing enforces a merge
+gate on `main`. Branch protection was applied under #21 (closed on 2026-09-24)
+while the repository was public; the repository settings that hold it live
+outside version control, and with the repository private the protection API
+answers 403 and `main` reports as unprotected. GitHub Actions also cannot run
+at present, so every CI job fails without starting. Green CI is therefore
+informative only, and the local checks (`ruff`, `mypy`, `pytest`) are the
+verification of record. The Decision below is the intended end state, not the
+current one; see Status.
 
 **Decision.** Branch protection (or a repository ruleset) on `main` that
 requires `ci`, `bi-readonly`, `audit-migration` and `demo-reports`, plus the
