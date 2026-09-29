@@ -192,3 +192,4 @@ plataforma, no pidiéndole al modelo que se comporte bien mediante el prompt.
 - Política (autonomía, límites, capas de aplicación): `docs/platform_es/policy.md`
 - Modelo de permisos y RBAC: `docs/architecture/permission-model.md`
 - Las correcciones de arquitectura en que se fundamenta esta definición: `docs/architecture_es/adr-002-agent-model-and-capabilities.md`
+- Propuesta de versionado de agentes y ciclo de desarrollo por agente (Propuesto, no aceptado): `docs/architecture_es/adr-009-agent-versioning.md`

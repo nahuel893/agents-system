@@ -180,3 +180,4 @@ model to behave.
 - Policy (autonomy, limits, enforcement layers): `docs/platform/policy.md`
 - Permission model and RBAC: `docs/architecture/permission-model.md`
 - The architecture corrections this definition is grounded in: `docs/architecture/adr-002-agent-model-and-capabilities.md`
+- Proposed agent versioning and per-agent development lifecycle (Proposed, not accepted): `docs/architecture/adr-009-agent-versioning.md`
