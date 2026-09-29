@@ -1,23 +1,24 @@
 # Agent Platform Architecture
 
-This document defines the formal architecture for expanding `agents-acme` from a single seller-focused AI system into a reusable agent platform.
+This document defines the formal architecture of agents-system, a development kit for building AI agents. The smallest path into the kit is the [Quickstart](../platform/library-usage.md#quickstart): an agent with one tool of your own in about ten lines.
 
 ## Executive summary
 
-The platform is split into two layers:
+The kit is split into three parts:
 
-1. **Core Platform** — reusable runtime, orchestration, lifecycle, permissions, and capability injection.
-2. **ACME Delivery Scope** — the concrete company implementation currently promised to the client, starting with the Seller AI / Preventa agent.
+1. **Core kit** — the harness: declarative and Python agent definitions, orchestration, lifecycle, permissions, and capability injection. This is what you build agents with.
+2. **Optional pieces** — the OpenAI-compatible **server**, the **channels** (WhatsApp is the first one), the **predefined roles** (reusable agent archetypes) and the **reference backends** (Postgres, Redis, embeddings). They are optional at runtime, not at install time: you only turn on the ones you need, but installing the kit still brings the dependencies of all of them (fastapi, asyncpg, redis and torch) until #188, a light core install, changes the packaging.
+3. **Your application** — the tools, connectors, business rules and per-client overrides that turn the kit into a specific agent. They live in your own repository, not in this one.
 
-This separation is intentional. The platform is the reusable product. ACME is one client implementation of that product.
+This separation is intentional. The kit is the reusable product. Any one agent built with it, a sales assistant included, is an application of the kit, never the kit itself.
 
 ---
 
 ## Scope boundary
 
-### Core Platform
+### Core kit
 
-The Core Platform owns the generic multi-agent infrastructure:
+The core kit owns the generic multi-agent infrastructure:
 
 - declarative role definitions in Markdown
 - agent factory / provider runtime
@@ -28,20 +29,26 @@ The Core Platform owns the generic multi-agent infrastructure:
 - memory, audit trail, and execution logging
 - optional warm cache for low-latency agent creation
 
-### ACME Delivery Scope
+### Optional pieces
 
-The ACME implementation owns company-specific behavior:
+The kit ships these so you do not have to build them, and nothing in the core depends on them at runtime. Installing the kit still brings their dependencies:
 
-- Seller AI / Preventa workflows
-- integrations with `DeW` / `App Preventas`
-- integrations with `App Sergio`
-- integrations with `Outline`
-- integrations with `Element`
-- company rules, vocabulary, approvals, and business constraints
+- the OpenAI-compatible server and its channels
+- the predefined roles under `platform/roles/`
+- reference backends for persistence, checkpointing and embeddings
 
-### Not delivered by default
+### Your application
 
-The following capabilities are considered platform capabilities or future modules, not part of the initial promised delivery unless explicitly provisioned:
+An application built on the kit owns everything specific to its domain:
+
+- its workflows and conversational logic
+- integrations with its own systems, registered as tools
+- its rules, vocabulary, approvals, and business constraints
+- per-client narrowing of a predefined role
+
+### Not enabled by default
+
+The following capabilities are considered kit capabilities or future modules; an application adopts them explicitly:
 
 - personal employee agents
 - meeting summary agents
@@ -145,7 +152,7 @@ This distinction prevents mixing role definition, runtime identity, and orchestr
 The initial central topology includes:
 
 - **Orchestrator Agent**
-- **Preventa Agent**
+- **Sales Agent**
 - **Data Agent**
 - **Summary Agent**
 
@@ -312,7 +319,7 @@ The platform supports multiple context sources:
 - employee context
 - organizational context
 - tool-derived context
-- private wiki context (`Outline`)
+- private knowledge-base context
 
 The system should distinguish between:
 
@@ -335,11 +342,11 @@ Responsible for:
 - policy enforcement
 - lifecycle control
 
-### Preventa Agent
+### Sales Agent
 
 Connected to:
 
-- `DeW` / `App Preventas`
+- the order and catalog systems of the application
 
 Responsible for:
 
@@ -351,9 +358,8 @@ Responsible for:
 
 Connected to:
 
-- `App Preventas`
-- `App Sergio`
-- `Outline`
+- the application's business data sources
+- the application's internal knowledge base
 
 Responsible for:
 
@@ -364,7 +370,7 @@ Responsible for:
 
 Connected to:
 
-- `Element`
+- the application's team chat
 
 Responsible for:
 
@@ -378,7 +384,7 @@ Connected to:
 
 - employee identity
 - optional local runtime
-- `Outline` access when permitted
+- knowledge-base access when permitted
 - optional interaction with the Summary Agent
 
 Responsible for:
@@ -389,17 +395,15 @@ Responsible for:
 
 ---
 
-## Current delivery stance for ACME
+## What the kit ships and what it leaves to you
 
-### Promised delivery
+### Shipped
 
-The currently committed client-facing delivery is:
+The kit ships the core harness, the eight predefined roles, the OpenAI-compatible server and the reference backends. An agent built on the kit, a sales assistant for example, is a predefined role plus the tools of the application that uses it.
 
-- **Seller AI / Preventa agent**
+### Roadmap potential
 
-### Platform roadmap potential
-
-The broader system supports future extension toward:
+The broader kit supports future extension toward:
 
 - employee agents
 - summaries
@@ -407,7 +411,7 @@ The broader system supports future extension toward:
 - local workstation runtimes
 - controlled child-agent delegation
 
-These are platform capabilities or roadmap options unless explicitly included in ACME scope.
+These are kit capabilities or roadmap options; an application adopts them explicitly.
 
 ---
 
@@ -419,18 +423,16 @@ The following decisions are still intentionally open:
 2. Can agents decide autonomously when to spawn child agents, or only under explicit system rules?
 3. Which actions require human approval versus autonomous execution?
 4. Which contexts are local-only, shared-team, or organization-wide?
-5. What is the exact contract boundary between product IP and client-specific implementation?
+5. What is the exact contract boundary between the kit and the application built on it?
 
 ---
 
 ## Recommended next documents
 
-1. `docs/architecture/acme-seller-ai.md`
-   - concrete ACME delivery scope
-2. `docs/platform/role.md` already covers the agent definition folder schema.
-3. `docs/architecture/delegation-policy.md`
+1. `docs/platform/role.md` already covers the agent definition folder schema.
+2. `docs/architecture/delegation-policy.md`
    - rules for child-agent spawning and escalation
-4. `docs/architecture/tool-permission-model.md`
+3. `docs/architecture/tool-permission-model.md`
    - RBAC and injection rules per connector
-5. `docs/architecture/adr-002-agent-model-and-capabilities.md`
+4. `docs/architecture/adr-002-agent-model-and-capabilities.md`
    - architecture corrections to the agent model, prompts, tool permissions, and persistence described in this document — includes the formal "agent" definition (`docs/platform/agent.md`) and records the correction of this document's folder-path references from `agents/` to `platform/roles/` (ADR-002 F.19)

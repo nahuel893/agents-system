@@ -1,7 +1,8 @@
 # Uso como biblioteca
 
-`agents_system` no es solo el runtime de ACME: es una biblioteca importable. El
-paquete entrega la plataforma: el harness (loader → injector → factory) y los
+`agents_system` es un kit de desarrollo para construir agentes, y este documento
+es su punto de entrada como biblioteca: el servidor es solo una pieza opcional.
+El paquete entrega el kit: el harness (loader → injector → factory) y los
 roles de agente PREDEFINIDOS (`platform/roles/`). **No** entrega las tools de
 ningún cliente ni los overrides de deployment de ningún cliente. La aplicación
 que lo consume aporta ambas cosas por su cuenta, en runtime, por inyección — en
