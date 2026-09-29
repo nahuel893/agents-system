@@ -7,7 +7,7 @@ Este documento define la arquitectura formal de agents-system, un kit de desarro
 El kit está dividido en tres partes:
 
 1. **Kit core**: el harness. Definiciones de agentes declarativas y en Python, orquestación, ciclo de vida, permisos e inyección de capacidades. Es con lo que se construyen los agentes.
-2. **Piezas opcionales**: el **servidor** compatible con OpenAI, los **canales** (WhatsApp es el primero), los **roles predefinidos** (arquetipos de agente reutilizables) y los **backends de referencia** (Postgres, Redis, embeddings). Se toman las que hacen falta y se dejan las demás.
+2. **Piezas opcionales**: el **servidor** compatible con OpenAI, los **canales** (WhatsApp es el primero), los **roles predefinidos** (arquetipos de agente reutilizables) y los **backends de referencia** (Postgres, Redis, embeddings). Son opcionales en tiempo de ejecución, no al instalar: se activan solo las que hacen falta, pero al instalar el kit igual se traen las dependencias de todas (fastapi, asyncpg, redis y torch) hasta que #188, una instalación liviana del core, cambie el empaquetado.
 3. **Tu aplicación**: las herramientas, conectores, reglas de negocio y overrides por cliente que convierten el kit en un agente concreto. Viven en tu propio repositorio, no en este.
 
 Esta separación es intencional. El kit es el producto reutilizable. Cualquier agente construido con él, un asistente de ventas incluido, es una aplicación del kit y nunca el kit en sí.
@@ -30,7 +30,7 @@ El kit core es dueño de la infraestructura multi-agente genérica:
 
 ### Piezas opcionales
 
-El kit las entrega para que no tengas que construirlas, pero nada del core depende de ellas:
+El kit las entrega para que no tengas que construirlas, y nada del core depende de ellas en tiempo de ejecución. Al instalar el kit igual se traen sus dependencias:
 - El servidor compatible con OpenAI y sus canales.
 - Los roles predefinidos bajo `platform/roles/`.
 - Los backends de referencia para persistencia, checkpointing y embeddings.
@@ -226,6 +226,26 @@ La factoría puede almacenar en una caché activa (*warm cache*) runtimes pre-in
 Los agentes operan en nombre de identidades reales. Sus accesos están limitados por el set de permisos del empleado que los dispara. El control se realiza en dos capas:
 1. **En la inyección de capacidades**: Excluyendo herramientas no autorizadas antes del inicio del runtime.
 2. **En tiempo de ejecución (Revalidación en caliente)**: Para llamadas a herramientas sensibles o críticas (ej. persistencia de pedidos), protegiendo al sistema contra escalamientos de privilegios o cambios repentinos de permisos en el backend.
+
+---
+
+## Qué entrega el kit y qué te deja a ti
+
+### Entregado
+
+El kit entrega el harness core, los ocho roles predefinidos, el servidor compatible con OpenAI y los backends de referencia. Un agente construido sobre el kit, un asistente de ventas por ejemplo, es un rol predefinido más las herramientas de la aplicación que lo usa.
+
+### Potencial de hoja de ruta
+
+El kit más amplio admite extensiones futuras hacia:
+
+- agentes para empleados
+- resúmenes
+- asistencia de datos más profunda
+- runtimes locales para estaciones de trabajo
+- delegación controlada de agentes hijos
+
+Son capacidades del kit u opciones de la hoja de ruta; una aplicación las adopta de forma explícita.
 
 ---
 

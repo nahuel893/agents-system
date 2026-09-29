@@ -7,7 +7,7 @@ This document defines the formal architecture of agents-system, a development ki
 The kit is split into three parts:
 
 1. **Core kit** — the harness: declarative and Python agent definitions, orchestration, lifecycle, permissions, and capability injection. This is what you build agents with.
-2. **Optional pieces** — the OpenAI-compatible **server**, the **channels** (WhatsApp is the first one), the **predefined roles** (reusable agent archetypes) and the **reference backends** (Postgres, Redis, embeddings). You take the ones you need and leave the rest.
+2. **Optional pieces** — the OpenAI-compatible **server**, the **channels** (WhatsApp is the first one), the **predefined roles** (reusable agent archetypes) and the **reference backends** (Postgres, Redis, embeddings). They are optional at runtime, not at install time: you only turn on the ones you need, but installing the kit still brings the dependencies of all of them (fastapi, asyncpg, redis and torch) until #188, a light core install, changes the packaging.
 3. **Your application** — the tools, connectors, business rules and per-client overrides that turn the kit into a specific agent. They live in your own repository, not in this one.
 
 This separation is intentional. The kit is the reusable product. Any one agent built with it, a sales assistant included, is an application of the kit, never the kit itself.
@@ -31,7 +31,7 @@ The core kit owns the generic multi-agent infrastructure:
 
 ### Optional pieces
 
-The kit ships these so you do not have to build them, but nothing in the core depends on them:
+The kit ships these so you do not have to build them, and nothing in the core depends on them at runtime. Installing the kit still brings their dependencies:
 
 - the OpenAI-compatible server and its channels
 - the predefined roles under `platform/roles/`
@@ -399,7 +399,7 @@ Responsible for:
 
 ### Shipped
 
-The kit ships the core harness, the eight predefined roles, the OpenAI-compatible server and the reference backends. The first agent most people build is a sales-assistance agent, which is the `sales-agent` role plus the tools of the application that uses it.
+The kit ships the core harness, the eight predefined roles, the OpenAI-compatible server and the reference backends. An agent built on the kit, a sales assistant for example, is a predefined role plus the tools of the application that uses it.
 
 ### Roadmap potential
 

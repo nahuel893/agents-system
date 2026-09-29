@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agents-system"
 version = "0.4.0"
-description = "A development kit for building AI agents: a generic harness and predefined agent roles that your application equips with its own tools, plus an optional server, channels and reference backends"
+description = "A development kit for building AI agents: a generic harness and predefined agent roles that your application equips with its own tools, plus a server, channels and reference backends that you turn on at runtime"
 readme = "README.md"
 license = "MIT"
 authors = [
