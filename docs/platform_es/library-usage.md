@@ -362,8 +362,16 @@ La regla, a propósito la misma en todo el uso como biblioteca:
 | no | sí | Se construye y se usa el modelo declarado. |
 | no | no | `ValueError`: el agente no declara modelo; pasá `model=`. |
 | sí | no | Se usa tu modelo; no se reporta nada. |
-| sí | sí, mismo id de modelo | Se usa tu modelo; no se reporta nada. |
-| sí | sí, otro id de modelo | **Gana tu modelo** y se registra una advertencia `runtime.model_conflict` con el agente, el id declarado y el id pasado. |
+| sí | sí, mismo id de modelo y mismo proveedor | Se usa tu modelo; no se reporta nada. |
+| sí | sí, mismo id de modelo, proveedor no identificable | Se usa tu modelo; un evento `runtime.model_provider_unverified` (nivel info) indica que no se pudo establecer el proveedor (no se lo da por equivalente ni por conflicto). |
+| sí | sí, otro id de modelo, o el mismo id de otro proveedor | **Gana tu modelo** y se registra una advertencia `runtime.model_conflict` con el agente, los ids declarado y pasado, y los proveedores declarado y pasado. |
+
+La comparación tiene límites. El proveedor del modelo pasado se lee de su clase
+(`langchain_openai` = `openai_compatible`, `langchain_groq` = `groq`,
+`langchain_anthropic` = `anthropic`, `langchain_ollama` = `ollama`), así que
+distingue esos cuatro pero no dos hosts de protocolo OpenAI entre sí, y un doble
+de test o un wrapper propio no tiene proveedor identificable. No se comparan
+`temperature` ni `max_tokens`.
 
 Gana el modelo explícito del caller porque pasarlo es un acto deliberado en el
 sitio de la llamada (un doble de test, un cliente compartido, un override

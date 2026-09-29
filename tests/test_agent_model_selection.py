@@ -270,6 +270,102 @@ def test_a_caller_model_that_is_the_declared_one_is_not_a_conflict() -> None:
     assert not [e for e in logs if e["event"] == "runtime.model_conflict"]
 
 
+def _real_models() -> dict[str, Any]:
+    """Real provider classes (none makes a network call on construction), all
+    reporting the SAME model id, so only the provider tells them apart."""
+    from langchain_anthropic import ChatAnthropic
+    from langchain_groq import ChatGroq
+    from langchain_ollama import ChatOllama
+    from langchain_openai import ChatOpenAI
+    from pydantic import SecretStr
+
+    return {
+        "openai_compatible": ChatOpenAI(
+            model="shared-id",
+            api_key=SecretStr("dummy"),
+            base_url="https://provider.test/v1",
+        ),
+        "anthropic": ChatAnthropic(  # type: ignore[call-arg]
+            model="shared-id", anthropic_api_key="dummy"
+        ),
+        "groq": ChatGroq(model="shared-id", api_key=SecretStr("dummy")),
+        "ollama": ChatOllama(model="shared-id"),
+    }
+
+
+def _conflicts(logs: list[Any]) -> list[Any]:
+    return [e for e in logs if e["event"] == "runtime.model_conflict"]
+
+
+@pytest.mark.parametrize(
+    ("declared_provider", "passed_provider"),
+    [
+        ("anthropic", "openai_compatible"),
+        ("openai_compatible", "anthropic"),
+        ("groq", "ollama"),
+        ("ollama", "groq"),
+    ],
+)
+def test_the_same_model_id_from_another_provider_is_a_conflict(
+    declared_provider: str, passed_provider: str
+) -> None:
+    declared = {"provider": declared_provider, "model": "shared-id"}
+    caller_model = _real_models()[passed_provider]
+
+    with structlog.testing.capture_logs() as logs:
+        runtime = agents_system.AgentRuntime(
+            _equipped(model=declared), model=caller_model
+        )
+
+    assert runtime._bound_model is caller_model
+    conflicts = _conflicts(logs)
+    assert len(conflicts) == 1, logs
+    assert conflicts[0]["declared_model"] == "shared-id"
+    assert conflicts[0]["passed_model"] == "shared-id"
+    assert conflicts[0]["declared_provider"] == declared_provider
+    assert conflicts[0]["passed_provider"] == passed_provider
+
+
+@pytest.mark.parametrize(
+    "provider", ["openai_compatible", "anthropic", "groq", "ollama"]
+)
+def test_the_same_model_id_from_the_same_provider_is_not_a_conflict(
+    provider: str,
+) -> None:
+    declared = {"provider": provider, "model": "shared-id"}
+
+    with structlog.testing.capture_logs() as logs:
+        agents_system.AgentRuntime(
+            _equipped(model=declared), model=_real_models()[provider]
+        )
+
+    assert not _conflicts(logs)
+    assert not [e for e in logs if e["event"] == "runtime.model_provider_unverified"]
+
+
+def test_an_unidentifiable_model_with_the_declared_id_is_reported_unverified() -> None:
+    """A model class whose provider cannot be told (a test double, a custom
+    wrapper) that shares the declared id is neither called equivalent nor called
+    a conflict: the runtime says it could not establish the provider."""
+    declared = {"provider": "anthropic", "model": "shared-id"}
+    caller_model = NamedScriptedModel(
+        responses=[AIMessage(content="ok")], model_name="shared-id"
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        runtime = agents_system.AgentRuntime(
+            _equipped(model=declared), model=caller_model
+        )
+
+    assert runtime._bound_model is caller_model
+    assert not _conflicts(logs)
+    unverified = [e for e in logs if e["event"] == "runtime.model_provider_unverified"]
+    assert len(unverified) == 1, logs
+    assert unverified[0]["log_level"] == "info"
+    assert unverified[0]["declared_provider"] == "anthropic"
+    assert unverified[0]["model"] == "shared-id"
+
+
 async def test_the_declared_model_answers_the_turn(
     library_env: list[str],
 ) -> None:

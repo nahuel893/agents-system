@@ -353,8 +353,16 @@ The rule, on purpose the same everywhere in library use:
 | no | yes | The declared model is built and used. |
 | no | no | `ValueError`: the agent declares no model; pass `model=`. |
 | yes | no | Your model is used; nothing is reported. |
-| yes | yes, same model id | Your model is used; nothing is reported. |
-| yes | yes, a different model id | **Your model wins** and a `runtime.model_conflict` warning is logged, naming the agent, the declared id and the passed id. |
+| yes | yes, same model id and same provider | Your model is used; nothing is reported. |
+| yes | yes, same model id, provider cannot be identified | Your model is used; an info-level `runtime.model_provider_unverified` event says the provider could not be established (it is not called a match, and not a conflict). |
+| yes | yes, a different model id, or the same id from a different provider | **Your model wins** and a `runtime.model_conflict` warning is logged, naming the agent, the declared and passed ids and the declared and passed providers. |
+
+The comparison has limits. The passed model's provider is read from its class
+(`langchain_openai` = `openai_compatible`, `langchain_groq` = `groq`,
+`langchain_anthropic` = `anthropic`, `langchain_ollama` = `ollama`), so it tells
+those four apart but cannot tell two OpenAI-protocol hosts from each other, and
+a test double or custom wrapper has no identifiable provider. Temperature and
+`max_tokens` are not compared.
 
 The caller's explicit model wins because passing it is a deliberate act at the
 call site (a test double, a shared client, a local override), and refusing
