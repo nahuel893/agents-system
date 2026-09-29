@@ -2481,3 +2481,139 @@ async def test_a_turn_that_finishes_is_not_marked_timed_out() -> None:
 
     assert result.timed_out is False
     assert result.timeout_s is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #181 -- a mid-tool timeout must not poison the checkpointed thread
+# ---------------------------------------------------------------------------
+
+
+def _slow_tool_spec() -> ToolSpec:
+    async def slow_connector(
+        inputs: dict[str, Any], *, session: Any = None
+    ) -> dict[str, Any]:
+        await asyncio.sleep(10)
+        return {}
+
+    return ToolSpec(
+        name="slow_tool",
+        required_permissions=(),
+        connector=slow_connector,
+        tier=Tier.T0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_turn_after_a_mid_tool_timeout_sends_a_valid_tool_call_sequence() -> None:
+    """Issue #181: a timeout inside a tool call leaves the checkpointed thread
+    ending in the assistant message that requested the tool, with no reply.
+    The next turn of that thread appends the user's message after it, and a
+    provider that needs one reply per tool_call_id rejects the request. What
+    the model receives on the second turn must be a valid sequence, through a
+    real checkpointer and nothing backend-specific."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agents_system.agent.graph import AgentRuntime
+
+    checkpointer = InMemorySaver()
+    thread = "+5491100000181"
+    first = AgentRuntime(
+        _timeout_runtime(0.3, (_slow_tool_spec(),)),
+        ToolAwareFakeModel(responses=[_tool_call_response("slow_tool", "call_181_a")]),
+        checkpointer=checkpointer,
+    )
+    timed_out = await asyncio.wait_for(
+        first.run_turn_with_usage(
+            [HumanMessage(content="Slow one")],
+            session_id="s1",
+            permissions=(),
+            thread_id=thread,
+        ),
+        timeout=3.0,
+    )
+    assert timed_out.timed_out is True
+
+    second_model = _RecordingModel(responses=[AIMessage(content="Sure.")])
+    second = AgentRuntime(
+        _timeout_runtime(5.0, (_slow_tool_spec(),)),
+        second_model,
+        checkpointer=checkpointer,
+    )
+    result = await second.run_turn_with_usage(
+        [HumanMessage(content="Try again")],
+        session_id="s1",
+        permissions=(),
+        thread_id=thread,
+    )
+
+    assert result.timed_out is False
+    seen = list(second_model.seen)  # type: ignore[attr-defined]
+    assert _unanswered_tool_call_ids(seen) == []
+    # The conversation is intact: the interrupted request is still visible,
+    # answered with an error reply, and the new message comes after it.
+    assert [type(m).__name__ for m in seen] == [
+        "SystemMessage",
+        "HumanMessage",
+        "AIMessage",
+        "ToolMessage",
+        "HumanMessage",
+    ]
+    reply = seen[3]
+    assert isinstance(reply, ToolMessage)
+    assert reply.tool_call_id == "call_181_a"
+    assert reply.status == "error"
+    assert seen[-1].content == "Try again"
+
+
+@pytest.mark.asyncio
+async def test_a_checkpointed_thread_with_answered_tool_calls_is_sent_unchanged() -> (
+    None
+):
+    """The repair only touches unanswered calls: a healthy thread reaches the
+    model exactly as persisted."""
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from agents_system.agent.graph import AgentRuntime
+
+    checkpointer = InMemorySaver()
+    thread = "+5491100000182"
+    first = AgentRuntime(
+        _timeout_runtime(5.0, (_catalog_spec(),)),
+        ToolAwareFakeModel(
+            responses=[
+                _tool_call_response("catalog_search", "call_181_b"),
+                AIMessage(content="Found it."),
+            ]
+        ),
+        checkpointer=checkpointer,
+    )
+    await first.run_turn(
+        [HumanMessage(content="Look it up")],
+        session_id="s1",
+        permissions=("read:catalog",),
+        thread_id=thread,
+    )
+
+    second_model = _RecordingModel(responses=[AIMessage(content="Anything else?")])
+    second = AgentRuntime(
+        _timeout_runtime(5.0, (_catalog_spec(),)),
+        second_model,
+        checkpointer=checkpointer,
+    )
+    await second.run_turn(
+        [HumanMessage(content="Thanks")],
+        session_id="s1",
+        permissions=("read:catalog",),
+        thread_id=thread,
+    )
+
+    seen = list(second_model.seen)  # type: ignore[attr-defined]
+    assert [type(m).__name__ for m in seen] == [
+        "SystemMessage",
+        "HumanMessage",
+        "AIMessage",
+        "ToolMessage",
+        "AIMessage",
+        "HumanMessage",
+    ]
+    assert [m.status for m in seen if isinstance(m, ToolMessage)] == ["success"]

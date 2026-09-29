@@ -283,6 +283,17 @@ turno arrancó de nuevo, o nunca se produjo estado, el uso es desconocido
 (`None`), nunca un valor inventado. `TurnResult.timed_out` y
 `TurnResult.timeout_s` permiten distinguir el timeout de un turno normal.
 
+En un hilo con checkpointer (`thread_id` dado), el estado persistido de un turno
+que expiró dentro de una herramienta sigue terminando con el mensaje del asistente
+que pidió la herramienta. El runtime no reescribe el almacén: antes de cada
+llamada al modelo responde toda llamada a herramienta sin respuesta con un
+`ToolMessage` de error (`Tool call interrupted: the tool did not return a result
+in an earlier turn`), ubicado justo después del mensaje que la pidió. Así el
+modelo siempre recibe una secuencia de llamadas a herramientas válida, en todos
+los canales y con cualquier backend de checkpointer, y una sola llamada lenta no
+puede dejar una conversación inutilizable hasta que venza su checkpoint. Un
+historial sano llega al modelo sin cambios.
+
 **Guía de dimensionamiento de cuenta para operadores.** `max_concurrent_turns`
 (default 10) acota cuántos turnos corre este proceso a la vez, pero NO acota
 el límite de tasa propio de la cuenta del proveedor (requests/minuto y/o

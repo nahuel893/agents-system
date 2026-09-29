@@ -258,6 +258,16 @@ next turn's. If the checkpointer degraded and the turn restarted, or no state wa
 produced, the usage is unknown (`None`), never a guess. `TurnResult.timed_out`
 and `TurnResult.timeout_s` let a caller tell the timeout from a normal turn.
 
+On a checkpointed thread (`thread_id` given), the persisted state of a turn
+that timed out inside a tool call still ends with the assistant message that
+requested the tool. The runtime does not rewrite the store: before every model
+call it answers any tool call that has no reply with an error `ToolMessage`
+(`Tool call interrupted: the tool did not return a result in an earlier turn`),
+placed right after the message that requested it. The model therefore always
+receives a valid tool-call sequence, on every channel and with any checkpointer
+backend, and one slow tool call cannot make a conversation unusable until its
+checkpoint expires. A healthy history reaches the model unchanged.
+
 **Account sizing guidance for operators.** `max_concurrent_turns` (default
 10) bounds how many turns this process runs at once, but it does NOT bound
 the provider's own account-level rate limit (requests/minute and/or
