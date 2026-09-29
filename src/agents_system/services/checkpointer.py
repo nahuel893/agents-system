@@ -12,7 +12,7 @@ Three concerns live here, each separate from the others:
   on the app's database, bounded by a timeout so a slow database degrades a
   turn (``agent/graph.py``'s ``_Thread``) instead of stalling it. It refuses
   to start on a database whose checkpoint schema is missing or older than
-  the installed saver needs.
+  the installed saver needs, or that its role cannot write and delete in.
 - **Schema** -- ``apply_checkpoint_migrations``: the saver's own versioned
   migrations, run by Alembic revision 007 during the deployment's migration
   step, so the tables are created where every other table is and by the same
@@ -101,12 +101,40 @@ def apply_checkpoint_migrations(database_url: str) -> None:
         saver.setup()
 
 
+#: The tables every turn writes and every purge deletes from, and what the
+#: app's role needs on each: reading and saving a thread upserts, retention
+#: deletes. ``checkpoint_migrations`` is only read, by the version check.
+_THREAD_TABLES = ("checkpoint_blobs", "checkpoint_writes", "checkpoints")
+_THREAD_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
+
+# One privilege per `has_table_privilege` call: given a list such as
+# 'INSERT,DELETE' it answers whether ANY of them is held, not all.
+# `transaction_read_only` is on under `default_transaction_read_only` (for
+# the role or the database) and on a standby server.
+_ACCESS = """
+SELECT current_setting('transaction_read_only') = 'on' AS read_only,
+       ARRAY(
+           SELECT p || ' on ' || t
+           FROM unnest(%(tables)s::text[]) AS t,
+                unnest(%(privileges)s::text[]) AS p
+           WHERE NOT has_table_privilege(t, p)
+           ORDER BY t, p
+       ) AS missing
+"""
+
+
 async def verify_checkpoint_schema(pool: AsyncConnectionPool[Any]) -> None:
-    """Refuse a database without the checkpoint schema the saver needs.
+    """Refuse a database the checkpointer cannot keep threads in.
 
     The app never creates tables at boot: a missing or outdated schema means
     the deployment's migration step did not run, and running turns against it
     would degrade every one of them.
+
+    The tables can also exist and still be unusable: the migration role
+    creates them, and the app may connect as a different one. A role that
+    can read them but not write or delete, or a read-only connection, would
+    boot, then forget every conversation (each save fails) and never delete
+    one (each purge fails) -- a silent retention breach. It is refused too.
     """
     from langgraph.checkpoint.postgres.base import BasePostgresSaver
 
@@ -121,10 +149,29 @@ async def verify_checkpoint_schema(pool: AsyncConnectionPool[Any]) -> None:
             cursor = await conn.execute("SELECT max(v) AS v FROM checkpoint_migrations")
             found = await cursor.fetchone()
             version = None if found is None else found["v"]
-    if version is None or version < needed:
+        if version is None or version < needed:
+            raise CheckpointSchemaError(
+                f"the checkpoint schema is at version {version}, the installed "
+                f"checkpointer needs {needed}: run `alembic upgrade head`"
+            )
+        cursor = await conn.execute(
+            _ACCESS,
+            {"tables": list(_THREAD_TABLES), "privileges": list(_THREAD_PRIVILEGES)},
+        )
+        access = await cursor.fetchone()
+    if access is None:  # a SELECT without FROM always returns its one row
+        raise CheckpointSchemaError("could not read the database role's privileges")
+    if access["missing"]:
         raise CheckpointSchemaError(
-            f"the checkpoint schema is at version {version}, the installed "
-            f"checkpointer needs {needed}: run `alembic upgrade head`"
+            "the database role cannot keep conversation threads: it lacks "
+            f"{', '.join(access['missing'])}. Grant it SELECT, INSERT, UPDATE "
+            f"and DELETE on {', '.join(_THREAD_TABLES)}"
+        )
+    if access["read_only"]:
+        raise CheckpointSchemaError(
+            "the database connection is read-only (default_transaction_read_only, "
+            "or a standby server), so no conversation thread could be saved or "
+            "purged: point DATABASE_URL at a writable primary"
         )
 
 

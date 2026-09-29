@@ -16,9 +16,11 @@ import pytest
 from agents_system.services.checkpointer import (
     CHECKPOINT_SCHEMA_VERSION,
     CheckpointPurger,
+    CheckpointSchemaError,
     PurgeResult,
     _connection_kwargs,
     psycopg_conninfo,
+    verify_checkpoint_schema,
 )
 
 
@@ -112,6 +114,95 @@ def test_the_installed_saver_needs_exactly_the_schema_the_migrations_create() ->
     from langgraph.checkpoint.postgres.base import BasePostgresSaver
 
     assert len(BasePostgresSaver.MIGRATIONS) - 1 == CHECKPOINT_SCHEMA_VERSION
+
+
+# ---------------------------------------------------------------------------
+# What the app refuses to boot on
+# ---------------------------------------------------------------------------
+
+
+class _Row:
+    def __init__(self, row: dict[str, Any]) -> None:
+        self._row = row
+
+    async def fetchone(self) -> dict[str, Any]:
+        return self._row
+
+
+class _Database:
+    """Just enough of a psycopg pool to answer the boot check, from what the
+    database would report: the schema version, the privileges the role
+    lacks, and whether its transactions are read-only. The SQL itself is
+    proven against a real PostgreSQL in ``test_checkpointer_integration.py``.
+    """
+
+    def __init__(
+        self,
+        *,
+        version: int | None = CHECKPOINT_SCHEMA_VERSION,
+        lacks: tuple[str, ...] = (),
+        read_only: bool = False,
+    ) -> None:
+        self.version = version
+        self.lacks = list(lacks)
+        self.read_only = read_only
+
+    def connection(self) -> Any:
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _connection() -> Any:
+            yield self
+
+        return _connection()
+
+    async def execute(self, sql: str, params: Any = None) -> _Row:
+        if "to_regclass" in sql:
+            return _Row({"present": self.version is not None})
+        if "checkpoint_migrations" in sql:
+            return _Row({"v": self.version})
+        if "has_table_privilege" in sql:
+            return _Row({"missing": self.lacks, "read_only": self.read_only})
+        raise AssertionError(f"unexpected query: {sql}")
+
+
+async def test_a_role_with_every_privilege_on_the_current_schema_boots() -> None:
+    await verify_checkpoint_schema(_Database())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("version", [None, CHECKPOINT_SCHEMA_VERSION - 1])
+async def test_a_missing_or_older_schema_is_refused(version: int | None) -> None:
+    with pytest.raises(CheckpointSchemaError, match="alembic upgrade head"):
+        await verify_checkpoint_schema(_Database(version=version))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "lacks",
+    [
+        ("DELETE on checkpoints",),
+        ("INSERT on checkpoint_blobs", "UPDATE on checkpoint_blobs"),
+    ],
+)
+async def test_a_role_that_cannot_save_or_purge_threads_is_refused(
+    lacks: tuple[str, ...],
+) -> None:
+    """A role that can only read the tables would boot and then forget every
+    conversation (each save fails) and never delete one (each purge fails):
+    retention silently breached. The app refuses to start instead, naming
+    what is missing."""
+    with pytest.raises(CheckpointSchemaError) as refused:
+        await verify_checkpoint_schema(_Database(lacks=lacks))  # type: ignore[arg-type]
+
+    for missing in lacks:
+        assert missing in str(refused.value)
+    assert "SELECT, INSERT, UPDATE and DELETE" in str(refused.value)
+
+
+async def test_a_read_only_connection_is_refused() -> None:
+    """`default_transaction_read_only` on the role or the database, or a
+    standby server: every save and every purge would fail."""
+    with pytest.raises(CheckpointSchemaError, match="read-only"):
+        await verify_checkpoint_schema(_Database(read_only=True))  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

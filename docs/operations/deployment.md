@@ -23,7 +23,7 @@ Per ADR-001, production deployment is organized into two stages:
 Services must start strictly in this dependency sequence:
 1. **PostgreSQL:** Starts and reports healthy via `pg_isready`.
 2. **Redis:** Starts and reports healthy via `redis-cli ping`. `GET /health` reports it; it no longer holds conversation state, which is in PostgreSQL since #24.
-3. **Database Migrations:** One-shot migration job executes `alembic upgrade head`, which also creates the conversation checkpoint tables (revision 007). If migrations fail, the deployment immediately aborts with non-zero exit code. The app refuses to start while the checkpoint schema is missing.
+3. **Database Migrations:** One-shot migration job executes `alembic upgrade head`, which also creates the conversation checkpoint tables (revision 007). If migrations fail, the deployment immediately aborts with non-zero exit code. The app refuses to start while the checkpoint schema is missing, or while its database role cannot write and delete in the checkpoint tables (see [conversation memory](../platform/conversation-memory.md#schema-and-migrations)).
 4. **App Server:** Starts only after database, Redis, and migrations are verified healthy and complete.
 
 ---

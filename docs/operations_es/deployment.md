@@ -23,7 +23,7 @@ Según ADR-001, el despliegue en producción se organiza en dos etapas:
 Los servicios deben iniciar estrictamente en esta secuencia de dependencias:
 1. **PostgreSQL:** Inicia y reporta estado saludable mediante `pg_isready`.
 2. **Redis:** Inicia y reporta estado saludable mediante `redis-cli ping`. `GET /health` lo informa; ya no guarda el estado de las conversaciones, que está en PostgreSQL desde #24.
-3. **Migraciones de Base de Datos:** Tarea puntual que ejecuta `alembic upgrade head`, que también crea las tablas de checkpoints de conversaciones (revisión 007). Si las migraciones fallan, el despliegue aborta de inmediato con código de salida distinto de cero. La app se niega a arrancar mientras falte el esquema de checkpoints.
+3. **Migraciones de Base de Datos:** Tarea puntual que ejecuta `alembic upgrade head`, que también crea las tablas de checkpoints de conversaciones (revisión 007). Si las migraciones fallan, el despliegue aborta de inmediato con código de salida distinto de cero. La app se niega a arrancar mientras falte el esquema de checkpoints, o mientras su rol de base no pueda escribir y borrar en las tablas de checkpoints (ver [memoria de conversación](../platform_es/conversation-memory.md#esquema-y-migraciones)).
 4. **Servidor de Aplicación (App):** Inicia únicamente después de verificar que la base de datos, Redis y las migraciones están completos y saludables.
 
 ---

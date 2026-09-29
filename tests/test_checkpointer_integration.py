@@ -177,6 +177,60 @@ async def test_the_checkpointer_refuses_an_unmigrated_database() -> None:
         _alembic("downgrade base", url)
 
 
+_APP_ROLE = "checkpointer_it_app_role"
+
+
+@pytest.mark.parametrize(
+    ("grants", "read_only", "refused_with"),
+    [
+        ("SELECT", False, "INSERT on checkpoint_blobs"),
+        ("SELECT, INSERT, UPDATE", False, "DELETE on checkpoints"),
+        ("SELECT, INSERT, UPDATE, DELETE", True, "read-only"),
+        ("SELECT, INSERT, UPDATE, DELETE", False, None),
+    ],
+)
+async def test_the_checkpointer_refuses_a_role_that_cannot_save_or_purge(
+    migrated: str, grants: str, read_only: bool, refused_with: str | None
+) -> None:
+    """A separate app role is an expected setup: the migration role creates
+    the tables. One that can read them but not write or delete would boot
+    and then forget every conversation and never purge one."""
+    from sqlalchemy.engine import make_url
+
+    await _execute(
+        migrated, f"CREATE ROLE {_APP_ROLE} LOGIN PASSWORD 'app-role-password'"
+    )
+    try:
+        await _execute(
+            migrated,
+            f"GRANT {grants} ON checkpoints, checkpoint_blobs, checkpoint_writes, "
+            f"checkpoint_migrations TO {_APP_ROLE}",
+        )
+        if read_only:
+            await _execute(
+                migrated,
+                f"ALTER ROLE {_APP_ROLE} SET default_transaction_read_only = on",
+            )
+        app_url = (
+            make_url(migrated)
+            .set(username=_APP_ROLE, password="app-role-password")
+            .render_as_string(hide_password=False)
+        )
+
+        if refused_with is None:
+            async with open_postgres_checkpointer(app_url, pool_size=1, timeout_s=5.0):
+                pass
+        else:
+            with pytest.raises(CheckpointSchemaError, match=refused_with):
+                async with open_postgres_checkpointer(
+                    app_url, pool_size=1, timeout_s=5.0
+                ):
+                    pass
+    finally:
+        await _execute(migrated, f"DROP OWNED BY {_APP_ROLE}")
+        await _execute(migrated, f"DROP ROLE {_APP_ROLE}")
+
+
 # ---------------------------------------------------------------------------
 # Durability: a conversation survives a process restart
 # ---------------------------------------------------------------------------

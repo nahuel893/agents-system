@@ -178,6 +178,14 @@ ejecutando las migraciones propias del saver, no una copia de su DDL. Por eso:
 - la app nunca ejecuta DDL al arrancar, y se niega a arrancar cuando el
   esquema falta o es más viejo que el que necesita el saver instalado: el
   error indica ejecutar `alembic upgrade head`;
+- la app también se niega a arrancar cuando su propio rol de base no puede
+  guardar hilos en esas tablas. Cuando la app se conecta con un rol distinto
+  del rol de migración, otorgale `SELECT, INSERT, UPDATE, DELETE` sobre
+  `checkpoints`, `checkpoint_blobs` y `checkpoint_writes`, y `SELECT` sobre
+  `checkpoint_migrations`. Un rol que solo pudiera leer arrancaría, y después
+  olvidaría cada conversación y nunca purgaría ninguna. Una conexión de solo
+  lectura (`default_transaction_read_only`, o un servidor standby) se rechaza
+  por la misma razón. El error nombra cada privilegio que falta;
 - `alembic revision --autogenerate` ignora estas tablas (`alembic/env.py`).
 
 Cuando una versión nueva de `langgraph-checkpoint-postgres` trae migraciones
@@ -234,12 +242,14 @@ saver.
   una lectura o un guardado que nunca responden, y un driver lento para
   cancelar que no retiene el turno).
 - `tests/test_checkpointer_service.py`: el string de conexión, los timeouts
-  de conexión, la alarma de versión del esquema, el ciclo de purga, y la ausencia de un `DeltaChannel`
+  de conexión, sobre qué se niega a arrancar la app, la alarma de versión del
+  esquema, el ciclo de purga, y la ausencia de un `DeltaChannel`
   que haría insegura la poda.
 - `tests/test_checkpointer_integration.py`, contra un PostgreSQL real (job de
   CI `checkpointer-integration`, `CHECKPOINTER_TEST_DATABASE_URL`): la
   revisión 007 y su downgrade, una base sin migrar rechazada, una
   conversación que sobrevive a un reinicio del proceso (cada turno en su
-  propio proceso de Python), la purga de hilos inactivos y de checkpoints
+  propio proceso de Python), un rol que no puede guardar ni purgar hilos y un
+  rol de solo lectura, ambos rechazados, la purga de hilos inactivos y de checkpoints
   reemplazados, un hilo corrupto que se degrada solo, y una conexión caída que
   se recupera en el turno siguiente.

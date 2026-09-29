@@ -166,6 +166,14 @@ running the saver's own migrations, not a copy of their DDL. So:
 - the app never runs DDL at boot, and refuses to start when the schema is
   missing or older than the installed saver needs: the error says to run
   `alembic upgrade head`;
+- the app also refuses to start when its own database role cannot keep
+  threads in those tables. When the app connects as a different role than
+  the migration role, grant it `SELECT, INSERT, UPDATE, DELETE` on
+  `checkpoints`, `checkpoint_blobs` and `checkpoint_writes`, and `SELECT` on
+  `checkpoint_migrations`. A role that could only read would boot, then
+  forget every conversation and never purge one. A read-only connection
+  (`default_transaction_read_only`, or a standby server) is refused for the
+  same reason. The error names each missing privilege;
 - `alembic revision --autogenerate` ignores these tables (`alembic/env.py`).
 
 When an upgraded `langgraph-checkpoint-postgres` ships new migrations, a
@@ -215,11 +223,13 @@ timeout_s=...)` opens the same pooled saver. Create its tables with
   something that is not a message list, a read or save that never answers,
   and a driver slow to cancel that does not hold the turn).
 - `tests/test_checkpointer_service.py`: the connection string, the
-  connection timeouts, the schema version tripwire, the purge loop, and the absence of a `DeltaChannel` that
+  connection timeouts, what the app refuses to boot on, the schema version
+  tripwire, the purge loop, and the absence of a `DeltaChannel` that
   would make pruning unsafe.
 - `tests/test_checkpointer_integration.py`, against a real PostgreSQL (CI job
   `checkpointer-integration`, `CHECKPOINTER_TEST_DATABASE_URL`): revision 007
   and its downgrade, a refused unmigrated database, a conversation that
-  survives a process restart (each turn in its own Python process), the purge
+  survives a process restart (each turn in its own Python process), a role
+  that cannot save or purge threads and a read-only role both refused, the purge
   of idle threads and of superseded checkpoints, a corrupt thread that
   degrades alone, and a dropped connection that heals on the next turn.
