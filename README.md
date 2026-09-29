@@ -259,7 +259,8 @@ Enforced invariants — additive for capability, subtractive for safety:
 git clone https://github.com/nahuel893/agents-system.git
 cd agents-system
 
-# Create environment and install dependencies
+# Create environment and install dependencies (every extra, through the
+# dev group: see "Library-First Usage" for what a plain install brings)
 uv sync
 
 # Copy config and edit
@@ -430,7 +431,10 @@ database — the runtime never reads the server's `Settings`.
 For the smallest start, an agent with one tool of your own in about ten
 lines, see the Quickstart in
 [`docs/platform/library-usage.md`](docs/platform/library-usage.md#quickstart),
-which also covers installing from another repository.
+which also covers installing from another repository. A plain install is the
+light core this needs; the served app, the database, the SQL tool, embeddings
+and the chat model providers are extras (`agents-system[server]`, ...), listed
+under "Extras" there.
 
 This example runs exactly as written (`tests/test_readme_library_example.py`
 executes it with a scripted model; `scripts/smoke-installed-wheel.sh` runs it

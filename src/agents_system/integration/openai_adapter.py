@@ -32,8 +32,14 @@ from contextlib import AsyncExitStack
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from fastapi import APIRouter, Depends, HTTPException, Request
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+except ImportError as exc:
+    raise_missing_extra("server", "The OpenAI-compatible adapter", exc)
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 
 from agents_system.config import get_settings

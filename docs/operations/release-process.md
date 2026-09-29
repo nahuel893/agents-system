@@ -64,16 +64,20 @@ do get (issue #166):
 1. Builds the wheel (`uv build --wheel`) into a throwaway directory outside
    the repository.
 2. Installs it into a fresh virtualenv there, with third-party dependencies
-   held to `uv.lock`'s pins (the CPU-only torch build comes from its own
-   explicit index, as in `pyproject.toml`).
-3. Runs the README's library example — the block marked
-   `<!-- runnable-example: library -->` — with an **empty** environment
-   (`env -i`: no `.env`, no server variables, not even `PATH` or `HOME`),
-   passing a scripted chat model to the example's `main(model)`.
-4. Fails unless the turn completes (one `catalog_search` call, then the
-   answer), the package was imported from the throwaway virtualenv, no
-   traceback was printed, and the missing `AuditSink` was reported exactly
-   once (`audit.sink_not_registered`).
+   held to `uv.lock`'s pins. It is a plain install, with no extra: the core
+   alone (issue #188). The script fails if anything an extra provides
+   (`agents_system.extras.EXTRA_MODULES`) is importable, and logs the
+   virtualenv's size.
+3. Runs the README's library example (the block marked
+   `<!-- runnable-example: library -->`) and the Quickstart of
+   `docs/platform/library-usage.md` (`<!-- runnable-example: quickstart -->`),
+   each in its own process with an **empty** environment (`env -i`: no
+   `.env`, no server variables, not even `PATH` or `HOME`), passing a
+   scripted chat model to the example's `main(model)`.
+4. Fails unless each turn completes (one tool call, then the answer), the
+   package was imported from the throwaway virtualenv, no traceback was
+   printed, and the missing `AuditSink` was reported exactly once per
+   process (`audit.sink_not_registered`).
 5. Removes the throwaway directory on exit, success or failure.
 
 It needs only `uv`, and makes no provider call. Run it before merging a

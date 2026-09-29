@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import time
 from collections import Counter
 from typing import TYPE_CHECKING
 
 import structlog
-from sqlalchemy import text
 
 from agents_system.audit.events import _AuditEventBase
+from agents_system.extras import raise_missing_extra
 
 if TYPE_CHECKING:
+    from sqlalchemy import TextClause
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 logger = structlog.get_logger()
@@ -31,15 +33,29 @@ logger = structlog.get_logger()
 #:
 #: ``EXCLUDED.next_seq`` is the row that failed to insert, i.e. ``:count``,
 #: so the parameter is bound once.
-_RESERVE_SEQUENCE_RANGE_SQL = text(
-    """
+_RESERVE_SEQUENCE_RANGE_SQL = """
     INSERT INTO audit_sequence (correlation_id, next_seq)
     VALUES (:correlation_id, :count)
     ON CONFLICT (correlation_id)
     DO UPDATE SET next_seq = audit_sequence.next_seq + EXCLUDED.next_seq
     RETURNING next_seq
     """
-)
+
+
+@functools.cache
+def _reserve_sequence_range_statement() -> TextClause:
+    """``_RESERVE_SEQUENCE_RANGE_SQL`` as a SQLAlchemy statement.
+
+    Built on first use, not at import: the sink writes through SQLAlchemy (the
+    ``postgres`` extra), while this module is core -- every audit event looks
+    up the registered sink here, installed extras or not (issue #188).
+    """
+    try:
+        from sqlalchemy import text
+    except ImportError as exc:
+        raise_missing_extra("postgres", "AuditSink", exc)
+    return text(_RESERVE_SEQUENCE_RANGE_SQL)
+
 
 # The process-wide registration (issue #166). `AuditSink` is a process-wide
 # singleton, so its registration is a plain module attribute -- visible to
@@ -75,6 +91,9 @@ class AuditSink:
         session_factory: async_sessionmaker[AsyncSession],
         maxsize: int = 1000,
     ) -> None:
+        # Fails here, naming the `postgres` extra, rather than on the first
+        # flush in the background drainer, where it would only be logged.
+        _reserve_sequence_range_statement()
         self._session_factory = session_factory
         self._queue: asyncio.Queue[_AuditEventBase] = asyncio.Queue(maxsize=maxsize)
         self._maxsize = maxsize
@@ -342,7 +361,7 @@ class AuditSink:
         for correlation_id in sorted(counts):
             count = counts[correlation_id]
             result = await session.execute(
-                _RESERVE_SEQUENCE_RANGE_SQL,
+                _reserve_sequence_range_statement(),
                 {"correlation_id": correlation_id, "count": count},
             )
             last_reserved: int = result.scalar_one()

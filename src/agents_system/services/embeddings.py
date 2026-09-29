@@ -16,11 +16,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import struct
-from typing import Any, Protocol
-
-from openai import AsyncOpenAI
+from typing import TYPE_CHECKING, Any, Protocol
 
 from agents_system.config import Settings
+from agents_system.extras import raise_missing_extra
+
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
 
 # Module-level placeholder so tests can patch ``embeddings.SentenceTransformer``.
 # Real import is lazy inside ``LocalBGEEmbeddingProvider.__init__`` to avoid
@@ -43,7 +45,12 @@ class OpenAIEmbeddingProvider:
         model: str = "text-embedding-3-small",
         dimensions: int = 512,
     ) -> None:
-        self._client = AsyncOpenAI(api_key=api_key)
+        # Imported here: the `embeddings` extra, not the core (issue #188).
+        try:
+            from openai import AsyncOpenAI
+        except ImportError as exc:
+            raise_missing_extra("embeddings", "The OpenAI embedding provider", exc)
+        self._client: AsyncOpenAI = AsyncOpenAI(api_key=api_key)
         self._model = model
         self._dimensions = dimensions
 
@@ -75,7 +82,10 @@ class LocalBGEEmbeddingProvider:
     ) -> None:
         global SentenceTransformer
         if SentenceTransformer is None:
-            from sentence_transformers import SentenceTransformer as _ST
+            try:
+                from sentence_transformers import SentenceTransformer as _ST
+            except ImportError as exc:
+                raise_missing_extra("embeddings", "The local embedding provider", exc)
 
             SentenceTransformer = _ST
         self._model = SentenceTransformer(model_name)

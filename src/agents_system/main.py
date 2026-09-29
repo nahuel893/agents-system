@@ -22,13 +22,19 @@ from typing import Annotated, Any, Literal
 
 import httpx
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core.language_models import BaseChatModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from fastapi import Depends, FastAPI, HTTPException, Request
+    from fastapi.responses import JSONResponse, Response
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+except ImportError as exc:
+    raise_missing_extra("server", "The served app", exc)
 
 from agents_system import __version__
 from agents_system.agent import models as _models

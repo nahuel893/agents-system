@@ -19,7 +19,12 @@ import importlib
 import os
 from typing import Any
 
-from fastapi import FastAPI
+from agents_system.extras import raise_missing_extra
+
+try:
+    from fastapi import FastAPI
+except ImportError as exc:
+    raise_missing_extra("server", "The served app", exc)
 
 from agents_system.connectors.order_connector import build_order_writer_tool_spec
 from agents_system.connectors.platform_connectors import (

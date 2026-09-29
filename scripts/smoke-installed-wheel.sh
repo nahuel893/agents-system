@@ -2,7 +2,8 @@
 # Smoke-test agents_system as an INSTALLED LIBRARY, the way an importer uses it.
 #
 # Builds the wheel, installs it into a throwaway virtualenv outside the
-# repository, and runs two documented examples with an EMPTY environment (no
+# repository -- a plain install, so the core alone, with no extra (issue
+# #188) -- and runs two documented examples with an EMPTY environment (no
 # `.env`, no server variables, not even PATH or HOME), each in its own
 # process: the README's library example (the block marked
 # `<!-- runnable-example: library -->`) and the Quickstart of
@@ -10,8 +11,10 @@
 # issue #168). A scripted chat model is passed to each example's own
 # `main(model)`, so nothing reaches a real provider.
 #
-# It fails if a turn does not complete (one tool call, then the answer), if
-# the Quickstart registers any tool besides its own, if any traceback is
+# It fails if the plain install brought any package an extra provides
+# (agents_system.extras.EXTRA_MODULES), if a turn does not complete (one tool
+# call, then the answer), if the Quickstart registers any tool besides its
+# own, if any traceback is
 # printed, or if the missing AuditSink is reported anything other than
 # exactly once per process (issue #166). Everything it creates lives in one
 # temporary directory that is removed on exit, success or failure.
@@ -96,6 +99,32 @@ done <"${workdir}/explicit-sources.txt"
 
 uv pip install --quiet --python "${venv_python}" \
   --constraints "${workdir}/constraints.txt" "${wheels[0]}"
+
+# Issue #188: a plain install is the core. Nothing an extra provides may be
+# importable, so the examples below prove the core alone runs them.
+log "checking that the plain install is the core alone"
+if ! (cd -- "${workdir}" && env -i "${venv_python}" -I - <<'PY'
+import importlib.util
+import sys
+
+from agents_system.extras import EXTRA_MODULES
+
+present = sorted(
+    {
+        module
+        for modules in EXTRA_MODULES.values()
+        for module in modules
+        if importlib.util.find_spec(module) is not None
+    }
+)
+if present:
+    sys.exit(f"a plain install must not bring what an extra provides: {present}")
+PY
+); then
+  fail "the plain install is not the core alone"
+fi
+read -r core_size _ < <(du -sh -- "${workdir}/venv")
+log "core-only virtualenv: ${core_size}"
 
 cp -- "${repo_root}/README.md" "${workdir}/README.md"
 cp -- "${quickstart_doc}" "${workdir}/library-usage.md"

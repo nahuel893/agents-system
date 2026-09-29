@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-import redis.asyncio as redis
+from agents_system.extras import raise_missing_extra
+
+try:
+    import redis.asyncio as redis
+except ImportError as exc:
+    raise_missing_extra("server", "The Redis connection pool", exc)
 
 _pool: redis.ConnectionPool | None = None
 

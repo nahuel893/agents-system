@@ -119,8 +119,11 @@ Both units execute as the dedicated unprivileged user and group `agents-system`,
 
 2. **Install Code and Virtualenv:**
    ```bash
-   sudo -u agents-system uv sync --frozen --no-dev
+   sudo -u agents-system uv sync --frozen --no-dev --extra all
    ```
+   A plain install is the library core (issue #188); the served app needs its
+   extras, and `all` is every one of them. See "Extras" in
+   `docs/platform/library-usage.md`.
 
 3. **Configure Environment File:**
    ```bash

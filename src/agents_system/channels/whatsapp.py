@@ -22,8 +22,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 import structlog
-from fastapi import HTTPException
-from starlette.datastructures import Headers
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from fastapi import HTTPException
+    from starlette.datastructures import Headers
+except ImportError as exc:
+    raise_missing_extra("server", "The WhatsApp channel", exc)
 
 from agents_system.channels.port import (
     InboundDelivery,

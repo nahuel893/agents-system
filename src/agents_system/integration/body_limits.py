@@ -12,7 +12,12 @@ each carrying its own copy.
 
 from __future__ import annotations
 
-from fastapi import HTTPException, Request
+from agents_system.extras import raise_missing_extra
+
+try:
+    from fastapi import HTTPException, Request
+except ImportError as exc:
+    raise_missing_extra("server", "The request body limit", exc)
 
 
 async def read_bounded_body(request: Request, max_bytes: int) -> bytes:

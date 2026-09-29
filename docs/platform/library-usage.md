@@ -68,8 +68,9 @@ if __name__ == "__main__":
 
 `tests/test_quickstart_example.py` executes this block as written, and
 `scripts/smoke-installed-wheel.sh` runs it against the built wheel installed
-outside the repository. Any LangChain chat model works in place of
-`ChatAnthropic`.
+outside the repository, with the core alone: no extra. Any LangChain chat
+model works in place of `ChatAnthropic`, which comes from
+`langchain-anthropic` (the `anthropic` extra; see "Extras" below).
 
 - `Agent(...)` extends the basic `agent` role (conversation plus escalation)
   unless you pass `extends=`. Pass it straight to `build_runtime` or
@@ -137,13 +138,67 @@ uv add ./wheels/agents_system-X.Y.Z-py3-none-any.whl
 The image then needs the wheel in its build context before it installs
 dependencies (for example `COPY wheels/ wheels/` ahead of `uv sync --frozen`).
 
-The package depends on `torch` for local embeddings. This repository routes
-it to the CPU-only PyTorch index in its own `[tool.uv.sources]`; add the same
+### Extras
+
+A plain install is the **core**: the agent API (`Agent`), the harness
+(`ToolRegistry`, `ToolSpec`, `build_runtime`, the injector and the
+interceptor), the in-process runtime (`AgentRuntime`), and the audit and
+metrics interfaces. That is everything the Quickstart and the complete example
+below use. It installs no web server, no database driver, no chat model
+provider and no `torch`: a core-only virtualenv measures about 76 MB, where a
+full install is over 1 GB, most of it `torch`.
+
+Everything else is an extra. Name the ones you use in the requirement:
+
+```bash
+uv add "agents-system[anthropic] @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
+uv add "agents-system[server,openai] @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
+```
+
+| Extra | What it enables | What it installs |
+|---|---|---|
+| `server` | The served app (`agents_system.main`, `agents_system.server`): HTTP, the channels, the OpenAI-compatible adapter and the Redis checkpointer. It brings `postgres`, because the app runs on its database. | FastAPI, uvicorn, Redis, langgraph-checkpoint-redis |
+| `postgres` | `AuditSink` (recording audit events), the platform tables and their migrations, and the reference backends | SQLAlchemy, asyncpg, Alembic |
+| `sql` | The guarded SQL query tool. It brings `postgres`. | sqlglot |
+| `embeddings` | Embeddings for retrieval, local or through the OpenAI API | torch, sentence-transformers, openai |
+| `openai` | The `openai_compatible` provider | langchain-openai |
+| `anthropic` | The `anthropic` provider | langchain-anthropic |
+| `groq` | The `groq` provider | langchain-groq |
+| `ollama` | The `ollama` provider | langchain-ollama |
+| `all` | Every extra above. The served app's Docker image installs it. | |
+
+A provider extra is needed when the runtime builds the model an agent
+declares (`AgentRuntime(equipped)` with no `model=`, or `build_agent_model`;
+see "Choosing the model"). A model you build and pass yourself needs its own
+integration package, whichever way you install it.
+
+Using a feature without its extra fails at once, with an error that names the
+extra instead of a bare `No module named 'fastapi'`:
+
+```text
+agents_system.extras.MissingExtraError: The served app needs the 'server' extra,
+which is not installed (no module named 'fastapi'). Install the package with it:
+agents-system[server]. The install section of docs/platform/library-usage.md
+lists every extra.
+```
+
+`MissingExtraError` is a `ModuleNotFoundError`: its `name` is the missing
+module and its `extra` the extra to install. `agents_system.extras.EXTRA_MODULES`
+maps each extra to the modules it provides.
+
+Up to v0.4.0 a plain install brought all of the above. An application that
+uses the server, the database, the SQL tool, embeddings or a declared model's
+provider names the matching extras when it upgrades past that release.
+
+The `embeddings` extra installs `torch`. This repository routes it to the
+CPU-only PyTorch index in its own `[tool.uv.sources]`; add the same
 `[tool.uv.sources]` and `[[tool.uv.index]]` entries to your application's
 `pyproject.toml` if you want the same.
 
-Either way, the import name is `agents_system` (underscore) — only the
-distribution name on the index is hyphenated.
+### Import name and platform roles
+
+However you install it, the import name is `agents_system` (underscore) —
+only the distribution name on the index is hyphenated.
 
 Installing the package is enough to get the predefined platform roles — they
 ship inside the wheel (`platform/roles/**` is packaged as `agents_system/platform`
@@ -339,6 +394,11 @@ own, for when you want the chat model itself (to wrap it, share it, or inspect
 it). Pass `default_model=` to get a fallback back for an agent that declares
 nothing.
 
+Each provider's integration is an extra: `openai` for `openai_compatible`,
+and `anthropic`, `groq` and `ollama` for the providers of those names (see
+"Extras"). A declared model whose extra is not installed fails when the model
+is built, with an error naming the extra.
+
 **Credentials come only from settings and the environment, never from the
 agent definition** (a `model:` block cannot carry one). The builder reads them
 through a narrow provider-only loader, so none of the server's variables
@@ -429,8 +489,9 @@ is registered unless you register it, and the process logs a single
 structured warning, `audit.sink_not_registered`, the first time an event has
 nowhere to go — once per process, never a traceback per event.
 
-To record them, construct the sink on an async SQLAlchemy session factory
-whose database carries the platform's audit tables (created by this
+To record them (with the `postgres` extra, which the sink writes through),
+construct the sink on an async SQLAlchemy session factory whose database
+carries the platform's audit tables (created by this
 repository's Alembic migrations — see `docs/platform/audit.md`), start it, and
 register it for the whole process:
 

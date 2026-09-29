@@ -119,8 +119,11 @@ Ambas unidades se ejecutan bajo el usuario y grupo dedicados y sin privilegios `
 
 2. **Instalar Código y Entorno Virtual:**
    ```bash
-   sudo -u agents-system uv sync --frozen --no-dev
+   sudo -u agents-system uv sync --frozen --no-dev --extra all
    ```
+   Una instalación simple es el núcleo de la biblioteca (issue #188); la app
+   servida necesita sus extras, y `all` es todos ellos. Ver "Extras" en
+   `docs/platform_es/library-usage.md`.
 
 3. **Configurar el Archivo de Entorno:**
    ```bash

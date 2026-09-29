@@ -6,9 +6,15 @@ import time
 from uuid import uuid4
 
 import structlog.contextvars
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import Response
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+    from starlette.requests import Request
+    from starlette.responses import Response
+except ImportError as exc:
+    raise_missing_extra("server", "The request ID middleware", exc)
 
 from agents_system.observability.logging import logger
 

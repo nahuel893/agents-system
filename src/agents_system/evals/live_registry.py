@@ -24,7 +24,13 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 from langchain_core.language_models import BaseChatModel
-from sqlalchemy.ext.asyncio import AsyncEngine
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+except ImportError as exc:
+    raise_missing_extra("postgres", "The live evaluation registry", exc)
 
 from agents_system.connectors.operator import TerminalPolicy, build_operator_tool_specs
 from agents_system.connectors.order_connector import build_order_writer_tool_spec

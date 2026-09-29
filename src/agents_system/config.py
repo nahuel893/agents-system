@@ -12,7 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import URL
+
+from agents_system.extras import raise_missing_extra
 
 #: Review finding 6 (PR #87) -- a generous but finite sanity ceiling on a
 #: per-million-token price. No real hosted provider prices anywhere near
@@ -447,6 +448,13 @@ class Settings(ProviderSettings):
         """
         if self.db_user is None and self.db_host is None:
             return self
+
+        # The database is the `postgres` extra; ModelPrice and the provider
+        # settings above are core and must import without it (issue #188).
+        try:
+            from sqlalchemy import URL
+        except ImportError as exc:
+            raise_missing_extra("postgres", "Composing DATABASE_URL", exc)
 
         self.database_url = URL.create(
             "postgresql+asyncpg",

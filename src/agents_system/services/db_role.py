@@ -18,10 +18,16 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-import asyncpg
 import structlog
-from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
+
+from agents_system.extras import raise_missing_extra
+
+try:
+    import asyncpg
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+except ImportError as exc:
+    raise_missing_extra("postgres", "The database role check", exc)
 
 UNWRAPPED_CONNECT_ERRORS: tuple[type[Exception], ...] = (
     OSError,
