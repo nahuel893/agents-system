@@ -153,15 +153,17 @@ class _TurnProgress:
 
 
 def _close_unanswered_tool_calls(
-    messages: list[AnyMessage], *, timeout_s: float
+    messages: Sequence[AnyMessage], *, reason: str
 ) -> list[AnyMessage]:
-    """Answer every tool call of *messages* that has no reply (issue #172).
+    """Answer every tool call of *messages* that has no reply (issues #172, #181).
 
     A turn cut off between a model call and the end of its tool round trip
     leaves the assistant's tool calls without their `ToolMessage`. Providers
     reject that sequence, so a caller replaying the returned messages as the
-    next turn's history would fail. Each outstanding call gets an error reply
-    placed right after its assistant message; the calls stay visible.
+    next turn's history would fail, and so would the next turn of a
+    checkpointed thread. Each outstanding call gets an error reply carrying
+    *reason*, placed right after its assistant message; the calls stay
+    visible. Messages that are already well formed come back unchanged.
     """
     closed: list[AnyMessage] = []
     for index, message in enumerate(messages):
@@ -177,7 +179,7 @@ def _close_unanswered_tool_calls(
         }
         closed.extend(
             ToolMessage(
-                content=f"Tool call interrupted: the turn timed out after {timeout_s}s",
+                content=f"Tool call interrupted: {reason}",
                 tool_call_id=call["id"],
                 status="error",
             )
@@ -344,7 +346,16 @@ async def _call_model(
     resumed multi-turn conversation would re-prepend and duplicate it on
     every turn.
     """
-    model_input = [SystemMessage(content=system_prompt), *state["messages"]]
+    # Issue #181 -- a persisted thread can end in an assistant message whose
+    # tool call never got its reply (a timeout or a crash inside the tool
+    # round trip). Repair the history the model SEES, not the store: this is
+    # the one place every channel and every checkpointer backend goes
+    # through, and it needs no backend-specific call. State is untouched.
+    history = _close_unanswered_tool_calls(
+        state["messages"],
+        reason="the tool did not return a result in an earlier turn",
+    )
+    model_input = [SystemMessage(content=system_prompt), *history]
     retried_after_tool_format_error = False
     try:
         response: AIMessage = await bound_model.ainvoke(model_input)
@@ -1057,7 +1068,10 @@ class AgentRuntime:
                 return self._finish_turn(
                     _close_unanswered_tool_calls(
                         partial_messages,
-                        timeout_s=float(effective_limits["total_execution_timeout_s"]),
+                        reason=(
+                            "the turn timed out after "
+                            f"{float(effective_limits['total_execution_timeout_s'])}s"
+                        ),
                     )
                     + [
                         AIMessage(
