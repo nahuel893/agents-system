@@ -59,6 +59,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 import yaml
 
+from agents_system.agent.context import DEFAULT_MAX_CONTEXT_TOKENS
 from agents_system.harness.registry import Tier
 
 if TYPE_CHECKING:
@@ -171,6 +172,10 @@ _PLATFORM_DEFAULT_LIMITS: dict[str, int] = {
     "max_tool_calls": 20,
     "max_delegation_depth": 2,
     "max_clarification_attempts": 3,
+    # Issue #28: estimated tokens a model call may carry (system prompt,
+    # tool schemas and history); the oldest history is trimmed past it. The
+    # default is a share of an assumed context window, see agent/context.py.
+    "max_context_tokens": DEFAULT_MAX_CONTEXT_TOKENS,
 }
 
 #: Public alias of ``_PLATFORM_DEFAULT_LIMITS`` — the Agent Runtime (D-014 S2,

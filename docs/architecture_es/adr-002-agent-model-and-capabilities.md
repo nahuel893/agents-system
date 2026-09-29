@@ -29,7 +29,7 @@
 | 21 | Desactualizado: decisión abierta de `permission-model.md` (resuelta por 10) + pgvector | F. Documentación desactualizada | ✅ hecho | `ec1e979`, `0348771` |
 | 22 | Historial de chat durable | G. Persistencia y memoria | ⚠️ parcial (mismo que 4) | #24 |
 | 23 | Implementación de referencia de `ConversationRecorder` | G. Persistencia y memoria | ⚠️ parcial (puerto + doble de prueba solamente, sin implementación de producción) | #27 |
-| 24 | Control del tamaño de contexto (recorte/compactación) | G. Persistencia y memoria | ⏳ pendiente | #28 |
+| 24 | Control del tamaño de contexto (recorte/compactación) | G. Persistencia y memoria | ✅ hecho | #28 |
 | 25 | Memoria propia del agente (`remember`/`recall`) | G. Persistencia y memoria | ⏳ pendiente | #29 (bloqueado por #15 y #25) |
 | 26 | Razonamiento — decisión explícita sobre persistirlo | G. Persistencia y memoria | ⏳ pendiente | #30 |
 | 27 | Tests de integración que nunca se ejecutan | H. CI | ✅ hecho | `729e2d9` |
@@ -1879,7 +1879,7 @@ indirecta — rechazada: el TTL acota el *tiempo*, no la *cantidad de
 mensajes* ni la *cantidad de tokens*; una conversación muy activa puede
 exceder una ventana de contexto bien dentro de las 24 horas.
 
-**Estado.** ⏳ pendiente. **Etapa planificada:** PR nuevo, seguido en #28.
+**Estado.** ✅ hecho (#28). El mecanismo es **recorte**, no compactación: es determinista, no cuesta una llamada al proveedor, no puede inventar hechos, y ningún dato muestra todavía que el recorte descarte algo que importe. `agent/context.py:trim_history` recorta sólo la proyección de la entrada del modelo que arma `_call_model` y nunca el historial persistido. Siempre conserva el prompt de sistema, los esquemas de herramientas y el último mensaje del usuario, y nunca separa una llamada a herramienta del asistente de sus respuestas (#181). El presupuesto es `execution_limits.max_context_tokens`, así que rige la regla existente de sólo endurecer. El valor por defecto es 64.000 tokens: una ventana asumida de 128.000 tokens (la menor ventana alojada en uso) por una fracción de 0,5 que deja lugar a la respuesta y al error del estimador. No hay tráfico de producción, así que el umbral se deriva de la ventana y sólo se verifica contra una línea base medida en `evals/results/` y en los logs operativos (la mayor solicitud individual, unos 2,6k tokens). Un recorte se registra en el log, se audita (`context_trimmed`) y se cuenta (`agent_limit_trips_total{limit="max_context_tokens"}`). La compactación, acotar el almacenamiento del checkpointer y una consulta de ventana por modelo siguen como seguimientos. Registro completo: `docs/platform_es/context-size.md`.
 
 ---
 

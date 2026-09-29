@@ -238,6 +238,31 @@ class TestRecorderEventFamilies:
         assert isinstance(event, RuntimeTimeout)
         assert event.total_execution_timeout_s == 30.0
 
+    @pytest.mark.asyncio
+    async def test_record_context_trimmed(self) -> None:
+        """record_context_trimmed produces a ContextTrimmed event with counts only."""
+        from agents_system.audit.events import ContextTrimmed
+        from agents_system.audit.recorder import record_context_trimmed
+
+        definition = MockDefinition()
+        event = await record_context_trimmed(
+            definition,
+            dropped_messages=12,
+            kept_messages=8,
+            tokens_before=9000,
+            tokens_after=3000,
+            max_context_tokens=4000,
+            over_budget=False,
+        )
+        assert isinstance(event, ContextTrimmed)
+        assert event.dropped_messages == 12
+        assert event.kept_messages == 8
+        assert event.tokens_before == 9000
+        assert event.tokens_after == 3000
+        assert event.max_context_tokens == 4000
+        assert event.over_budget is False
+        assert event.payload["dropped_messages"] == 12
+
 
 class TestRecorderCorrelationId:
     """correlation_id is captured from structlog.contextvars at call time."""
