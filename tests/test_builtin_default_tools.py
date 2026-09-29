@@ -331,3 +331,102 @@ def test_the_audit_event_round_trips_through_the_union() -> None:
     )
 
     assert isinstance(event, EscalationNotDelivered)
+
+
+# ---------------------------------------------------------------------------
+# Issue #182 -- the platform-supplied default is visible in the audit trail
+# ---------------------------------------------------------------------------
+
+
+async def _events_of(sink: CapturingSink, event_type: str) -> list[Any]:
+    for _ in range(50):
+        found = [e for e in sink.captured if e.event_type == event_type]
+        if found:
+            return found
+        await asyncio.sleep(0.02)
+    return []
+
+
+async def test_the_build_marks_the_default_in_tool_granted_and_runtime_built(
+    sink: CapturingSink,
+) -> None:
+    equipped = agents_system.build_runtime(
+        AGENT, _registry(), granted_permissions=["send:escalation"]
+    )
+
+    assert equipped.builtin_defaults == ("escalation_notifier",)
+    granted = {e.tool_name: e for e in await _events_of(sink, "tool_granted")}
+    assert granted["escalation_notifier"].builtin_default is True
+    assert granted["escalation_notifier"].payload["builtin_default"] is True
+    # A tool the caller registered is not marked.
+    assert granted["word_count"].builtin_default is False
+    assert granted["word_count"].payload["builtin_default"] is False
+
+    [built] = await _events_of(sink, "runtime_built")
+    assert built.builtin_defaults == ["escalation_notifier"]
+    assert built.payload["builtin_defaults"] == ["escalation_notifier"]
+
+
+async def test_a_denied_default_is_not_reported_as_equipped(
+    sink: CapturingSink,
+) -> None:
+    equipped = agents_system.build_runtime(AGENT, _registry(), granted_permissions=[])
+
+    # Filled by the default but denied: nothing built-in reaches the model.
+    assert equipped.builtin_defaults == ()
+    [built] = await _events_of(sink, "runtime_built")
+    assert built.builtin_defaults == []
+
+
+async def test_a_registered_tool_leaves_builtin_defaults_empty(
+    sink: CapturingSink,
+) -> None:
+    async def page_a_human(
+        inputs: dict[str, Any], *, session: Any = None
+    ) -> dict[str, Any]:
+        return {"escalation_id": "esc-1"}
+
+    own = agents_system.ToolSpec(
+        name="escalation_notifier",
+        required_permissions=("send:escalation",),
+        connector=page_a_human,
+        tier=agents_system.Tier.T2,
+    )
+    equipped = agents_system.build_runtime(
+        AGENT, _registry(own), granted_permissions=["send:escalation"]
+    )
+
+    assert equipped.builtin_defaults == ()
+    [built] = await _events_of(sink, "runtime_built")
+    assert built.builtin_defaults == []
+
+
+async def test_a_call_to_the_default_is_marked_in_tool_call_attempted(
+    sink: CapturingSink,
+) -> None:
+    from agents_system.harness.interceptor import intercept
+
+    equipped = agents_system.build_runtime(
+        AGENT, _registry(), granted_permissions=["send:escalation"]
+    )
+    await intercept(
+        "escalation_notifier",
+        {"reason": "user_request", "details": "d"},
+        equipped,
+        current_permissions=["send:escalation"],
+    )
+    await intercept("word_count", {"text": "a b"}, equipped)
+
+    attempts: dict[str, Any] = {}
+    for _ in range(50):
+        attempts = {
+            e.tool_name: e
+            for e in sink.captured
+            if e.event_type == "tool_call_attempted"
+        }
+        if len(attempts) == 2:
+            break
+        await asyncio.sleep(0.02)
+    assert attempts["escalation_notifier"].builtin_default is True
+    assert attempts["escalation_notifier"].payload["builtin_default"] is True
+    assert attempts["word_count"].builtin_default is False

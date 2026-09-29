@@ -332,9 +332,13 @@ class Settings(ProviderSettings):
     # `main._build_chat_model` dispatches on; `openai_compatible` then reads
     # the same `openai_compatible_*` settings as every other role (e.g.
     # OpenRouter -- see docs/platform/live-eval.md). Env var: EVAL_PROVIDER.
-    eval_provider: Literal["ollama", "groq", "anthropic", "openai_compatible"] = (
-        "ollama"
-    )
+    #
+    # No default (#182): it used to be "ollama", so a live run that forgot the
+    # variable silently measured a local model. Unset now means
+    # ``build_eval_model`` raises a clear error before any model is built.
+    eval_provider: (
+        Literal["ollama", "groq", "anthropic", "openai_compatible"] | None
+    ) = None
 
     # App
     log_level: str = "INFO"
@@ -362,6 +366,10 @@ class Settings(ProviderSettings):
           Slice 2): ``GET /metrics`` would be open to anyone.
         - an empty ``meta_webhook_secret``: HMAC-SHA256 with an empty key is
           attacker-computable, so any webhook signature is forgeable.
+        - an empty ``whatsapp_verify_token`` while the WhatsApp channel is
+          enabled (``whatsapp_runtime_id`` set): the GET handshake compares
+          the supplied token with it, and two empty strings match, so the
+          endpoint would answer anyone (#182).
 
         Centralised here (not only in the lifespan) so the guard is
         unit-testable without spinning up FastAPI.
@@ -385,6 +393,15 @@ class Settings(ProviderSettings):
             raise ValueError(
                 "meta_webhook_secret is required (an empty secret makes webhook "
                 "signatures forgeable); set META_WEBHOOK_SECRET or explicitly set "
+                "ALLOW_INSECURE=true for dev"
+            )
+
+        if self.whatsapp_runtime_id and not self.whatsapp_verify_token:
+            raise ValueError(
+                "whatsapp_verify_token is required when the WhatsApp channel is "
+                "enabled (whatsapp_runtime_id is set); an empty token matches an "
+                "empty hub.verify_token, so anyone could complete the webhook "
+                "handshake. Set WHATSAPP_VERIFY_TOKEN or explicitly set "
                 "ALLOW_INSECURE=true for dev"
             )
 

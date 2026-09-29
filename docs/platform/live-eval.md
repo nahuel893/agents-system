@@ -21,9 +21,12 @@ pytest -m live
 
 `live` is a pytest marker, deselected by default exactly like `integration`
 (`pyproject.toml`'s `addopts`). You need a running local Ollama with the
-configured model already pulled:
+configured model already pulled, and `EVAL_PROVIDER=ollama` set (there is no
+default provider: `EVAL_PROVIDER` unset makes the run stop with a message that
+names the variable, issue #182):
 
 ```bash
+export EVAL_PROVIDER=ollama
 ollama serve
 ollama pull qwen2.5:3b   # or whatever OLLAMA_MODEL names
 ```
@@ -86,12 +89,18 @@ stay in the usual `evals/results/` reports.
 ## Switching providers (EVAL_PROVIDER)
 
 The eval's own provider is a separate switch from the running application's
-`ADAPTER_PROVIDER`: `EVAL_PROVIDER` (`Settings.eval_provider`, default
-`"ollama"`), read by `agents_system.evals.provider.build_eval_model()`. Choosing a
+`ADAPTER_PROVIDER`: `EVAL_PROVIDER` (`Settings.eval_provider`, no default),
+read by `agents_system.evals.provider.build_eval_model()`. Choosing a
 different model for a one-off eval run must never change what the app itself
 serves, so the two never share a field. It accepts the same values
 `main._build_chat_model` dispatches on: `ollama`, `groq`, `anthropic`,
 `openai_compatible`.
+
+There is deliberately no default. It used to be a local Ollama model, so a run
+with a forgotten variable silently measured a different, weaker model than the
+one the numbers were meant for. Now `build_eval_model()` raises
+`EvalProviderNotConfiguredError`, naming `EVAL_PROVIDER` and the four values,
+before any model call. Set it explicitly, in the environment or in `.env`.
 
 `openai_compatible` reads the exact same `OPENAI_COMPATIBLE_BASE_URL` /
 `OPENAI_COMPATIBLE_MODEL` / `OPENAI_COMPATIBLE_API_KEY` settings every other
@@ -132,9 +141,9 @@ export MODEL_PRICES='{"google/gemini-3.8-flash": {"input_per_million": 0.75, "ou
 ```
 
 Without a `MODEL_PRICES` entry for the model, every turn reports
-`cost_usd: None` and the run's cost column stays empty. Never leave
-`EVAL_PROVIDER` at its default for a gate: it selects a local Ollama model,
-and a rate measured on a different model is not comparable.
+`cost_usd: None` and the run's cost column stays empty. Always set
+`EVAL_PROVIDER` explicitly for a gate, and check the model name in the
+report: a rate measured on a different model is not comparable.
 
 ## Scenario schema
 

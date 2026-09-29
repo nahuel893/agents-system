@@ -99,13 +99,24 @@ that assumes ACME, that is a bug, not a feature.
 The package is not published to PyPI. Install it from a release tag with uv:
 
 ```bash
-uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
+uv add "agents-system @ git+https://github.com/nahuel893/agents-system@v0.4.0"
 ```
 
-This works while the repository is private, for anyone whose SSH key has
-access to it; once it is public again,
-`git+https://github.com/nahuel893/agents-system@vX.Y.Z` works without
-credentials. Pin a tag rather than a branch, so every upgrade is a deliberate
+Replace `v0.4.0` with the release you want. Over HTTPS this needs no SSH setup
+and works without credentials once the repository is public; while it is
+private, git must be able to authenticate over HTTPS (a credential helper, or
+`gh auth setup-git`). The alternative, for anyone whose SSH key has access to
+the repository, is the SSH form:
+
+```bash
+uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@v0.4.0"
+```
+
+Expect the environment to be about 1.2 GB, most of it `torch` (see the note on
+`torch` below, and #188, "A light core install", which aims to make it
+optional).
+
+Pin a tag rather than a branch, so every upgrade is a deliberate
 change to your `pyproject.toml`; uv records the resolved commit in your
 `uv.lock`. When no tag holds a change you need yet, pin its full commit hash
 the same way (`...agents-system@<commit-sha>`) and move to the tag once it
@@ -470,6 +481,19 @@ The served app never uses it. `create_app`'s lifespan builds with
 escalation_notifier`, and a registry that holds the default (registered by
 hand) is refused at boot. Pass `builtin_defaults=False` yourself for the same
 fail-closed behaviour in-process.
+
+**Why the default stays on, and how to see it (issue #182).** The defaults are
+on by default so that the Quickstart runs in about ten lines with no
+registration. That is a deliberate trade-off, not an oversight, and the answer
+to "it is easy to forget they are on" is a louder signal rather than an opt-in:
+
+- the build logs `injector.builtin_default_granted` (above);
+- `EquippedRuntime.builtin_defaults` lists the granted built-in defaults of the
+  runtime (a default that was denied is not listed), so a deployment can assert
+  on it in a test or a startup check;
+- the audit trail marks them: `tool_granted`, `tool_call_attempted` and
+  `runtime_built` carry `builtin_default` (`runtime_built` carries the list
+  `builtin_defaults`), see `docs/platform/audit.md`.
 
 ---
 

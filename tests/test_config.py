@@ -352,9 +352,14 @@ def test_ollama_config_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_eval_provider_defaults_to_ollama() -> None:
+def test_eval_provider_has_no_silent_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#182: a live run that forgot EVAL_PROVIDER used to measure a local
+    Ollama model without saying so. There is no default any more."""
+    monkeypatch.delenv("EVAL_PROVIDER", raising=False)
     settings = Settings(_env_file=None)
-    assert settings.eval_provider == "ollama"
+    assert settings.eval_provider is None
 
 
 def test_eval_provider_overridable_via_env_independent_of_adapter_provider(
@@ -767,6 +772,49 @@ def test_settings_boots_when_meta_webhook_secret_set() -> None:
 
     settings = Settings(meta_webhook_secret="s", **common)  # type: ignore[arg-type]
     assert settings.meta_webhook_secret == "s"
+
+
+# ---------------------------------------------------------------------------
+# #182 -- an empty WHATSAPP_VERIFY_TOKEN with the WhatsApp channel enabled
+# ---------------------------------------------------------------------------
+
+
+def _whatsapp_settings(**overrides: object) -> Settings:
+    base: dict[str, object] = {
+        "_env_file": None,
+        "adapter_runtimes": [],
+        "meta_webhook_secret": "s",
+        "whatsapp_runtime_id": "sales",
+        # conftest sets ALLOW_INSECURE for the suite; an init kwarg outranks it.
+        "allow_insecure": False,
+    }
+    base.update(overrides)
+    return Settings(**base)  # type: ignore[arg-type]
+
+
+def test_settings_raises_when_whatsapp_is_enabled_without_a_verify_token() -> None:
+    """With the token unset, ``GET /webhook?hub.verify_token=`` would compare
+    two empty strings and succeed, answering the handshake for anyone."""
+    with pytest.raises(ValidationError) as excinfo:
+        _whatsapp_settings(whatsapp_verify_token="")
+    assert "whatsapp_verify_token" in str(excinfo.value)
+
+
+def test_settings_boots_when_whatsapp_is_enabled_with_a_verify_token() -> None:
+    settings = _whatsapp_settings(whatsapp_verify_token="v")
+    assert settings.whatsapp_verify_token == "v"
+
+
+def test_settings_needs_no_verify_token_while_whatsapp_is_not_enabled() -> None:
+    """A deployment that does not serve WhatsApp (no runtime routed to it)
+    is not asked for a WhatsApp secret."""
+    settings = _whatsapp_settings(whatsapp_runtime_id="", whatsapp_verify_token="")
+    assert settings.whatsapp_verify_token == ""
+
+
+def test_allow_insecure_lets_a_dev_boot_without_a_verify_token() -> None:
+    settings = _whatsapp_settings(whatsapp_verify_token="", allow_insecure=True)
+    assert settings.allow_insecure is True
 
 
 # ---------------------------------------------------------------------------

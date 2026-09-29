@@ -27,7 +27,7 @@ All entrypoint configuration comes from environment variables (or the project's
 | Variable | Default / requirement | Description |
 |----------|-----------------------|-------------|
 | `DEMO_DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo` | Connection pool for the loaded demo database. |
-| `EVAL_PROVIDER` | `ollama` | Chat-model provider: `ollama`, `groq`, `anthropic`, or `openai_compatible`. It is intentionally separate from `ADAPTER_PROVIDER`. |
+| `EVAL_PROVIDER` | required, no default | Chat-model provider: `ollama`, `groq`, `anthropic`, or `openai_compatible`. It is intentionally separate from `ADAPTER_PROVIDER`. |
 | `OLLAMA_MODEL` | `qwen2.5:3b` | Ollama model when `EVAL_PROVIDER=ollama`. |
 | `OLLAMA_BASE_URL` | optional | Ollama server URL; unset uses the provider default. |
 | `GROQ_API_KEY` | required for Groq | Credential used when `EVAL_PROVIDER=groq`. |

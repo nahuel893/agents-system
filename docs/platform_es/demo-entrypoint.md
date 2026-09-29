@@ -29,7 +29,7 @@ archivo `.env` del proyecto). La URL de la base demo es independiente de
 | Variable | Valor por defecto / requisito | Descripción |
 |----------|-------------------------------|-------------|
 | `DEMO_DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo` | Pool de conexión para la base demo cargada. |
-| `EVAL_PROVIDER` | `ollama` | Proveedor del modelo de chat: `ollama`, `groq`, `anthropic` u `openai_compatible`. Es intencionalmente independiente de `ADAPTER_PROVIDER`. |
+| `EVAL_PROVIDER` | obligatorio, sin valor por defecto | Proveedor del modelo de chat: `ollama`, `groq`, `anthropic` u `openai_compatible`. Es intencionalmente independiente de `ADAPTER_PROVIDER`. |
 | `OLLAMA_MODEL` | `qwen2.5:3b` | Modelo de Ollama cuando `EVAL_PROVIDER=ollama`. |
 | `OLLAMA_BASE_URL` | opcional | URL del servidor Ollama; sin definir usa el valor por defecto del proveedor. |
 | `GROQ_API_KEY` | obligatoria para Groq | Credencial usada cuando `EVAL_PROVIDER=groq`. |

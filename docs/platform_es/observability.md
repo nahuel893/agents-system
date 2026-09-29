@@ -124,10 +124,16 @@ igual que el outcome `error` a nivel turno.
 
 **Regla de honestidad para tokens/costo** -- mismo contrato que el
 `TurnUsage` del Slice 1: `agent_tokens_total`/`agent_cost_usd_total` sólo
-se incrementan cuando el valor es realmente conocido. Un turno que
-expiró por timeout o falló incrementa
+se incrementan cuando el valor es realmente conocido. Un turno que lanzó una
+excepción (`outcome="error"`) incrementa
 `agent_turns_total`/`agent_turn_duration_seconds` pero nunca una muestra
-de token o costo adivinada en `0`.
+de token o costo adivinada en `0`. Un turno con timeout (`outcome="timeout"`)
+informa el uso de las llamadas al modelo que terminaron antes de agotar su
+presupuesto (issue #172): es una cota inferior real, así que sus muestras de
+token y costo sí se registran; una llamada cortada a mitad de vuelo no informó
+nada y no se cuenta. Solo un turno con timeout cuyo uso no pudo determinarse
+(una degradación del checkpointer lo reinició, o no se produjo estado) no
+registra muestra de token ni de costo.
 
 ## Observabilidad del proveedor, y la investigación del issue #145
 
@@ -268,6 +274,24 @@ Al arrancar, la app registra un WARNING `runtime.turn_budget_below_request_timeo
 por cada runtime sobre el proveedor `openai_compatible` cuyo presupuesto de turno
 sea menor que el timeout de request. Nunca frena el arranque: un presupuesto
 ajustado puede ser deliberado.
+
+A qué roles incluidos alcanza y si es intencional:
+
+| Rol | `total_execution_timeout_s` | Avisa bajo `openai_compatible` |
+|---|---|---|
+| `sales-agent`, `data-agent` | 60 (el default de la plataforma, `PLATFORM_DEFAULT_LIMITS`; los roles no definen nada) | No: 60 s supera el timeout de request de 45 s |
+| `developer-agent` | 120 (definido a propósito) | No |
+| `operator-agent` | 30 (definido a propósito: el rol puede modificar el host, así que sus límites se ajustan) | Sí, en cada arranque |
+
+Los 60 s de `sales-agent` y `data-agent` son el default intencional, no un
+descuido, y es lo que mantiene silencioso su arranque. El aviso de
+`operator-agent` es esperado, no una falla: se repite en cada arranque mientras
+el rol corra sobre `openai_compatible` con el timeout de request de 45 s por
+defecto, y es la señal de que una sola llamada lenta al proveedor puede consumir
+el turno entero. Subí el presupuesto del rol en su `policy.md`, o bajá
+`OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S` solo si el proveedor es lo bastante
+rápido para seguir siendo útil. Ambos casos están probados contra el lifespan
+(`tests/test_main.py`).
 
 **Qué reporta un turno que agotó el tiempo.** El turno termina con la respuesta
 fija "This is taking longer than expected. Please try again." y

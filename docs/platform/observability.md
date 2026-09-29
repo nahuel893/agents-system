@@ -115,9 +115,14 @@ unchanged, same as the turn-level `error` outcome.
 
 **Honesty rule for tokens/cost** — same contract as slice 1's `TurnUsage`:
 `agent_tokens_total`/`agent_cost_usd_total` are only incremented when the
-value is actually known. A timed-out or errored turn increments
+value is actually known. A turn that raised (`outcome="error"`) increments
 `agent_turns_total`/`agent_turn_duration_seconds` but never a guessed `0`
-token or cost sample.
+token or cost sample. A timed-out turn (`outcome="timeout"`) reports the usage
+of the model calls that completed before its budget ran out (issue #172): that
+is a real lower bound, so its token and cost samples are recorded; a call cut
+off mid-flight reported nothing and is not counted. Only a timed-out turn whose
+usage could not be determined at all (a checkpointer degradation restarted it,
+or no state was produced) records no token or cost sample.
 
 ## Provider observability, and the issue #145 investigation
 
@@ -245,6 +250,23 @@ turns a slow but working provider into a failing one.
 At boot the app logs a `runtime.turn_budget_below_request_timeout` WARNING for
 every runtime on the `openai_compatible` provider whose turn budget is below
 the request timeout. It never stops the boot: a tight budget can be deliberate.
+
+Which shipped roles that concerns, and whether it is intended:
+
+| Role | `total_execution_timeout_s` | Warns under `openai_compatible` |
+|---|---|---|
+| `sales-agent`, `data-agent` | 60 (the platform default, `PLATFORM_DEFAULT_LIMITS`; the roles set nothing) | No: 60 s is above the 45 s request timeout |
+| `developer-agent` | 120 (set on purpose) | No |
+| `operator-agent` | 30 (set on purpose: the role can change the host, so its limits are tightened) | Yes, on every boot |
+
+The 60 s of `sales-agent` and `data-agent` is the intended default, not an
+oversight, and it is what keeps their boot quiet. The `operator-agent` warning
+is expected, not a fault: it repeats on every boot for as long as the role runs
+on `openai_compatible` with the default 45 s request timeout, and it is the
+signal that a single slow provider call can consume the whole turn. Raise the
+role's budget in its `policy.md`, or lower `OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S`
+only if the provider is fast enough to stay useful. Both are tested against the
+lifespan (`tests/test_main.py`).
 
 **What a timed-out turn reports.** The turn ends with the fixed reply "This
 is taking longer than expected. Please try again." and `outcome="timeout"`.

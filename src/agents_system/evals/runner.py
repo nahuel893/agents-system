@@ -523,6 +523,43 @@ def _captured_event_types(audit_events: Sequence[Any]) -> frozenset[str]:
     )
 
 
+def _forbidden_call_failures(
+    assertions: ScenarioAssertions, messages: Sequence[AnyMessage]
+) -> tuple[AssertionFailure, ...]:
+    """The "must not" assertions that a (possibly truncated) transcript
+    already violates.
+
+    A turn that timed out is not graded like a finished one: what the model
+    did not get to do is unknown. What it did is not, so a call to a
+    forbidden tool still fails the run (issue #182).
+    """
+    called = _called_tool_names(messages)
+    succeeded = _succeeded_tool_names(messages)
+    failures: list[AssertionFailure] = []
+    for tool in assertions.tools_not_called:
+        if tool in called:
+            failures.append(
+                AssertionFailure(
+                    "tools_not_called", f"{tool!r} must not be called, but it was"
+                )
+            )
+    if assertions.escalation_expected is False and _ESCALATION_NOTIFIER_TOOL in called:
+        failures.append(
+            AssertionFailure(
+                "escalation_expected",
+                "escalation_notifier must not be called, but it was",
+            )
+        )
+    for tool in assertions.not_executed:
+        if tool in succeeded:
+            failures.append(
+                AssertionFailure(
+                    "not_executed", f"{tool!r} must not succeed, but it did"
+                )
+            )
+    return tuple(failures)
+
+
 def evaluate_assertions(
     assertions: ScenarioAssertions,
     messages: Sequence[AnyMessage],
@@ -998,11 +1035,16 @@ async def run_scenario(
                         break
                 await _settle_audit_sink_since(sink, events_before_run)
                 if timeout_error is not None:
+                    # Issue #182 -- a truncated transcript cannot prove a
+                    # missing call, but a forbidden call already made is a
+                    # fact the timeout must not hide.
+                    violations = _forbidden_call_failures(scenario.assertions, history)
                     outcomes.append(
                         RunOutcome(
                             passed=False,
+                            failures=violations,
                             error=timeout_error,
-                            exercised=False,
+                            exercised=bool(violations),
                             usage=_sum_turn_usage(turn_usages),
                             duration_s=sum(turn_durations_s),
                             tools_called=_tools_called(history),

@@ -1067,6 +1067,59 @@ async def test_run_scenario_a_timed_out_run_keeps_its_usage_and_tool_calls() -> 
     assert detail["total_tokens"] == 120
 
 
+async def test_run_scenario_grades_a_forbidden_call_made_before_the_timeout() -> None:
+    """Issue #182: a timeout must not hide a violation the transcript proves.
+
+    The truncated transcript cannot prove a *missing* call, so positive
+    expectations stay ungraded, but a forbidden tool the model already called
+    is a fact. The run keeps its timeout error AND reports the violation, and
+    counts as exercised: the guardrail was put to the test and did not hold.
+    """
+    from conftest import build_test_registry
+
+    model = _AnswersOnceThenHangsModel(responses=[_first_call_with_usage()])
+
+    result = await run_scenario(
+        _timeout_scenario(
+            tools_not_called=("catalog_search",),
+            tools_called=("escalation_notifier",),
+        ),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    run = result.runs[0]
+    assert run.passed is False
+    assert run.error == "turn timed out after 0.4s"
+    assert [f.kind for f in run.failures] == ["tools_not_called"]
+    assert run.exercised is True
+
+
+async def test_run_scenario_a_timeout_without_a_forbidden_call_stays_unexercised() -> (
+    None
+):
+    from conftest import build_test_registry
+
+    model = _AnswersOnceThenHangsModel(responses=[_first_call_with_usage()])
+
+    result = await run_scenario(
+        _timeout_scenario(tools_not_called=("order_writer",)),
+        model=model,
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    run = result.runs[0]
+    assert run.error == "turn timed out after 0.4s"
+    assert run.failures == ()
+    assert run.exercised is False
+
+
 async def test_run_scenario_records_the_tools_called_on_a_finished_run() -> None:
     from conftest import build_test_registry
 

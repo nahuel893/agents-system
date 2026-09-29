@@ -103,13 +103,24 @@ El paquete no está publicado en PyPI. Instalalo desde un tag de release con
 uv:
 
 ```bash
-uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
+uv add "agents-system @ git+https://github.com/nahuel893/agents-system@v0.4.0"
 ```
 
-Esto funciona mientras el repositorio es privado, para cualquiera cuya clave
-SSH tenga acceso; cuando vuelva a ser público,
-`git+https://github.com/nahuel893/agents-system@vX.Y.Z` funciona sin
-credenciales. Fijá un tag y no una rama, así cada actualización es un cambio
+Reemplazá `v0.4.0` por el release que quieras. Por HTTPS no hace falta
+configurar SSH y funciona sin credenciales cuando el repositorio sea público;
+mientras es privado, git debe poder autenticarse por HTTPS (un credential
+helper, o `gh auth setup-git`). La alternativa, para quien tenga una clave SSH
+con acceso al repositorio, es la forma SSH:
+
+```bash
+uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@v0.4.0"
+```
+
+Esperá un entorno de unos 1,2 GB, en su mayoría `torch` (ver la nota sobre
+`torch` más abajo, y #188, "A light core install", que apunta a hacerlo
+opcional).
+
+Fijá un tag y no una rama, así cada actualización es un cambio
 deliberado en tu `pyproject.toml`; uv registra el commit resuelto en tu
 `uv.lock`. Si todavía ningún tag contiene un cambio que necesitás, fijá el
 hash completo de su commit de la misma forma (`...agents-system@<commit-sha>`)
@@ -483,6 +494,20 @@ propio `escalation_notifier` falla el arranque con `InjectionError: Unknown
 tool: escalation_notifier`, y un registro que contiene el default (registrado
 a mano) se rechaza al arrancar. Pasá `builtin_defaults=False` vos mismo para
 tener el mismo comportamiento de falla cerrada en proceso.
+
+**Por qué el default queda activado y cómo verlo (issue #182).** Los defaults
+vienen activados para que el Quickstart corra en unas diez líneas sin
+registrar nada. Es un trade-off deliberado, no un descuido, y la respuesta a
+"es fácil olvidar que están activos" es una señal más fuerte en lugar de un
+opt-in:
+
+- el build registra `injector.builtin_default_granted` (arriba);
+- `EquippedRuntime.builtin_defaults` lista los defaults incluidos otorgados del
+  runtime (un default denegado no aparece), así que un despliegue puede
+  afirmarlo en un test o en un chequeo de arranque;
+- la auditoría los marca: `tool_granted`, `tool_call_attempted` y
+  `runtime_built` llevan `builtin_default` (`runtime_built` lleva la lista
+  `builtin_defaults`), ver `docs/platform_es/audit.md`.
 
 ---
 

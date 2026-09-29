@@ -219,6 +219,7 @@ def resolve_tool_surface(
                 "record_tool_granted",
                 definition=definition,
                 tool_name=spec.name,
+                builtin_default=from_default,
             )
             continue
 

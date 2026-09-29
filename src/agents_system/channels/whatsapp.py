@@ -112,12 +112,16 @@ class WhatsAppChannel:
         if not hub_challenge:
             raise HTTPException(status_code=400, detail="Missing hub.challenge")
 
+        configured_token = self._require_settings().verify_token
+        # An unset token is not a credential: without this, the empty string
+        # would match an empty (or absent-as-empty) ``hub.verify_token``.
         if (
-            hub_mode == "subscribe"
+            configured_token
+            and hub_mode == "subscribe"
             and hub_verify_token is not None
             and hmac.compare_digest(
                 hub_verify_token.encode("utf-8"),
-                self._require_settings().verify_token.encode("utf-8"),
+                configured_token.encode("utf-8"),
             )
         ):
             return hub_challenge

@@ -24,9 +24,12 @@ pytest -m live
 
 `live` es un marcador de pytest, deseleccionado por defecto igual que
 `integration` (el `addopts` de `pyproject.toml`). Necesitás un Ollama local
-corriendo con el modelo configurado ya descargado:
+corriendo con el modelo configurado ya descargado, y `EVAL_PROVIDER=ollama`
+definido (no hay proveedor por defecto: con `EVAL_PROVIDER` sin definir la
+corrida se detiene con un mensaje que nombra la variable, issue #182):
 
 ```bash
+export EVAL_PROVIDER=ollama
 ollama serve
 ollama pull qwen2.5:3b   # o el que nombre OLLAMA_MODEL
 ```
@@ -92,12 +95,19 @@ el costo siguen en los reportes de siempre en `evals/results/`.
 ## Cambiar de proveedor (EVAL_PROVIDER)
 
 El proveedor propio del eval es un switch separado del `ADAPTER_PROVIDER` de
-la aplicación en ejecución: `EVAL_PROVIDER` (`Settings.eval_provider`, por
-defecto `"ollama"`), leído por `agents_system.evals.provider.build_eval_model()`.
+la aplicación en ejecución: `EVAL_PROVIDER` (`Settings.eval_provider`, sin
+valor por defecto), leído por `agents_system.evals.provider.build_eval_model()`.
 Elegir otro modelo para una corrida de eval puntual nunca debe cambiar lo que
 la app misma sirve, así que ambos nunca comparten un campo. Acepta los mismos
 valores que despacha `main._build_chat_model`: `ollama`, `groq`, `anthropic`,
 `openai_compatible`.
+
+A propósito no hay valor por defecto. Antes era un modelo local de Ollama, así
+que una corrida con la variable olvidada medía en silencio otro modelo, más
+débil, que el de los números que se querían obtener. Ahora `build_eval_model()`
+lanza `EvalProviderNotConfiguredError`, que nombra `EVAL_PROVIDER` y los cuatro
+valores, antes de cualquier llamada al modelo. Definilo explícitamente, en el
+entorno o en `.env`.
 
 `openai_compatible` lee exactamente los mismos settings
 `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_MODEL` /
@@ -140,9 +150,9 @@ export MODEL_PRICES='{"google/gemini-3.8-flash": {"input_per_million": 0.75, "ou
 ```
 
 Sin una entrada de `MODEL_PRICES` para el modelo, cada turno reporta
-`cost_usd: None` y la columna de costo de la corrida queda vacía. Nunca dejes
-`EVAL_PROVIDER` en su valor por defecto para una compuerta: elige un modelo
-local de Ollama, y una tasa medida con otro modelo no es comparable.
+`cost_usd: None` y la columna de costo de la corrida queda vacía. Definí siempre
+`EVAL_PROVIDER` explícitamente para una compuerta, y revisá el nombre del modelo
+en el reporte: una tasa medida con otro modelo no es comparable.
 
 ## Esquema de escenario
 
