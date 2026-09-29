@@ -114,9 +114,11 @@ the repository, is the SSH form:
 uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@v0.4.0"
 ```
 
-Expect the environment to be about 1.2 GB, most of it `torch` (see the note on
-`torch` below, and #188, "A light core install", which aims to make it
-optional).
+From the first release after v0.4.0, that is a plain install: the light core,
+about 76 MB, which is all the Quickstart needs. The server, the database, the
+SQL tool, embeddings and the chat model providers are extras (see "Extras"
+below); up to v0.4.0 the same command brought all of them, about 1 GB more,
+most of it `torch`.
 
 Pin a tag rather than a branch, so every upgrade is a deliberate
 change to your `pyproject.toml`; uv records the resolved commit in your
@@ -151,8 +153,8 @@ full install is over 1 GB, most of it `torch`.
 Everything else is an extra. Name the ones you use in the requirement:
 
 ```bash
-uv add "agents-system[anthropic] @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
-uv add "agents-system[server,openai] @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
+uv add "agents-system[anthropic] @ git+https://github.com/nahuel893/agents-system@vX.Y.Z"
+uv add "agents-system[server,openai] @ git+https://github.com/nahuel893/agents-system@vX.Y.Z"
 ```
 
 | Extra | What it enables | What it installs |

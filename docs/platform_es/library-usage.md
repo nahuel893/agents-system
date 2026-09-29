@@ -118,9 +118,11 @@ con acceso al repositorio, es la forma SSH:
 uv add "agents-system @ git+ssh://git@github.com/nahuel893/agents-system@v0.4.0"
 ```
 
-Esperá un entorno de unos 1,2 GB, en su mayoría `torch` (ver la nota sobre
-`torch` más abajo, y #188, "A light core install", que apunta a hacerlo
-opcional).
+Desde el primer release posterior a v0.4.0, eso es una instalación simple: el
+núcleo liviano, de unos 76 MB, que es todo lo que necesita el Inicio rápido. El
+servidor, la base de datos, la tool SQL, los embeddings y los proveedores de
+modelos de chat son extras (ver "Extras" más abajo); hasta v0.4.0 el mismo
+comando traía todo eso, alrededor de 1 GB más, casi todo `torch`.
 
 Fijá un tag y no una rama, así cada actualización es un cambio
 deliberado en tu `pyproject.toml`; uv registra el commit resuelto en tu
@@ -157,8 +159,8 @@ con el núcleo mide unos 76 MB, mientras que una instalación completa pasa de
 Todo lo demás es un extra. Nombrá los que uses en el requisito:
 
 ```bash
-uv add "agents-system[anthropic] @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
-uv add "agents-system[server,openai] @ git+ssh://git@github.com/nahuel893/agents-system@vX.Y.Z"
+uv add "agents-system[anthropic] @ git+https://github.com/nahuel893/agents-system@vX.Y.Z"
+uv add "agents-system[server,openai] @ git+https://github.com/nahuel893/agents-system@vX.Y.Z"
 ```
 
 | Extra | Qué habilita | Qué instala |

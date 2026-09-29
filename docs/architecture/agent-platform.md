@@ -7,7 +7,7 @@ This document defines the formal architecture of agents-system, a development ki
 The kit is split into three parts:
 
 1. **Core kit** — the harness: declarative and Python agent definitions, orchestration, lifecycle, permissions, and capability injection. This is what you build agents with.
-2. **Optional pieces** — the OpenAI-compatible **server**, the **channels** (WhatsApp is the first one), the **predefined roles** (reusable agent archetypes) and the **reference backends** (Postgres, Redis, embeddings). They are optional at runtime, not at install time: you only turn on the ones you need, but installing the kit still brings the dependencies of all of them (fastapi, asyncpg, redis and torch) until #188, a light core install, changes the packaging.
+2. **Optional pieces** — the OpenAI-compatible **server**, the **channels** (WhatsApp is the first one), the **predefined roles** (reusable agent archetypes) and the **reference backends** (Postgres, Redis, embeddings). You turn on only the ones you need, and install only the ones you use: a plain install is the core, and the server, the channels and the reference backends are extras (`server`, `postgres`, `sql`, `embeddings`, and one per chat model provider). The predefined roles ship with the core.
 3. **Your application** — the tools, connectors, business rules and per-client overrides that turn the kit into a specific agent. They live in your own repository, not in this one.
 
 This separation is intentional. The kit is the reusable product. Any one agent built with it, a sales assistant included, is an application of the kit, never the kit itself.
@@ -31,11 +31,11 @@ The core kit owns the generic multi-agent infrastructure:
 
 ### Optional pieces
 
-The kit ships these so you do not have to build them, and nothing in the core depends on them at runtime. Installing the kit still brings their dependencies:
+The kit ships these so you do not have to build them, and nothing in the core depends on them. The predefined roles come with a plain install; the rest are extras you install when you use them:
 
-- the OpenAI-compatible server and its channels
-- the predefined roles under `platform/roles/`
-- reference backends for persistence, checkpointing and embeddings
+- the OpenAI-compatible server and its channels (the `server` extra)
+- the predefined roles under `platform/roles/` (in every install)
+- reference backends for persistence, checkpointing and embeddings (the `postgres`, `server` and `embeddings` extras)
 
 ### Your application
 

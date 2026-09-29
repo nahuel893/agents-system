@@ -140,36 +140,45 @@ def test_architecture_twins_name_the_same_optional_pieces(path: str) -> None:
         assert piece in opening.lower(), f"{path}: summary must name {piece!r}"
 
 
-#: (path, phrase that qualifies "optional" as a runtime choice, the install fact)
-RUNTIME_QUALIFIERS = (
-    ("README.md", "at runtime", "installing the kit"),
-    ("AGENTS.md", "at runtime", "installing the kit"),
-    ("docs/architecture/agent-platform.md", "at runtime", "installing the kit"),
-    (
-        "docs/architecture_es/agent-platform.md",
-        "en tiempo de ejecución",
-        "instalar el kit",
-    ),
+#: (path, the phrase naming a plain install, the phrase naming the extras).
+#: Issue #188 made the install light: a plain install is the core, and the
+#: server, the channels and the reference backends are extras. The predefined
+#: roles ship with the core, inside the wheel.
+INSTALL_FACTS = (
+    ("README.md", "plain install", "extras"),
+    ("AGENTS.md", "plain install", "extras"),
+    ("docs/architecture/agent-platform.md", "plain install", "extras"),
+    ("docs/architecture_es/agent-platform.md", "instalación simple", "extras"),
+    ("docs/platform/library-usage.md", "plain install", "extras"),
+    ("docs/platform_es/library-usage.md", "instalación simple", "extras"),
 )
 
-#: Wording that reads as "you can skip these when you install".
-INSTALL_OPTIONAL_WORDING = (
-    "leave the rest",
-    "dejan las demás",
-    "add when you need it",
+#: What the entry points said while every piece was a mandatory dependency.
+STALE_INSTALL_WORDING = (
+    "1.2 gb",
+    "1,2 gb",
+    "until #188",
+    "hasta que #188",
+    "aims to make it",
+    "apunta a hacerlo",
+    "not at install time",
+    "no al instalar",
+    "installing the kit brings",
+    "installing the kit still brings",
+    "al instalar el kit igual se traen",
 )
 
 
-@pytest.mark.parametrize(("path", "runtime", "install"), RUNTIME_QUALIFIERS)
-def test_optional_pieces_are_optional_at_runtime_not_at_install(
-    path: str, runtime: str, install: str
+@pytest.mark.parametrize(("path", "core", "extras"), INSTALL_FACTS)
+def test_entry_points_say_the_optional_pieces_are_extras(
+    path: str, core: str, extras: str
 ) -> None:
-    """A plain install still pulls fastapi, asyncpg, redis and torch (#188)."""
+    """A plain install is the core; the rest is an extra (#188)."""
     text = _read(path)
-    assert runtime in text, f"{path}: say the pieces are optional {runtime!r}"
-    assert install in text, f"{path}: say what {install!r} still brings"
-    offenders = [w for w in INSTALL_OPTIONAL_WORDING if w in text.lower()]
-    assert not offenders, f"{path} implies an optional install: {offenders}"
+    assert core in text, f"{path}: say what {core!r} brings"
+    assert extras in text, f"{path}: name the {extras!r}"
+    offenders = [w for w in STALE_INSTALL_WORDING if w in text.lower()]
+    assert not offenders, f"{path} still describes the pre-#188 install: {offenders}"
 
 
 def _section(text: str, heading: str) -> str:
