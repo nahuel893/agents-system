@@ -31,11 +31,11 @@ Every feature of the kit on one page, with the name to reach it and the page tha
 |---|---|---|---|---|
 | Your own tools | A tool is a `ToolSpec` (name, required permissions, tier, input schema, async connector) held in a registry. Your code runs the connector: database, API, anything. | `ToolRegistry`, `ToolSpec`, `Tier` | None | [Tool](tool.md), [Library usage](library-usage.md) |
 | Capability tiers | Every tool declares how dangerous it is: T0 inherent, T1 scoped read, T2 write, send or model-written query, T3 host execution. A tier that understates a permission is rejected. | `ToolSpec(tier=Tier.T2, ...)` | None | [Tool](tool.md) |
-| Declarative command tools | Declares a fixed command line in a manifest. The model fills declared parameters only, each checked against a pattern or a list. The command runs without a shell, inside a bubblewrap sandbox. | `command_tools:` in `manifest.md` (permission `run:<name>`, tier T2 or T3); `build_command_tool_specs` | None (host needs `bwrap`) | [Tool](tool.md), [Sandbox](../operations/sandbox-bwrap.md) |
+| Declarative command tools | Declares a fixed command line in a manifest. The model fills declared parameters only, each checked against a pattern or a list. The command runs without a shell, inside a bubblewrap sandbox. | `command_tools:` in `manifest.md` (permission `run:<name>`, tier T2); `build_command_tool_specs` | None (host needs `bwrap`) | [Tool](tool.md), [Sandbox](../operations/sandbox-bwrap.md) |
 | Read-only SQL tool | Lets the model write a read-only query over an allowlist of views. A guard rejects anything else, and a database role enforces the limits. | `build_sql_query_tool_spec(engine, SqlQueryConfig(...))`; permission `query:sql`; `scripts/provision_sql_readonly.sql` | `sql` | [ADR-007](../architecture/adr-007-read-only-sql-tool.md), [Tool](tool.md) |
 | Operator tools | A shell and a file reader for the `operator-agent` role, under a sandbox and terminal policy. Host execution (T3). | `build_operator_tool_specs`, `TerminalPolicy`, `SandboxPolicy` | None (host needs `bwrap`) | [Sandbox](../operations/sandbox-bwrap.md), [Tool](tool.md) |
-| Reference backends | Opt-in implementations of the tools the predefined roles declare: catalog search, client lookup, sales reports, message sender, in-memory knowledge base, order writer, summarizer. | `ReferenceBackends` and its `*_tool_spec()` methods; `InMemoryKnowledgeBase`, `InMemoryOrderWriter` | `postgres` (the database-backed ones) | [Reference backends](reference-backends.md) |
-| Catalog retrieval | Search over a product catalog you provide: vectors when an embedder is available, keywords otherwise. | `build_catalog_rag_connector(embedder, settings, source)` with your `CatalogSource`; `search_catalog`; `EMBEDDING_PROVIDER` | `embeddings` for vectors | [Library usage](library-usage.md#extras) |
+| Reference backends | Opt-in implementations of the tools the predefined roles declare: catalog search, client lookup, sales reports, message sender, in-memory knowledge base, order writer, summarizer. | `ReferenceBackends` and its `*_tool_spec()` methods; `InMemoryKnowledgeBase`, `InMemoryOrderWriter` | `postgres` (the whole module needs it, in-memory classes included) | [Reference backends](reference-backends.md) |
+| Catalog retrieval | Search over a product catalog you provide: vectors when an embedder is available, keywords otherwise. | `build_catalog_rag_connector(embedder, settings, source)` with your `CatalogSource`; `search_catalog`; `EMBEDDING_PROVIDER` | `postgres`, plus `embeddings` for vectors | [Library usage](library-usage.md#extras) |
 | Built-in escalation | In-process, a role that inherits `escalation_notifier` gets a default that reaches no human, logs the attempt and records an audit event, so a first agent builds without wiring one. The served app never uses it: boot fails until you register your own. | `build_runtime(..., builtin_defaults=False)` to turn it off; `EquippedRuntime.builtin_defaults` | None | [Library usage](library-usage.md), [Audit](audit.md) |
 
 ## Permissions and security
@@ -58,17 +58,17 @@ Every feature of the kit on one page, with the name to reach it and the page tha
 | Execution limits | Caps tool calls, per-call time and total turn time. A timed-out turn reports the timeout and keeps its usage. Limits can only be tightened by overrides. | `execution_limits:` in `policy.md`; `tool_call_timeout_s`, `total_execution_timeout_s`, `max_tool_calls` | None | [Policy](policy.md) |
 | Turn usage and cost | Returns token usage and a cost estimate for each turn, from a price table you supply. | `run_turn_with_usage`, `TurnUsage`; `ModelPrice`, `AgentRuntime(model_prices=...)`, `MODEL_PRICES` | None | [Library usage](library-usage.md), [Live eval](live-eval.md) |
 | Tool-call repair (**coming in the next release**) | After a turn stops mid-tool (a timeout), the unanswered tool calls are closed in the history the model sees, so the next turn is valid. | Automatic in `AgentRuntime.run_turn` | None | [Context size](context-size.md) |
-| Escalation to a human | Roles declare when to escalate. The `escalation_notifier` tool (permission `send:escalation`) hands the case to a channel you provide. | `escalation_rules` in `policy.md`; `EscalationChannel` protocol, `LoggingEscalationChannel` (reference) | None | [Policy](policy.md), [Reference backends](reference-backends.md) |
+| Escalation to a human | Roles declare when to escalate. The `escalation_notifier` tool (permission `send:escalation`) hands the case to a channel you provide. | `escalation_rules` in `policy.md`; `EscalationChannel` protocol, `LoggingEscalationChannel` (reference) | None for the protocol; `postgres` for `LoggingEscalationChannel` | [Policy](policy.md), [Reference backends](reference-backends.md) |
 
 ## Conversation memory and context
 
 | Feature | What it does | How to use it | Extra needed | Docs |
 |---|---|---|---|---|
-| Durable conversation memory (**coming in the next release**) | Keeps each conversation in PostgreSQL, so it survives restarts. Replaces the Redis checkpointer. | `open_postgres_checkpointer`, `AgentRuntime(checkpointer=...)`; tables from migration `007` | `postgres` | [Conversation memory](conversation-memory.md) |
+| Durable conversation memory (**coming in the next release**) | Keeps each conversation in PostgreSQL, so it survives restarts. Replaces the Redis checkpointer. | `open_postgres_checkpointer`, `AgentRuntime(checkpointer=...)` plus `run_turn(..., thread_id=...)`: without a `thread_id` a turn keeps no history; tables from migration `007` | `postgres` | [Conversation memory](conversation-memory.md) |
 | Retention and purge (**coming in the next release**) | Deletes conversations idle past a window, on a schedule. The window is its own setting; `never` keeps them. | `CHECKPOINTER_RETENTION_S`, `CHECKPOINTER_PURGE_INTERVAL_S`; `purge_checkpoints`, `CheckpointPurger` | `postgres` | [Conversation memory](conversation-memory.md) |
 | Failure policy (**coming in the next release**) | If the store cannot answer in time, the turn degrades instead of stalling, and a metric counts it. | `CHECKPOINTER_TIMEOUT_S`, `CHECKPOINTER_POOL_SIZE` | `postgres` | [Conversation memory](conversation-memory.md) |
 | Context budget (**coming in the next release**) | Trims the oldest history when a model call would pass a token budget. Records an audit event and a metric. | `max_context_tokens` in `execution_limits`; `trim_history` | None | [Context size](context-size.md) |
-| Conversation isolation | Each `session_id` is its own thread, with no state shared between them. | `run_turn(..., session_id=...)` | None | [Harness](harness.md) |
+| Conversation isolation | A turn is stateless unless you pass `thread_id`. With a checkpointer, `thread_id` keys the saved history and threads share no state. `session_id` is only a label carried in the turn state. | `AgentRuntime(checkpointer=...)`, `run_turn(..., thread_id=...)` | None (the durable checkpointer needs `postgres`) | [Library usage](library-usage.md), [Conversation memory](conversation-memory.md) |
 
 ## Serving and channels
 
@@ -98,13 +98,13 @@ Every feature of the kit on one page, with the name to reach it and the page tha
 
 | Feature | What it does | How to use it | Extra needed | Docs |
 |---|---|---|---|---|
-| YAML scenarios | Describes a conversation and what must be true of the result: tools called, text, permission outcomes. | Files in `evals/scenarios/`; `load_scenario`, `load_scenarios`, `Scenario` | None | [Live eval](live-eval.md) |
-| Live eval against a real model | Runs scenarios against a real provider, opt-in and never on offline test runs. | `pytest -m live`; `EVAL_PROVIDER`; `build_eval_model` | The provider extra | [Live eval](live-eval.md) |
-| Whole suite in one command | Runs every phase and writes logs and a summary. | `scripts/run-live-suite.sh` (`--quick` for one run each) | The provider extra | [Live eval](live-eval.md) |
-| Success-rate gates | Repeats each scenario and gates on the share that passes. | `EVAL_RUNS`; `ScenarioGate` | The provider extra | [Live eval](live-eval.md) |
-| Guardrail assertions | Checks that a boundary held: a call was blocked, a tool was not called, a limit fired, an audit event was recorded. | `ScenarioAssertions`; `evaluate_assertions` | The provider extra | [Live eval](live-eval.md) |
+| YAML scenarios | Describes a conversation and what must be true of the result: tools called, text, permission outcomes. | Files in `evals/scenarios/`; `load_scenario`, `load_scenarios`, `Scenario` | `postgres` | [Live eval](live-eval.md) |
+| Live eval against a real model | Runs scenarios against a real provider, opt-in and never on offline test runs. | `pytest -m live`; `EVAL_PROVIDER`; `build_eval_model` | `postgres` and the provider extra | [Live eval](live-eval.md) |
+| Whole suite in one command | Runs every phase and writes logs and a summary. | `scripts/run-live-suite.sh` (`--quick` for one run each) | `postgres` and the provider extra | [Live eval](live-eval.md) |
+| Success-rate gates | Repeats each scenario and gates on the share that passes. | `EVAL_RUNS`; `ScenarioGate` | `postgres` and the provider extra | [Live eval](live-eval.md) |
+| Guardrail assertions | Checks that a boundary held: a call was blocked, a tool was not called, a limit fired, an audit event was recorded. | `ScenarioAssertions`; `evaluate_assertions` | `postgres` and the provider extra | [Live eval](live-eval.md) |
 | Load scenarios | Drives concurrent turns through the real app with an injected model. | `pytest -m load`; `create_app(chat_model=...)` | `server` | [Live eval](live-eval.md) |
-| Result files | Writes results, tokens and cost per run. | `write_results` | None | [Live eval](live-eval.md) |
+| Result files | Writes results, tokens and cost per run. | `write_results` | `postgres` | [Live eval](live-eval.md) |
 
 ## Installation and packaging
 
@@ -123,7 +123,7 @@ Every feature of the kit on one page, with the name to reach it and the page tha
 | Docker deployment | A production Compose stack: database, Redis, migrations, then the app. Ports bind to localhost. | `docker-compose.prod.yml`, `Dockerfile` | None | [Deployment](../operations/deployment.md) |
 | systemd deployment | Units for a Linux host: a one-shot migration, then the app. | `deploy/systemd/` | None | [Deployment](../operations/deployment.md) |
 | Migrations | Schema changes with Alembic, run before the app starts. | `alembic upgrade head`; `alembic/versions/` | `postgres` | [Deployment](../operations/deployment.md) |
-| Sandboxed execution | Runs T3 tools in a bubblewrap sandbox on the host. | `bwrap` on the host; `SandboxPolicy` | None | [Sandbox](../operations/sandbox-bwrap.md) |
+| Sandboxed execution | Runs the built-in operator tools and the declarative command tools in a bubblewrap sandbox on the host. A custom T3 tool of your own runs in the host process, so its connector must sandbox itself. | `bwrap` on the host; `SandboxPolicy` | None | [Sandbox](../operations/sandbox-bwrap.md) |
 | Database provisioning | Creates the read-only roles the report and SQL tools rely on. | `scripts/provision_bi_readonly.sql`, `scripts/provision_sql_readonly.sql` | `postgres` | [ADR-007](../architecture/adr-007-read-only-sql-tool.md), [Reference backends](reference-backends.md) |
 | Demo | A fake distributor with data and a runnable app, to see the pieces working. | `examples/demo/app.py`; `demo/README.md` | `server` | [Demo entrypoint](demo-entrypoint.md) |
 
