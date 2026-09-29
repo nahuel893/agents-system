@@ -1,8 +1,9 @@
 """Live harness for issue #78 Phase 0 Slice 3.
 
 Boots the REAL application -- the HTTP API, the WhatsApp webhook route and
-its deferred worker, a real (throwaway) Postgres database, a real Redis
-checkpointer, and audit persisted to the real `audit_event` table -- instead
+its deferred worker, a real (throwaway) Postgres database holding the real
+checkpointer's conversation threads (#24), and audit persisted to the real
+`audit_event` table -- instead
 of calling `AgentRuntime.run_turn` directly the way `evals/runner.py` does.
 Phase 1 (#79) and Phase 2 (extends #76) are meant to build their own live
 scenarios on top of `boot_live_harness` below.
@@ -24,16 +25,15 @@ Design decisions
   `alembic upgrade head` (the same pattern the CI `audit-migration` /
   `outbox-migration` jobs use for a disposable schema), dropped at teardown.
   Never the operator's own `agents_system` database.
-- **Real Redis** at the harness's configured `REDIS_URL` (docker-compose's
-  `redis` service) -- the checkpointer runs for real
-  (`WHATSAPP_CHECKPOINTER_ENABLED` defaults `True`; nothing here disables
-  it), so `read_thread` reads an actual persisted LangGraph checkpoint.
-  `boot_live_harness` tracks every `thread_id` its own `deliver_webhook`
-  calls write (the normalized phone number `DeferredWebhookWorker` engages
-  the checkpointer with) and deletes those threads at teardown, in the same
-  `finally` that drops the throwaway database -- a checkpoint left behind by
-  one run must never be mistaken for proof that a LATER run's checkpointing
-  actually worked (#113 review).
+- **The real checkpointer** (#24): LangGraph's Postgres saver on the
+  throwaway database, whose checkpoint tables `alembic upgrade head` creates
+  (revision 007). It runs for real (`WHATSAPP_CHECKPOINTER_ENABLED` defaults
+  `True`; nothing here disables it), so `read_thread` reads an actual
+  persisted LangGraph checkpoint. Every thread this run writes lives in that
+  database and is dropped with it at teardown, so a checkpoint left behind by
+  one run can never be mistaken for proof that a LATER run's checkpointing
+  actually worked (#113 review). `used_thread_ids` still records which
+  threads `deliver_webhook` drove.
 - **One `boot_live_harness` at a time per process.** Booting mutates the
   process-global `os.environ` and the process-global `get_settings()`
   `lru_cache` -- there is no per-instance `Settings` isolation. A whole
@@ -313,11 +313,10 @@ class FakeWhatsAppServer:
 
     async def stop(self) -> None:
         """Never raises (#113 review): `boot_live_harness`'s teardown
-        `finally` calls this before `_delete_redis_threads`/`_drop_database`
-        -- an exception escaping here would abort that `finally` block
-        before the throwaway database is dropped, masking whatever error
-        actually failed the boot. Mirrors `_drop_database`'s/
-        `_delete_redis_threads`'s own never-raise teardown contract."""
+        `finally` calls this before `_drop_database` -- an exception escaping
+        here would abort that `finally` block before the throwaway database
+        is dropped, masking whatever error actually failed the boot. Mirrors
+        `_drop_database`'s own never-raise teardown contract."""
         if self._server is not None:
             self._server.should_exit = True
         if self._task is not None:
@@ -526,30 +525,6 @@ async def _drop_database(admin_url: str, name: str) -> None:
         logger.warning("live_harness.drop_database_failed", database=name)
     finally:
         await engine.dispose()
-
-
-async def _delete_redis_threads(redis_url: str, thread_ids: set[str]) -> None:
-    """Best-effort delete of every LangGraph checkpoint this harness run
-    wrote (#113 review, high-severity finding): a stale checkpoint left by
-    an earlier run under the same `thread_id` must never let a later run's
-    `read_thread` assertion pass without the current run's checkpointer
-    genuinely having written anything. Mirrors `_drop_database`'s own
-    never-raise contract -- a teardown that fails must not hide the test's
-    own result.
-    """
-    if not thread_ids:
-        return
-    from langgraph.checkpoint.redis import AsyncRedisSaver
-
-    try:
-        async with AsyncRedisSaver.from_conn_string(redis_url) as saver:
-            for thread_id in thread_ids:
-                await saver.adelete_thread(thread_id)
-    except Exception:
-        logger.warning(
-            "live_harness.delete_redis_threads_failed",
-            thread_ids=sorted(thread_ids),
-        )
 
 
 def _run_migrations(database_url: str, *, repo_root: Path) -> None:
@@ -786,10 +761,9 @@ class LiveHarness:
     #: re-deriving it from `LIVE_HARNESS_ADMIN_DATABASE_URL` itself.
     database_url: str
     #: Every `thread_id` (normalized phone number) a `deliver_webhook` call
-    #: has driven the checkpointer with, so `boot_live_harness`'s teardown
-    #: knows exactly which Redis checkpoints are this run's own to delete
-    #: (#113 review) -- never mutated by `send_chat_completion`, which never
-    #: engages the checkpointer (see this module's docstring).
+    #: has driven the checkpointer with (#113 review) -- never mutated by
+    #: `send_chat_completion`, which never engages the checkpointer. They all
+    #: live in this run's throwaway database (see this module's docstring).
     used_thread_ids: set[str] = field(default_factory=set)
 
     async def send_chat_completion(self, text: str) -> httpx.Response:
@@ -822,9 +796,9 @@ class LiveHarness:
         # (#113 review), which adds a leading `+` when *phone* is missing
         # one. Tracking the raw, unnormalized `phone` here would record the
         # wrong key whenever a caller passes a number without a leading
-        # `+`, so teardown would delete nothing and leak the real Redis
-        # checkpoint (#113 review follow-up) -- regardless of whether the
-        # worker has run yet by the time this call returns.
+        # `+`, so the recorded key would not be the thread the worker wrote
+        # (#113 review follow-up) -- regardless of whether the worker has
+        # run yet by the time this call returns.
         normalized_phone = AcceptAllParticipantDirectory().normalize_address(phone)
         self.used_thread_ids.add(normalized_phone)
         return await self.client.post(
@@ -893,11 +867,15 @@ class LiveHarness:
     async def read_thread(self, thread_id: str) -> Any:
         """Read the checkpointed LangGraph thread for *thread_id* (the
         normalized address `DeferredWebhookWorker` used) straight out of the
-        real Redis checkpointer -- `None` if nothing was ever checkpointed
-        under it."""
-        from langgraph.checkpoint.redis import AsyncRedisSaver
+        real Postgres checkpointer's tables in this run's database -- `None`
+        if nothing was ever checkpointed under it."""
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-        async with AsyncRedisSaver.from_conn_string(self.redis_url) as saver:
+        from agents_system.services.checkpointer import psycopg_conninfo
+
+        async with AsyncPostgresSaver.from_conn_string(
+            psycopg_conninfo(self.database_url)
+        ) as saver:
             return await saver.aget_tuple({"configurable": {"thread_id": thread_id}})
 
 
@@ -951,8 +929,9 @@ async def boot_live_harness(
     Requires a reachable Postgres (`LIVE_HARNESS_ADMIN_DATABASE_URL`,
     default: `docker-compose.yml`'s own `postgres` service) able to
     `CREATE DATABASE`, a reachable Redis (`LIVE_HARNESS_REDIS_URL`, default:
-    the `redis` service), and a real model reachable through whatever
-    `EVAL_PROVIDER` is configured (see `docs/platform/live-eval.md`).
+    the `redis` service, probed by `GET /health`), and a real model reachable
+    through whatever `EVAL_PROVIDER` is configured (see
+    `docs/platform/live-eval.md`).
 
     *role* (#79, Phase 1) accepts either a predefined platform-role name --
     #78's original `str` -- or a Python-built `Agent` (`agent.spec.Agent`,
@@ -1151,8 +1130,6 @@ async def boot_live_harness(
             if registry_engine is not None:
                 await registry_engine.dispose()
             await outbound.stop()
-            if harness is not None:
-                await _delete_redis_threads(redis_url, harness.used_thread_ids)
             await _drop_database(admin_url, db_name)
             if demo_db_name is not None:
                 await _drop_database(admin_url, demo_db_name)

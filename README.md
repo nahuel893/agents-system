@@ -77,7 +77,7 @@ This design means you can instantiate a **data analyst agent**, a **sales agent*
 │                   Agent Runtime                      │
 │  LangGraph graph  (or any orchestrator)              │
 │  Node: classify → route → execute → respond          │
-│  State: Redis (checkpointer per thread_id)           │
+│  State: Postgres (checkpointer per thread_id)        │
 └───────────────────────┬──────────────────────────────┘
                         │ injects
 ┌───────────────────────▼──────────────────────────────┐
@@ -192,7 +192,8 @@ Enforced invariants — additive for capability, subtractive for safety:
 | **LLM** | Pluggable: Anthropic, OpenAI, Groq, Ollama | Model per task, none locked in |
 | **Declarative Format** | YAML frontmatter in Markdown | Human-readable, diffable, composable |
 | **Tool Registry** | Python dataclasses + permission tuples | Simple, testable, auditable |
-| **State / Cache** | Redis 8+ | Sub-millisecond reads, TTL-based eviction, RediSearch query engine |
+| **Conversation state** | PostgreSQL 16 (LangGraph checkpointer) | Survives restarts; idle conversations purged after `CHECKPOINTER_RETENTION_S` ([conversation memory](docs/platform/conversation-memory.md)) |
+| **Redis** | Redis 8+ | Reported by `GET /health`; it no longer holds conversation state |
 | **Primary Database** | PostgreSQL 16 | Relational storage for orders, clients, audit logs |
 | **Logging** | structlog | Structured JSON with correlation IDs |
 | **Async Queue** | FastAPI BackgroundTasks → Celery (scale) | Start simple, scale when needed |
@@ -362,6 +363,7 @@ Environment variables (loaded from `.env`). Key settings:
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql+asyncpg://localhost:5432/agents_system` | PostgreSQL connection. Composed from `DB_USER`/`DB_HOST`/`DB_NAME` when those are set |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
+| `CHECKPOINTER_RETENTION_S` | `86400` | How long an idle conversation is kept before the purge deletes it; `never` keeps it indefinitely. See [conversation memory](docs/platform/conversation-memory.md) |
 | `ANTHROPIC_API_KEY` | — | Anthropic Claude API key |
 | `OPENAI_API_KEY` | — | OpenAI API key — **embeddings only** (see `OPENAI_COMPATIBLE_API_KEY` for chat) |
 | `ADAPTER_PROVIDER` | `ollama` | LLM provider: `ollama`, `groq`, `anthropic`, `openai_compatible` |

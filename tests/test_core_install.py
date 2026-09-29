@@ -36,14 +36,15 @@ SOURCE_ROOT = REPO_ROOT / "src" / "agents_system"
 #: Written out here rather than read from `agents_system.extras`, so the
 #: test does not take the implementation's word for it.
 OPTIONAL_MODULES: dict[str, tuple[str, ...]] = {
-    "server": (
-        "fastapi",
-        "starlette",
-        "uvicorn",
-        "redis",
-        "langgraph.checkpoint.redis",
+    "server": ("fastapi", "starlette", "uvicorn", "redis"),
+    "postgres": (
+        "sqlalchemy",
+        "asyncpg",
+        "alembic",
+        "psycopg",
+        "psycopg_pool",
+        "langgraph.checkpoint.postgres",
     ),
-    "postgres": ("sqlalchemy", "asyncpg", "alembic"),
     "sql": ("sqlglot",),
     "embeddings": ("torch", "sentence_transformers", "transformers", "openai"),
     "openai": ("langchain_openai", "tiktoken"),
@@ -58,8 +59,14 @@ EVERY_OPTIONAL_MODULE = tuple(
 #: The distributions each extra must install directly (self-references such
 #: as `agents-system[postgres]` are expanded before comparing).
 EXPECTED_EXTRAS: dict[str, set[str]] = {
-    "server": {"fastapi", "uvicorn", "redis", "langgraph-checkpoint-redis"},
-    "postgres": {"sqlalchemy", "asyncpg", "alembic"},
+    "server": {"fastapi", "uvicorn", "redis"},
+    "postgres": {
+        "sqlalchemy",
+        "asyncpg",
+        "alembic",
+        "langgraph-checkpoint-postgres",
+        "psycopg",
+    },
     "sql": {"sqlglot"},
     "embeddings": {"torch", "sentence-transformers", "openai"},
     "openai": {"langchain-openai"},

@@ -30,9 +30,9 @@ services:
       retries: 5
 
   redis:
-    # Redis 8 bundles the Query Engine (RediSearch) required by the
-    # langgraph-checkpoint-redis checkpointer (D-014 S4). redis:7 lacks
-    # FT.* commands and crashes app startup when the checkpointer is enabled.
+    # Conversation state no longer lives here: the checkpointer keeps it in
+    # the postgres service above, on the pgdata volume (#24). Redis stays for
+    # the GET /health probe.
     image: redis:8-alpine
     # Redis ships with NO authentication. Exposed on 0.0.0.0 it is a
     # remote-code-execution vector, not just a data leak — this was open

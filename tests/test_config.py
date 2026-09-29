@@ -484,26 +484,93 @@ def test_openai_compatible_request_timeout_rejects_non_positive(
 
 
 def test_whatsapp_checkpointer_config_defaults():
-    """whatsapp_checkpointer_enabled defaults True, checkpointer_ttl_s defaults 86400s."""
+    """whatsapp_checkpointer_enabled defaults True (design AD-7)."""
     settings = Settings(_env_file=None)
     assert settings.whatsapp_checkpointer_enabled is True
-    assert settings.checkpointer_ttl_s == 86400
 
 
 def test_whatsapp_checkpointer_config_overridable_via_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("WHATSAPP_CHECKPOINTER_ENABLED", "false")
-    monkeypatch.setenv("CHECKPOINTER_TTL_S", "3600")
     settings = Settings(_env_file=None)
     assert settings.whatsapp_checkpointer_enabled is False
-    assert settings.checkpointer_ttl_s == 3600
 
 
-def test_checkpointer_ttl_s_accepts_none() -> None:
-    """checkpointer_ttl_s=None means no expiry (design AD-7 idle expiry is optional)."""
-    settings = Settings(_env_file=None, checkpointer_ttl_s=None)
-    assert settings.checkpointer_ttl_s is None
+# ---------------------------------------------------------------------------
+# Issue #24 -- durable checkpointer: retention is its own setting
+# ---------------------------------------------------------------------------
+
+
+def test_checkpointer_retention_defaults_to_the_previous_24_hour_window() -> None:
+    """Upgrading changes where conversations are kept, not for how long."""
+    settings = Settings(_env_file=None)
+    assert settings.checkpointer_retention_s == 86_400
+    assert settings.checkpointer_purge_interval_s == 3_600
+
+
+def test_checkpointer_retention_is_overridable_via_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CHECKPOINTER_RETENTION_S", "2592000")
+    monkeypatch.setenv("CHECKPOINTER_PURGE_INTERVAL_S", "600")
+    settings = Settings(_env_file=None)
+    assert settings.checkpointer_retention_s == 2_592_000
+    assert settings.checkpointer_purge_interval_s == 600
+
+
+@pytest.mark.parametrize("value", ["never", "NEVER", " never "])
+def test_checkpointer_retention_never_keeps_conversations_indefinitely(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Keeping conversations forever is a choice written down, not a default."""
+    monkeypatch.setenv("CHECKPOINTER_RETENTION_S", value)
+    assert Settings(_env_file=None).checkpointer_retention_s is None
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CHECKPOINTER_RETENTION_S", "0"),
+        ("CHECKPOINTER_RETENTION_S", "-1"),
+        ("CHECKPOINTER_RETENTION_S", "forever"),
+        ("CHECKPOINTER_PURGE_INTERVAL_S", "0"),
+        ("CHECKPOINTER_POOL_SIZE", "0"),
+        ("CHECKPOINTER_TIMEOUT_S", "0"),
+    ],
+)
+def test_checkpointer_settings_reject_non_positive_or_unknown_values(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_checkpointer_connection_settings_have_bounded_defaults() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.checkpointer_pool_size == 5
+    assert settings.checkpointer_timeout_s == 5.0
+
+
+def test_the_legacy_ttl_setting_still_sets_retention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CHECKPOINTER_TTL_S (the Redis TTL) is read as the retention it always
+    was, so an upgrade keeps a deployment's chosen window."""
+    monkeypatch.setenv("CHECKPOINTER_TTL_S", "3600")
+    settings = Settings(_env_file=None)
+    assert settings.checkpointer_retention_s == 3_600
+    assert settings.checkpointer_ttl_s == 3_600
+
+
+def test_the_legacy_ttl_setting_cannot_contradict_retention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CHECKPOINTER_TTL_S", "3600")
+    monkeypatch.setenv("CHECKPOINTER_RETENTION_S", "7200")
+    with pytest.raises(ValidationError, match="CHECKPOINTER_RETENTION_S"):
+        Settings(_env_file=None)
 
 
 # ---------------------------------------------------------------------------

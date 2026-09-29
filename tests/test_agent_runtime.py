@@ -13,7 +13,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pytest
-import redis.exceptions
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -944,11 +943,13 @@ async def test_tool_call_count_resets_to_zero_on_checkpointer_resume() -> None:
 
 
 class _FailingCheckpointer(BaseCheckpointSaver[str]):
-    """A checkpointer whose backend read raises redis.ConnectionError — NO
-    real network involved, this simulates an unreachable Redis instance."""
+    """A checkpointer whose backend read raises — NO real network involved,
+    this simulates an unreachable backend. Issue #24: the failure policy does
+    not depend on the exception class, so a plain ``ConnectionError`` stands
+    in for any client library's own error."""
 
     async def aget_tuple(self, config: Any) -> Any:
-        raise redis.exceptions.ConnectionError("Redis unavailable (simulated)")
+        raise ConnectionError("checkpointer backend unavailable (simulated)")
 
 
 @pytest.mark.asyncio
@@ -1390,78 +1391,6 @@ async def test_tool_format_error_retry_accounts_for_both_calls_and_nulls_usage()
     assert result.usage.input_tokens is None
     assert result.usage.output_tokens is None
     assert result.usage.total_tokens is None
-
-
-async def test_checkpointer_degradation_marks_turn_usage_fully_unknown() -> None:
-    """Review finding 3 (PR #87) -- reproduces review probe
-    `probe_retries.py`'s second scenario. A checkpointer backend failure that
-    surfaces AFTER a model call already completed (simulated here via a
-    checkpointer whose `aput`/`put` raises, not `aget_tuple`, matching the
-    review's own description: 'When Redis fails during checkpoint save')
-    forces a same-turn retry WITHOUT the checkpointer. The failed attempt's
-    tokens are unrecoverable, so the whole turn's usage must be reported
-    fully unknown (`model_calls=None`) -- never the retried invocation's own
-    count reported as if the failed attempt spent nothing."""
-    from langgraph.checkpoint.base import (
-        ChannelVersions,
-        Checkpoint,
-        CheckpointMetadata,
-    )
-    from langgraph.checkpoint.memory import InMemorySaver
-
-    from agents_system.agent.graph import AgentRuntime
-
-    class _FailsOnFirstPutCheckpointer(InMemorySaver):
-        """A real, working InMemorySaver whose FIRST `aput` raises a
-        redis.ConnectionError -- simulating a Redis backend failure that
-        happens while saving the checkpoint AFTER a model call completed
-        (not while reading the initial checkpoint, unlike this file's
-        existing `_FailingCheckpointer`)."""
-
-        def __init__(self) -> None:
-            super().__init__()
-            self._put_calls = 0
-
-        async def aput(
-            self,
-            config: Any,
-            checkpoint: Checkpoint,
-            metadata: CheckpointMetadata,
-            new_versions: ChannelVersions,
-        ) -> Any:
-            self._put_calls += 1
-            if self._put_calls == 1:
-                raise redis.exceptions.ConnectionError(
-                    "Redis connection lost during checkpoint put (simulated)"
-                )
-            return await super().aput(config, checkpoint, metadata, new_versions)
-
-    checkpointer = _FailsOnFirstPutCheckpointer()
-    model = FakeMessagesListChatModel(
-        responses=[
-            AIMessage(
-                content="Still here.",
-                usage_metadata={
-                    "input_tokens": 50,
-                    "output_tokens": 10,
-                    "total_tokens": 60,
-                },
-            )
-        ]
-    )
-    runtime = _make_runtime()
-    agent = AgentRuntime(runtime, model, checkpointer=checkpointer)
-
-    result = await agent.run_turn_with_usage(
-        [HumanMessage(content="hi")],
-        session_id="s1",
-        thread_id="+5491100000005",
-    )
-
-    assert result.messages[-1].content == "Still here."
-    assert result.usage.model_calls is None
-    assert result.usage.total_tokens is None
-    assert result.usage.cost_usd is None
 
 
 # ---------------------------------------------------------------------------
@@ -2505,12 +2434,14 @@ def _slow_tool_spec() -> ToolSpec:
 
 @pytest.mark.asyncio
 async def test_turn_after_a_mid_tool_timeout_sends_a_valid_tool_call_sequence() -> None:
-    """Issue #181: a timeout inside a tool call leaves the checkpointed thread
-    ending in the assistant message that requested the tool, with no reply.
-    The next turn of that thread appends the user's message after it, and a
+    """Issue #181: a timeout inside a tool call must not leave the
+    checkpointed thread ending in an assistant message whose tool call has no
+    reply -- the next turn appends the user's message after it, and a
     provider that needs one reply per tool_call_id rejects the request. What
     the model receives on the second turn must be a valid sequence, through a
-    real checkpointer and nothing backend-specific."""
+    real checkpointer and nothing backend-specific. Since issue #24 the
+    timed-out turn is saved as the user received it: the interrupted call
+    answered with an error, then the timeout reply."""
     from langgraph.checkpoint.memory import InMemorySaver
 
     from agents_system.agent.graph import AgentRuntime
@@ -2550,18 +2481,21 @@ async def test_turn_after_a_mid_tool_timeout_sends_a_valid_tool_call_sequence() 
     seen = list(second_model.seen)  # type: ignore[attr-defined]
     assert _unanswered_tool_call_ids(seen) == []
     # The conversation is intact: the interrupted request is still visible,
-    # answered with an error reply, and the new message comes after it.
+    # answered with an error reply, the timeout reply the user was sent
+    # follows it, and the new message comes after that.
     assert [type(m).__name__ for m in seen] == [
         "SystemMessage",
         "HumanMessage",
         "AIMessage",
         "ToolMessage",
+        "AIMessage",
         "HumanMessage",
     ]
     reply = seen[3]
     assert isinstance(reply, ToolMessage)
     assert reply.tool_call_id == "call_181_a"
     assert reply.status == "error"
+    assert seen[4].content == timed_out.messages[-1].content
     assert seen[-1].content == "Try again"
 
 

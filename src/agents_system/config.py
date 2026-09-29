@@ -10,7 +10,7 @@ and pydantic-settings reads the subclass's fields from the same environment.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agents_system.extras import raise_missing_extra
@@ -222,7 +222,26 @@ class Settings(ProviderSettings):
     # passed, no degradation logging) - distinct from AD-8's unplanned
     # runtime-failure degradation, which only applies when this is True.
     whatsapp_checkpointer_enabled: bool = True
-    checkpointer_ttl_s: int | None = 86400
+
+    # Issue #24 -- the checkpointer keeps each conversation thread in the
+    # platform's Postgres database (the same `database_url`), so a restart or
+    # a container recreation no longer loses it. How long an IDLE thread is
+    # kept is a separate, business-owned value: a periodic purge deletes every
+    # thread whose last turn is older than `checkpointer_retention_s`, and
+    # prunes each thread's superseded checkpoints. The default keeps the
+    # previous 24-hour window; `CHECKPOINTER_RETENTION_S=never` keeps threads
+    # indefinitely (a deliberate choice, see docs/platform/conversation-memory.md).
+    checkpointer_retention_s: int | None = Field(default=86_400, gt=0)
+    checkpointer_purge_interval_s: float = Field(default=3_600.0, gt=0)
+    # The checkpointer's own connection pool (psycopg, not the SQLAlchemy
+    # engine), so its connections add to the database's total. The timeout
+    # bounds both taking a connection and each statement: a checkpointer that
+    # cannot answer in time degrades the turn instead of stalling it.
+    checkpointer_pool_size: int = Field(default=5, gt=0)
+    checkpointer_timeout_s: float = Field(default=5.0, gt=0)
+    # Deprecated: the Redis checkpointer's TTL, read as the retention it
+    # always amounted to so an upgrade keeps a deployment's chosen window.
+    checkpointer_ttl_s: int | None = Field(default=None, gt=0)
 
     # W2b2 — DeferredWebhookWorker's poll loop, started in the lifespan once
     # a runtime is resolved for whatsapp_runtime_id (see main.py::lifespan).
@@ -431,6 +450,35 @@ class Settings(ProviderSettings):
                 "rag_threshold_direct must be greater than rag_threshold_ambiguous"
             )
 
+        return self
+
+    @field_validator("checkpointer_retention_s", mode="before")
+    @classmethod
+    def parse_retention_never(cls, value: object) -> object:
+        """``never`` (any case) means keep idle conversations indefinitely.
+
+        An environment variable cannot express ``None``; a word can, and
+        unlike ``0`` it cannot be misread as "delete immediately".
+        """
+        if isinstance(value, str) and value.strip().lower() == "never":
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def apply_legacy_checkpointer_ttl(self) -> "Settings":
+        """Read the deprecated ``CHECKPOINTER_TTL_S`` as the retention.
+
+        Setting both is refused rather than silently preferring one: the two
+        names describe the same window, so two values are a mistake.
+        """
+        if self.checkpointer_ttl_s is None:
+            return self
+        if "checkpointer_retention_s" in self.model_fields_set:
+            raise ValueError(
+                "CHECKPOINTER_TTL_S is deprecated and CHECKPOINTER_RETENTION_S "
+                "replaces it; set only CHECKPOINTER_RETENTION_S"
+            )
+        self.checkpointer_retention_s = self.checkpointer_ttl_s
         return self
 
     @model_validator(mode="after")
