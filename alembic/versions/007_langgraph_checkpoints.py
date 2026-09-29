@@ -18,6 +18,11 @@ stays exactly what the installed library expects. The saver's migrations
 build indexes concurrently, which cannot run inside a transaction, so they
 run in an autocommit block on their own connection.
 
+Offline (``alembic upgrade head --sql``, the documented dry run) there is
+no database to ask which migrations it already has, so the revision prints
+every one of the saver's migration statements, each followed by its version
+row, in the same autocommit block.
+
 When an upgraded library ships further migrations, a new revision calls
 ``apply_checkpoint_migrations`` again (the app refuses to boot until then,
 and ``tests/test_checkpointer_service.py`` fails first).
@@ -27,7 +32,7 @@ Downgrade drops the four tables and every conversation thread with them.
 
 from __future__ import annotations
 
-from alembic import op
+from alembic import context, op
 
 # revision identifiers, used by Alembic.
 revision = "007"
@@ -38,11 +43,27 @@ depends_on = None
 
 def upgrade() -> None:
     """Apply the installed saver's own checkpoint migrations."""
+    if context.is_offline_mode():
+        _print_checkpoint_migrations()
+        return
     from agents_system.services.checkpointer import apply_checkpoint_migrations
 
     database_url = op.get_bind().engine.url.render_as_string(hide_password=False)
     with op.get_context().autocommit_block():
         apply_checkpoint_migrations(database_url)
+
+
+def _print_checkpoint_migrations() -> None:
+    """The dry run: the saver's statements, as its own ``setup()`` runs them."""
+    from langgraph.checkpoint.postgres.base import BasePostgresSaver
+
+    with op.get_context().autocommit_block():
+        for version, statement in enumerate(BasePostgresSaver.MIGRATIONS):
+            op.execute(statement)
+            op.execute(
+                f"INSERT INTO checkpoint_migrations (v) VALUES ({version}) "
+                "ON CONFLICT (v) DO NOTHING"
+            )
 
 
 def downgrade() -> None:

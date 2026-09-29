@@ -27,9 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
@@ -277,7 +277,10 @@ async def _purge(conn: AsyncConnection[Any], retention_s: int | None) -> PurgeRe
     )
 
 
-PurgeFn = Callable[[int | None], Awaitable[PurgeResult]]
+class PurgeFn(Protocol):
+    """A purge bound to its store, such as ``partial(purge_checkpoints, pool)``."""
+
+    def __call__(self, *, retention_s: int | None) -> Awaitable[PurgeResult]: ...
 
 
 class CheckpointPurger:
@@ -311,7 +314,7 @@ class CheckpointPurger:
     async def _run(self) -> None:
         while True:
             try:
-                result = await self._purge(self._retention_s)
+                result = await self._purge(retention_s=self._retention_s)
             except Exception as exc:
                 logger.warning(
                     "checkpointer.purge_failed",

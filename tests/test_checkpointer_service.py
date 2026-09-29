@@ -95,7 +95,7 @@ class _RecordingPurge:
         self.failures = failures
         self.ran = asyncio.Event()
 
-    async def __call__(self, retention_s: int | None) -> PurgeResult:
+    async def __call__(self, *, retention_s: int | None) -> PurgeResult:
         self.calls.append(retention_s)
         if len(self.calls) >= 3:
             self.ran.set()
@@ -174,7 +174,7 @@ async def test_the_purge_log_reports_counts_and_never_thread_ids(
     """A thread id is a customer's phone number: the purge log carries
     counts only."""
 
-    async def purge(retention_s: int | None) -> Any:
+    async def purge(*, retention_s: int | None) -> Any:
         return PurgeResult(threads_deleted=1, checkpoints_pruned=0)
 
     purger = CheckpointPurger(purge, retention_s=86_400, interval_s=3_600)
@@ -202,3 +202,90 @@ def test_the_agent_state_has_no_delta_channel_so_pruning_is_safe() -> None:
     channels = StateGraph(AgentState).channels
     assert channels
     assert not any(isinstance(c, DeltaChannel) for c in channels.values())
+
+
+def test_the_dry_run_of_revision_007_prints_the_savers_own_migrations() -> None:
+    """`alembic upgrade head --sql` is the documented dry run
+    (docs/operations/deployment.md). Revision 007 runs the saver's own
+    migrations on a live database; offline it must print the same
+    statements, outside a transaction, because some build indexes
+    concurrently."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from langgraph.checkpoint.postgres.base import BasePostgresSaver
+
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "006:007", "--sql"],
+        cwd=Path(__file__).resolve().parents[1],
+        env={
+            **os.environ,
+            "DATABASE_URL": "postgresql+asyncpg://dry:run@localhost:5432/dry",
+        },
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    sql = result.stdout
+    for statement in BasePostgresSaver.MIGRATIONS:
+        assert statement.strip() in sql
+    assert "INSERT INTO checkpoint_migrations (v) VALUES (9)" in sql
+    concurrent = sql.index("CREATE INDEX CONCURRENTLY")
+    assert sql.rfind("COMMIT;", 0, concurrent) > sql.rfind("BEGIN;", 0, concurrent)
+
+
+class _FakeCursor:
+    def __init__(self, rows: list[dict[str, Any]], rowcount: int) -> None:
+        self._rows = rows
+        self.rowcount = rowcount
+
+    async def fetchall(self) -> list[dict[str, Any]]:
+        return self._rows
+
+
+class _FakeConnection:
+    """Just enough of a psycopg AsyncConnection to record the purge's SQL."""
+
+    def __init__(self) -> None:
+        self.statements: list[tuple[str, Any]] = []
+
+    def transaction(self) -> Any:
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _transaction() -> Any:
+            yield
+
+        return _transaction()
+
+    async def execute(self, sql: str, params: Any = None) -> _FakeCursor:
+        self.statements.append((sql, params))
+        if "HAVING" in sql:
+            return _FakeCursor([{"thread_id": "+5491100000000"}], 1)
+        return _FakeCursor([], 2)
+
+
+async def test_the_purger_drives_the_real_purge_with_the_configured_retention() -> None:
+    """The wiring the lifespan uses: `partial(purge_checkpoints, pool)`."""
+    from functools import partial
+
+    from agents_system.services.checkpointer import purge_checkpoints
+
+    conn = _FakeConnection()
+    purger = CheckpointPurger(
+        partial(purge_checkpoints, conn), retention_s=60, interval_s=3_600
+    )
+
+    await purger.start()
+    for _ in range(100):
+        if conn.statements:
+            break
+        await asyncio.sleep(0.01)
+    await purger.stop()
+
+    idle_queries = [params for sql, params in conn.statements if "HAVING" in sql]
+    assert idle_queries == [{"retention_s": 60}]

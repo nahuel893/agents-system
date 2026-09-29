@@ -344,3 +344,45 @@ async def test_a_dropped_database_connection_heals_on_the_next_turn(
         )
 
     assert [m.content for m in model.seen[1:]] == ["one", "a", "two"]  # type: ignore[attr-defined]
+
+
+async def test_the_lifespan_purger_enforces_retention_on_the_real_saver(
+    migrated: str,
+) -> None:
+    """The exact wiring `create_app`'s lifespan starts: the purger built from
+    the Postgres saver and the settings deletes an idle thread on its first
+    run, at startup."""
+    import asyncio
+
+    from agents_system.config import Settings
+    from agents_system.main import _build_checkpoint_purger
+
+    idle = "+5491100024008"
+    await _turns(migrated, idle, ["old"])
+    await _execute(
+        migrated,
+        "UPDATE checkpoints SET checkpoint = jsonb_set(checkpoint, '{ts}', "
+        "to_jsonb('2020-01-01T00:00:00+00:00'::text)) WHERE thread_id = :t",
+        t=idle,
+    )
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        checkpointer_retention_s=3_600,
+        checkpointer_purge_interval_s=3_600,
+    )
+
+    async with open_postgres_checkpointer(
+        migrated, pool_size=1, timeout_s=5.0
+    ) as saver:
+        purger = _build_checkpoint_purger(saver, settings)
+        assert purger is not None
+        await purger.start()
+        try:
+            for _ in range(100):
+                if (await _thread_rows(migrated, idle))["checkpoints"] == 0:
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            await purger.stop()
+
+    assert set((await _thread_rows(migrated, idle)).values()) == {0}
