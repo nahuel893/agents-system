@@ -6,7 +6,7 @@
 [![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-336791)](https://postgresql.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
 
-**agents-system** is a development kit for building AI agents. You describe an agent (a system prompt, the tools it may call, the policy that bounds it), hand it your own tools, and the kit assembles a permission-bound runtime around it. The smallest path is an agent with one tool of your own in about ten lines: see the [Quickstart](docs/platform/library-usage.md#quickstart), which also covers installing the kit from another repository.
+**agents-system** is a development kit for building AI agents. You describe an agent (a system prompt, the tools it may call, the policy that bounds it), hand it your own tools, and the kit assembles a permission-bound runtime around it. The smallest path is an agent with one tool of your own in about ten lines: see the [Quickstart](docs/platform/library-usage.md#quickstart), which also covers installing the kit from another repository. For every feature in one place, with its entry point and the doc that explains it, see the [Feature reference](docs/platform/features.md).
 
 Everything else is an optional piece you turn on at runtime, only when you need it: an OpenAI-compatible **server**, **channels** such as WhatsApp, the eight **predefined roles** (reusable agent archetypes), and **reference backends** (Postgres, Redis, embeddings). A plain install is the light core that runs the Quickstart (about 76 MB); the server, the channels and the reference backends are extras you install when you use them (`agents-system[server]`, `[postgres]`, `[embeddings]`, ...), and the predefined roles ship with the core. Agent definitions can be declarative Markdown folders *and* plain Python; a two-layer deployment model lets your application inject its own tools, skills, and per-client overrides, all without modifying the core.
 
@@ -923,6 +923,7 @@ Full reference: [`docs/architecture/adr-004-library-first-agents.md`](docs/archi
 | Platform Specification | [`docs/platform/`](docs/platform/) | EN |
 | Context-size control (model-input trimming, `max_context_tokens`) | [`docs/platform/context-size.md`](docs/platform/context-size.md), [`docs/platform_es/context-size.md`](docs/platform_es/context-size.md) | EN + ES |
 | Conversation memory (durable Postgres checkpointer, retention, personal data) | [`docs/platform/conversation-memory.md`](docs/platform/conversation-memory.md), [`docs/platform_es/conversation-memory.md`](docs/platform_es/conversation-memory.md) | EN + ES |
+| Feature reference (every feature, its entry point and its doc) | [`docs/platform/features.md`](docs/platform/features.md), [`docs/platform_es/features.md`](docs/platform_es/features.md) | EN + ES |
 | Library Usage (integrating `agents_system` into your app) | [`docs/platform/library-usage.md`](docs/platform/library-usage.md), [`docs/platform_es/library-usage.md`](docs/platform_es/library-usage.md) | EN + ES |
 | Especificación de Plataforma | [`docs/platform_es/`](docs/platform_es/) | ES |
 | Production Operations (deployment, systemd, sandboxing) | [`docs/operations/`](docs/operations/) | EN + ES |
