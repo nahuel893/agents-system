@@ -12,7 +12,8 @@ armar su propia tool registry e inyectarlo al agente."*
 This document is for someone integrating `agents_system` into their own
 application, not for someone working on the platform itself. For the
 platform's own architecture, read `docs/platform/harness.md` and
-`docs/platform/deployment.md` first.
+`docs/platform/deployment.md` first. For every feature of the kit on one page,
+see [`docs/platform/features.md`](features.md).
 
 ---
 
@@ -674,6 +675,7 @@ so you know to check `AgentDefinition.deployment is not None` (or log
 
 ## Cross-references
 
+- Every feature of the kit, with its entry point and doc: `docs/platform/features.md`
 - Harness pipeline and injection order: `docs/platform/harness.md`
 - Predefined role vs. deployment override semantics: `docs/platform/deployment.md`
 - Role/manifest/policy file schema: `docs/platform/role.md`, `docs/platform/policy.md`

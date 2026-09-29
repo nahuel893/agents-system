@@ -14,7 +14,9 @@ Este documento es para quien integra `agents_system` en su propia aplicación,
 no para quien trabaja en la plataforma. Para la arquitectura de la plataforma,
 leé primero `docs/platform_es/harness.md` y `docs/platform_es/deployment.md`.
 
-Versión en inglés: `docs/platform/library-usage.md`.
+Versión en inglés: `docs/platform/library-usage.md`. Para ver todas las
+funcionalidades del kit en una sola página, consulta
+[`docs/platform_es/features.md`](features.md).
 
 ---
 
@@ -696,6 +698,7 @@ confirmar que un override efectivamente se aplicó.
 
 ## Referencias cruzadas
 
+- Todas las funcionalidades del kit, con su punto de entrada y su doc: `docs/platform_es/features.md`
 - Pipeline del harness y orden de inyección: `docs/platform_es/harness.md`
 - Semántica de rol predefinido vs. override de deployment: `docs/platform_es/deployment.md`
 - Esquema de archivos de rol/manifest/policy: `docs/platform_es/role.md`, `docs/platform_es/policy.md`
