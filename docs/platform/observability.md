@@ -85,7 +85,7 @@ metric objects live in `src/agents_system/observability/metrics.py`.
 | `agent_cost_usd_total` | Counter | `runtime_id` | A turn's `cost_usd` is known (same `Settings.model_prices` lookup as slice 1). |
 | `agent_tool_calls_total` | Counter | `tool`, `outcome` | Every tool call attempt: `outcome` is `ok`, `denied`, `blocked`, `timeout`, or `error`. |
 | `agent_tool_call_duration_seconds` | Histogram | `tool`, `outcome` | Same as above. |
-| `agent_limit_trips_total` | Counter | `limit` | An execution limit fires — `"max_tool_calls"` (the `_limit_reached` terminal node) and `"max_context_tokens"` (the model input was trimmed, `docs/platform/context-size.md`); ADR-005 section 6's "limit trips". |
+| `agent_limit_trips_total` | Counter | `limit` | An execution limit fires — `"max_tool_calls"` (the `_limit_reached` terminal node) and `"max_context_tokens"` (the model input was trimmed or sent above the budget, `docs/platform/context-size.md`); ADR-005 section 6's "limit trips". |
 | `agent_audit_events_dropped` | Gauge | none | Current process-local `AuditSink.dropped_count`, sampled when `GET /metrics` is served. |
 | `agent_provider_requests_total` | Counter | `provider`, `status` | Every raw HTTP attempt the chat model's own async client makes (issue #145) — see "Provider observability, and the issue #145 investigation" below. |
 | `agent_provider_retries_total` | Counter | `provider` | Every attempt the provider SDK's OWN retry loop re-sends after an earlier attempt on the same call failed (issue #145). |

@@ -32,7 +32,9 @@ prompt. `agent/context.py:trim_history` decides what is dropped. The rules,
 in priority order:
 
 1. The system prompt and the tool schemas are always sent.
-2. The latest user message is always kept.
+2. The latest user message is always kept, and so is the newest unit after
+   it: the tool call the model just made and its result. Without the result
+   the model cannot tell the operation already ran and would issue it again.
 3. An assistant message with tool calls and its tool replies are one unit,
    kept whole or dropped whole. A tool call without its reply, or a reply
    without its call, is rejected by providers (#181).
@@ -48,13 +50,16 @@ A history that fits the budget is sent unmodified: no message is dropped and
 nothing is logged.
 
 If rules 1 to 3 alone exceed the budget (for example a single very large user
-message), the input is sent above the budget and flagged `over_budget`.
-Dropping the user's question would answer nothing, and the provider's own
+message, or a tool result larger than the budget), or the system prompt and
+tool schemas alone do, the input is sent above the budget and flagged
+`over_budget`. This holds even when nothing was dropped: a request that
+cannot fit and has nothing to discard is still reported. Dropping the user's
+question or the tool result would answer nothing, and the provider's own
 error is then the honest failure.
 
 During a long tool loop the same rules apply inside the current turn: the
-newest tool rounds are kept, the oldest are dropped, and the user message
-stays.
+newest tool round is always kept, then as many older ones as fit, the oldest
+are dropped, and the user message stays.
 
 ## Configuration
 
@@ -102,7 +107,7 @@ model has.
 
 ## Observability
 
-A trimmed model call is never silent:
+A trimmed or over-budget model call is never silent:
 
 - A `runtime.context_trimmed` warning with `dropped_messages`,
   `kept_messages`, `tokens_before`, `tokens_after`, `max_context_tokens` and

@@ -376,7 +376,7 @@ async def _call_model(
         trim = trim_history(
             history, max_tokens=max_context_tokens, fixed_tokens=fixed_tokens
         )
-        if trim.trimmed:
+        if trim.trimmed or trim.over_budget:
             _report_context_trim(trim, max_context_tokens, definition, metrics)
         history = trim.messages
     model_input = [system_message, *history]
@@ -424,11 +424,12 @@ def _report_context_trim(
     definition: Any,
     metrics: Metrics | None,
 ) -> None:
-    """Log, audit and count one trimmed model input (issue #28).
+    """Log, audit and count one trimmed or over-budget model input (issue #28).
 
     Counts only: no message text reaches the log, the audit event or the
     metric. `over_budget` marks the case where even the minimum (system
-    prompt, tools, latest user message) exceeds the budget.
+    prompt, tools, latest user message, newest tool round) exceeds the
+    budget; it is reported even when nothing was dropped.
     """
     logger.warning(
         "runtime.context_trimmed",

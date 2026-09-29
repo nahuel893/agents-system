@@ -14,7 +14,8 @@ The function is pure. It works on the model-input projection built in
 Rules, in priority order:
 
 1. The system prompt and the tool schemas (`fixed_tokens`) are always sent.
-2. The latest user message is always kept.
+2. The latest user message is always kept, and so is the newest unit after it
+   (the tool call the model just made and its result).
 3. An assistant message with tool calls and its tool replies are one unit:
    a unit is kept whole or dropped whole (issue #181: a tool call without its
    reply, or a reply without its call, is rejected by providers).
@@ -22,9 +23,11 @@ Rules, in priority order:
    and it starts on a user message, because some providers reject a
    conversation that opens on an assistant turn.
 
-When rules 1 to 3 alone already exceed the budget, the input is sent above
-it and `ContextTrim.over_budget` says so; the alternative, dropping the
-user's question, would answer nothing.
+When rules 1 to 3 alone already exceed the budget, or the fixed parts alone
+do, the input is sent above it and `ContextTrim.over_budget` says so, whether
+or not anything was dropped. The alternative, dropping the user's question or
+the result of the tool the model just called, would answer nothing or make the
+model repeat the call.
 
 Token counts are an ESTIMATE (`count_tokens_approximately`, about four
 characters a token). No tokenizer covers every configured provider, so the
@@ -76,7 +79,8 @@ class ContextTrim:
     dropped_messages: int
     tokens_before: int
     tokens_after: int
-    #: Rules 1 to 3 alone exceed the budget: the input is sent above it.
+    #: The request exceeds the budget even after trimming (rules 1 to 3 alone
+    #: do, or there was nothing to drop): it is sent above it.
     over_budget: bool
 
     @property
@@ -121,7 +125,9 @@ def trim_history(
             dropped_messages=0,
             tokens_before=tokens_before,
             tokens_after=tokens_before,
-            over_budget=False,
+            # Nothing to drop is not the same as fitting: the fixed parts
+            # alone can exceed the budget.
+            over_budget=tokens_before > max_tokens,
         )
 
     units = _units(messages)
@@ -138,8 +144,16 @@ def trim_history(
     )
     remaining = max_tokens - fixed_tokens - costs[anchor]
 
-    # The current turn: what follows the user message, newest first.
+    # The current turn: what follows the user message, newest first. The
+    # newest unit is mandatory (rule 3): it is the tool call the model just
+    # made and its result, and without it the model cannot tell the operation
+    # already ran and would issue it again. It is kept even when it alone
+    # exceeds the budget (`remaining` may go negative, which stops the older
+    # units below from being added).
     tail_start = len(units)
+    if tail_start > anchor + 1:
+        tail_start -= 1
+        remaining -= costs[tail_start]
     while tail_start > anchor + 1 and costs[tail_start - 1] <= remaining:
         tail_start -= 1
         remaining -= costs[tail_start]

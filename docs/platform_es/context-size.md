@@ -34,7 +34,10 @@ presupuesto y antepone el prompt de sistema. `agent/context.py:trim_history`
 decide qué se descarta. Las reglas, por prioridad:
 
 1. El prompt de sistema y los esquemas de las herramientas se envían siempre.
-2. El último mensaje del usuario se conserva siempre.
+2. El último mensaje del usuario se conserva siempre, y también la unidad más
+   nueva que le sigue: la llamada a herramienta que el modelo acaba de hacer y
+   su resultado. Sin el resultado, el modelo no puede saber que la operación ya
+   se ejecutó y la emitiría de nuevo.
 3. Un mensaje del asistente con llamadas a herramientas y sus respuestas son
    una sola unidad, que se conserva entera o se descarta entera. Una llamada
    sin respuesta, o una respuesta sin su llamada, la rechazan los proveedores
@@ -51,13 +54,18 @@ Un historial que cabe en el presupuesto se envía sin modificar: no se descarta
 ningún mensaje y no se registra nada.
 
 Si las reglas 1 a 3 solas ya exceden el presupuesto (por ejemplo, un único
-mensaje de usuario enorme), la entrada se envía por encima del presupuesto y
-se marca `over_budget`. Descartar la pregunta del usuario no respondería nada,
-y el error del propio proveedor es entonces el fallo honesto.
+mensaje de usuario enorme, o un resultado de herramienta mayor que el
+presupuesto), o si el prompt de sistema y los esquemas de herramientas solos lo
+exceden, la entrada se envía por encima del presupuesto y se marca
+`over_budget`. Esto vale aun cuando no se descartó nada: una solicitud que no
+cabe y no tiene nada para descartar igual se informa. Descartar la pregunta
+del usuario o el resultado de la herramienta no respondería nada, y el error
+del propio proveedor es entonces el fallo honesto.
 
 Durante un bucle largo de herramientas se aplican las mismas reglas dentro del
-turno actual: se conservan las rondas de herramientas más nuevas, se descartan
-las más antiguas y el mensaje del usuario permanece.
+turno actual: la ronda de herramientas más nueva se conserva siempre, luego
+todas las anteriores que quepan, se descartan las más antiguas y el mensaje
+del usuario permanece.
 
 ## Configuración
 
@@ -107,7 +115,7 @@ tiene un modelo configurado.
 
 ## Observabilidad
 
-Una llamada recortada nunca es silenciosa:
+Una llamada recortada o por encima del presupuesto nunca es silenciosa:
 
 - Una advertencia `runtime.context_trimmed` con `dropped_messages`,
   `kept_messages`, `tokens_before`, `tokens_after`, `max_context_tokens` y

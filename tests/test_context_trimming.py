@@ -546,3 +546,136 @@ async def test_a_persisted_unanswered_tool_call_is_still_repaired_then_trimmed()
     [model_input] = model.captured_inputs
     _assert_well_formed(model_input[1:])
     assert model_input[-1].content == "are you there?"
+
+
+# ---------------------------------------------------------------------------
+# Review fixes (PR #194): the newest tool round is mandatory, and an
+# over-budget request is always reported
+# ---------------------------------------------------------------------------
+
+
+def test_the_newest_tool_round_is_kept_even_when_its_result_exceeds_the_budget() -> (
+    None
+):
+    from agents_system.agent.context import trim_history
+
+    user = HumanMessage(content="Please calculate")
+    huge_round = _tool_round(1, chars=4_000)
+    history: list[AnyMessage] = [*_conversation(2), user, *huge_round]
+
+    result = trim_history(history, max_tokens=200)
+
+    # The model must see the call it just made AND its result, or it cannot
+    # tell the operation already ran and would issue it again.
+    assert result.messages == [user, *huge_round]
+    assert result.over_budget is True
+    _assert_well_formed(result.messages)
+
+
+def test_older_tool_rounds_still_give_way_to_the_mandatory_newest_round() -> None:
+    from agents_system.agent.context import trim_history
+
+    user = HumanMessage(content="Please calculate")
+    history: list[AnyMessage] = [
+        user,
+        *_tool_round(0),
+        *_tool_round(1, chars=4_000),
+    ]
+
+    result = trim_history(history, max_tokens=200)
+
+    assert result.messages == [user, *history[-3:]]
+    _assert_well_formed(result.messages)
+
+
+def test_a_fixed_only_request_above_the_budget_is_flagged_over_budget() -> None:
+    from agents_system.agent.context import trim_history
+
+    result = trim_history([], max_tokens=100, fixed_tokens=500)
+
+    assert result.messages == []
+    assert result.over_budget is True
+    assert result.trimmed is False
+
+
+def _big_single_message_state(chars: int = 40_000) -> dict[str, Any]:
+    return {"messages": [HumanMessage(content="x" * chars)]}
+
+
+@pytest.mark.asyncio
+async def test_an_over_budget_request_with_nothing_to_drop_is_logged() -> None:
+    from agents_system.agent.graph import _call_model
+
+    model = _model()
+    with structlog.testing.capture_logs() as logs:
+        await _call_model(
+            _big_single_message_state(), model, "sys", max_context_tokens=1_000
+        )
+
+    [entry] = [e for e in logs if e["event"] == "runtime.context_trimmed"]
+    assert entry["over_budget"] is True
+    assert entry["dropped_messages"] == 0
+    assert entry["tokens_after"] > entry["max_context_tokens"] == 1_000
+    # The request is still sent: dropping the user's message answers nothing.
+    assert len(model.captured_inputs[0][-1].content) == 40_000
+    assert "xxxx" not in str(entry)
+
+
+@pytest.mark.asyncio
+async def test_an_over_budget_request_with_nothing_to_drop_is_audited_and_counted(
+    sink: _CapturingSink,
+) -> None:
+    from prometheus_client import CollectorRegistry
+
+    from agents_system.agent.graph import _call_model
+    from agents_system.observability.metrics import build_metrics
+
+    metrics = build_metrics(CollectorRegistry())
+    await _call_model(
+        _big_single_message_state(),
+        _model(),
+        "sys",
+        max_context_tokens=1_000,
+        definition=_runtime().definition,
+        metrics=metrics,
+    )
+
+    for _ in range(50):
+        events = [e for e in sink.captured if isinstance(e, ContextTrimmed)]
+        if events:
+            break
+        await asyncio.sleep(0.02)
+    [event] = events
+    assert event.over_budget is True
+    assert event.dropped_messages == 0
+    assert (
+        metrics.limit_trips_total.labels(limit="max_context_tokens")._value.get() == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_fixed_parts_only_request_above_the_budget_is_reported() -> None:
+    from agents_system.agent.graph import _call_model
+
+    with structlog.testing.capture_logs() as logs:
+        await _call_model(
+            {"messages": []}, _model(), "s" * 4_000, max_context_tokens=100
+        )
+
+    [entry] = [e for e in logs if e["event"] == "runtime.context_trimmed"]
+    assert entry["over_budget"] is True
+    assert entry["dropped_messages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_tool_result_reaches_the_model_with_its_call() -> None:
+    from agents_system.agent.graph import _call_model
+
+    model = _model()
+    user = HumanMessage(content="Please calculate")
+    huge_round = _tool_round(1, chars=4_000)
+    await _call_model(
+        {"messages": [user, *huge_round]}, model, "sys", max_context_tokens=200
+    )
+
+    assert model.captured_inputs[0][1:] == [user, *huge_round]

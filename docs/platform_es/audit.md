@@ -84,7 +84,7 @@ permanece en `payload`.
 | `runtime_built` | `harness/factory.py` | Se ensambló un `EquippedRuntime` |
 | `runtime_initialized` | `agent/graph.py` | El grafo aceptó un turno |
 | `runtime_timeout` | `agent/graph.py` | El turno excedió `total_execution_timeout_s` |
-| `context_trimmed` | `agent/graph.py` | La entrada del modelo se recortó a `max_context_tokens` (`docs/platform_es/context-size.md`). Payload: sólo conteos de mensajes y tokens, nunca texto de mensajes |
+| `context_trimmed` | `agent/graph.py` | La entrada del modelo se recortó a `max_context_tokens`, o se envió por encima sin nada que descartar (`docs/platform_es/context-size.md`). Payload: sólo conteos de mensajes y tokens, nunca texto de mensajes |
 | `tool_call_attempted` | `harness/interceptor.py` | Una llamada alcanzó la Capa 2 |
 | `tool_call_blocked` | `harness/interceptor.py` | La Capa 2 rechazó la llamada |
 | `escalation_not_delivered` | `harness/defaults.py` | El `escalation_notifier` por defecto incorporado atendió un escalamiento: no se contactó a ningún humano (solo en uso como biblioteca en proceso, nunca en la app servida). Payload: `tool_name`, `reason` (cortado a 200 caracteres y luego redactado) y `details_chars`, nunca el texto de los detalles |

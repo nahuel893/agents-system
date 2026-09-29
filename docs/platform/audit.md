@@ -82,7 +82,7 @@ else stays in `payload`.
 | `runtime_initialized` | `agent/graph.py` | The graph accepted a turn |
 | `runtime_timeout` | `agent/graph.py` | The turn exceeded `total_execution_timeout_s` |
 | `unknown_tool` | `harness/injector.py` | A role named a tool that is not in the registry |
-| `context_trimmed` | `agent/graph.py` | The model input was trimmed to `max_context_tokens` (`docs/platform/context-size.md`). Payload: message and token counts only, never message text |
+| `context_trimmed` | `agent/graph.py` | The model input was trimmed to `max_context_tokens`, or sent above it with nothing to drop (`docs/platform/context-size.md`). Payload: message and token counts only, never message text |
 | `tool_call_attempted` | `harness/interceptor.py` | A call reached Layer 2 |
 | `tool_call_blocked` | `harness/interceptor.py` | Layer 2 refused the call |
 | `escalation_not_delivered` | `harness/defaults.py` | The built-in default `escalation_notifier` handled an escalation: no human was reached (in-process library use only, never the served app). Payload: `tool_name`, `reason` (cut to 200 characters, then redacted) and `details_chars`, never the details text |
