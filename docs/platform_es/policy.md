@@ -251,6 +251,15 @@ proveedor global por defecto `ADAPTER_PROVIDER` al que recurre todo runtime
 sin declaración propia), el error de arranque también nombra el rol de ese
 agente.
 
+### Uso en proceso (issue #186)
+
+La declaración también se respeta sin el servidor: `AgentRuntime(equipped)` sin
+`model=` construye el modelo declarado con la misma implementación que usa la
+app servida (`agents_system.agent.models`), leyendo las credenciales solo del
+entorno. Un modelo pasado por el caller que difiera del declarado gana y se
+reporta con una advertencia `runtime.model_conflict`. Ver
+`docs/platform_es/library-usage.md`, "Elegir el modelo".
+
 ### El seguimiento de costos no se ve afectado
 
 `MODEL_PRICES` (`Settings.model_prices`, ver `docs/platform_es/live-eval.md`)

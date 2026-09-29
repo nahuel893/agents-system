@@ -53,6 +53,11 @@ The injection flow, end to end::
     agent = agents_system.AgentRuntime(equipped, model=my_chat_model)
     reply = await agent.run_turn(messages, session_id="s1")
 
+    #    An agent that declares its own model -- ``Agent(model={"provider":
+    #    ..., "model": ...})`` -- needs no model argument: ``AgentRuntime(
+    #    equipped)`` builds the declared one from the environment (see
+    #    ``agents_system.build_agent_model``).
+
 Step 3's role need not be a bare platform-role string. An
 ``agents_system.Agent`` — built entirely in Python, from a folder, or a
 composition of both — resolves through the exact same
@@ -98,6 +103,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "InjectionError": ("agents_system.harness.injector", "InjectionError"),
     "AgentRuntime": ("agents_system.agent.graph", "AgentRuntime"),
     "Agent": ("agents_system.agent.spec", "Agent"),
+    # Issue #186 -- the chat model an agent's declared `model` names, built
+    # from the environment without the server (also what `AgentRuntime`
+    # uses when it is given no `model=`).
+    "build_agent_model": ("agents_system.agent.models", "build_agent_model"),
     # Issue #166 -- what a library user needs to run turns without the
     # server: a price table for `AgentRuntime(model_prices=...)`, and the
     # sink to register (`AuditSink.set_current`) if audit events should be

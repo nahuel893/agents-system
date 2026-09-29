@@ -41,6 +41,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
+from agents_system.agent.models import build_agent_model, declared_model
 from agents_system.agent.state import AgentState
 from agents_system.config import ModelPrice
 from agents_system.harness.factory import EquippedRuntime
@@ -749,6 +750,93 @@ async def _run_tracking_progress(
 # ---------------------------------------------------------------------------
 
 
+#: LangChain integration package -> the declarable ``provider`` its chat model
+#: classes serve. ``langchain_openai`` covers every OpenAI-protocol host, which
+#: is exactly what ``openai_compatible`` declares; the package cannot tell one
+#: such host from another, so that is the limit of the comparison.
+_PROVIDER_BY_PACKAGE = {
+    "langchain_openai": "openai_compatible",
+    "langchain_groq": "groq",
+    "langchain_anthropic": "anthropic",
+    "langchain_ollama": "ollama",
+}
+
+
+def _model_provider(model: BaseChatModel) -> str | None:
+    """The declarable provider ``model`` belongs to, or ``None`` if unknown.
+
+    Read from the package that defines the model's class or any of its bases
+    (so a subclass such as ``ReasoningSanitizedChatOpenAI`` is still
+    recognised). A test double, a custom wrapper or a class from another
+    package is unidentifiable: ``None``, never a guess.
+    """
+    for cls in type(model).__mro__:
+        package = cls.__module__.split(".", 1)[0]
+        if package in _PROVIDER_BY_PACKAGE:
+            return _PROVIDER_BY_PACKAGE[package]
+    return None
+
+
+def _report_model_conflict(definition: Any, model: BaseChatModel) -> None:
+    """Warn when the caller's ``model`` is not the one the agent declares.
+
+    Issue #186. The caller's model always wins (see ``AgentRuntime``'s
+    ``model`` parameter); this only makes the disagreement visible, so a
+    declaration that is not being honored is never silent. Compared by the
+    provider model id (`model_display_name`) AND the provider, because two
+    providers can serve the same id string. A declared temperature or
+    ``max_tokens`` is not comparable on an arbitrary model object, so it is
+    not checked. Nothing is built here: the declared model is never
+    constructed just to be compared.
+
+    Limits of the comparison: the provider is read from the model's class
+    (`_model_provider`), so it separates ``openai_compatible`` / ``groq`` /
+    ``anthropic`` / ``ollama`` but not two OpenAI-protocol hosts from each
+    other. When the id matches and the provider cannot be identified, the
+    models are not called equivalent: ``runtime.model_provider_unverified``
+    (info, not a conflict) says the provider could not be established.
+    """
+    declared = declared_model(definition)
+    if declared is None:
+        return
+    agent = getattr(definition, "role_name", "<unknown>")
+    declared_id = declared["model"]
+    declared_provider = declared["provider"]
+    passed_id = model_display_name(model)
+    if passed_id == declared_id:
+        passed_provider = _model_provider(model)
+        if passed_provider == declared_provider:
+            return
+        if passed_provider is None:
+            logger.info(
+                "runtime.model_provider_unverified",
+                agent=agent,
+                model=declared_id,
+                declared_provider=declared_provider,
+                detail=(
+                    "the passed model reports the declared model id but its "
+                    "provider cannot be identified, so it is not known to be "
+                    "the declared model; the passed model is used."
+                ),
+            )
+            return
+    else:
+        passed_provider = _model_provider(model)
+    logger.warning(
+        "runtime.model_conflict",
+        agent=agent,
+        declared_model=declared_id,
+        passed_model=passed_id,
+        declared_provider=declared_provider,
+        passed_provider=passed_provider,
+        detail=(
+            "the agent declares a model but AgentRuntime was given a different "
+            "one; the passed model is used and the declaration is ignored. "
+            "Drop model= to run on the declared model."
+        ),
+    )
+
+
 class AgentRuntime:
     """Provider-agnostic, async-native agent runtime.
 
@@ -760,6 +848,17 @@ class AgentRuntime:
         Any LangChain BaseChatModel instance. The runtime binds the granted tool
         surface to it at construction time. Swapping providers requires only
         changing this argument — no other runtime code changes.
+
+        Issue #186 -- optional. Omitted (``None``), the runtime builds the
+        model the agent DECLARES (``Agent(model={...})``, or ``model:`` in its
+        frontmatter, inherited through ``extends``) with
+        ``agents_system.build_agent_model``, reading credentials only from the
+        process environment and ``ProviderSettings`` -- never from the server
+        ``Settings``. An agent that declares none raises ``ValueError``.
+        Passed AND different from the declared model id, the passed model wins
+        and a ``runtime.model_conflict`` warning names both: the caller's
+        explicit argument is never silently overridden by configuration, and
+        the declaration is never silently inert.
     checkpointer:
         Optional shared LangGraph checkpointer (design AD-1). Only engaged
         when a ``thread_id`` is also passed to a given ``run_turn`` call —
@@ -799,12 +898,16 @@ class AgentRuntime:
     def __init__(
         self,
         runtime: EquippedRuntime,
-        model: BaseChatModel,
+        model: BaseChatModel | None = None,
         checkpointer: BaseCheckpointSaver[Any] | None = None,
         runtime_id: str | None = None,
         metrics: Metrics | None = None,
         model_prices: Mapping[str, ModelPrice] | None = None,
     ) -> None:
+        if model is None:
+            model = build_agent_model(runtime.definition)
+        else:
+            _report_model_conflict(runtime.definition, model)
         self._runtime = runtime
         self._equipped = runtime
         self._checkpointer = checkpointer

@@ -86,7 +86,7 @@ outside the repository. Any LangChain chat model works in place of
 | The harness: `ToolRegistry`, `RootConfig`, `resolve`, `build_runtime`, `AgentRuntime` | Your own `ToolSpec`s — the connectors that call *your* services |
 | The predefined platform roles (`platform/roles/*/{role,manifest,policy}.md`) — what a `sales-agent`, `orchestrator`, `data-agent`, or `summary-agent` *is allowed to do* | Your own deployment overrides (`deployments/{your-client}/`), if you want client-specific prompts, skills, or tighter policy |
 | RBAC enforcement (`InjectionError`, `FactoryError`, `DefinitionError`) | The permission grants for your caller/identity, and the `granted_permissions` you pass to `build_runtime` |
-| A LangGraph-backed `AgentRuntime` that turns an equipped runtime into something you can call `run_turn` on | Any LangChain `BaseChatModel` to bind it to |
+| A LangGraph-backed `AgentRuntime` that turns an equipped runtime into something you can call `run_turn` on | Any LangChain `BaseChatModel` to bind it to, unless the agent declares its own `model:` |
 
 The platform never has business logic specific to any one client baked in —
 including ACME, the platform's first deployment. If you find platform code
@@ -162,6 +162,7 @@ nothing more:
 | `FactoryError` | `agents_system.harness.factory` | Raised when a runtime can't be assembled (e.g. a declared skill file is missing) |
 | `InjectionError` | `agents_system.harness.injector` | Raised when a role declares a tool your registry doesn't have |
 | `AgentRuntime` | `agents_system.agent.graph` | Wraps an `EquippedRuntime` + a chat model into something you call `run_turn` on |
+| `build_agent_model` | `agents_system.agent.models` | Builds the chat model an agent's resolved `model:` declares, credentials from settings/env only. `AgentRuntime(equipped)` calls it when you pass no model. See "Choosing the model" |
 | `Agent` | `agents_system.agent.spec` | A custom agent defined in Python (`Agent(...)`), from a folder (`Agent.from_folder(path)`), or both; pass it wherever a role name goes (`resolve`, `build_runtime`). See `docs/platform/role.md` |
 | `ModelPrice` | `agents_system.config` | One model's price per million input/output tokens, for `AgentRuntime(model_prices=...)` |
 | `AuditSink` | `agents_system.audit.sink` | The audit event sink; register one with `AuditSink.set_current(sink)` to record audit events (see "Running without the server") |
@@ -295,6 +296,84 @@ Three things the example shows on purpose:
       roots=agents_system.RootConfig(deployments_root=MY_APP_ROOT / "deployments"),
   )
   ```
+
+---
+
+## Choosing the model: the one the agent declares
+
+An agent may declare its own model (`Agent(model={...})`, or a `model:` block
+in its frontmatter, inherited through `extends`; see
+`docs/platform/policy.md`, "Model configuration"). In library use that
+declaration is honored: pass no model and `AgentRuntime` builds it.
+
+```python
+import agents_system
+
+agent = agents_system.Agent(
+    name="summarizer",
+    model={
+        "provider": "openai_compatible",
+        "model": "vendor/model-id",
+        "temperature": 0.2,
+    },
+)
+equipped = agents_system.build_runtime(agent, registry, granted_permissions=[])
+
+runtime = agents_system.AgentRuntime(equipped)  # no model=: the declared one
+```
+
+`agents_system.build_agent_model(equipped.definition)` is the same step on its
+own, for when you want the chat model itself (to wrap it, share it, or inspect
+it). Pass `default_model=` to get a fallback back for an agent that declares
+nothing.
+
+**Credentials come only from settings and the environment, never from the
+agent definition** (a `model:` block cannot carry one). The builder reads them
+through a narrow provider-only loader, so none of the server's variables
+(`META_WEBHOOK_SECRET`, database URL, ...) are needed:
+
+| Provider | Variables |
+|---|---|
+| `openai_compatible` | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` |
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `groq` | `GROQ_API_KEY` |
+| `ollama` | `OLLAMA_BASE_URL` |
+
+A missing required variable (`OPENAI_COMPATIBLE_BASE_URL`,
+`ANTHROPIC_API_KEY`) fails at construction with an error that names the agent
+and the variable. `OPENAI_COMPATIBLE_API_KEY` is optional, for keyless local
+endpoints.
+
+### When you pass a model AND the agent declares one
+
+The rule, on purpose the same everywhere in library use:
+
+| You pass `model=` | The agent declares `model:` | Result |
+|---|---|---|
+| no | yes | The declared model is built and used. |
+| no | no | `ValueError`: the agent declares no model; pass `model=`. |
+| yes | no | Your model is used; nothing is reported. |
+| yes | yes, same model id and same provider | Your model is used; nothing is reported. |
+| yes | yes, same model id, provider cannot be identified | Your model is used; an info-level `runtime.model_provider_unverified` event says the provider could not be established (it is not called a match, and not a conflict). |
+| yes | yes, a different model id, or the same id from a different provider | **Your model wins** and a `runtime.model_conflict` warning is logged, naming the agent, the declared and passed ids and the declared and passed providers. |
+
+The comparison has limits. The passed model's provider is read from its class
+(`langchain_openai` = `openai_compatible`, `langchain_groq` = `groq`,
+`langchain_anthropic` = `anthropic`, `langchain_ollama` = `ollama`), so it tells
+those four apart but cannot tell two OpenAI-protocol hosts from each other, and
+a test double or custom wrapper has no identifiable provider. Temperature and
+`max_tokens` are not compared.
+
+The caller's explicit model wins because passing it is a deliberate act at the
+call site (a test double, a shared client, a local override), and refusing
+would make the declaration impossible to override in tests. The warning makes
+the disagreement visible instead of silent. The declared model is not built
+when it loses, so the warning needs no credentials.
+
+The served app is unchanged: it builds each runtime's declared model at boot
+(the declaration takes precedence there; the global `ADAPTER_PROVIDER` model is
+only the default for agents that declare none). Both paths call one
+implementation, `agents_system.agent.models`, so they cannot drift.
 
 ---
 

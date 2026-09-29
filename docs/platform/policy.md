@@ -244,6 +244,15 @@ one specific agent's own declaration (rather than the global
 `ADAPTER_PROVIDER` default every runtime without one falls back to), the
 boot error names that agent's role too.
 
+### In-process use (issue #186)
+
+The declaration is honored without the server too: `AgentRuntime(equipped)`
+with no `model=` builds the declared model through the same implementation the
+served app uses (`agents_system.agent.models`), reading credentials from the
+environment only. A caller-passed model that differs from the declared one
+wins and is reported with a `runtime.model_conflict` warning. See
+`docs/platform/library-usage.md`, "Choosing the model".
+
 ### Cost tracking is unaffected
 
 `MODEL_PRICES` (`Settings.model_prices`, see `docs/platform/live-eval.md`)

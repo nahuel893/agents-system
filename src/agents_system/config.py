@@ -52,7 +52,62 @@ class ModelPrice(BaseModel):
     )
 
 
-class Settings(BaseSettings):
+class ProviderSettings(BaseSettings):
+    """The chat-model provider settings, and nothing else (issue #186).
+
+    The library builds a chat model from an agent's declared ``model`` without
+    the server: ``agent.models.build_chat_model`` reads the provider host,
+    model and credentials from THIS class. The full ``Settings`` below inherits
+    from it, so the served app and the library read the same variables with the
+    same defaults from one definition -- but constructing ``ProviderSettings``
+    runs none of the server's fail-closed validators (#167), so it works with
+    no ``META_WEBHOOK_SECRET``, no database URL and no ``.env`` at all.
+
+    The hosted providers' keys (``GROQ_API_KEY``, ``ANTHROPIC_API_KEY``) are
+    read straight from the process environment by ``build_chat_model``, as
+    they always were.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # Any OpenAI-compatible chat endpoint (MiniMax, vLLM, LM Studio, ...),
+    # selected with adapter_provider="openai_compatible".
+    # Deliberately NOT named openai_* — Settings.openai_api_key is the embeddings
+    # credential, and reusing it would prevent running embeddings on OpenAI and
+    # chat on another host at the same time.
+    # base_url and model are REQUIRED when this provider is selected; the check
+    # lives in _build_chat_model, so Settings still constructs without an env
+    # file. api_key is optional — keyless local endpoints are legitimate.
+    openai_compatible_api_key: str = ""
+    openai_compatible_base_url: str = ""
+    openai_compatible_model: str = ""
+    # issue #145 -- bounded per-HTTP-call timeout to the openai_compatible
+    # provider. Previously unset, which left the openai SDK's own default in
+    # effect (connect=5s, read/write/pool=600s): one stuck call could wait up
+    # to ten minutes with no visible failure. 45s is comfortably under
+    # the platform default total_execution_timeout_s (60s,
+    # harness.loader.PLATFORM_DEFAULT_LIMITS)
+    # so a single hung call fails with a clear client-side timeout instead of
+    # being silently absorbed by the platform's own per-turn budget.
+    openai_compatible_request_timeout_s: float = Field(default=45.0, gt=0)
+
+    # Ollama adapter (#169, ADR-002 E.18) — configurable model + host so a
+    # role can be evaluated against a different local model (e.g. the live-eval
+    # pipeline running qwen2.5:3b vs qwen3:8b) without a code change. Defaults
+    # match what `_build_chat_model` hardcoded before this field existed, so
+    # an unconfigured deployment's behavior is unchanged. Empty base_url means
+    # "unset" -- `_build_chat_model` passes None, not "", so ChatOllama falls
+    # back to its own default host resolution (OLLAMA_HOST env var, then
+    # http://localhost:11434) instead of treating "" as a real base URL.
+    ollama_model: str = "qwen2.5:3b"
+    ollama_base_url: str = ""
+
+
+class Settings(ProviderSettings):
     """Centralised configuration using pydantic-settings.
 
     Values are read from environment variables first, then from a `.env`
@@ -269,38 +324,6 @@ class Settings(BaseSettings):
     # unauthenticated /metrics -- refused at boot unless allow_insecure is
     # also set (see validate_security_fail_closed below).
     metrics_api_key: str = ""
-
-    # Any OpenAI-compatible chat endpoint (MiniMax, vLLM, LM Studio, ...),
-    # selected with adapter_provider="openai_compatible".
-    # Deliberately NOT named openai_* — openai_api_key above is the embeddings
-    # credential, and reusing it would prevent running embeddings on OpenAI and
-    # chat on another host at the same time.
-    # base_url and model are REQUIRED when this provider is selected; the check
-    # lives in _build_chat_model, so Settings still constructs without an env
-    # file. api_key is optional — keyless local endpoints are legitimate.
-    openai_compatible_api_key: str = ""
-    openai_compatible_base_url: str = ""
-    openai_compatible_model: str = ""
-    # issue #145 -- bounded per-HTTP-call timeout to the openai_compatible
-    # provider. Previously unset, which left the openai SDK's own default in
-    # effect (connect=5s, read/write/pool=600s): one stuck call could wait up
-    # to ten minutes with no visible failure. 45s is comfortably under
-    # the platform default total_execution_timeout_s (60s,
-    # harness.loader.PLATFORM_DEFAULT_LIMITS)
-    # so a single hung call fails with a clear client-side timeout instead of
-    # being silently absorbed by the platform's own per-turn budget.
-    openai_compatible_request_timeout_s: float = Field(default=45.0, gt=0)
-
-    # Ollama adapter (#169, ADR-002 E.18) — configurable model + host so a
-    # role can be evaluated against a different local model (e.g. the live-eval
-    # pipeline running qwen2.5:3b vs qwen3:8b) without a code change. Defaults
-    # match what `_build_chat_model` hardcoded before this field existed, so
-    # an unconfigured deployment's behavior is unchanged. Empty base_url means
-    # "unset" -- `_build_chat_model` passes None, not "", so ChatOllama falls
-    # back to its own default host resolution (OLLAMA_HOST env var, then
-    # http://localhost:11434) instead of treating "" as a real base URL.
-    ollama_model: str = "qwen2.5:3b"
-    ollama_base_url: str = ""
 
     # Live-eval pipeline's own provider switch (#169 follow-up, ADR-002
     # E.18). Deliberately a SEPARATE field from `adapter_provider` above --
