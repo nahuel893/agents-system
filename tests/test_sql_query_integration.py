@@ -19,8 +19,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
+import subprocess
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -821,3 +824,318 @@ async def test_a_qualified_security_definer_call_is_refused_at_both_layers(
     assert refused["reason"] == "function_not_allowed"
     assert unguarded["error_kind"] == "role_not_read_only"
     assert "never readable" not in json.dumps(unguarded)
+
+
+# ---------------------------------------------------------------------------
+# Allowlisted base tables (opt-in): a table hides no rows, so the role's
+# privileges are the whole boundary
+# ---------------------------------------------------------------------------
+
+_TABLE = "sql_tool_fixture.sales"
+_TABLE_KEY = ("sql_tool_fixture", "sales")
+_WITH_TABLE = _ALLOWED | {_TABLE_KEY}
+_TABLE_CONFIG = SqlQueryConfig(
+    views={**_CONFIG.views, _TABLE: "One row per sale (the base table)."},
+    row_limit=10,
+    statement_timeout_ms=2_000,
+    allow_base_tables=True,
+)
+_TABLE_DEFAULT_CONFIG = SqlQueryConfig(
+    views=_TABLE_CONFIG.views, row_limit=10, statement_timeout_ms=2_000
+)
+
+
+async def test_an_allowlisted_base_table_needs_the_opt_in(
+    sql_engine: AsyncEngine, admin_engine: AsyncEngine
+) -> None:
+    await _admin(admin_engine, f"GRANT SELECT ON {_TABLE} TO sql_readonly")
+    try:
+        default_verdict = await verify_query_role(sql_engine, _WITH_TABLE)
+        opted_in_verdict = await verify_query_role(
+            sql_engine, _WITH_TABLE, allow_base_tables=True
+        )
+        refused = await build_sql_query_connector(sql_engine, _TABLE_DEFAULT_CONFIG)(
+            {"sql": f"SELECT count(*) AS n FROM {_TABLE}"}
+        )
+        answered = await build_sql_query_connector(sql_engine, _TABLE_CONFIG)(
+            {"sql": f"SELECT count(*) AS n FROM {_TABLE}"}
+        )
+    finally:
+        await _admin(admin_engine, f"REVOKE SELECT ON {_TABLE} FROM sql_readonly")
+
+    assert default_verdict is False
+    assert opted_in_verdict is True
+    assert refused["error_kind"] == "role_not_read_only"
+    assert "error" not in answered, answered
+    assert answered["rows"] == [[40]]
+    assert await verify_query_role(sql_engine, _ALLOWED) is True
+
+
+async def test_the_opt_in_still_refuses_a_table_outside_the_allowlist(
+    sql_engine: AsyncEngine, admin_engine: AsyncEngine
+) -> None:
+    await _admin(
+        admin_engine, "GRANT SELECT ON sql_tool_fixture.secrets TO sql_readonly"
+    )
+    try:
+        verdict = await verify_query_role(sql_engine, _ALLOWED, allow_base_tables=True)
+        result = await build_sql_query_connector(sql_engine, _TABLE_CONFIG)(
+            {"sql": "SELECT count(*) FROM sql_tool_fixture.sales_v"}
+        )
+    finally:
+        await _admin(
+            admin_engine, "REVOKE SELECT ON sql_tool_fixture.secrets FROM sql_readonly"
+        )
+
+    assert verdict is False
+    assert result["error_kind"] == "role_not_read_only"
+
+
+async def test_the_opt_in_still_refuses_a_plain_view_without_the_barrier(
+    sql_engine: AsyncEngine, admin_engine: AsyncEngine
+) -> None:
+    await _admin(
+        admin_engine,
+        "ALTER VIEW sql_tool_fixture.sales_v RESET (security_barrier)",
+    )
+    try:
+        verdict = await verify_query_role(sql_engine, _ALLOWED, allow_base_tables=True)
+    finally:
+        await _admin(
+            admin_engine,
+            "ALTER VIEW sql_tool_fixture.sales_v SET (security_barrier = true)",
+        )
+
+    assert verdict is False
+
+
+async def test_a_write_grant_on_an_allowlisted_table_is_refused_with_the_opt_in(
+    sql_engine: AsyncEngine, admin_engine: AsyncEngine
+) -> None:
+    await _admin(admin_engine, f"GRANT SELECT, UPDATE ON {_TABLE} TO sql_readonly")
+    try:
+        verdict = await verify_query_role(
+            sql_engine, _WITH_TABLE, allow_base_tables=True
+        )
+    finally:
+        await _admin(admin_engine, f"REVOKE ALL ON {_TABLE} FROM sql_readonly")
+
+    assert verdict is False
+
+
+_CREATE_PARTITIONED = (
+    (
+        "CREATE TABLE sql_tool_fixture.events (id integer, day date) "
+        "PARTITION BY RANGE (day)"
+    ),
+    (
+        "CREATE TABLE sql_tool_fixture.events_2026 "
+        "PARTITION OF sql_tool_fixture.events "
+        "FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')"
+    ),
+    (
+        "INSERT INTO sql_tool_fixture.events "
+        "SELECT g, date '2026-01-01' + g FROM generate_series(1, 12) AS g"
+    ),
+    "GRANT SELECT ON sql_tool_fixture.events TO sql_readonly",
+)
+_DROP_PARTITIONED = "DROP TABLE IF EXISTS sql_tool_fixture.events"
+
+
+async def test_a_partitioned_table_is_read_through_its_parent_only(
+    sql_engine: AsyncEngine, admin_engine: AsyncEngine
+) -> None:
+    # GRANT does not recurse into partitions, and reading through the parent
+    # checks the parent only: the parent is the allowlisted relation, and a
+    # partition the role could read directly would be a finding of its own.
+    allowed = _ALLOWED | {("sql_tool_fixture", "events")}
+    config = SqlQueryConfig(
+        views={**_CONFIG.views, "sql_tool_fixture.events": "Events by day."},
+        row_limit=10,
+        statement_timeout_ms=2_000,
+        allow_base_tables=True,
+    )
+    for statement in _CREATE_PARTITIONED:
+        await _admin(admin_engine, statement)
+    try:
+        default_verdict = await verify_query_role(sql_engine, allowed)
+        verdict = await verify_query_role(sql_engine, allowed, allow_base_tables=True)
+        answered = await build_sql_query_connector(sql_engine, config)(
+            {"sql": "SELECT count(*) AS n FROM sql_tool_fixture.events"}
+        )
+        direct = await _sqlstate_of(
+            sql_engine, "SELECT count(*) FROM sql_tool_fixture.events_2026"
+        )
+        await _admin(
+            admin_engine,
+            "GRANT SELECT ON sql_tool_fixture.events_2026 TO sql_readonly",
+        )
+        leaky_verdict = await verify_query_role(
+            sql_engine, allowed, allow_base_tables=True
+        )
+    finally:
+        await _admin(admin_engine, _DROP_PARTITIONED)
+
+    assert default_verdict is False
+    assert verdict is True
+    assert answered["rows"] == [[12]]
+    assert direct == "42501"
+    assert leaky_verdict is False
+
+
+_CREATE_RLS_TABLE = (
+    (
+        "CREATE TABLE sql_tool_fixture.rls_sales AS "
+        "SELECT id, product, amount FROM sql_tool_fixture.sales"
+    ),
+    "ALTER TABLE sql_tool_fixture.rls_sales ENABLE ROW LEVEL SECURITY",
+    (
+        "CREATE POLICY only_product_1 ON sql_tool_fixture.rls_sales "
+        "FOR SELECT TO sql_readonly USING (product = 'product-1')"
+    ),
+    "GRANT SELECT ON sql_tool_fixture.rls_sales TO sql_readonly",
+)
+_DROP_RLS_TABLE = "DROP TABLE IF EXISTS sql_tool_fixture.rls_sales"
+
+
+async def test_row_level_security_still_hides_rows_and_is_no_error_oracle(
+    sql_engine: AsyncEngine, admin_engine: AsyncEngine
+) -> None:
+    # The role has no BYPASSRLS and owns nothing, so the policy applies to
+    # it, and PostgreSQL evaluates a policy's expression as a security
+    # barrier: the model's condition never runs on a row the policy hides.
+    # product-1 rows stop at 45.00; the hidden maximum is 50.00.
+    key = ("sql_tool_fixture", "rls_sales")
+    config = SqlQueryConfig(
+        views={**_CONFIG.views, "sql_tool_fixture.rls_sales": "product-1 sales."},
+        row_limit=10,
+        statement_timeout_ms=2_000,
+        allow_base_tables=True,
+    )
+    connector = build_sql_query_connector(sql_engine, config)
+    for statement in _CREATE_RLS_TABLE:
+        await _admin(admin_engine, statement)
+    try:
+        verdict = await verify_query_role(
+            sql_engine, _ALLOWED | {key}, allow_base_tables=True
+        )
+        visible = await connector(
+            {"sql": "SELECT count(*) AS n FROM sql_tool_fixture.rls_sales"}
+        )
+        hidden_probe = await connector(
+            {
+                "sql": "SELECT count(*) AS n FROM sql_tool_fixture.rls_sales "
+                "WHERE 1 / (CASE WHEN amount > 47 THEN 0 ELSE 1 END) = 1"
+            }
+        )
+        visible_probe = await connector(
+            {
+                "sql": "SELECT count(*) AS n FROM sql_tool_fixture.rls_sales "
+                "WHERE 1 / (CASE WHEN amount > 44 THEN 0 ELSE 1 END) = 1"
+            }
+        )
+    finally:
+        await _admin(admin_engine, _DROP_RLS_TABLE)
+
+    assert verdict is True
+    assert visible["rows"] == [[8]]
+    # No division by zero: the hidden 50.00 was never evaluated.
+    assert "error" not in hidden_probe, hidden_probe
+    assert hidden_probe["rows"] == [[8]]
+    # The same probe over a value the policy shows does raise: the oracle
+    # is only closed for hidden rows, which is the property that matters.
+    assert visible_probe["error_kind"] == "data_error"
+
+
+# ---------------------------------------------------------------------------
+# The provisioning script: a listed table needs `-v sql_allow_tables=on`
+# ---------------------------------------------------------------------------
+
+_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "provision_sql_readonly.sql"
+
+
+def _psql_url(name: str) -> str:
+    url = make_url(_require(name)).set(drivername="postgresql")
+    return url.render_as_string(hide_password=False)
+
+
+def _provision(*variables: str) -> subprocess.CompletedProcess[str]:
+    if shutil.which("psql") is None:
+        pytest.skip("psql is not installed.")
+    password = make_url(_require("SQL_DATABASE_URL")).password or ""
+    args = ["-v", f"sql_password={password}"]
+    for variable in variables:
+        args += ["-v", variable]
+    return subprocess.run(
+        [
+            "psql",
+            _psql_url("DATABASE_URL"),
+            "-v",
+            "ON_ERROR_STOP=1",
+            *args,
+            "-f",
+            str(_SCRIPT),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.fixture
+def restore_provisioning() -> Iterator[None]:
+    """Whatever a test provisioned, end on the suite's standard role."""
+    yield
+    restored = _provision("sql_views=sql_tool_fixture.sales_v")
+    assert restored.returncode == 0, restored.stderr
+
+
+_TABLE_VIEWS = "sql_views=sql_tool_fixture.sales_v,sql_tool_fixture.sales"
+
+
+@pytest.mark.usefixtures("restore_provisioning")
+async def test_the_script_refuses_a_listed_table_by_default(
+    sql_engine: AsyncEngine,
+) -> None:
+    refused = _provision(_TABLE_VIEWS)
+
+    assert refused.returncode != 0
+    assert "sql_tool_fixture.sales" in refused.stderr
+    assert "sql_allow_tables" in refused.stderr
+    # Atomic: the role is exactly what it was, and no table was granted.
+    assert await verify_query_role(sql_engine, _ALLOWED) is True
+
+
+@pytest.mark.usefixtures("restore_provisioning")
+async def test_the_script_grants_a_listed_table_with_the_opt_in(
+    sql_engine: AsyncEngine,
+) -> None:
+    granted = _provision(_TABLE_VIEWS, "sql_allow_tables=on")
+    await sql_engine.dispose()
+
+    assert granted.returncode == 0, granted.stderr
+    assert await verify_query_role(sql_engine, _WITH_TABLE) is False
+    assert (
+        await verify_query_role(sql_engine, _WITH_TABLE, allow_base_tables=True) is True
+    )
+    answered = await build_sql_query_connector(sql_engine, _TABLE_CONFIG)(
+        {"sql": f"SELECT count(*) AS n FROM {_TABLE}"}
+    )
+    assert answered["rows"] == [[40]]
+
+
+@pytest.mark.usefixtures("restore_provisioning")
+async def test_the_script_still_refuses_a_plain_view_with_the_opt_in() -> None:
+    # secrets_v is a plain view without security_barrier.
+    refused = _provision("sql_views=sql_tool_fixture.secrets_v", "sql_allow_tables=on")
+
+    assert refused.returncode != 0
+    assert "security_barrier" in refused.stderr
+
+
+@pytest.mark.usefixtures("restore_provisioning")
+async def test_the_script_rejects_a_malformed_opt_in() -> None:
+    refused = _provision(_TABLE_VIEWS, "sql_allow_tables=maybe")
+
+    assert refused.returncode != 0
+    assert "sql_allow_tables must be on or off" in refused.stderr

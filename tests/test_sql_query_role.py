@@ -148,13 +148,105 @@ def test_reading_a_relation_outside_the_allowlist_is_a_problem() -> None:
     assert any("public.orders" in p for p in check.problems)
 
 
-def test_an_allowlisted_base_table_is_a_problem() -> None:
-    findings = [_relation("sales_v", relkind="r"), _relation("clients_v")]
+@pytest.mark.parametrize("relkind", ["r", "p"])
+def test_an_allowlisted_base_table_is_a_problem_by_default(relkind: str) -> None:
+    # The default keeps the check's original strictness: a table in the
+    # allowlist (or a stray SELECT grant on one) stops the tool unless the
+    # deployment opted in to base tables.
+    findings = [_relation("sales_v", relkind=relkind), _relation("clients_v")]
 
     check = evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED)
 
     assert not check.safe
+    assert any(
+        "reporting.sales_v" in p and "allow_base_tables" in p for p in check.problems
+    )
+
+
+@pytest.mark.parametrize("relkind", ["r", "p"])
+def test_an_allowlisted_base_table_is_safe_when_the_deployment_opts_in(
+    relkind: str,
+) -> None:
+    # A table hides no rows, so there is nothing for a security barrier to
+    # order the model's predicates after: the role's privileges are the
+    # whole boundary, and they are checked exactly as for a view.
+    findings = [_relation("sales_v", relkind=relkind), _relation("clients_v")]
+
+    check = evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED, allow_base_tables=True)
+
+    assert check.safe
+    assert check.problems == ()
+
+
+@pytest.mark.parametrize("relkind", ["r", "p"])
+def test_an_allowlisted_base_table_is_still_refused_when_it_can_be_written(
+    relkind: str,
+) -> None:
+    findings = [
+        _relation("sales_v", relkind=relkind, can_write=True),
+        _relation("clients_v"),
+    ]
+
+    check = evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED, allow_base_tables=True)
+
+    assert not check.safe
+    assert any("can write" in p and "reporting.sales_v" in p for p in check.problems)
+
+
+@pytest.mark.parametrize("relkind", ["r", "p"])
+def test_a_base_table_outside_the_allowlist_is_a_problem_in_both_modes(
+    relkind: str,
+) -> None:
+    findings = [*_SAFE_FINDINGS, _relation("orders", schema="public", relkind=relkind)]
+
+    for allow in (False, True):
+        check = evaluate_query_role(
+            _SAFE_FACTS, findings, _ALLOWED, allow_base_tables=allow
+        )
+
+        assert not check.safe
+        assert any(
+            "public.orders" in p and "not allowlisted" in p for p in check.problems
+        )
+
+
+@pytest.mark.parametrize("barrier", [False, None])
+def test_the_opt_in_does_not_relax_the_barrier_rule_for_plain_views(
+    barrier: bool | None,
+) -> None:
+    findings = [
+        {**_relation("sales_v"), "security_barrier": barrier},
+        _relation("clients_v"),
+    ]
+
+    check = evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED, allow_base_tables=True)
+
+    assert not check.safe
+    assert any(
+        "security_barrier" in p and "reporting.sales_v" in p for p in check.problems
+    )
+
+
+def test_a_foreign_table_is_refused_even_with_the_opt_in() -> None:
+    # Remote data, reached with credentials and remote privileges this
+    # role's own grants say nothing about.
+    findings = [_relation("sales_v", relkind="f"), _relation("clients_v")]
+
+    check = evaluate_query_role(_SAFE_FACTS, findings, _ALLOWED, allow_base_tables=True)
+
+    assert not check.safe
     assert any("reporting.sales_v" in p for p in check.problems)
+
+
+def test_a_mix_of_views_and_base_tables_is_safe_with_the_opt_in() -> None:
+    findings = [
+        _relation("sales_v", relkind="r"),
+        _relation("clients_v", relkind="m"),
+    ]
+
+    assert evaluate_query_role(
+        _SAFE_FACTS, findings, _ALLOWED, allow_base_tables=True
+    ).safe
 
 
 def test_a_materialized_view_is_an_acceptable_allowlisted_relation() -> None:
@@ -355,6 +447,14 @@ class _Engine:
 async def test_verify_query_role_is_true_for_a_safe_role() -> None:
     engine = _Engine(_Connection(_SAFE_FACTS, _SAFE_FINDINGS))
     assert await verify_query_role(engine, _ALLOWED) is True
+
+
+async def test_verify_query_role_passes_the_base_table_opt_in_through() -> None:
+    findings = [_relation("sales_v", relkind="r"), _relation("clients_v")]
+    engine = _Engine(_Connection(_SAFE_FACTS, findings))
+
+    assert await verify_query_role(engine, _ALLOWED) is False
+    assert await verify_query_role(engine, _ALLOWED, allow_base_tables=True) is True
 
 
 async def test_verify_query_role_is_false_for_a_writable_role() -> None:

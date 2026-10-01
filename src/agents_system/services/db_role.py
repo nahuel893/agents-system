@@ -197,6 +197,9 @@ _ELEVATED_ATTRIBUTES = (
     "rolbypassrls",
 )
 _VIEW_RELKINDS = frozenset({"v", "m"})
+_BASE_TABLE_RELKINDS = frozenset({"r", "p"})
+"""Ordinary (`r`) and partitioned (`p`) tables: relations that hold rows and
+hide none. Accepted in the allowlist only on an explicit opt-in."""
 
 MAX_TEMP_FILE_LIMIT_KB = 1_048_576
 """Highest `temp_file_limit` (in kB, so 1 GiB) the check accepts for the
@@ -227,6 +230,8 @@ def evaluate_query_role(
     facts: Mapping[str, Any] | None,
     findings: Iterable[Mapping[str, Any]],
     allowed: frozenset[tuple[str, str]],
+    *,
+    allow_base_tables: bool = False,
 ) -> QueryRoleCheck:
     """Decide whether the role behind *facts*/*findings* is safe for the tool.
 
@@ -239,7 +244,8 @@ def evaluate_query_role(
     SELECT from no relation and no sequence outside *allowed* (a sequence is
     never allowlisted, so any readable one is a problem - a sequence's
     `last_value` can leak a row count); and every allowlisted relation it
-    can read is a materialized view or a `security_barrier` view.
+    can read is a materialized view or a `security_barrier` view - or, when
+    *allow_base_tables* is set, an ordinary or partitioned table.
 
     Why `security_barrier`: a view's own WHERE or JOIN is what hides rows
     from this role, and without the option the planner may evaluate the
@@ -247,6 +253,21 @@ def evaluate_query_role(
     error for some values (`1 / (CASE WHEN amount > x THEN 0 ELSE 1 END)`)
     then tells the model whether a hidden row matches, one call at a time.
     A materialized view holds only its own rows, so it needs no barrier.
+
+    Why base tables are opt-in, and safe when opted in: a table hides no
+    rows, so there is nothing for a barrier to order the model's conditions
+    after; the role's privileges (checked above, on the relation PostgreSQL
+    resolves) are the whole boundary, as they are for a view with no filter.
+    Row-level security needs no special case: the role has no BYPASSRLS
+    (checked above) and owns nothing (ownership is a write finding), so the
+    table's policies apply to it, and PostgreSQL evaluates them as
+    security-barrier quals. A partitioned table is read through its parent:
+    a partition the role can read directly is not allowlisted, so it is a
+    problem. The default stays strict because a table in the allowlist, or a
+    stray grant on one, was always a refusal; keeping it refused unless the
+    deployment asks makes exposing a raw table an explicit decision. A plain
+    view still needs the barrier in both modes, and foreign tables stay
+    refused.
     """
     if facts is None:
         return QueryRoleCheck(problems=("the current role was not found",), warnings=())
@@ -298,12 +319,16 @@ def evaluate_query_role(
             problems.append(f"role can read {shown}, which is not allowlisted")
             continue
         readable.add(key)
-        if finding.get("relkind") not in _VIEW_RELKINDS:
+        relkind = finding.get("relkind")
+        if relkind in _BASE_TABLE_RELKINDS:
+            if not allow_base_tables:
+                problems.append(
+                    f"allowlisted relation {shown} is a base table "
+                    "(accepted only with allow_base_tables)"
+                )
+        elif relkind not in _VIEW_RELKINDS:
             problems.append(f"allowlisted relation {shown} is not a view")
-        elif (
-            finding.get("relkind") == "v"
-            and finding.get("security_barrier") is not True
-        ):
+        elif relkind == "v" and finding.get("security_barrier") is not True:
             problems.append(
                 f"allowlisted view {shown} is not a security_barrier view "
                 "(ALTER VIEW ... SET (security_barrier = true))"
@@ -315,18 +340,24 @@ def evaluate_query_role(
 
 
 async def check_query_role(
-    conn: Any, allowed: frozenset[tuple[str, str]]
+    conn: Any,
+    allowed: frozenset[tuple[str, str]],
+    *,
+    allow_base_tables: bool = False,
 ) -> QueryRoleCheck:
     """Ask the database, over *conn*, what the current role can do."""
     facts = (await conn.execute(_QUERY_ROLE_FACTS)).mappings().first()
     findings = (await conn.execute(_QUERY_ROLE_FINDINGS)).mappings().all()
-    return evaluate_query_role(facts, findings, allowed)
+    return evaluate_query_role(
+        facts, findings, allowed, allow_base_tables=allow_base_tables
+    )
 
 
 async def verify_query_role(
     engine: Any,
     allowed: frozenset[tuple[str, str]],
     *,
+    allow_base_tables: bool = False,
     log_event: str = "sql_query.role_check_failed",
 ) -> bool | None:
     """Startup form of `check_query_role`, shaped like `role_is_read_only`.
@@ -340,7 +371,9 @@ async def verify_query_role(
     try:
         async with engine.connect() as conn:
             try:
-                check = await check_query_role(conn, allowed)
+                check = await check_query_role(
+                    conn, allowed, allow_base_tables=allow_base_tables
+                )
             finally:
                 await conn.rollback()
     except DATABASE_UNAVAILABLE_ERRORS:

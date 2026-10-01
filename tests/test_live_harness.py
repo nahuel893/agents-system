@@ -709,6 +709,27 @@ def test_render_provision_sql_readonly_substitutes_every_psql_variable() -> None
     assert "sql_tool_fixture.sales_v" in rendered
 
 
+def test_render_provision_sql_readonly_leaves_base_tables_off_by_default() -> None:
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("s.v",)
+    )
+
+    assert "set_config('sql_readonly.allow_tables', 'off', false)" in rendered
+
+
+def test_render_provision_sql_readonly_can_allow_base_tables() -> None:
+    from agents_system.evals.live_harness import render_provision_sql_readonly
+
+    rendered = render_provision_sql_readonly(
+        database="db1", password="pw", views=("s.t",), allow_base_tables=True
+    )
+
+    assert "set_config('sql_readonly.allow_tables', 'on', false)" in rendered
+    assert ":'" not in rendered
+
+
 def test_render_provision_sql_readonly_defaults_temp_file_limit() -> None:
     from agents_system.evals.live_harness import render_provision_sql_readonly
 
