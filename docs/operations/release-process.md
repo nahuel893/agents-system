@@ -40,7 +40,7 @@ available locally.
    hold, and the release PR body records their results:
 
    1. The full live suite passes against the reference model
-      (`google/gemini-3.8-flash` through `EVAL_PROVIDER=openai_compatible`;
+      (`openai/gpt-6-sol` through `EVAL_PROVIDER=openai_compatible`;
       see the Definition of done in `AGENTS.md` for the exact environment):
 
       ```sh
