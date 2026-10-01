@@ -647,10 +647,11 @@ def _quote_sql_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
-#: The four psql-only meta-command prefixes `scripts/provision_sql_readonly.sql`
-#: uses purely to supply a DEFAULT for `sql_temp_file_limit` when the caller's
-#: `-v` omits it. `render_provision_sql_readonly` always supplies a value
-#: itself (see its own *temp_file_limit* parameter), so the whole `\if
+#: The psql-only meta-command prefixes `scripts/provision_sql_readonly.sql`
+#: uses purely to supply a DEFAULT for `sql_temp_file_limit` and
+#: `sql_allow_tables` when the caller's `-v` omits them.
+#: `render_provision_sql_readonly` always supplies a value itself (see its own
+#: *temp_file_limit* and *allow_base_tables* parameters), so the whole `\if
 #: ... \endif` block -- along with the unrelated `\set ON_ERROR_STOP on`
 #: line -- is dropped rather than interpreted; asyncpg's simple query
 #: protocol has no psql meta-command support at all, so leaving one in would
@@ -664,6 +665,7 @@ def render_provision_sql_readonly(
     password: str,
     views: Sequence[str],
     temp_file_limit: str = "256MB",
+    allow_base_tables: bool = False,
 ) -> str:
     """Render the checked-in `scripts/provision_sql_readonly.sql` (#80,
     ADR-007's read-only SQL tool role) into plain SQL runnable over one
@@ -671,8 +673,9 @@ def render_provision_sql_readonly(
     role against the harness's throwaway database with this function).
 
     Renders the CHECKED-IN script -- rather than a parallel
-    reimplementation -- by substituting its three psql variables
-    (`sql_password`, `sql_views`, `sql_temp_file_limit`) and its one
+    reimplementation -- by substituting its four psql variables
+    (`sql_password`, `sql_views`, `sql_temp_file_limit`, `sql_allow_tables`,
+    the last one off unless *allow_base_tables* is set) and its one
     automatic psql variable (`DBNAME`) and dropping its psql-only
     meta-commands, so a live Phase 1 run provisions the tool's role through
     the EXACT same runbook an operator follows by hand -- see
@@ -688,6 +691,9 @@ def render_provision_sql_readonly(
     rendered = rendered.replace(":'sql_views'", _quote_sql_literal(",".join(views)))
     rendered = rendered.replace(
         ":'sql_temp_file_limit'", _quote_sql_literal(temp_file_limit)
+    )
+    rendered = rendered.replace(
+        ":'sql_allow_tables'", _quote_sql_literal("on" if allow_base_tables else "off")
     )
     rendered = rendered.replace(':"DBNAME"', _quote_sql_identifier(database))
     return rendered

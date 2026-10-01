@@ -25,6 +25,16 @@
 -- WHERE or JOIN, on rows the view hides, and an error raised only for some
 -- values tells the model what those rows hold.
 --
+-- A base table hides no rows, so it needs no barrier: with
+-- -v sql_allow_tables=on (default off) an ordinary or partitioned table may
+-- be listed too, and the role gets SELECT on exactly it. Without the flag
+-- the script refuses a table, so exposing a raw table is a decision the
+-- caller makes out loud; a plain view still needs the barrier either way.
+-- Set the same flag on the tool (SqlQueryConfig(allow_base_tables=True)).
+-- Row-level security on a listed table still applies to this role (it has
+-- no BYPASSRLS and owns nothing), and a partitioned or inheritance parent
+-- exposes the rows of its children through it (ADR-007).
+--
 -- The tool re-checks all of this on every call (services/db_role.py,
 -- check_query_role) and refuses to run while the role can write anything or
 -- read anything beyond its allowlist, while it belongs to any other role,
@@ -48,12 +58,14 @@
 -- The password and the view list come from the caller, never from this
 -- file. Pass them bare: psql quotes them itself. The view list must match
 -- the tool's configured `views` exactly; sql_temp_file_limit is optional
--- (at most 1GB, which the tool's check enforces):
+-- (at most 1GB, which the tool's check enforces), and so is sql_allow_tables
+-- (on or off):
 --
 --   psql "$ADMIN_DATABASE_URL" \
 --     -v sql_password=change-me \
 --     -v sql_views=reporting.sales_v,reporting.clients_v \
 --     -v sql_temp_file_limit=256MB \
+--     -v sql_allow_tables=off \
 --     -f scripts/provision_sql_readonly.sql
 --
 -- Idempotent: safe to re-run, and re-running REPAIRS drift - every setting is
@@ -130,7 +142,13 @@ $$;
 -- 4. Strip every relation, sequence and schema privilege, then grant SELECT
 -- on exactly the listed views. The list travels through a session setting
 -- because psql does not interpolate variables inside a DO body.
+\if :{?sql_allow_tables}
+\else
+\set sql_allow_tables off
+\endif
 SELECT set_config('sql_readonly.views', :'sql_views', false) AS views_to_grant;
+SELECT set_config('sql_readonly.allow_tables', :'sql_allow_tables', false)
+    AS allow_tables;
 
 DO $$
 DECLARE
@@ -140,7 +158,18 @@ DECLARE
     grantor_row record;
     entry text;
     parts text[];
+    allow_tables boolean;
+    listed_kind text;
 BEGIN
+    allow_tables := CASE lower(btrim(current_setting('sql_readonly.allow_tables')))
+        WHEN 'on' THEN true
+        WHEN 'off' THEN false
+    END;
+    IF allow_tables IS NULL THEN
+        RAISE EXCEPTION 'sql_allow_tables must be on or off, got "%"',
+            current_setting('sql_readonly.allow_tables');
+    END IF;
+
     SELECT oid INTO STRICT reader_oid FROM pg_roles WHERE rolname = 'sql_readonly';
 
     FOR schema_row IN
@@ -205,15 +234,17 @@ BEGIN
         IF array_length(parts, 1) <> 2 THEN
             RAISE EXCEPTION 'sql_views entry "%" must be written as schema.view', entry;
         END IF;
-        IF NOT EXISTS (
-            SELECT 1
-            FROM pg_class AS c
-            JOIN pg_namespace AS n ON n.oid = c.relnamespace
-            WHERE n.nspname = parts[1]
-              AND c.relname = parts[2]
-              AND c.relkind IN ('v', 'm')
-        ) THEN
-            RAISE EXCEPTION 'sql_views entry "%" is not an existing view', entry;
+        SELECT c.relkind::text INTO listed_kind
+        FROM pg_class AS c
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = parts[1]
+          AND c.relname = parts[2]
+          AND c.relkind IN ('r', 'p', 'v', 'm');
+        IF listed_kind IS NULL THEN
+            RAISE EXCEPTION 'sql_views entry "%" is not an existing view or base table', entry;
+        END IF;
+        IF listed_kind IN ('r', 'p') AND NOT allow_tables THEN
+            RAISE EXCEPTION 'sql_views entry "%" is a base table; pass -v sql_allow_tables=on to allow one, or list a materialized or security_barrier view over it', entry;
         END IF;
         IF EXISTS (
             SELECT 1
@@ -296,12 +327,12 @@ BEGIN
                           pg_catalog.has_any_column_privilege(
                               'sql_readonly', c.oid, 'SELECT'
                           )
-                          -- Exempt exactly the views this run just granted
-                          -- SELECT on. Scoped to THIS match only: a write
+                          -- Exempt exactly the views (or, with sql_allow_tables=on, tables)
+                          -- this run just granted SELECT on. Scoped to THIS match only: a write
                           -- privilege below is never exempted, even on a
                           -- listed view (issue #131 review).
                           AND NOT (
-                              c.relkind IN ('v', 'm')
+                              c.relkind IN ('r', 'p', 'v', 'm')
                               AND EXISTS (
                                   SELECT 1
                                   FROM unnest(
