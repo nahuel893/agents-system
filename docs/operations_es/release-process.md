@@ -42,7 +42,7 @@ disponibles localmente.
    release registra sus resultados:
 
    1. La suite completa en vivo pasa con el modelo de referencia
-      (`google/gemini-3.8-flash` a través de `EVAL_PROVIDER=openai_compatible`;
+      (`openai/gpt-6-sol` a través de `EVAL_PROVIDER=openai_compatible`;
       el entorno exacto está en la Definición de terminado de `AGENTS.md`):
 
       ```sh

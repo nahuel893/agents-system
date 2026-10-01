@@ -118,7 +118,7 @@ OpenRouter, por ejemplo:
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-export OPENAI_COMPATIBLE_MODEL=google/gemini-3.8-flash
+export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
 export OPENAI_COMPATIBLE_API_KEY=...   # tu propia clave -- nunca la commitees
 pytest -m live
 ```
@@ -133,20 +133,21 @@ silencio de lo que el proveedor realmente usó.
 
 ### Modelo de referencia
 
-El modelo de referencia para la evaluación en vivo es `google/gemini-3.8-flash`
-a través de OpenRouter (con soporte de tool calling; USD 0,75 por millón de
-tokens de entrada y 3,75 por millón de salida). Las líneas base y las
-compuertas de este documento y de los issues de ajuste de roles se miden con
-él. `deepseek/deepseek-v4-flash` sigue siendo una segunda opinión válida, solo
-a título informativo. Ningún script fija uno de los dos modelos: el modelo
-siempre sale de `OPENAI_COMPATIBLE_MODEL`.
+El modelo de referencia para la evaluación en vivo es `openai/gpt-6-sol` a
+través de OpenRouter (con soporte de tool calling y razonamiento; USD 2,00 por
+millón de tokens de entrada y 10,00 por millón de salida), desde el
+2026-10-01 (#216). Las líneas base medidas antes de esa fecha, incluidas las
+de los issues de ajuste de roles, se tomaron con `google/gemini-3.8-flash`.
+`google/gemini-3.8-flash` y `deepseek/deepseek-v4-flash` siguen siendo
+segundas opiniones válidas, solo a título informativo. Ningún script fija un
+modelo: el modelo siempre sale de `OPENAI_COMPATIBLE_MODEL`.
 
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-export OPENAI_COMPATIBLE_MODEL=google/gemini-3.8-flash
+export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
 export OPENAI_COMPATIBLE_API_KEY=...   # tu propia clave -- nunca la commitees
-export MODEL_PRICES='{"google/gemini-3.8-flash": {"input_per_million": 0.75, "output_per_million": 3.75}}'
+export MODEL_PRICES='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}'
 ```
 
 Sin una entrada de `MODEL_PRICES` para el modelo, cada turno reporta
@@ -333,7 +334,7 @@ cualquier otra marcada `live`:
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-export OPENAI_COMPATIBLE_MODEL=google/gemini-3.8-flash
+export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
 export OPENAI_COMPATIBLE_API_KEY=...
 EVAL_RUNS=3 pytest -m live tests/test_live_eval_guardrails.py -s
 ```
@@ -627,7 +628,7 @@ el adapter) --, y
 valor el precio en USD por millón de tokens de entrada/salida:
 
 ```bash
-export MODEL_PRICES='{"google/gemini-3.8-flash": {"input_per_million": 0.75, "output_per_million": 3.75}}'
+export MODEL_PRICES='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}'
 ```
 
 `AgentRuntime` deriva esta clave por sí mismo, al construirse, a partir del
