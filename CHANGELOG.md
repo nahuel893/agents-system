@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/nahuel893/agents-system/compare/v0.5.0...v0.5.1) (2026-10-01)
+
+
+### Features
+
+* **sql:** accept allowlisted base tables on an opt-in ([#204](https://github.com/nahuel893/agents-system/issues/204)) ([#205](https://github.com/nahuel893/agents-system/issues/205)) ([35de542](https://github.com/nahuel893/agents-system/commit/35de5424359063cece62e0c967a24d52faad2558))
+
 ## [0.5.0](https://github.com/nahuel893/agents-system/compare/v0.4.0...v0.5.0) (2026-09-29)
 
 
