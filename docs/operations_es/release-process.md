@@ -35,15 +35,30 @@ disponibles localmente.
    `gh auth token`, apuntando a `main`. Mantiene abierta o actualizada
    exactamente una PR de release permanente, como se describe más abajo.
 
-2. **Revisá y mergeá la PR de release** (squash merge). Como quedó abierta
-   bajo tu propia cuenta, los checks requeridos corren como en cualquier
-   otra PR. Antes de mergear, corré el smoke test del wheel instalado sobre
-   la rama del release (ver [Smoke test del wheel como
-   biblioteca](#smoke-test-del-wheel-como-biblioteca)):
+2. **Pasá la compuerta de release sobre la rama del release y después mergeá
+   la PR de release** (squash merge). Como quedó abierta bajo tu propia
+   cuenta, los checks requeridos corren como en cualquier otra PR. Antes de
+   mergear se tienen que cumplir las tres condiciones, y el cuerpo de la PR de
+   release registra sus resultados:
 
-   ```sh
-   scripts/smoke-installed-wheel.sh
-   ```
+   1. La suite completa en vivo pasa con el modelo de referencia
+      (`google/gemini-3.8-flash` a través de `EVAL_PROVIDER=openai_compatible`;
+      el entorno exacto está en la Definición de terminado de `AGENTS.md`):
+
+      ```sh
+      scripts/run-live-suite.sh
+      ```
+
+   2. El smoke test del wheel instalado pasa (ver [Smoke test del wheel como
+      biblioteca](#smoke-test-del-wheel-como-biblioteca)):
+
+      ```sh
+      scripts/smoke-installed-wheel.sh
+      ```
+
+   3. `docs/platform/features.md` y su gemelo en español están al día: las
+      filas marcadas "llega en el próximo release" pasan a esta versión, y la
+      línea del último release la nombra.
 
 3. **Creá el tag y el GitHub Release:**
 
@@ -54,6 +69,14 @@ disponibles localmente.
    Esto corre `npx --yes release-please github-release` con los mismos
    argumentos, creando el tag `vX.Y.Z` y el GitHub Release a partir de la
    sección mergeada de `CHANGELOG.md`.
+
+4. **Instalá la versión desde su tag** en un proyecto limpio, fuera del
+   repositorio, con el núcleo más cada extra que tocó la versión, y armá un
+   agente con ella:
+
+   ```sh
+   uv add "agents-system[<extras>] @ git+https://github.com/nahuel893/agents-system@vX.Y.Z"
+   ```
 
 ## Smoke test del wheel como biblioteca
 
