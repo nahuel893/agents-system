@@ -11,7 +11,8 @@ check:
    none of it survives into the next pooled use of the connection.
 3. `check_query_role` inside the same transaction, before the query: the
    role must still be read-only by default, hold no elevated attribute, and
-   be able to read nothing but the allowlisted views. Grants drift; this is
+   be able to read nothing but the allowlisted views (or, when the
+   deployment opted in, base tables). Grants drift; this is
    checked on every call, not once at boot.
 4. The guard's canonical rendering is sent through the driver's extended
    protocol (asyncpg prepares every statement), which refuses a second
@@ -174,6 +175,7 @@ async def run_guarded_query(
     statement_timeout_ms: int,
     row_limit: int,
     byte_limit: int,
+    allow_base_tables: bool = False,
 ) -> QueryRows:
     """Run *guarded* under the database-side limits described above.
 
@@ -185,7 +187,9 @@ async def run_guarded_query(
         try:
             await conn.exec_driver_sql("SET TRANSACTION READ ONLY")
             await conn.execute(_SESSION_LIMITS, session_limits(statement_timeout_ms))
-            role = await check_query_role(conn, allowed_relations)
+            role = await check_query_role(
+                conn, allowed_relations, allow_base_tables=allow_base_tables
+            )
             if not role.safe:
                 raise UnsafeQueryRoleError(role.problems)
             deadline = _now() + statement_timeout_ms / 1000

@@ -7,7 +7,8 @@ every other one fails.
 
 1. Database (the boundary). *engine* must connect as a dedicated role
    provisioned by `scripts/provision_sql_readonly.sql`: read-only by default,
-   no elevated attributes, SELECT on the allowlisted views and nothing else.
+   no elevated attributes, SELECT on the allowlisted views (or, with
+   `allow_base_tables`, tables) and nothing else.
    `services.sql_query.run_guarded_query` re-verifies that on every call,
    inside a `READ ONLY` transaction with a server-side, transaction-local
    `statement_timeout`, before the model's query runs, and always rolls
@@ -146,6 +147,13 @@ class SqlQueryConfig:
     model sees (columns and grain help it write correct SQL). The same names
     must be the ONLY relations the database role can read; the tool checks
     that on every call.
+
+    Every one must be a materialized view or a `security_barrier` view, unless
+    `allow_base_tables` is set: then an ordinary or partitioned table may be
+    listed too (a plain view still needs the barrier). A table hides no rows,
+    so the role's own privileges are the whole boundary; the flag exists so
+    that exposing a raw table is an explicit decision (ADR-007). Set it in
+    `scripts/provision_sql_readonly.sql` too (`-v sql_allow_tables=on`).
     """
 
     views: Mapping[str, str]
@@ -153,6 +161,7 @@ class SqlQueryConfig:
     statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS
     allowed_functions: frozenset[str] = field(default=DEFAULT_ALLOWED_FUNCTIONS)
     byte_limit: int = DEFAULT_BYTE_LIMIT
+    allow_base_tables: bool = False
 
     def __post_init__(self) -> None:
         if not self.views:
@@ -347,6 +356,7 @@ def build_sql_query_connector(engine: Any, config: SqlQueryConfig) -> AsyncConne
                 statement_timeout_ms=config.statement_timeout_ms,
                 row_limit=row_limit,
                 byte_limit=config.byte_limit,
+                allow_base_tables=config.allow_base_tables,
             )
         except UnsafeQueryRoleError as unsafe:
             _logger.error(

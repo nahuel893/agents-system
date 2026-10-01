@@ -165,7 +165,9 @@ def safe_role(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """Default: the role check passes. Tests that need it to fail override."""
     calls: list[Any] = []
 
-    async def fake_check(conn: Any, allowed: Any) -> QueryRoleCheck:
+    async def fake_check(
+        conn: Any, allowed: Any, *, allow_base_tables: bool = False
+    ) -> QueryRoleCheck:
         calls.append(allowed)
         return QueryRoleCheck(problems=(), warnings=())
 
@@ -327,7 +329,9 @@ async def test_a_query_that_breaks_the_parser_is_a_result_not_an_exception() -> 
 async def test_an_unsafe_role_refuses_every_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def unsafe(conn: Any, allowed: Any) -> QueryRoleCheck:
+    async def unsafe(
+        conn: Any, allowed: Any, *, allow_base_tables: bool = False
+    ) -> QueryRoleCheck:
         return QueryRoleCheck(problems=("can write reporting.sales_v",), warnings=())
 
     monkeypatch.setattr(sql_query, "check_query_role", unsafe)
@@ -340,6 +344,31 @@ async def test_an_unsafe_role_refuses_every_query(
     # The model's query never ran: only the transaction setup did.
     assert not any('"reporting"."sales_v"' in s for s in engine.statements)
     assert engine.rolled_back
+
+
+async def test_base_tables_are_refused_by_default_and_the_opt_in_reaches_the_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[bool] = []
+
+    async def record(
+        conn: Any, allowed: Any, *, allow_base_tables: bool = False
+    ) -> QueryRoleCheck:
+        seen.append(allow_base_tables)
+        return QueryRoleCheck(problems=(), warnings=())
+
+    monkeypatch.setattr(sql_query, "check_query_role", record)
+    assert _CONFIG.allow_base_tables is False
+    opted_in = SqlQueryConfig(views=_CONFIG.views, allow_base_tables=True)
+
+    await build_sql_query_connector(_Engine(rows=[("a", 1)]), _CONFIG)(
+        {"sql": "SELECT product, amount FROM sales_v"}
+    )
+    await build_sql_query_connector(_Engine(rows=[("a", 1)]), opted_in)(
+        {"sql": "SELECT product, amount FROM sales_v"}
+    )
+
+    assert seen == [False, True]
 
 
 async def test_no_engine_means_not_configured() -> None:
