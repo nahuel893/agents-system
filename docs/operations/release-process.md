@@ -34,15 +34,29 @@ available locally.
    `gh auth token`, targeting `main`. It keeps exactly one standing release
    PR open/updated, as described below.
 
-2. **Review and merge the release PR** (squash merge). Because it was opened
-   under the maintainer's own account, the required checks run like any
-   other PR. Before merging, run the installed-wheel smoke test on the
-   release branch (see [Smoke-testing the wheel as a
-   library](#smoke-testing-the-wheel-as-a-library)):
+2. **Pass the release gate on the release branch, then merge the release PR**
+   (squash merge). Because it was opened under the maintainer's own account,
+   the required checks run like any other PR. Before merging, all three must
+   hold, and the release PR body records their results:
 
-   ```sh
-   scripts/smoke-installed-wheel.sh
-   ```
+   1. The full live suite passes against the reference model
+      (`google/gemini-3.8-flash` through `EVAL_PROVIDER=openai_compatible`;
+      see the Definition of done in `AGENTS.md` for the exact environment):
+
+      ```sh
+      scripts/run-live-suite.sh
+      ```
+
+   2. The installed-wheel smoke test passes (see [Smoke-testing the wheel as
+      a library](#smoke-testing-the-wheel-as-a-library)):
+
+      ```sh
+      scripts/smoke-installed-wheel.sh
+      ```
+
+   3. `docs/platform/features.md` and its ES twin are current: the rows marked
+      "coming in the next release" now belong to this version, and the
+      latest-release line names it.
 
 3. **Create the tag and GitHub Release:**
 
@@ -53,6 +67,14 @@ available locally.
    This runs `npx --yes release-please github-release` with the same
    arguments, creating the `vX.Y.Z` tag and the GitHub Release from the
    merged `CHANGELOG.md` section.
+
+4. **Install the release from its tag** in a clean project outside the
+   repository, with the core plus every extra the release touched, and build
+   an agent with it:
+
+   ```sh
+   uv add "agents-system[<extras>] @ git+https://github.com/nahuel893/agents-system@vX.Y.Z"
+   ```
 
 ## Smoke-testing the wheel as a library
 

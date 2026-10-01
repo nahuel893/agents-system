@@ -63,6 +63,46 @@ Gentle AI already installs the SDD skills and Strict TDD in your config — you 
 
 So: treat the issue as the contract, run apply + verify against it, and do not close it until every acceptance criterion passes. If the issue is underspecified, say so on the issue rather than guessing — see the Definition of Ready in the delivery flow.
 
+## Definition of done — what every PR proves before it merges
+
+Offline tests prove the code does what the tests say. Only a real model proves an agent still behaves, so a change that can alter agent behavior is not done until a live run says so. Record the **observed** result of every step below in the PR body; a step you skip needs its reason there too.
+
+1. **Offline checks**, from the repository root: `ruff check .`, `ruff format --check .`, `mypy src/`, `pytest -q`. While GitHub Actions cannot run, these local results are the verification of record.
+2. **Live scenarios for every behavior change.** A PR that touches the runtime, an agent or role prompt, a tool or connector, a channel, the harness or the permission model runs the live modules that cover what it touched, before merge, and reports per-scenario pass rates. Docs-only, tests-only and CI-only PRs are exempt; say so in the body. If a review fix changes a prompt or behavior after the live run, re-run the affected scenarios.
+
+   | You changed | Run at least |
+   |---|---|
+   | A role or agent prompt, escalation, no-fabrication | `tests/test_live_eval_roles.py` (plus `tests/test_live_eval_sales_agent.py` for the sales role) |
+   | The permission model, the interceptor, guards or execution limits | `tests/test_live_eval_guardrails.py` |
+   | The SQL tool or parameterized reports | `tests/test_live_eval_sql_query.py` |
+   | The runtime, conversation memory, the served app, a channel, or a tool end to end | `tests/test_live_eval_phase1.py` and `tests/test_live_smoke.py` |
+   | The `Agent` API, `extends`, skills or the importer | `tests/test_live_eval_phase4.py` |
+   | Concurrency, the webhook worker, the outbox or connection pools | `tests/test_live_load_phase3.py` |
+
+   Always force the remote reference model; local inference is never used:
+
+   ```bash
+   set -a; . .env; set +a
+   EVAL_PROVIDER=openai_compatible OPENAI_COMPATIBLE_MODEL=google/gemini-3.8-flash \
+   MODEL_PRICES='{"google/gemini-3.8-flash": {"input_per_million": 0.75, "output_per_million": 3.75}}' \
+   EVAL_RUNS=3 pytest -m live <module> -k "<scenarios>" -rA
+   ```
+
+   Check the model name in the output before trusting a result. Never print `.env`.
+3. **Docs in the same PR.** Every behavior or configuration change updates its page under `docs/` and the twin under the matching `docs/*_es/` directory, and its row in `docs/platform/features.md` (EN + ES), labeled as coming in the next release.
+4. **Commit identity.** Commits use the GitHub noreply address: run `git config user.email 63928063+nahuel893@users.noreply.github.com` in every checkout and worktree. No AI attribution trailers. Before pushing, check `git log --format='%ae %ce' origin/main..HEAD`.
+5. **Nothing private leaves the machine.** No customer or company names, personal emails, secrets or absolute local paths in committed files, PR bodies or issue comments.
+
+## Release gate — what must pass before a tag
+
+A release is cut only with the owner's go-ahead, through `scripts/release.sh pr|tag`. On the release branch, before merging the release PR:
+
+1. **The full live suite passes:** `scripts/run-live-suite.sh` (all suites, `EVAL_RUNS=3`) with the reference model forced as above. Put its summary in the release PR body.
+2. **The installed wheel works:** `scripts/smoke-installed-wheel.sh`.
+3. **The feature page is current:** in `docs/platform/features.md` and its ES twin, the rows marked "coming in the next release" now belong to this version, and the latest-release line names it.
+
+After tagging, install the release from its tag in a clean project (the core, plus every extra the release touched) and build an agent with it. The full procedure is in `docs/operations/release-process.md`.
+
 ## Engram persistent memory
 
 Engram is always active. Save decisions, bugfixes, discoveries, and conventions proactively. Search it before starting work that may have been done before.
