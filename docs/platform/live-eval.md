@@ -218,6 +218,28 @@ back to the lenient, 80%-threshold happy-path class merely because its
 author forgot the declaration. An ordinary filename (no marker) is
 unaffected and keeps defaulting to `happy_path` as before.
 
+## Targeting an agent, not only a role (issue #221)
+
+A scenario names the agent under test in one of three ways, and grant
+defaulting (`eval.grants_defaulted`, policy `all-declared`) and every assertion
+behave the same for all three:
+
+| Kind | How | Identifier |
+|---|---|---|
+| `role` | `role: sales-agent` (unchanged) | the role name |
+| `folder` | `agent: stock-bot` in YAML, or `Scenario(agent_folder="stock-bot")`; the folder is resolved under `run_scenario(agents_root=...)` with `Agent.from_folder` semantics | the folder path relative to the root |
+| `inline` | `run_scenario(scenario, ..., agent=Agent(...))` | `Agent.name` |
+
+`role` and `agent` are mutually exclusive in a file; an inline `Agent` is passed
+with a scenario that names neither. A folder uses the same containment as
+`FolderLocator`: a path that escapes `agents_root` (`..`, an absolute path, or a
+symlink out of it), a folder that does not exist, or a folder scenario run
+without `agents_root` raises `ScenarioError` before any model call.
+
+`ScenarioResult` carries `agent` and `agent_kind` (`role`, `folder` or
+`inline`), and both appear in the JSON and Markdown reports. `role` keeps its
+value for role scenarios.
+
 ## Guardrail assertion types and turn-level overrides (issue #76)
 
 Five more assertion types, and two scenario-level fields, exist specifically
@@ -534,12 +556,12 @@ coverage is out of scope for #169 and belongs to the sibling issues under
 of `agents_system.evals.reporting.write_results(...)` writes two timestamped
 files:
 
-- `evals/results/<UTC timestamp>.json` — one entry per scenario: role,
+- `evals/results/<UTC timestamp>.json` — one entry per scenario: role, agent, agent kind,
   model, run count, pass count, success rate, per-run failure detail,
   (issue #78 Phase 0) real token usage/cost, and (issue #81) `category`,
   `exercised`, `threshold`, `gate_passed`, `gate_reason` -- see Gating above.
 - `evals/results/<UTC timestamp>.md` — a short markdown table (scenario,
-  role, model, category, runs, exercised, success rate, threshold, gate,
+  agent (kind), model, category, runs, exercised, success rate, threshold, gate,
   tokens, cost, duration) for a quick read.
 
 ## Tokens and cost (issue #78 Phase 0)

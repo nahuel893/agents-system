@@ -1,0 +1,9 @@
+# #221 -- a scenario that targets an agent FOLDER (resolved under the
+# fixtures root `tests/fixtures/agents/eval_targets/`), not a predefined role.
+agent: stock-bot
+name: folder_target_stock_lookup
+description: A customer asks whether a catalog item is in stock.
+turns:
+  - "Please look up Item Alpha in the product catalog and tell me whether it is in stock."
+assertions:
+  tools_called: [catalog_search]

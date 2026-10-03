@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import pathlib
 import time
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -27,6 +28,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
 from agents_system.agent.graph import AgentRuntime, TurnUsage
+from agents_system.agent.spec import Agent
 from agents_system.audit.sink import AuditSink
 from agents_system.config import get_settings
 from agents_system.evals.schema import (
@@ -35,9 +37,10 @@ from agents_system.evals.schema import (
     DEFAULT_HAPPY_PATH_THRESHOLD,
     Scenario,
     ScenarioAssertions,
+    ScenarioError,
 )
 from agents_system.harness.factory import EquippedRuntime, build_runtime
-from agents_system.harness.loader import RootConfig, resolve
+from agents_system.harness.loader import FolderLocator, RootConfig, resolve
 from agents_system.harness.registry import ToolRegistry
 
 #: The exact prefix `agent/graph.py::_execute_tools` writes into a
@@ -189,6 +192,12 @@ def _sum_turn_usage(turns: Sequence[TurnUsage]) -> TurnUsage:
     )
 
 
+#: #221 -- the three ways a scenario can name its agent.
+AGENT_KIND_ROLE = "role"
+AGENT_KIND_FOLDER = "folder"
+AGENT_KIND_INLINE = "inline"
+
+
 @dataclasses.dataclass(frozen=True)
 class ScenarioResult:
     """A scenario's outcomes across `runs` executions, against one model."""
@@ -211,6 +220,16 @@ class ScenarioResult:
     #: (1.0); for a happy-path scenario, to `Scenario.threshold` or
     #: `schema.DEFAULT_HAPPY_PATH_THRESHOLD` when it was not overridden.
     threshold: float = DEFAULT_HAPPY_PATH_THRESHOLD
+    #: #221 -- a stable identifier for the agent under test and its kind
+    #: (``AGENT_KIND_*``): the role name, the folder path relative to the
+    #: agents root (POSIX), or the inline ``Agent.name``. Defaults to
+    #: ``role`` / ``"role"`` for a result built the pre-#221 way.
+    agent: str = ""
+    agent_kind: str = AGENT_KIND_ROLE
+
+    def __post_init__(self) -> None:
+        if not self.agent:
+            object.__setattr__(self, "agent", self.role)
 
     @property
     def success_rate(self) -> float:
@@ -292,6 +311,8 @@ class ScenarioResult:
         return {
             "scenario": self.scenario,
             "role": self.role,
+            "agent": self.agent,
+            "agent_kind": self.agent_kind,
             "model": self.model,
             "runs": len(self.runs),
             "passed": sum(1 for run in self.runs if run.passed),
@@ -835,6 +856,64 @@ async def _settle_audit_sink_since(
         await asyncio.sleep(interval_s)
 
 
+def _resolve_agent_target(
+    scenario: Scenario, agent: Agent | None, agents_root: pathlib.Path | None
+) -> tuple[Any, str, str]:
+    """#221 -- turn a scenario's agent reference into ``(locator, identifier,
+    kind)`` before any model call.
+
+    A folder is resolved under *agents_root* with the same containment as
+    ``FolderLocator``: the fully resolved path (symlinks followed) must stay
+    inside the root, else it raises ``ScenarioError``.
+    """
+    named = [
+        label
+        for label, present in (
+            ("role", bool(scenario.role)),
+            ("agent_folder", scenario.agent_folder is not None),
+            ("agent=", agent is not None),
+        )
+        if present
+    ]
+    if len(named) > 1:
+        raise ScenarioError(
+            f"scenario {scenario.name!r}: names its agent more than once "
+            f"({', '.join(named)}); give exactly one"
+        )
+    if agent is not None:
+        return agent, agent.name, AGENT_KIND_INLINE
+    if scenario.role:
+        return scenario.role, scenario.role, AGENT_KIND_ROLE
+    if scenario.agent_folder is None:
+        raise ScenarioError(
+            f"scenario {scenario.name!r}: no agent to run -- set a role, an "
+            "agent folder, or pass agent= to run_scenario"
+        )
+    if agents_root is None:
+        raise ScenarioError(
+            f"scenario {scenario.name!r}: agent folder "
+            f"{scenario.agent_folder!r} needs run_scenario(agents_root=...)"
+        )
+    root = agents_root.resolve()
+    folder = pathlib.PurePath(scenario.agent_folder)
+    resolved = (root / folder).resolve()
+    if folder.is_absolute() or not resolved.is_relative_to(root) or resolved == root:
+        raise ScenarioError(
+            f"scenario {scenario.name!r}: agent folder "
+            f"{scenario.agent_folder!r} escapes the agents root"
+        )
+    if not resolved.is_dir():
+        raise ScenarioError(
+            f"scenario {scenario.name!r}: agent folder "
+            f"{scenario.agent_folder!r} not found under the agents root"
+        )
+    return (
+        FolderLocator(path=resolved, root=root),
+        resolved.relative_to(root).as_posix(),
+        AGENT_KIND_FOLDER,
+    )
+
+
 async def run_scenario(
     scenario: Scenario,
     *,
@@ -845,6 +924,8 @@ async def run_scenario(
     roots: RootConfig | None = None,
     runs: int = 1,
     audit_sink_factory: Callable[[], _CapturingAuditSink] = _CapturingAuditSink,
+    agent: Agent | None = None,
+    agents_root: pathlib.Path | None = None,
 ) -> ScenarioResult:
     """Run *scenario* `runs` times against `model`, returning a per-run
     outcome and an aggregate success rate.
@@ -882,6 +963,13 @@ async def run_scenario(
     event being dropped (see `_CapturingAuditSink`'s docstring). Whatever
     sink was registered before this call, if any, is restored afterward;
     injectable for tests that want their own handle on what was captured.
+
+    #221 -- the agent under test is named one of three ways: the scenario's
+    ``role`` (a predefined-role name, unchanged), its ``agent_folder`` (resolved
+    under ``agents_root`` with ``FolderLocator`` containment; an escaping or
+    missing path raises ``ScenarioError`` before any model call), or an
+    ``Agent`` passed as ``agent=``. Grant defaulting and assertions are the
+    same for all three; the result carries ``agent`` and ``agent_kind``.
     """
     if (registry is None) == (registry_factory is None):
         raise ValueError(
@@ -889,6 +977,7 @@ async def run_scenario(
             "`registry_factory`, not both and not neither."
         )
 
+    target, agent_id, agent_kind = _resolve_agent_target(scenario, agent, agents_root)
     roots = roots if roots is not None else RootConfig()
 
     # Issue #166 -- AgentRuntime no longer reads Settings for prices; the
@@ -916,18 +1005,18 @@ async def run_scenario(
             # widening: build_runtime() still applies R3/R4 and persists the
             # same bounded grant ceiling for Layer 2.
             granted_permissions = resolve(
-                scenario.role, client=scenario.client, roots=roots
+                target, client=scenario.client, roots=roots
             ).permissions
             logger.info(
                 "eval.grants_defaulted",
                 policy=_ALL_DECLARED_GRANT_POLICY,
                 scenario=scenario.name,
-                role=scenario.role,
+                role=agent_id,
             )
 
         def _build_equipped(active_registry: ToolRegistry) -> EquippedRuntime:
             built = build_runtime(
-                scenario.role,
+                target,
                 active_registry,
                 granted_permissions,
                 client=scenario.client,
@@ -978,7 +1067,7 @@ async def run_scenario(
             if registry_factory is not None:
                 equipped = _build_equipped(registry_factory())
             assert equipped is not None  # exactly one branch above set it
-            agent = AgentRuntime(equipped, model, model_prices=model_prices)
+            agent_runtime = AgentRuntime(equipped, model, model_prices=model_prices)
             history: list[AnyMessage] = []
             # #78 Phase 0 (review finding 5) -- one TurnUsage per turn this
             # run makes; summed into the RunOutcome below.
@@ -1006,7 +1095,7 @@ async def run_scenario(
                 for turn in scenario.turns:
                     history = [*history, HumanMessage(content=turn)]
                     turn_start = time.monotonic()
-                    turn_result = await agent.run_turn_with_usage(
+                    turn_result = await agent_runtime.run_turn_with_usage(
                         history,
                         session_id=f"eval-{scenario.name}-{index}",
                         # Prices this run's usage under the same id
@@ -1099,6 +1188,8 @@ async def run_scenario(
     return ScenarioResult(
         scenario=scenario.name,
         role=scenario.role,
+        agent=agent_id,
+        agent_kind=agent_kind,
         model=model_name,
         runs=tuple(outcomes),
         audit_events_captured=len(sink.captured),

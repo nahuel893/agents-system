@@ -231,6 +231,29 @@ con umbral del 80%, solo porque quien lo escribió olvidó declararlo. Un
 nombre de archivo ordinario (sin ninguno de esos marcadores) no se ve
 afectado y sigue usando el default `happy_path` como antes.
 
+## Apuntar a un agente, no solo a un rol (issue #221)
+
+Un escenario nombra el agente bajo prueba de una de tres maneras, y el
+default de grants (`eval.grants_defaulted`, política `all-declared`) y todas
+las aserciones se comportan igual en las tres:
+
+| Tipo | Cómo | Identificador |
+|---|---|---|
+| `role` | `role: sales-agent` (sin cambios) | el nombre del rol |
+| `folder` | `agent: stock-bot` en el YAML, o `Scenario(agent_folder="stock-bot")`; la carpeta se resuelve bajo `run_scenario(agents_root=...)` con la semántica de `Agent.from_folder` | la ruta de la carpeta relativa a la raíz |
+| `inline` | `run_scenario(scenario, ..., agent=Agent(...))` | `Agent.name` |
+
+`role` y `agent` son excluyentes en un archivo; un `Agent` en línea se pasa
+con un escenario que no nombra ninguno. Una carpeta usa la misma contención
+que `FolderLocator`: una ruta que escapa de `agents_root` (`..`, una ruta
+absoluta o un symlink hacia afuera), una carpeta inexistente, o un escenario de
+carpeta corrido sin `agents_root` lanza `ScenarioError` antes de cualquier
+llamada al modelo.
+
+`ScenarioResult` lleva `agent` y `agent_kind` (`role`, `folder` o `inline`), y
+ambos aparecen en los reportes JSON y Markdown. `role` conserva su valor en
+los escenarios de rol.
+
 ## Tipos de aserción para guardrails y overrides por turno (issue #76)
 
 Cinco tipos de aserción más, y dos campos a nivel escenario, existen
@@ -575,12 +598,12 @@ versionado). Cada corrida de
 de tiempo:
 
 - `evals/results/<timestamp UTC>.json` — una entrada por escenario: rol,
-  modelo, cantidad de corridas, cantidad de éxitos, tasa de éxito, el
+  agente (`agent`), tipo de agente (`agent_kind`), modelo, cantidad de corridas, cantidad de éxitos, tasa de éxito, el
   detalle de fallas por corrida, (issue #78 Phase 0) el uso real de
   tokens/costo, y (issue #81) `category`, `exercised`, `threshold`,
   `gate_passed`, `gate_reason` -- ver Compuertas de calidad arriba.
 - `evals/results/<timestamp UTC>.md` — una tabla markdown corta (escenario,
-  rol, modelo, categoría, corridas, ejercitadas, tasa de éxito, umbral,
+  agente (tipo), modelo, categoría, corridas, ejercitadas, tasa de éxito, umbral,
   compuerta, tokens, costo, duración) para una lectura rápida.
 
 ## Tokens y costo (issue #78 Phase 0)
