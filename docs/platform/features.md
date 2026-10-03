@@ -99,6 +99,7 @@ Every feature of the kit on one page, with the name to reach it and the page tha
 | Feature | What it does | How to use it | Extra needed | Docs |
 |---|---|---|---|---|
 | YAML scenarios | Describes a conversation and what must be true of the result: tools called, text, permission outcomes. | Files in `evals/scenarios/`; `load_scenario`, `load_scenarios`, `Scenario` | `postgres` | [Live eval](live-eval.md) |
+| Scenario targets (**coming in the next release**) | A scenario can run against a predefined role, an agent folder under a configured root, or an `Agent` passed from Python. Results and reports carry the agent identifier and kind. | `Scenario(agent_folder=...)`, YAML `agent:`; `run_scenario(agent=..., agents_root=...)` | `postgres` and the provider extra | [Live eval](live-eval.md) |
 | Live eval against a real model | Runs scenarios against a real provider, opt-in and never on offline test runs. | `pytest -m live`; `EVAL_PROVIDER`; `build_eval_model` | `postgres` and the provider extra | [Live eval](live-eval.md) |
 | Whole suite in one command | Runs every phase and writes logs and a summary. | `scripts/run-live-suite.sh` (`--quick` for one run each) | `postgres` and the provider extra | [Live eval](live-eval.md) |
 | Success-rate gates | Repeats each scenario and gates on the share that passes. | `EVAL_RUNS`; `ScenarioGate` | `postgres` and the provider extra | [Live eval](live-eval.md) |

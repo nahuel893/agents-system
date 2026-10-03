@@ -118,12 +118,18 @@ class Scenario:
     """One atomic eval task: a role, its input turns, and its assertions."""
 
     name: str
-    role: str
     turns: tuple[str, ...]
     assertions: ScenarioAssertions = dataclasses.field(
         default_factory=ScenarioAssertions
     )
     description: str = ""
+    #: #221 -- the agent this scenario targets, by exactly one of three kinds:
+    #: a predefined-role name (``role``), an agent folder under the runner's
+    #: ``agents_root`` (``agent_folder``, relative, resolved with the same
+    #: containment as ``FolderLocator``), or an ``Agent`` handed to
+    #: ``run_scenario(agent=...)`` from Python (neither field set).
+    role: str = dataclasses.field(default="", kw_only=True)
+    agent_folder: str | None = dataclasses.field(default=None, kw_only=True)
     #: Optional deployment client to resolve the role under (see
     #: `harness.loader.resolve`). ``None`` resolves the generic platform role,
     #: which is what every scenario shipped with the library scope uses.
@@ -186,6 +192,13 @@ class Scenario:
     #: safety guarantee `_validate_execution_limits` enforces everywhere
     #: else. See `docs/platform/live-eval.md`.
     execution_limits_override: Mapping[str, float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.role and self.agent_folder is not None:
+            raise ScenarioError(
+                f"scenario {self.name!r}: names both a role and an agent "
+                "folder; give exactly one"
+            )
 
 
 def _require_str_tuple(
@@ -306,10 +319,22 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         )
 
     role = raw.get("role")
-    if not isinstance(role, str) or not role.strip():
+    agent_folder = raw.get("agent")
+    if role is not None and agent_folder is not None:
+        raise ScenarioError(f"{path}: names both 'role' and 'agent'; give exactly one")
+    if role is None and agent_folder is None:
+        raise ScenarioError(
+            f"{path}: one of 'role' or 'agent' is required and must be a "
+            "non-empty string"
+        )
+    if role is not None and (not isinstance(role, str) or not role.strip()):
         raise ScenarioError(
             f"{path}: 'role' is required and must be a non-empty string"
         )
+    if agent_folder is not None and (
+        not isinstance(agent_folder, str) or not agent_folder.strip()
+    ):
+        raise ScenarioError(f"{path}: 'agent' must be a non-empty string")
 
     turns = _require_str_tuple(raw.get("turns"), field="turns", source=path)
     if not turns:
@@ -436,7 +461,8 @@ def load_scenario(path: pathlib.Path) -> Scenario:
 
     return Scenario(
         name=str(raw.get("name") or path.stem),
-        role=role,
+        role=role or "",
+        agent_folder=agent_folder,
         turns=turns,
         assertions=assertions,
         description=str(raw.get("description") or ""),

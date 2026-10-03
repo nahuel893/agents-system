@@ -45,7 +45,7 @@ def write_results(
         f"# Live-eval results -- {timestamp}",
         "",
         (
-            "| Scenario | Role | Model | Category | Runs | Exercised | "
+            "| Scenario | Agent | Model | Category | Runs | Exercised | "
             "Success rate | Threshold | Gate | Tokens | Cost (USD) | "
             "Duration (s) |"
         ),
@@ -76,7 +76,7 @@ def write_results(
             else f"{result.total_duration_s:.2f}"
         )
         lines.append(
-            f"| {result.scenario} | {result.role} | {result.model} | "
+            f"| {result.scenario} | {result.agent} ({result.agent_kind}) | {result.model} | "
             f"{result.category} | {len(result.runs)} | {result.exercised_count} | "
             f"{result.success_rate:.0%} | {result.threshold:.0%} | {gate_symbol} | "
             f"{tokens} | {cost} | {duration} |"

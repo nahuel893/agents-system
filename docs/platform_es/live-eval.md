@@ -231,6 +231,29 @@ con umbral del 80%, solo porque quien lo escribió olvidó declararlo. Un
 nombre de archivo ordinario (sin ninguno de esos marcadores) no se ve
 afectado y sigue usando el default `happy_path` como antes.
 
+## Apuntar a un agente, no solo a un rol (issue #221)
+
+Un escenario nombra el agente bajo prueba de una de tres maneras, y el
+default de grants (`eval.grants_defaulted`, política `all-declared`) y todas
+las aserciones se comportan igual en las tres:
+
+| Tipo | Cómo | Identificador |
+|---|---|---|
+| `role` | `role: sales-agent` (sin cambios) | el nombre del rol |
+| `folder` | `agent: stock-bot` en el YAML, o `Scenario(agent_folder="stock-bot")`; la carpeta se resuelve bajo `run_scenario(agents_root=...)` con la semántica de `Agent.from_folder` | la ruta de la carpeta relativa a la raíz |
+| `inline` | `run_scenario(scenario, ..., agent=Agent(...))` | `Agent.name` |
+
+`role` y `agent` son excluyentes en un archivo; un `Agent` en línea se pasa
+con un escenario que no nombra ninguno. Una carpeta usa la misma contención
+que `FolderLocator`: una ruta que escapa de `agents_root` (`..`, una ruta
+absoluta o un symlink hacia afuera), una carpeta inexistente, o un escenario de
+carpeta corrido sin `agents_root` lanza `ScenarioError` antes de cualquier
+llamada al modelo.
+
+`ScenarioResult` lleva `agent` y `agent_kind` (`role`, `folder` o `inline`), y
+ambos aparecen en los reportes JSON y Markdown. `role` conserva su valor en
+los escenarios de rol.
+
 ## Tipos de aserción para guardrails y overrides por turno (issue #76)
 
 Cinco tipos de aserción más, y dos campos a nivel escenario, existen
