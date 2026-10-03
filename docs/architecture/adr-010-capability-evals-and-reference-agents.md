@@ -1,6 +1,8 @@
 # ADR-010 — Capability-based evals, with predefined roles as reference agents
 
-**Status:** Proposed · **Date:** 2026-10-03 · **Amends (on acceptance):** ADR-002 D, D.17, E.18; ADR-004 D3, D7, D8 · **Issue:** #219
+**Status:** Accepted (2026-10-03) · **Date:** 2026-10-03 · **Amends:** ADR-002 D, D.17, E.18; ADR-004 D3, D7, D8 · **Issue:** #219
+
+**Acceptance.** The owner accepted this ADR on 2026-10-03, and every open question below is resolved as its recommendation states.
 
 ## Summary
 

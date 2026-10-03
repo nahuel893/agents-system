@@ -1,6 +1,8 @@
 # ADR-010 — Evals por capacidad, con los roles predefinidos como agentes de referencia
 
-**Estado:** Propuesto · **Fecha:** 2026-10-03 · **Enmienda (si se acepta):** ADR-002 D, D.17, E.18; ADR-004 D3, D7, D8 · **Issue:** #219
+**Estado:** Aceptado (2026-10-03) · **Fecha:** 2026-10-03 · **Enmienda:** ADR-002 D, D.17, E.18; ADR-004 D3, D7, D8 · **Issue:** #219
+
+**Aceptación.** El responsable aceptó este ADR el 2026-10-03, y cada pregunta abierta de abajo queda resuelta según su recomendación.
 
 ## Resumen
 

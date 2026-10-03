@@ -1055,7 +1055,7 @@ de humo.
 ## Referencias cruzadas
 
 - ADR-002 E.18: `docs/architecture/adr-002-agent-model-and-capabilities.md`
-- ADR-010 (propuesto), evals por capacidad con los roles predefinidos como
+- ADR-010 (aceptado), evals por capacidad con los roles predefinidos como
   agentes de referencia: `docs/architecture_es/adr-010-capability-evals-and-reference-agents.md`
 - Plan de pruebas en vivo (secciones Principle y Gating, issue #81):
   `docs/delivery/live-test-plan.md`
