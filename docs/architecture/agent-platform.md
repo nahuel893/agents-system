@@ -436,3 +436,5 @@ The following decisions are still intentionally open:
    - RBAC and injection rules per connector
 4. `docs/architecture/adr-002-agent-model-and-capabilities.md`
    - architecture corrections to the agent model, prompts, tool permissions, and persistence described in this document — includes the formal "agent" definition (`docs/platform/agent.md`) and records the correction of this document's folder-path references from `agents/` to `platform/roles/` (ADR-002 F.19)
+5. `docs/architecture/adr-010-capability-evals-and-reference-agents.md` (Proposed)
+   - capability-based evals in two layers, and the predefined roles as reference agents instead of supported API

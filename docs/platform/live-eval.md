@@ -977,6 +977,8 @@ is what keeps this documented floor case from failing its own smoke test.
 ## Cross-references
 
 - ADR-002 E.18: `docs/architecture/adr-002-agent-model-and-capabilities.md`
+- ADR-010 (proposed), capability-based evals with the predefined roles as
+  reference agents: `docs/architecture/adr-010-capability-evals-and-reference-agents.md`
 - Live-test plan (Principle and Gating sections, issue #81):
   `docs/delivery/live-test-plan.md`
 - Reference backends the eval runner wires in: `docs/platform/reference-backends.md`
