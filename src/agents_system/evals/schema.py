@@ -118,7 +118,10 @@ class Scenario:
     """One atomic eval task: a role, its input turns, and its assertions."""
 
     name: str
-    turns: tuple[str, ...]
+    #: Second positional, as before #221, so ``Scenario(name, role, turns)``
+    #: keeps working; ``""`` means the target is a folder or an inline Agent.
+    role: str = ""
+    turns: tuple[str, ...] = ()
     assertions: ScenarioAssertions = dataclasses.field(
         default_factory=ScenarioAssertions
     )
@@ -128,7 +131,6 @@ class Scenario:
     #: ``agents_root`` (``agent_folder``, relative, resolved with the same
     #: containment as ``FolderLocator``), or an ``Agent`` handed to
     #: ``run_scenario(agent=...)`` from Python (neither field set).
-    role: str = dataclasses.field(default="", kw_only=True)
     agent_folder: str | None = dataclasses.field(default=None, kw_only=True)
     #: Optional deployment client to resolve the role under (see
     #: `harness.loader.resolve`). ``None`` resolves the generic platform role,

@@ -598,12 +598,12 @@ versionado). Cada corrida de
 de tiempo:
 
 - `evals/results/<timestamp UTC>.json` — una entrada por escenario: rol,
-  modelo, cantidad de corridas, cantidad de éxitos, tasa de éxito, el
+  agente (`agent`), tipo de agente (`agent_kind`), modelo, cantidad de corridas, cantidad de éxitos, tasa de éxito, el
   detalle de fallas por corrida, (issue #78 Phase 0) el uso real de
   tokens/costo, y (issue #81) `category`, `exercised`, `threshold`,
   `gate_passed`, `gate_reason` -- ver Compuertas de calidad arriba.
 - `evals/results/<timestamp UTC>.md` — una tabla markdown corta (escenario,
-  rol, modelo, categoría, corridas, ejercitadas, tasa de éxito, umbral,
+  agente (tipo), modelo, categoría, corridas, ejercitadas, tasa de éxito, umbral,
   compuerta, tokens, costo, duración) para una lectura rápida.
 
 ## Tokens y costo (issue #78 Phase 0)

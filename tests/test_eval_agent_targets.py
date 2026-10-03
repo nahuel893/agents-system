@@ -277,3 +277,13 @@ async def test_shipped_fixture_scenario_runs_offline() -> None:
     )
     assert result.runs[0].passed, result.runs[0].failures
     assert (result.agent, result.agent_kind) == ("stock-bot", "folder")
+
+
+def test_scenario_keeps_positional_name_role_turns_order() -> None:
+    """Pre-#221 callers built ``Scenario(name, role, turns)`` positionally."""
+    scenario = Scenario("old", "sales-agent", ("hello",))
+
+    assert scenario.name == "old"
+    assert scenario.role == "sales-agent"
+    assert scenario.turns == ("hello",)
+    assert scenario.assertions == ScenarioAssertions()
