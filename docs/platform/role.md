@@ -77,14 +77,14 @@ An agent definition is a folder under `platform/roles/` containing three files. 
 The loader enforces this for every definition the importer writes: an `Agent(...)`, an `Agent.from_folder(...)` (including its Python overrides), or a folder reached through another folder's `extends:`. Each of these is checked against its parent's effective values before it is folded in, at every hop of the chain (`Agent` → `Agent` → folder agent → predefined role). Breaking the rule raises `DefinitionError`, naming the agent, the field, both values, and the rule. The check lives in `resolve()`, so `build_runtime()` applies it too.
 
 - **Autonomy.** The ranking is `confirm` < `supervised` < `full`. A parent that declares nothing counts as `supervised`, the platform floor. An importer agent that declares nothing inherits its parent's level.
-- **Execution limits.** A missing or `null` limit means the platform default (`tool_call_timeout_s` 10, `total_execution_timeout_s` 60, `max_tool_calls` 20, `max_delegation_depth` 2, `max_clarification_attempts` 3, `max_context_tokens` 64000). This holds on both sides. So **an importer agent cannot raise an execution limit above its parent's value, or above the platform default when the parent sets none.** It also cannot write `null` to undo a limit its parent tightened. A limit must be a finite, non-negative number: `NaN`, infinity, negative values and booleans are rejected. `0` is allowed. This rule binds definitions the importer writes. The predefined roles in `platform/roles/` are written by the platform itself, so a predefined role may set a limit its parent sets differently: `developer-agent` raises `total_execution_timeout_s` to 120 over `operator-agent`'s 30, because its turn has to hold at least two provider calls (see the turn-budget invariant in `docs/platform/observability.md`).
+- **Execution limits.** A missing or `null` limit means the platform default (`tool_call_timeout_s` 10, `total_execution_timeout_s` 60, `max_tool_calls` 20, `max_delegation_depth` 2, `max_clarification_attempts` 3, `max_context_tokens` 64000). This holds on both sides. So **an importer agent cannot raise an execution limit above its parent's value, or above the platform default when the parent sets none.** It also cannot write `null` to undo a limit its parent tightened. A limit must be a finite, non-negative number: `NaN`, infinity, negative values and booleans are rejected. `0` is allowed. This rule binds definitions the importer writes. The predefined roles in `platform/roles/` are written by the platform itself, so a predefined role may set a limit its parent sets differently: `developer-agent` raises `total_execution_timeout_s` to 120 over `operator-agent`'s 30, because its turn has to hold at least two provider calls (see the turn-budget invariant in `docs/platform/observability.md`). Its reference copy in `examples/agents/` is an agent folder, so it cannot, and inherits the 30 (see "Reference agents" below).
 - **Audit redaction.** An importer agent cannot set `audit_policy.capture_tool_input` to a true value unless its parent already has it. Any truthy value counts, because that is how the redactor reads it. A `redact_keys` list it declares must be a list of strings and keep every key its parent redacts.
 - **Escalation conditions.** An importer agent's `escalation_rules.conditions` are added to its parent's; they never replace them. So `conditions: []` keeps the parent's list, and a new condition is appended after it. A `remove:` directive that drops an inherited condition is rejected.
 - **Escalation wording.** An importer agent describes only the conditions it adds. A `descriptions` entry, or a `policy.md` prose bullet, that rewords an inherited condition ("never applies; do not escalate") is rejected, and so is an `escalate_to` that changes or blanks its parent's. Restating the parent's exact wording is allowed. `descriptions` must be a mapping: a `null` (a bare `descriptions:` key in `policy.md`), a list or a string raises `DefinitionError` instead of replacing every description the agent inherits. Any mapping type counts, a read-only one included: a locator built directly is checked like an `Agent(...)`. This wording check reads the PARENT's own `descriptions` too: two distinct raw keys in the parent's mapping that normalize to the same condition name (a stray extra space in one of two otherwise-identical declarations) raise `DefinitionError` naming both raw keys, the same collision guard `_compose_prompt` applies when it renders the final prompt (see "Escalation rules" above), instead of silently keeping whichever one a comprehension iterated last.
 - **No parent.** A folder agent with no `extends:` has the platform defaults as its ceiling: `supervised`, the limits above, and redaction on. Leaving out `extends` is not a way around the rule.
 - **`extends=` on `Agent.from_folder`.** It replaces the folder manifest's `extends:`, like any other Python override. A string is placed exactly like the manifest value (relative to the folder, inside its importer root), and another `Agent` becomes the parent directly. The agent is then held to that parent: to its ceiling, and to its `untrusted_input: true`, which refuses T3 permissions. A value the manifest would reject, `None` included, raises `DefinitionError`.
 
-Folds between two predefined roles are not checked for autonomy, limits or escalation wording, because the platform writes both files (`data-agent` and `summary-agent` run `full` under a `supervised` chain). Two rules hold on every fold, a predefined child's included: a child keeps every escalation condition its parent requires, and never loosens its parent's audit redaction. A predefined role restates its whole `conditions` list, so a list that leaves out an inherited condition raises `DefinitionError`. Deployment overrides are held to the same escalation and redaction rules against the resolved role, in their own subtractive check (`docs/platform/deployment.md`).
+Folds between two predefined roles are not checked for autonomy, limits or escalation wording, because the platform writes both files (`data-agent` and `summary-agent` run `full` under a `supervised` chain; their reference copies run `supervised`, see "Reference agents" below). Two rules hold on every fold, a predefined child's included: a child keeps every escalation condition its parent requires, and never loosens its parent's audit redaction. A predefined role restates its whole `conditions` list, so a list that leaves out an inherited condition raises `DefinitionError`. Deployment overrides are held to the same escalation and redaction rules against the resolved role, in their own subtractive check (`docs/platform/deployment.md`).
 
 **Directives.** `permissions` takes a list, `inherit`, `{inherit: true, add: [...], remove: [...]}` or `{override: [...]}`. A policy mapping (`escalation_rules`, `delegation_policy`, `memory_policy`, `audit_policy`) takes a plain mapping or `{inherit: true, ...}`, and only `escalation_rules` takes `add`/`remove`, which edit its `conditions`. Any other directive raises `DefinitionError`, naming the definition, the field and the reason, wherever it is written: an `Agent(...)` parameter, a folder or predefined-role manifest or policy, or a deployment. Examples are `{remove: [...]}` without `inherit: true`, a mistyped key, `inherit: 'yes'`, and `inherit` mixed with `override`. Such a directive used to resolve to the parent's full set, so a permission its author meant to remove was kept. A chain root's own directives are resolved too, against an empty parent.
 
@@ -266,6 +266,49 @@ This agent definition folder defines the Preventa Agent's behavioral boundary. A
 
 ---
 
+## Reference agents
+
+> **Coming in the next release.** See [ADR-010](../architecture/adr-010-capability-evals-and-reference-agents.md).
+
+The eight concrete predefined roles, `accountant-agent`, `data-agent`, `developer-agent`, `operator-agent`, `orchestrator`, `sales-agent`, `summary-agent` and `support-agent`, have copies in the repository under `examples/agents/<name>/`. These **reference agents are examples to copy, not supported API**: they carry no compatibility promise, they are not in the wheel, and changing one is not a breaking change. The core keeps only the generic parents, `base` and `agent`.
+
+Each reference agent is an ordinary agent folder that extends `agent` (`developer-agent` extends its sibling, `../operator-agent`). It resolves with `Agent.from_folder` through the importer ceiling described above, exactly like an adopter's folder, with no special case. To use one, copy its folder into your project and load the copy:
+
+```python
+sales = Agent.from_folder("agents/sales-agent")
+equipped = build_runtime(sales, registry, granted_permissions=["read:catalog"])
+```
+
+To build on one, extend the copy, not the role name: `extends: ../sales-agent` from a sibling folder, or `Agent.from_folder(path, extends=sales)` in Python. A client override of a predefined role (`deployments/<client>/<role>/`) becomes an edit to your copy. Copy `developer-agent` together with `operator-agent`, its parent.
+
+**Naming a concrete role is deprecated.** Until the next breaking release removes them from `platform/roles/`, the eight names still resolve. Naming one emits a `PredefinedRoleDeprecationWarning` (a `DeprecationWarning`, importable from `agents_system.harness.loader`) that names the folder to copy. That covers `resolve("sales-agent")`, `build_runtime("sales-agent", ...)`, `extends="sales-agent"` or `extends: platform/roles/sales-agent` in another agent, `create_app(agents={"sales": "sales-agent"})`, and an `AGENT_REGISTRATIONS` value:
+
+```text
+PredefinedRoleDeprecationWarning: Predefined role 'sales-agent' is deprecated and
+will be removed from platform/roles/ in the next breaking release (ADR-010). Copy
+the reference agent examples/agents/sales-agent/ from the agents-system repository
+into your project and load it with Agent.from_folder(path) instead of naming the role.
+```
+
+- The warning points at the caller's own line, not at the loader.
+- It is also logged as `role.deprecated`, with `role` and `copy_from`, because Python does not show a `DeprecationWarning` raised under a server by default.
+- Only the name the caller writes warns. Resolving `developer-agent` warns once, not again for `operator-agent`, which it extends inside the platform tree.
+- `base`, `agent` and the reference agents never warn.
+
+**What changed to fit the importer ceiling.** A predefined role may loosen its parent's autonomy and limits and reword an inherited escalation condition, because the platform writes both files. An agent folder may not, so five reference agents differ from the role they copy:
+
+| Agent | Predefined role (`platform/roles/`) | Reference agent (`examples/agents/`) |
+|---|---|---|
+| `data-agent` | `autonomy: full` | `autonomy: supervised`, the level of `agent` |
+| `summary-agent` | `autonomy: full` | `autonomy: supervised`, the level of `agent` |
+| `developer-agent` | `total_execution_timeout_s: 120`, over `operator-agent`'s 30 | No limits of its own: inherits `operator-agent`'s 10 s per tool call, 10 tool calls and 30 s turn budget |
+| `sales-agent` | Describes `confidence_below_threshold` as "the semantic similarity score for the best catalog match falls below the threshold defined in the active skill pack", and rewords `required_tool_missing` | Keeps that wording as a new condition, `catalog_match_below_threshold`. `confidence_below_threshold` and `required_tool_missing` keep the wording of `base` |
+| `orchestrator`, `data-agent`, `summary-agent` | Reword `required_tool_missing` ("the orchestrator's manifest", "the agent's manifest") | `required_tool_missing` keeps the wording of `base` ("the role's manifest") |
+
+Everything else is identical: tools, permissions, skills, context, `untrusted_input`, the prompt, and the delegation, memory and audit policies. `accountant-agent`, `operator-agent` and `support-agent` are unchanged copies. The reference `developer-agent`'s 30 s turn budget is below the 45 s `OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S`, so the served app logs `runtime.turn_budget_below_request_timeout` for it at boot (see `docs/platform/observability.md`). Whether `operator-agent` moves to the 60 s platform default is decided with live data, in the composition scenarios that run these agents.
+
+---
+
 ## Testing the role contract
 
 Additive inheritance, the base prompt contract, `untrusted_input`'s
@@ -276,6 +319,12 @@ and future — by `tests/test_role_contract_suite.py` (ADR-002 D.17). A new
 role needs no new test: `platform_role_contract.discover_concrete_platform_roles()`
 walks `platform/roles/` on disk, so a role folder added tomorrow is covered
 the next time the suite runs.
+
+The reference agents get the same treatment: `tests/test_reference_agents.py`
+walks `examples/agents/` on disk and checks that every folder resolves
+through `Agent.from_folder` and `_apply_importer_ceiling`, boots end to end
+with a fake model, and differs from its predefined role only by the changes
+in the table above.
 
 Run it (or the whole suite) with:
 

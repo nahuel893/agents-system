@@ -1248,6 +1248,13 @@ the model does in response to the *intended* prompt.
 > platform-role name. See
 > [ADR-004 — Library-first custom agents](adr-004-library-first-agents.md).
 
+> **Amended by ADR-010:** of this tree, only `base` and `agent` stay
+> supported. The eight concrete roles become reference agents in
+> `examples/agents/`, examples to copy that resolve through the importer
+> path like any adopter's folder. Naming one is deprecated, and the next
+> breaking release removes them from `platform/roles/`. See
+> [ADR-010 — Capability-based evals, with predefined roles as reference agents](adr-010-capability-evals-and-reference-agents.md).
+
 **Current tree**, verified directly against every `manifest.md`'s `extends:`
 field:
 
@@ -1342,6 +1349,11 @@ Assistant-capability question ties to issue #15.
 
 #### D.17 — Inherited role contract test suite
 
+> **Amended by ADR-010:** the suite keeps walking the generic parents in
+> `platform/roles/`, and a second walk covers the reference agents in
+> `examples/agents/` as fixtures (`tests/test_reference_agents.py`). See
+> [ADR-010 — Capability-based evals, with predefined roles as reference agents](adr-010-capability-evals-and-reference-agents.md).
+
 **Current state.** Two templates already exist and demonstrate the pattern,
 but no formal, documented "test suite that inherits like roles do" exists
 yet as a named convention. `tests/test_role_resolution_pinned.py` includes
@@ -1404,6 +1416,12 @@ role contract" section.
 > `AgentDefinition`/`AgentRuntime`, not a role name, so it applies to an
 > importer-defined `Agent` exactly as it does to a predefined role. See
 > [ADR-004 — Library-first custom agents](adr-004-library-first-agents.md).
+
+> **Amended by ADR-010:** evals are organized by capability: a
+> deterministic mechanism layer, a behavior layer on minimal fixture agents,
+> and a few composition scenarios on reference agents. The per-model
+> comparison is per capability, not per role. See
+> [ADR-010 — Capability-based evals, with predefined roles as reference agents](adr-010-capability-evals-and-reference-agents.md).
 
 **Current state.** No such pipeline exists. Per-PR CI is deterministic
 (offline, fake-model-based) per the existing test suite's own shape

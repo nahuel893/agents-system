@@ -285,6 +285,7 @@ A qué roles incluidos alcanza y si es intencional:
 | `sales-agent`, `data-agent` | 60 (el default de la plataforma, `PLATFORM_DEFAULT_LIMITS`; los roles no definen nada) | No: 60 s supera el timeout de request de 45 s |
 | `developer-agent` | 120 (definido a propósito) | No |
 | `operator-agent` | 30 (definido a propósito: el rol puede modificar el host, así que sus límites se ajustan) | Sí, en cada arranque |
+| El `developer-agent` de referencia (`examples/agents/developer-agent/`, llega en el próximo release) | 30, heredado del `operator-agent` de referencia: una carpeta de agente no puede subir el límite de su padre (`docs/platform_es/role.md`, "Agentes de referencia") | Sí, en cada arranque |
 
 Los 60 s de `sales-agent` y `data-agent` son el default intencional, no un
 descuido, y es lo que mantiene silencioso su arranque. El aviso de

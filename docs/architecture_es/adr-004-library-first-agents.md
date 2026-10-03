@@ -65,6 +65,12 @@ código que también incluía nunca se corrigió (#70).
 
 ### D3 — `Agent`: un constructor de Python congelado, inmutable en profundidad
 
+> **Enmendado por ADR-010:** `extends` con el nombre de un rol predefinido
+> concreto está obsoleto: emite un `PredefinedRoleDeprecationWarning` que
+> nombra el agente de referencia de `examples/agents/` a copiar, y la
+> próxima versión incompatible lo elimina. `extends="agent"` (el valor por
+> defecto), `extends="base"` y otro `Agent` no cambian. Ver [ADR-010 — Evals por capacidad, con los roles predefinidos como agentes de referencia](adr-010-capability-evals-and-reference-agents.md).
+
 `agent/spec.py` define `Agent` (exportado como `agents_system.Agent`), que
 construye un agente a partir de parámetros de Python, de
 `Agent.from_folder(path, **overrides)`, o de ambos — `overrides` reemplaza,
@@ -135,6 +141,10 @@ puede coexistir con el paquete `agent/` ya existente.
 
 ### D7 — `examples/demo/app.py`, no un punto de entrada empaquetado
 
+> **Enmendado por ADR-010:** la demo pasa a registrar agentes de referencia de
+> `examples/agents/` con `create_app(agents=...)`, no un nombre de rol
+> predefinido. Ver [ADR-010 — Evals por capacidad, con los roles predefinidos como agentes de referencia](adr-010-capability-evals-and-reference-agents.md).
+
 `src/agents_system/demo.py` se mudó a `examples/demo/app.py`, idéntico byte
 a byte salvo su docstring de módulo. `examples/` no incluye `__init__.py` y
 queda fuera del paquete instalado, así que la invocación documentada es un
@@ -143,6 +153,11 @@ propia llamada `build_app` de `demo.py` no necesitó cambios — ya omite
 `agents`, así que sigue usando la ruta de reserva `AGENT_REGISTRATIONS`.
 
 ### D8 — Guard 1: una instantánea revisada, más un check de CI obligatorio
+
+> **Enmendado por ADR-010:** cuando los roles concretos salgan de
+> `platform/roles/`, Guard 1 se acota a los padres genéricos: `agent` es la
+> única base sobre la que construyen otros agentes, y los agentes de
+> referencia no traen promesa de compatibilidad. Ver [ADR-010 — Evals por capacidad, con los roles predefinidos como agentes de referencia](adr-010-capability-evals-and-reference-agents.md).
 
 La superficie de `tools`/`permissions` de un rol predefinido es una base de
 seguridad compartida sobre la que construyen las cadenas `extends:` de otros

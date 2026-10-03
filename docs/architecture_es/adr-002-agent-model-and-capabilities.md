@@ -1395,6 +1395,13 @@ que hace el modelo en respuesta al prompt *pretendido*.
 > inline en Python, no solo un nombre de rol de plataforma. Ver
 > [ADR-004 — Agentes personalizados library-first](adr-004-library-first-agents.md).
 
+> **Enmendado por ADR-010:** de este árbol, solo `base` y `agent` siguen
+> soportados. Los ocho roles concretos pasan a ser agentes de referencia en
+> `examples/agents/`, ejemplos para copiar que se resuelven por el camino
+> del importador como la carpeta de cualquier adoptante. Nombrar uno está
+> obsoleto, y la próxima versión incompatible los saca de `platform/roles/`.
+> Ver [ADR-010 — Evals por capacidad, con los roles predefinidos como agentes de referencia](adr-010-capability-evals-and-reference-agents.md).
+
 **Árbol actual**, verificado directamente contra el campo `extends:` de
 cada `manifest.md` real:
 
@@ -1496,6 +1503,11 @@ está atada al issue #15.
 
 #### D.17 — Suite de pruebas de contrato heredado por rol
 
+> **Enmendado por ADR-010:** la suite sigue recorriendo los padres
+> genéricos de `platform/roles/`, y un segundo recorrido cubre como fixtures
+> a los agentes de referencia de `examples/agents/`
+> (`tests/test_reference_agents.py`). Ver [ADR-010 — Evals por capacidad, con los roles predefinidos como agentes de referencia](adr-010-capability-evals-and-reference-agents.md).
+
 **Estado actual.** Ya existen dos plantillas que demuestran el patrón, pero
 todavía no existe una convención formal y documentada de "suite de pruebas
 que hereda como heredan los roles". `tests/test_role_resolution_pinned.py`
@@ -1564,6 +1576,12 @@ probar el contrato del rol".
 > que se aplica a un `Agent` definido por quien importa exactamente igual
 > que a un rol predefinido. Ver
 > [ADR-004 — Agentes personalizados library-first](adr-004-library-first-agents.md).
+
+> **Enmendado por ADR-010:** las evals se organizan por capacidad: una capa
+> de mecanismo determinística, una capa de comportamiento sobre agentes
+> fixture mínimos, y unos pocos escenarios de composición sobre agentes de
+> referencia. La comparación por modelo es por capacidad, no por rol. Ver
+> [ADR-010 — Evals por capacidad, con los roles predefinidos como agentes de referencia](adr-010-capability-evals-and-reference-agents.md).
 
 **Estado actual.** No existe tal pipeline. El CI por PR es determinístico
 (offline, basado en un modelo falso) según la propia forma de la suite de

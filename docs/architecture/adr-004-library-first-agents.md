@@ -59,6 +59,12 @@ corrected (#70).
 
 ### D3 — `Agent`: a frozen, deep-immutable Python builder
 
+> **Amended by ADR-010:** `extends` by a concrete predefined-role name is
+> deprecated: it emits a `PredefinedRoleDeprecationWarning` naming the
+> reference agent in `examples/agents/` to copy, and the next breaking
+> release removes it. `extends="agent"` (the default), `extends="base"` and
+> another `Agent` are unchanged. See [ADR-010 — Capability-based evals, with predefined roles as reference agents](adr-010-capability-evals-and-reference-agents.md).
+
 `agent/spec.py`'s `Agent` (exported as `agents_system.Agent`) builds an
 agent from Python parameters, from `Agent.from_folder(path, **overrides)`,
 or both — `overrides` replaces, never merges, the folder's own field.
@@ -122,6 +128,10 @@ sibling `agent.py` file, which cannot coexist with the already-existing
 
 ### D7 — `examples/demo/app.py`, not a packaged entry point
 
+> **Amended by ADR-010:** the demo moves to registering reference agents from
+> `examples/agents/` with `create_app(agents=...)`, not a predefined-role
+> name. See [ADR-010 — Capability-based evals, with predefined roles as reference agents](adr-010-capability-evals-and-reference-agents.md).
+
 `src/agents_system/demo.py` moved to `examples/demo/app.py`, byte-identical
 apart from its module docstring. `examples/` ships no `__init__.py` and is
 outside the installed package, so the documented invocation is a plain
@@ -130,6 +140,11 @@ own `build_app` call needed zero changes — it already omits `agents`, so it
 keeps using the `AGENT_REGISTRATIONS` fallback path.
 
 ### D8 — Guard 1: a reviewed snapshot, plus a required CI check
+
+> **Amended by ADR-010:** once the concrete roles leave `platform/roles/`,
+> Guard 1 narrows to the generic parents: `agent` is the only baseline other
+> agents build on, and the reference agents carry no compatibility promise.
+> See [ADR-010 — Capability-based evals, with predefined roles as reference agents](adr-010-capability-evals-and-reference-agents.md).
 
 A predefined role's `tools`/`permissions` surface is a shared safety
 baseline other agents' `extends:` chains build on, so a change to it is
