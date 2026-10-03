@@ -57,6 +57,13 @@ from agents_system.evals.runner import RunOutcome, ScenarioResult, run_scenario
 from agents_system.evals.schema import CATEGORY_GUARDRAIL, Scenario, load_scenarios
 from agents_system.harness.loader import RootConfig
 
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 _SCENARIOS_DIR = (
     pathlib.Path(__file__).resolve().parents[1] / "evals" / "scenarios" / "guardrails"
 )

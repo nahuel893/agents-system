@@ -29,6 +29,13 @@ from platform_role_contract import (
     discover_concrete_platform_roles,
 )
 
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 _ESCALATION_INPUT = {"reason": "customer_angry", "details": "Asked for a manager"}
 
 

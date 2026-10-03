@@ -36,6 +36,13 @@ from agents_system.evals.schema import (
 )
 from agents_system.harness.loader import RootConfig
 
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 
 class ToolAwareFakeModel(FakeMessagesListChatModel):
     """Same fake-model shape as `test_agent_runtime.py` -- `bind_tools` must

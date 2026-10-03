@@ -20,6 +20,13 @@ from typing import Any
 import pytest
 import structlog
 
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 FIXTURE_BASE = REPO_ROOT / "tests" / "fixtures" / "agents"
 GENERIC_ROOTS_DIR = FIXTURE_BASE / "generic-role"

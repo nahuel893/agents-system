@@ -11,9 +11,17 @@ new production code.
 
 from __future__ import annotations
 
+import pytest
 from platform_role_contract import EXPECTED_ROLE_TOOLS
 
 from agents_system.harness.loader import RootConfig, resolve
+
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
 
 
 def test_agent_extending_sales_agent_inherits_its_full_tool_surface() -> None:

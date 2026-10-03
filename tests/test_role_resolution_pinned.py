@@ -36,6 +36,13 @@ import pytest
 
 from agents_system.harness.loader import RootConfig, resolve
 
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _CLIENT_A_DEPLOYMENTS = (
     _REPO_ROOT / "tests" / "fixtures" / "agents" / "overrides" / "deployments"
