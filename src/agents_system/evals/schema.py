@@ -111,6 +111,29 @@ class ScenarioAssertions:
     #: own surface and so never appears in `called` at all -- the actual
     #: exercise signal there is "was the poisoned data source retrieved").
     guardrail_exercised: tuple[str, ...] = ()
+    #: #224 -- tool names that MUST have at least one call that executed
+    #: successfully: no interceptor denial, no timeout, no connector-reported
+    #: ``error_kind``. The positive counterpart of `not_executed`, for a
+    #: behavior scenario where an accepted call is the point (valid
+    #: arguments, the exact identifier a tool only accepts when right).
+    tools_succeeded: tuple[str, ...] = ()
+    #: #224 -- per tool, argument values at least ONE call to it must carry,
+    #: all in that same call (any outcome; pair with `tools_succeeded` when
+    #: the call must also have worked). Each expected value is text found
+    #: case-insensitively inside the argument; a non-string argument is read
+    #: as its JSON text, so ``items: ART-009`` matches a list of order lines
+    #: naming that product. It checks what the system executed, never the
+    #: model's prose.
+    tool_arguments: Mapping[str, Mapping[str, str]] = dataclasses.field(
+        default_factory=dict
+    )
+    #: #224 -- text that MUST appear, case-insensitively, in the run's final
+    #: assistant message. Only for a value the model cannot produce without
+    #: the tool result or the earlier turn under test (a command's printed
+    #: output, a fact only a fixture holds), never for wording: ADR-002 E.18
+    #: rules out assertions on phrasing, not on whether an answer carries the
+    #: data it was given.
+    reply_contains: tuple[str, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -223,6 +246,56 @@ def _optional_bool(value: Any, *, field: str, source: pathlib.Path) -> bool | No
             f"{source}: '{field}' must be a boolean (true/false), got {value!r}"
         )
     return value
+
+
+def _non_blank_str_tuple(
+    value: Any, *, field: str, source: pathlib.Path
+) -> tuple[str, ...]:
+    """Like `_require_str_tuple`, also refusing a blank entry: an empty
+    string is found in every text, so it would pass vacuously."""
+    items = _require_str_tuple(value, field=field, source=source)
+    if any(not item.strip() for item in items):
+        raise ScenarioError(f"{source}: '{field}' entries must be non-empty strings")
+    return items
+
+
+def _tool_arguments(
+    value: Any, *, field: str, source: pathlib.Path
+) -> Mapping[str, Mapping[str, str]]:
+    """#224 -- validate `assertions.tool_arguments`: a mapping of tool name
+    to a non-empty mapping of argument name to a non-blank string."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ScenarioError(
+            f"{source}: '{field}' must map tool names to argument mappings, "
+            f"got {value!r}"
+        )
+    result: dict[str, dict[str, str]] = {}
+    for tool, arguments in value.items():
+        if (
+            not isinstance(tool, str)
+            or not isinstance(arguments, dict)
+            or not arguments
+        ):
+            raise ScenarioError(
+                f"{source}: '{field}.{tool}' must be a non-empty mapping of "
+                f"argument names to expected text, got {arguments!r}"
+            )
+        expected: dict[str, str] = {}
+        for name, text in arguments.items():
+            if (
+                not isinstance(name, str)
+                or not isinstance(text, str)
+                or not text.strip()
+            ):
+                raise ScenarioError(
+                    f"{source}: '{field}.{tool}.{name}' must be a non-empty "
+                    f"string, got {text!r}"
+                )
+            expected[name] = text
+        result[tool] = expected
+    return result
 
 
 def _validated_permission_tuple(
@@ -392,6 +465,21 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         guardrail_exercised=_require_str_tuple(
             raw_assertions.get("guardrail_exercised"),
             field="assertions.guardrail_exercised",
+            source=path,
+        ),
+        tools_succeeded=_require_str_tuple(
+            raw_assertions.get("tools_succeeded"),
+            field="assertions.tools_succeeded",
+            source=path,
+        ),
+        tool_arguments=_tool_arguments(
+            raw_assertions.get("tool_arguments"),
+            field="assertions.tool_arguments",
+            source=path,
+        ),
+        reply_contains=_non_blank_str_tuple(
+            raw_assertions.get("reply_contains"),
+            field="assertions.reply_contains",
             source=path,
         ),
     )

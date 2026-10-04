@@ -613,6 +613,100 @@ def test_load_scenario_rejects_a_non_list_new_tuple_assertion(
         load_scenario(path)
 
 
+# ---------------------------------------------------------------------------
+# #224 -- the three behavior-layer assertion fields (tools_succeeded,
+# tool_arguments, reply_contains)
+# ---------------------------------------------------------------------------
+
+
+def test_load_scenario_parses_the_behavior_assertion_fields(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = """
+role: sales-agent
+turns:
+  - hi
+assertions:
+  tools_succeeded: [order_writer]
+  tool_arguments:
+    order_writer:
+      client_id: CL-7731
+      items: ART-009
+  reply_contains: ["48611", "70607"]
+"""
+    path = _write(tmp_path, "behavior_assertions.yaml", text)
+
+    scenario = load_scenario(path)
+
+    assert scenario.assertions.tools_succeeded == ("order_writer",)
+    assert scenario.assertions.tool_arguments == {
+        "order_writer": {"client_id": "CL-7731", "items": "ART-009"}
+    }
+    assert scenario.assertions.reply_contains == ("48611", "70607")
+
+
+def test_load_scenario_behavior_assertion_fields_default_empty(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(tmp_path, "minimal.yaml", _MINIMAL)
+
+    scenario = load_scenario(path)
+
+    assert scenario.assertions.tools_succeeded == ()
+    assert scenario.assertions.tool_arguments == {}
+    assert scenario.assertions.reply_contains == ()
+
+
+@pytest.mark.parametrize("field", ["tools_succeeded", "reply_contains"])
+def test_load_scenario_rejects_a_non_list_behavior_tuple_assertion(
+    tmp_path: pathlib.Path, field: str
+) -> None:
+    text = _MINIMAL + f"\nassertions:\n  {field}: 5\n"
+    path = _write(tmp_path, "bad.yaml", text)
+
+    with pytest.raises(ScenarioError, match=field):
+        load_scenario(path)
+
+
+def test_load_scenario_rejects_an_empty_reply_contains_entry(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An empty string is a substring of every reply, so it would pass
+    vacuously."""
+    text = _MINIMAL + '\nassertions:\n  reply_contains: ["  "]\n'
+    path = _write(tmp_path, "bad.yaml", text)
+
+    with pytest.raises(ScenarioError, match="reply_contains"):
+        load_scenario(path)
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "tool_arguments: [order_writer]",
+        "tool_arguments:\n    order_writer: CL-7731",
+        "tool_arguments:\n    order_writer: {}",
+        "tool_arguments:\n    order_writer:\n      client_id: 7731",
+        'tool_arguments:\n    order_writer:\n      client_id: "  "',
+    ],
+    ids=[
+        "not-a-mapping",
+        "arguments-not-a-mapping",
+        "no-arguments",
+        "non-string-value",
+        "blank-value",
+    ],
+)
+def test_load_scenario_rejects_a_malformed_tool_arguments_block(
+    tmp_path: pathlib.Path, block: str
+) -> None:
+    text = _MINIMAL + f"\nassertions:\n  {block}\n"
+    path = _write(tmp_path, "bad.yaml", text)
+
+    with pytest.raises(ScenarioError, match="tool_arguments"):
+        load_scenario(path)
+
+
 def test_execution_limits_override_docstring_discloses_it_bypasses_the_ceiling_invariant() -> (
     None
 ):

@@ -20,7 +20,7 @@ import dataclasses
 import json
 import pathlib
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import structlog
@@ -532,6 +532,67 @@ def _limit_was_reached(messages: Sequence[AnyMessage]) -> bool:
     )
 
 
+def _argument_text(value: Any) -> str:
+    """#224 -- an argument value as the text `tool_arguments` searches: a
+    string as given, anything else as its JSON text."""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _call_carries(args: Any, expected: Mapping[str, str]) -> bool:
+    """#224 -- whether one call's *args* carry every expected value."""
+    if not isinstance(args, Mapping):
+        return False
+    return all(
+        name in args and text.casefold() in _argument_text(args[name]).casefold()
+        for name, text in expected.items()
+    )
+
+
+def _tool_arguments_failures(
+    expected: Mapping[str, Mapping[str, str]], messages: Sequence[AnyMessage]
+) -> list[AssertionFailure]:
+    failures: list[AssertionFailure] = []
+    for tool, arguments in expected.items():
+        calls = [
+            call["args"]
+            for message in messages
+            if isinstance(message, AIMessage)
+            for call in message.tool_calls
+            if call["name"] == tool
+        ]
+        if not calls:
+            failures.append(
+                AssertionFailure(
+                    "tool_arguments",
+                    f"expected a call to {tool!r} with {dict(arguments)!r}; "
+                    "it was not called",
+                )
+            )
+        elif not any(_call_carries(args, arguments) for args in calls):
+            failures.append(
+                AssertionFailure(
+                    "tool_arguments",
+                    f"no call to {tool!r} carried {dict(arguments)!r}; "
+                    f"its calls had {calls!r}",
+                )
+            )
+    return failures
+
+
+def _final_reply(messages: Sequence[AnyMessage]) -> str | None:
+    """#224 -- the text of the run's last assistant message, or ``None``
+    when it produced none."""
+    for message in reversed(messages):
+        if isinstance(message, AIMessage):
+            return message.text
+    return None
+
+
 def _captured_event_types(audit_events: Sequence[Any]) -> frozenset[str]:
     """#76 -- the `event_type` of every captured audit event (see
     `_CapturingAuditSink`). Tolerant of anything without one (never expected
@@ -750,6 +811,30 @@ def evaluate_assertions(
                     "not_executed", f"{tool!r} must not succeed, but it did"
                 )
             )
+
+    for tool in assertions.tools_succeeded:
+        if tool not in succeeded:
+            reason = "it was not called" if tool not in called else "it did not succeed"
+            failures.append(
+                AssertionFailure(
+                    "tools_succeeded",
+                    f"expected a successful call to {tool!r}, but {reason}",
+                )
+            )
+
+    failures.extend(_tool_arguments_failures(assertions.tool_arguments, messages))
+
+    if assertions.reply_contains:
+        reply = _final_reply(messages)
+        for text in assertions.reply_contains:
+            if reply is None or text.casefold() not in reply.casefold():
+                failures.append(
+                    AssertionFailure(
+                        "reply_contains",
+                        f"expected the final reply to contain {text!r}; "
+                        f"it was {reply!r}",
+                    )
+                )
 
     exercised_signals: list[bool] = []
     if assertions.tools_not_called:

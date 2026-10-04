@@ -677,6 +677,158 @@ def test_evaluate_assertions_guardrail_exercised_false_when_its_own_tool_was_not
 
 
 # ---------------------------------------------------------------------------
+# #224 -- tools_succeeded, tool_arguments, reply_contains
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_assertions_tools_succeeded_passes_on_a_successful_call() -> None:
+    messages = [
+        _tool_call("order_writer", {"client_id": "CL-1", "items": []}),
+        ToolMessage(content='{"order_id": "mem-order-000001"}', tool_call_id="call-1"),
+        AIMessage(content="Your order is placed."),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tools_succeeded=("order_writer",)), messages
+    )
+
+    assert outcome.passed
+    assert outcome.exercised is True
+
+
+def test_evaluate_assertions_tools_succeeded_fails_on_a_connector_error() -> None:
+    messages = [
+        _tool_call("order_writer", {"client_id": "", "items": []}),
+        ToolMessage(
+            content='{"error": "No client_id", "error_kind": "invalid_order"}',
+            tool_call_id="call-1",
+        ),
+        AIMessage(content="I could not place it."),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tools_succeeded=("order_writer",)), messages
+    )
+
+    assert not outcome.passed
+    assert outcome.failures[0].kind == "tools_succeeded"
+    assert "did not succeed" in outcome.failures[0].detail
+
+
+def test_evaluate_assertions_tools_succeeded_fails_when_never_called() -> None:
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tools_succeeded=("order_writer",)),
+        [AIMessage(content="Done.")],
+    )
+
+    assert not outcome.passed
+    assert "was not called" in outcome.failures[0].detail
+
+
+def test_evaluate_assertions_tool_arguments_matches_a_call_case_insensitively() -> None:
+    messages = [
+        _tool_call("order_writer", {"client_id": "cl-7731", "items": []}),
+        ToolMessage(content='{"order_id": "mem-order-000001"}', tool_call_id="call-1"),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tool_arguments={"order_writer": {"client_id": "CL-7731"}}),
+        messages,
+    )
+
+    assert outcome.passed
+
+
+def test_evaluate_assertions_tool_arguments_reads_a_non_string_value_as_json() -> None:
+    messages = [
+        _tool_call(
+            "order_writer",
+            {"client_id": "CL-1", "items": [{"product_id": "ART-009", "qty": 6}]},
+        ),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tool_arguments={"order_writer": {"items": "art-009"}}),
+        messages,
+    )
+
+    assert outcome.passed
+
+
+def test_evaluate_assertions_tool_arguments_needs_one_call_with_every_value() -> None:
+    """Two calls that each carry half of the expected arguments do not add up
+    to one call that carries both."""
+    messages = [
+        _tool_call("order_writer", {"client_id": "CL-7731", "items": []}, "call-1"),
+        _tool_call(
+            "order_writer",
+            {"client_id": "CL-0001", "items": [{"product_id": "ART-009"}]},
+            "call-2",
+        ),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(
+            tool_arguments={
+                "order_writer": {"client_id": "CL-7731", "items": "ART-009"}
+            }
+        ),
+        messages,
+    )
+
+    assert not outcome.passed
+    assert outcome.failures[0].kind == "tool_arguments"
+
+
+def test_evaluate_assertions_tool_arguments_fails_when_the_tool_was_not_called() -> (
+    None
+):
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tool_arguments={"order_writer": {"client_id": "CL-7731"}}),
+        [AIMessage(content="Which client?")],
+    )
+
+    assert not outcome.passed
+    assert "was not called" in outcome.failures[0].detail
+
+
+def test_evaluate_assertions_reply_contains_reads_the_final_reply_only() -> None:
+    """The token in a tool result proves nothing about the answer: only the
+    last assistant message counts."""
+    messages = [
+        _tool_call("factor", {"n": "3432276877"}),
+        ToolMessage(content="3432276877: 48611 70607", tool_call_id="call-1"),
+        AIMessage(content="It is prime."),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(reply_contains=("48611",)), messages
+    )
+
+    assert not outcome.passed
+    assert outcome.failures[0].kind == "reply_contains"
+
+
+def test_evaluate_assertions_reply_contains_passes_case_insensitively() -> None:
+    messages = [
+        AIMessage(content=[{"type": "text", "text": "Factors: 48611 x 70607."}]),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(reply_contains=("48611", "X 70607")), messages
+    )
+
+    assert outcome.passed
+    assert outcome.exercised is True
+
+
+def test_evaluate_assertions_reply_contains_fails_when_there_is_no_reply() -> None:
+    outcome = evaluate_assertions(ScenarioAssertions(reply_contains=("48611",)), [])
+
+    assert not outcome.passed
+
+
+# ---------------------------------------------------------------------------
 # run_scenario -- real resolve()/build_runtime()/AgentRuntime pipeline,
 # fake model only.
 # ---------------------------------------------------------------------------
