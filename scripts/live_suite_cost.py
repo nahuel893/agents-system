@@ -12,7 +12,9 @@ the harness write no report, but the runtime logs one `runtime.turn_usage`
 line per turn; when no report carries a cost, the cost of those lines in the
 suite log is used instead, so nothing is counted twice. Prints the total in
 USD, or `n/a` when neither source has a cost (the model had no `MODEL_PRICES`
-entry) or when any row's cost is unknown: a partial sum is never shown as a total.
+entry) or when any row's cost is unknown: a partial sum is never shown as a total,
+and the log total never stands in for a report with an unknown row. A JSON that is
+not a list of row objects is skipped with a warning on stderr.
 """
 
 from __future__ import annotations
@@ -22,18 +24,38 @@ import pathlib
 import sys
 
 
-def _report_cost(results_dir: pathlib.Path, marker: pathlib.Path) -> float | None:
+def _warn(message: str) -> None:
+    print(f"warning: {message}", file=sys.stderr)
+
+
+def _report_cost(
+    results_dir: pathlib.Path, marker: pathlib.Path
+) -> tuple[float | None, bool]:
+    """The summed cost of the reports newer than *marker*, and whether any row
+    had an unknown cost (then there is no total, and the log must not stand in
+    for it). A file that is not a list of row objects is skipped with a warning."""
     since = marker.stat().st_mtime
     total: float | None = None
     for report in sorted(results_dir.glob("*.json")):
         if report.stat().st_mtime <= since:
             continue
-        for row in json.loads(report.read_text(encoding="utf-8")):
-            cost = row.get("total_cost_usd")
+        try:
+            rows = json.loads(report.read_text(encoding="utf-8"))
+            if not isinstance(rows, list) or not all(
+                isinstance(row, dict) for row in rows
+            ):
+                raise ValueError("not a list of row objects")
+            costs = [row.get("total_cost_usd") for row in rows]
+            if any(cost is not None for cost in costs):
+                [float(cost) for cost in costs if cost is not None]
+        except (OSError, ValueError, TypeError) as error:
+            _warn(f"skipping {report.name}: {error}")
+            continue
+        for cost in costs:
             if cost is None:
-                return None  # a partial amount is not a total
+                return None, True  # a partial amount is not a total
             total = (total or 0.0) + float(cost)
-    return total
+    return total, False
 
 
 def _log_cost(log: pathlib.Path) -> float | None:
@@ -56,8 +78,11 @@ def _log_cost(log: pathlib.Path) -> float | None:
 def total_cost(
     results_dir: pathlib.Path, marker: pathlib.Path, log: pathlib.Path | None = None
 ) -> float | None:
-    total = _report_cost(results_dir, marker) if results_dir.is_dir() else None
-    if total is None and log is not None and log.is_file():
+    total: float | None = None
+    unknown = False
+    if results_dir.is_dir():
+        total, unknown = _report_cost(results_dir, marker)
+    if total is None and not unknown and log is not None and log.is_file():
         total = _log_cost(log)
     return total
 

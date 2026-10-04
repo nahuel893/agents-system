@@ -104,8 +104,11 @@ reportes que escribió (`scripts/live_suite_cost.py`) o, para las suites que
 levantan el harness y no escriben reporte, de las líneas `runtime.turn_usage`
 de su log; el costo de un grupo es la suma de sus suites (`n/a` para el grupo
 `mechanism`, que es offline). Una suite o grupo con algún costo desconocido
-es `n/a`, nunca una suma parcial. Las tasas por escenario, los tokens y el costo
-siguen en los reportes de siempre en `evals/results/`.
+es `n/a`, nunca una suma parcial; un reporte con una fila de costo desconocido
+también deja su suite en `n/a` (el total del log nunca lo reemplaza), y un
+JSON en `evals/results/` que no sea una lista de objetos fila se omite con una
+advertencia. Las tasas por escenario, los tokens y el costo siguen en los
+reportes de siempre en `evals/results/`.
 
 ### Qué escenarios corre un cambio
 
@@ -656,7 +659,10 @@ matrix = await run_capability_matrix(
 )
 ```
 
-El nombre de una columna no puede repetir el id de una capacidad.
+El nombre de una columna no puede repetir el id de una capacidad, y un id de
+capacidad no puede repetirse en `capabilities` (`ValueError`; duplicaría la
+columna y correría sus escenarios dos veces). `candidates_from_names` cierra
+los clientes HTTP de los modelos ya construidos si falla un nombre posterior.
 `MatrixCase(column, run)` acepta cualquier corrutina que devuelva un
 `ScenarioResult`.
 

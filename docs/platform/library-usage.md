@@ -474,7 +474,7 @@ The comparison has limits. The passed model's provider is read from its class
 (`langchain_openai` = `openai_compatible`, `langchain_groq` = `groq`,
 `langchain_anthropic` = `anthropic`, `langchain_ollama` = `ollama`), so it tells
 those four apart but cannot tell two OpenAI-protocol hosts from each other, and
-a test double or custom wrapper has no identifiable provider. Temperature and
+a test double or custom wrapper has no identifiable provider. `temperature` and
 `max_tokens` are not compared.
 
 The caller's explicit model wins because passing it is a deliberate act at the

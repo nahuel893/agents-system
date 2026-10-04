@@ -506,3 +506,64 @@ async def test_script_runs_the_matrix_and_writes_both_files(
     assert len(list(tmp_path.glob("capability-matrix-*.json"))) == 1
     assert len(list(tmp_path.glob("capability-matrix-*.md"))) == 1
     assert "| Model |" in capsys.readouterr().out
+
+
+async def test_repeated_capability_id_is_rejected() -> None:
+    with pytest.raises(ValueError, match="duplicate capability"):
+        await run_capability_matrix(
+            _candidates("m"),
+            capabilities=["grounding", "grounding"],
+            runs=1,
+            run_case=_scripted({}),
+        )
+
+
+def test_candidates_from_names_closes_earlier_clients_when_the_nth_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[str] = []
+
+    class _Client:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def aclose(self) -> None:
+            closed.append(self.name)
+
+    def fake_build(model_override: str | None = None) -> tuple[BaseChatModel, str]:
+        if model_override == "bad":
+            raise RuntimeError("no key for bad")
+        model = FakeListChatModel(responses=["x"])
+        object.__setattr__(model, "http_async_client", _Client(str(model_override)))
+        return model, str(model_override)
+
+    monkeypatch.setattr(matrix_module, "build_eval_model", fake_build)
+
+    with pytest.raises(RuntimeError, match="no key for bad"):
+        matrix_module.candidates_from_names(["a", "b", "bad", "c"])
+
+    assert closed == ["a", "b"]
+
+
+async def test_candidates_from_names_closes_earlier_clients_inside_a_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[str] = []
+
+    class _Client:
+        async def aclose(self) -> None:
+            closed.append("a")
+
+    def fake_build(model_override: str | None = None) -> tuple[BaseChatModel, str]:
+        if model_override == "bad":
+            raise RuntimeError("boom")
+        model = FakeListChatModel(responses=["x"])
+        object.__setattr__(model, "http_async_client", _Client())
+        return model, "a"
+
+    monkeypatch.setattr(matrix_module, "build_eval_model", fake_build)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        matrix_module.candidates_from_names(["a", "bad"])
+
+    assert closed == ["a"]
