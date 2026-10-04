@@ -214,8 +214,28 @@ DEPLOY_GRANTS='{"acme-sales": ["read:catalog", "write:orders"], "support": ["rea
 
 - **A value is strict.** At most one `@`; the role and the client each match the id rule above. A malformed id or value fails boot, naming it and `AGENT_REGISTRATIONS`. `__` has no meaning anywhere: it is part of the name.
 - **`"{role}@{client}"`** is that id's `clients` entry, so it needs an explicit `RootConfig(deployments_root=...)`. `"{role}"` alone means no deployment override.
-- **Only predefined roles.** An environment variable cannot carry an `Agent`; a custom agent is registered with `agents=`.
+- **Predefined roles, or a folder.** An environment variable cannot carry an `Agent` object; a value is a predefined-role name, or `"folder:<name>"` (below). Anything else is registered with `agents=`.
 - **`agents=` wins.** When `create_app` gets `agents=`, `AGENT_REGISTRATIONS` is ignored, never merged.
+
+### Serving an agent folder: `AGENTS_ROOT` (coming in the next release)
+
+A value of the form `"folder:<name>"` registers the agent folder `<name>` under the directory `AGENTS_ROOT` names, for example a copy of a [reference agent](../../examples/agents/README.md):
+
+```bash
+AGENTS_ROOT=/srv/agents
+AGENT_REGISTRATIONS='{"support": "folder:support-agent"}'
+ADAPTER_RUNTIMES='["support"]'
+DEPLOY_GRANTS='{"support": ["read:catalog"]}'
+```
+
+`AGENTS_ROOT` is the operator's setting and a registration value is not trusted, so every escape fails boot, naming the id and `AGENT_REGISTRATIONS`:
+
+- **Unset or relative root.** A folder value with `AGENTS_ROOT` unset (the default) or not an absolute path fails closed. Without a folder value, `AGENTS_ROOT` is not read.
+- **One folder name.** `<name>` is a single folder directly under the root, matching the runtime-id character rule. An absolute path, a `..` segment, a separator or an `@` fails. A folder value takes no `@{client}`: deployment overrides apply to predefined roles only.
+- **No symlinks out.** The folder must exist, and once symlinks are followed it must still lie strictly inside the root. A file inside the folder that is a symlink out of it fails the load, as for any agent folder.
+- **Siblings stay inside.** The root is the importer root, so a sibling `extends: ../operator-agent` inside it works, and one that leaves it fails.
+
+The folder is held to the importer ceiling like any `Agent.from_folder`. A predefined-role name keeps working, with its deprecation warning.
 
 ### Migrating from the old runtime ids
 

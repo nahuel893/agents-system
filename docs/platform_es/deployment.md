@@ -304,8 +304,28 @@ DEPLOY_GRANTS='{"acme-sales": ["read:catalog", "write:orders"], "support": ["rea
 
 - **Un valor es estricto.** Como mucho un `@`; el rol y el cliente cumplen cada uno la regla de ids de arriba. Un id o un valor malformado hace fallar el arranque, nombrándolo junto con `AGENT_REGISTRATIONS`. `__` no significa nada en ningún lado: es parte del nombre.
 - **`"{role}@{client}"`** es la entrada de `clients` de ese id, así que necesita un `RootConfig(deployments_root=...)` explícito. `"{role}"` solo significa sin sobreescritura de despliegue.
-- **Solo roles predefinidos.** Una variable de entorno no puede llevar un `Agent`; un agente propio se registra con `agents=`.
+- **Roles predefinidos, o una carpeta.** Una variable de entorno no puede llevar un objeto `Agent`; un valor es el nombre de un rol predefinido, o `"folder:<name>"` (abajo). Cualquier otra cosa se registra con `agents=`.
 - **`agents=` gana.** Cuando `create_app` recibe `agents=`, `AGENT_REGISTRATIONS` se ignora, nunca se mezcla.
+
+### Servir una carpeta de agente: `AGENTS_ROOT` (próxima versión)
+
+Un valor de la forma `"folder:<name>"` registra la carpeta de agente `<name>` bajo el directorio que nombra `AGENTS_ROOT`, por ejemplo una copia de un [agente de referencia](../../examples/agents/README.md):
+
+```bash
+AGENTS_ROOT=/srv/agents
+AGENT_REGISTRATIONS='{"support": "folder:support-agent"}'
+ADAPTER_RUNTIMES='["support"]'
+DEPLOY_GRANTS='{"support": ["read:catalog"]}'
+```
+
+`AGENTS_ROOT` lo fija el operador y un valor de registro no es de confianza, así que todo escape hace fallar el arranque, nombrando el id y `AGENT_REGISTRATIONS`:
+
+- **Raíz sin definir o relativa.** Un valor de carpeta con `AGENTS_ROOT` sin definir (el valor por defecto) o que no es una ruta absoluta falla cerrado. Sin un valor de carpeta, `AGENTS_ROOT` no se lee.
+- **Un solo nombre de carpeta.** `<name>` es una única carpeta directamente bajo la raíz, que cumple la regla de caracteres de los ids de runtime. Una ruta absoluta, un segmento `..`, un separador o un `@` falla. Un valor de carpeta no admite `@{client}`: las sobreescrituras de despliegue aplican solo a roles predefinidos.
+- **Sin symlinks hacia afuera.** La carpeta debe existir y, tras seguir los symlinks, seguir estando estrictamente dentro de la raíz. Un archivo dentro de la carpeta que sea un symlink hacia afuera hace fallar la carga, como en cualquier carpeta de agente.
+- **Los hermanos quedan adentro.** La raíz es la raíz del importador, así que un `extends: ../operator-agent` hermano dentro de ella funciona, y uno que sale de ella falla.
+
+La carpeta queda sujeta al techo del importador como cualquier `Agent.from_folder`. El nombre de un rol predefinido sigue funcionando, con su aviso de obsolescencia.
 
 ### Migrar desde los ids de runtime viejos
 

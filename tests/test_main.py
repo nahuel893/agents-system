@@ -3582,19 +3582,17 @@ async def test_env_registration_is_ignored_when_create_app_gets_agents(
     assert set(app.state.runtimes) == {"acme-sales"}
 
 
-@pytest.mark.asyncio
-async def test_env_registration_leaves_demo_build_app_unchanged(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """design.md D5: `examples/demo/app.py`'s `build_app` (moved from
-    `agents_system.demo` by PR5, ADR-004) passes no `agents=` and needs no
-    change -- with nothing registered in the environment it boots with an
-    empty runtime cache."""
+def test_demo_build_app_registers_the_reference_sales_agent() -> None:
+    """#226 (ADR-010): `examples/demo/app.py`'s `build_app` registers the
+    reference `sales-agent` folder with `create_app(agents=...)` under the
+    runtime id the demo docs use, instead of relying on `AGENT_REGISTRATIONS`
+    naming a predefined role."""
     from _demo_app import demo_app
 
     app = demo_app.build_app(engine=MagicMock(), model=MagicMock())
 
-    await _boot(app, _env_settings(monkeypatch))
-
-    assert app.state.runtimes == {}
-    assert app.state.adapter_model_ids == frozenset()
+    assert set(app.state.agents) == {"demo-sales-agent"}
+    agent = app.state.agents["demo-sales-agent"]
+    assert agent.name == "sales-agent"
+    assert agent._folder is not None
+    assert agent._folder.parts[-3:] == ("examples", "agents", "sales-agent")

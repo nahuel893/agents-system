@@ -39,28 +39,27 @@ archivo `.env` del proyecto). La URL de la base demo es independiente de
 | `OPENAI_COMPATIBLE_API_KEY` | opcional | Credencial para ese endpoint; omitila para servidores locales sin clave. |
 | `DEMO_HOST` | `127.0.0.1` | Host de enlace HTTP. |
 | `DEMO_PORT` | `8000` | Puerto de enlace HTTP. |
-| `AGENT_REGISTRATIONS` | obligatoria para servir un rol | Objeto JSON que mapea cada ID de runtime que elegís al rol predefinido que sirve, como `"{role}"` o `"{role}@{client}"`, por ejemplo `{"demo-sales-agent": "sales-agent"}`. El ID es opaco: nada lo parsea. Una entrada malformada hace fallar el arranque, nombrándola. |
+| `AGENT_REGISTRATIONS` | no se lee | La entrada registra ella misma la carpeta del agente de referencia `sales-agent` (`examples/agents/sales-agent`), con el ID de runtime `demo-sales-agent`, mediante `create_app(agents=...)`; `agents=` gana sobre esta variable. |
 | `ADAPTER_RUNTIMES` | obligatoria para exponer un rol | Lista JSON de los IDs de runtime registrados a publicar, como `["demo-sales-agent"]`. Vacía (el valor por defecto) no expone modelos en `/v1/*`. |
 | `ADAPTER_API_KEY` | obligatoria al publicar un rol | Token Bearer requerido por `/v1/*`. |
 | `DEPLOY_GRANTS` | obligatoria para cada runtime registrado | Objeto JSON que mapea cada ID registrado a la lista de nombres de permisos efectivamente otorgados, por ejemplo `{"demo-sales-agent": ["read:catalog"]}`. Un runtime registrado sin una entrada correspondiente hace fallar el arranque de forma explícita, nombrando ese runtime. |
 
 Por ejemplo, elegí un proveedor y definí sus variables; después publicá un rol
-predefinido sin guardar valores de credenciales en el control de versiones:
+de referencia sin guardar valores de credenciales en el control de versiones:
 
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://your-compatible-endpoint.example/v1
 export OPENAI_COMPATIBLE_MODEL=your-model-id
 export OPENAI_COMPATIBLE_API_KEY="$YOUR_PROVIDER_API_KEY"
-export AGENT_REGISTRATIONS='{"demo-sales-agent": "sales-agent"}'
 export ADAPTER_RUNTIMES='["demo-sales-agent"]'
 export DEPLOY_GRANTS='{"demo-sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
 export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
 ```
 
-`AGENT_REGISTRATIONS` construye el runtime, y `ADAPTER_RUNTIMES` y
-`ADAPTER_API_KEY` son los que efectivamente lo publican y protegen en
-`/v1/*`; esta entrada no define ninguno por defecto. El arranque también
+La entrada construye el runtime `demo-sales-agent` desde la carpeta de
+referencia, y `ADAPTER_RUNTIMES` y `ADAPTER_API_KEY` son los que efectivamente
+lo publican y protegen en `/v1/*`; esta entrada no define ninguno por defecto. El arranque también
 requiere una entrada explícita de `DEPLOY_GRANTS` para cada runtime
 registrado (issue #38) — si falta, el lifespan de `main.py` lanza
 `DefinitionError` nombrando ese runtime. Los IDs de runtime con la vieja forma
@@ -68,10 +67,10 @@ registrado (issue #38) — si falta, el lifespan de `main.py` lanza
 [cómo migrar](deployment.md#migrar-desde-los-ids-de-runtime-viejos). El
 ejemplo de arriba le otorga a `demo-sales-agent` su conjunto completo de
 permisos declarados
-(`platform/roles/sales-agent/manifest.md`): `read:catalog`,
+(`examples/agents/sales-agent/manifest.md`): `read:catalog`,
 `read:client_registry`, `write:orders`, `write:order_items`,
 `read:price_lists`, `send:message`. `sales-agent` declara
-`untrusted_input: true` (`platform/roles/sales-agent/policy.md`), y ninguno de
+`untrusted_input: true` (`examples/agents/sales-agent/policy.md`), y ninguno de
 esos seis permisos es T3 (como `exec:command` o `read:files`), así que otorgar
 su conjunto completo acá nunca le da un permiso T3 a un rol de entrada no
 confiable (ADR-002 C.11/C.13).

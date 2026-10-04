@@ -300,7 +300,7 @@ curl http://localhost:8000/health
 # it in ADAPTER_RUNTIMES. Every registered runtime also needs an explicit
 # DEPLOY_GRANTS entry or boot refuses to start (issue #38 -- there is no
 # auto-grant). The id is your choice; nothing parses it:
-#   AGENT_REGISTRATIONS='{"sales": "sales-agent"}'
+#   AGENT_REGISTRATIONS='{"sales": "folder:sales-agent"}'   # under AGENTS_ROOT
 #   ADAPTER_RUNTIMES='["sales"]'
 #   DEPLOY_GRANTS='{"sales": ["read:catalog", "write:orders"]}'
 #   ADAPTER_API_KEY=<something>      # required once a runtime is exposed
@@ -319,8 +319,9 @@ curl http://localhost:8000/v1/chat/completions \
 Load the repeatable demo database first with
 [`demo/load_demo_company.py`](demo/load_demo_company.py). Then configure the
 demo URL, one `EVAL_PROVIDER` and its provider variables, optional
-`DEMO_HOST`/`DEMO_PORT`, plus `AGENT_REGISTRATIONS`, `ADAPTER_RUNTIMES` and
-`ADAPTER_API_KEY` to publish a role:
+`DEMO_HOST`/`DEMO_PORT`, plus `ADAPTER_RUNTIMES` and `ADAPTER_API_KEY` to
+publish the reference `sales-agent`, which the demo registers itself as
+`demo-sales-agent`:
 
 ```bash
 export DEMO_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo
@@ -330,7 +331,6 @@ export OPENAI_COMPATIBLE_MODEL=your-model-id
 export OPENAI_COMPATIBLE_API_KEY="$YOUR_PROVIDER_API_KEY"
 export DEMO_HOST=127.0.0.1
 export DEMO_PORT=8000
-export AGENT_REGISTRATIONS='{"demo-sales-agent": "sales-agent"}'
 export ADAPTER_RUNTIMES='["demo-sales-agent"]'
 export DEPLOY_GRANTS='{"demo-sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
 export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
@@ -367,7 +367,8 @@ Environment variables (loaded from `.env`). Key settings:
 | `ANTHROPIC_API_KEY` | — | Anthropic Claude API key |
 | `OPENAI_API_KEY` | — | OpenAI API key — **embeddings only** (see `OPENAI_COMPATIBLE_API_KEY` for chat) |
 | `ADAPTER_PROVIDER` | `ollama` | LLM provider: `ollama`, `groq`, `anthropic`, `openai_compatible` |
-| `AGENT_REGISTRATIONS` | `{}` | Which runtimes the app builds when `create_app` gets no `agents=` (ADR-004). JSON object mapping each runtime id you choose to a predefined role, as `"{role}"` or `"{role}@{client}"` — e.g. `{"acme-sales": "sales-agent@acme"}`. A malformed id or value fails boot, naming it. Replaces the removed `{deployment}__{role}` ids: see [migrating](docs/platform/deployment.md#migrating-from-the-old-runtime-ids) |
+| `AGENT_REGISTRATIONS` | `{}` | Which runtimes the app builds when `create_app` gets no `agents=` (ADR-004). JSON object mapping each runtime id you choose to a predefined role, as `"{role}"` or `"{role}@{client}"` — e.g. `{"acme-sales": "sales-agent@acme"}`. A value may also be `"folder:<name>"`, an agent folder under `AGENTS_ROOT`. A malformed id or value fails boot, naming it. Replaces the removed `{deployment}__{role}` ids: see [migrating](docs/platform/deployment.md#migrating-from-the-old-runtime-ids) |
+| `AGENTS_ROOT` | `""` | Absolute directory that `"folder:<name>"` values of `AGENT_REGISTRATIONS` resolve under. Unset, a folder value fails boot; so does one that escapes the root (absolute path, `..`, symlink out). See [deployment](docs/platform/deployment.md#serving-an-agent-folder-agents_root-coming-in-the-next-release) |
 | `ADAPTER_RUNTIMES` | `[]` | Which registered runtime ids `/v1` publishes. Empty publishes none — the runtime *cache* may hold more, for other channels, and those are never exposed here. Setting any requires `ADAPTER_API_KEY` |
 | `WHATSAPP_RUNTIME_ID` | — | Which registered runtime id inbound WhatsApp routes to. Unset means the route answers 200 and runs no turn. **If `WHATSAPP_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID` are both set, this must resolve to a runtime or the app refuses to boot** (#141) — otherwise `/webhook` durably accepts signed messages nothing ever processes |
 | `DEPLOY_GRANTS` | `{}` | **Required** per registered runtime id (issue #38). JSON object mapping each registered id to the list of permission wire names actually granted to it — e.g. `{"acme-sales": ["read:catalog", "write:orders"]}`. A role's own manifest only declares what it *may* need; this is what a deployment actually *grants*, and it bounds Layer-2 revalidation for the whole life of that runtime. A registered runtime with no matching entry fails boot loudly, naming the runtime id |
