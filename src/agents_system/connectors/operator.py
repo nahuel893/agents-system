@@ -68,6 +68,7 @@ def _forbidden_sandbox_paths() -> frozenset[pathlib.Path]:
         pathlib.Path("/root"),
         pathlib.Path("/run"),
         pathlib.Path("/var/run"),
+        pathlib.Path("/etc"),
         pathlib.Path.home(),
         pathlib.Path.cwd(),
     )
@@ -93,7 +94,8 @@ class SandboxPolicy:
 
     extra_ro_binds: tuple[pathlib.Path, ...] = ()
     """Additional read-only bind mounts a command needs beyond the fixed
-    system paths (`/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`) and its
+    system paths (`/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, a short `/etc`
+    allowlist) and its
     own resolved install directory. Empty by default: a deployment states
     exactly what an allowlisted command needs, rather than the sandbox
     guessing."""
@@ -110,7 +112,7 @@ class SandboxPolicy:
                 raise ValueError(
                     f"SandboxPolicy.extra_ro_binds contains '{path}', which "
                     f"resolves to '{resolved}' -- ADR-002 C.14 forbids binding "
-                    "the filesystem root, /home, $HOME, /root, /run or "
+                    "the filesystem root, /home, $HOME, /root, /etc, /run or "
                     "/var/run into a sandbox, even read-only, since any of "
                     "those exposes every user's files (review follow-up on "
                     "PR #148: a widened bind list this broad is exactly how "
@@ -233,18 +235,44 @@ def _bwrap_path() -> str | None:
 #: merged-`/usr` layout (where these are symlinks into `/usr`) and a
 #: traditional split one.
 #:
-#: `/etc` is bound WHOLE rather than an allowlist of specific files (review
-#: follow-up, PR #148): it is read-only, contains no per-user secrets (those
-#: live under `/home`/`/root`, already excluded -- see
-#: `_forbidden_sandbox_paths`), and an allowlist would have to be kept in
-#: sync with whatever files an arbitrary allowlisted command happens to
-#: need (locale data, `nsswitch.conf`, terminfo, CA bundles for a
-#: network-declared tool, ...) with no reliable way to enumerate that set
-#: up front. The narrower, auditable boundary here is WHICH commands can
-#: run at all (`allowed_commands`/`command_tools` declarations) and WHAT
-#: network/extra-bind access each one gets (`SandboxPolicy`), not
-#: micromanaging one read-only system directory.
-_SYSTEM_RO_BINDS: tuple[str, ...] = ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc")
+#: `/etc` is deliberately NOT bound whole (issue #238): it holds the
+#: deployment's secrets file (`/etc/agents-system/agents-system.env`) and
+#: `passwd`/`group`, and `use_term` checks only `argv[0]`, so an allowed
+#: `cat` could print them. Only `_SYSTEM_ETC_BINDS` is bound.
+_SYSTEM_RO_BINDS: tuple[str, ...] = ("/usr", "/bin", "/sbin", "/lib", "/lib64")
+
+#: The explicit `/etc` allowlist (issue #238), each entry tried with
+#: `--ro-bind-try`. Determined by experiment with bwrap on a host with an
+#: empty `/etc`: `factor`, `ls`, `cat`, `sleep`, `echo` and a venv Python all
+#: run with NO `/etc` at all, so this list is for portability and fidelity,
+#: not a requirement of those commands. None of these hold secrets:
+#:
+#: - `ld.so.cache`: the dynamic linker's library cache (non-default lib dirs);
+#: - `nsswitch.conf`: glibc name-service config (needed once a tool resolves
+#:   names);
+#: - `localtime`: without it `date` and `strftime` silently report UTC;
+#: - `ssl/certs`, `ca-certificates`, `pki/tls/certs`: TLS trust roots for a
+#:   network-declared tool (`/etc/ssl/cert.pem` links into `ca-certificates`);
+#: - `alternatives`: the Debian-family symlink farm behind e.g.
+#:   `/usr/bin/awk -> /etc/alternatives/awk` (symlinks only; not present on
+#:   the Arch-family host this was measured on, kept from the layout, so
+#:   treat it as unverified here).
+#:
+#: Deliberately left out: `passwd`, `group` (no command above needs them;
+#: `ls -l` just prints numeric ids), `shadow`, `hosts`, and everything under
+#: `/etc/agents-system`.
+_SYSTEM_ETC_BINDS: tuple[str, ...] = (
+    "/etc/ld.so.cache",
+    "/etc/nsswitch.conf",
+    "/etc/localtime",
+    "/etc/ssl/certs",
+    "/etc/ca-certificates",
+    "/etc/pki/tls/certs",
+    "/etc/alternatives",
+)
+
+#: Bound only when the tool declares `network=True`: the resolver needs them.
+_NETWORK_ETC_BINDS: tuple[str, ...] = ("/etc/resolv.conf", "/etc/hosts")
 
 _MAX_SYMLINK_HOPS = 80
 
@@ -338,7 +366,8 @@ def _bwrap_argv(argv: list[str], *, policy: TerminalPolicy, bwrap: str) -> list[
     if sandbox.network:
         wrapped.append("--share-net")
 
-    for path in _SYSTEM_RO_BINDS:
+    etc_binds = _SYSTEM_ETC_BINDS + (_NETWORK_ETC_BINDS if sandbox.network else ())
+    for path in _SYSTEM_RO_BINDS + etc_binds:
         wrapped += ["--ro-bind-try", path, path]
 
     for program_root in _program_ro_binds(argv[0]):

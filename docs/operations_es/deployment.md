@@ -133,6 +133,7 @@ Ambas unidades se ejecutan bajo el usuario y grupo dedicados y sin privilegios `
    sudo chown root:agents-system /etc/agents-system/agents-system.env
    sudo chmod 640 /etc/agents-system/agents-system.env
    # Editar /etc/agents-system/agents-system.env con credenciales reales de producción
+   # (el sandbox de comandos nunca monta este directorio; ver operations_es/sandbox-bwrap.md)
    ```
 
 4. **Instalar y Habilitar Unidades:**

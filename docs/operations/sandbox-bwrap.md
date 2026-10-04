@@ -161,6 +161,33 @@ logs for this line rather than assuming a clean start means the sandbox
 works; the actual enforcement still happens per call regardless of whether
 this line was read.
 
+## What the sandbox exposes of `/etc`
+
+The sandbox never binds the host `/etc` whole (#238). It holds the
+deployment's secrets file (`/etc/agents-system/agents-system.env`) and
+`passwd`/`group`, and `use_term` checks only `argv[0]`, so an allowed `cat`
+would print them. Only an explicit allowlist is bound read-only
+(`_SYSTEM_ETC_BINDS` in `connectors/operator.py`): `ld.so.cache`,
+`nsswitch.conf`, `localtime`, `ssl/certs`, `ca-certificates`,
+`pki/tls/certs` and `alternatives`. A tool that declares `network=True` also
+gets `resolv.conf` and `hosts`. `passwd`, `group`, `shadow` and
+`/etc/agents-system` are never bound.
+
+The list was found by experiment with `bwrap`: `factor`, `ls`, `cat`,
+`sleep`, `echo` and a venv Python run with no `/etc` at all, so the entries
+exist for portability (library cache, time zone, TLS roots, DNS). The
+`alternatives` entry (Debian-family symlinks such as `awk`) could not be
+verified on the Arch-family host used; it holds only symlinks into `/usr`.
+
+A command that needs another `/etc` file gets it through
+`SandboxPolicy.extra_ro_binds` (for example `/etc/ssl`). **Risk:** each extra
+bind is readable by every command that tool runs; never bind
+`/etc/agents-system`, and `SandboxPolicy` refuses `/etc` itself. Other
+reads outside the root were probed and are closed: a symlink in the root
+to a host file resolves to nothing (the target is not mounted), `/proc` is
+the sandbox's own PID namespace, and the environment is cleared. The
+directory holding `argv[0]` is also readable, as before.
+
 ## Workspace scoping
 
 `TerminalPolicy.root` — the directory bound **read-write** inside every
