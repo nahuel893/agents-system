@@ -9,6 +9,16 @@ from agents_system.evals.live_registry import (
     build_live_registry,
     build_live_registry_factory,
 )
+from agents_system.evals.matrix import (
+    CapabilityMatrix,
+    MatrixCase,
+    MatrixCell,
+    ModelCandidate,
+    candidates_from_names,
+    run_capability_matrix,
+    scenario_case,
+    write_matrix,
+)
 from agents_system.evals.provider import build_eval_model, model_display_name
 from agents_system.evals.reporting import DEFAULT_RESULTS_DIR, write_results
 from agents_system.evals.runner import (
@@ -40,6 +50,10 @@ __all__ = [
     "GUARDRAIL_THRESHOLD",
     "AssertionFailure",
     "AssertionOutcome",
+    "CapabilityMatrix",
+    "MatrixCase",
+    "MatrixCell",
+    "ModelCandidate",
     "RunOutcome",
     "Scenario",
     "ScenarioAssertions",
@@ -49,10 +63,14 @@ __all__ = [
     "build_eval_model",
     "build_live_registry",
     "build_live_registry_factory",
+    "candidates_from_names",
     "evaluate_assertions",
     "load_scenario",
     "load_scenarios",
     "model_display_name",
+    "run_capability_matrix",
     "run_scenario",
+    "scenario_case",
+    "write_matrix",
     "write_results",
 ]

@@ -44,13 +44,19 @@ class EvalProviderNotConfiguredError(RuntimeError):
     """`EVAL_PROVIDER` is unset, and there is no provider to fall back to."""
 
 
-def build_eval_model() -> tuple[BaseChatModel, str]:
+def build_eval_model(
+    model_override: str | None = None,
+) -> tuple[BaseChatModel, str]:
     """Build the chat model a live-eval run should use, from
     `Settings.eval_provider`, plus the display name to report results under.
 
     Reuses `main._build_chat_model` -- the exact provider dispatch every
     real role is built with -- so an eval run exercises a genuinely
     supported provider, never a bespoke construction path of its own.
+
+    *model_override* names another model of the same provider (the capability
+    matrix, #228, builds one per candidate); without it the provider's
+    configured model is used.
 
     Raises `EvalProviderNotConfiguredError` when `EVAL_PROVIDER` is unset:
     picking a model silently would report a measurement of something the
@@ -65,5 +71,5 @@ def build_eval_model() -> tuple[BaseChatModel, str]:
             "(openai_compatible for a remote model such as OpenRouter; see "
             "docs/platform/live-eval.md) together with that provider's variables."
         )
-    model = _build_chat_model(provider)
+    model = _build_chat_model(provider, model_override=model_override)
     return model, model_display_name(model)
