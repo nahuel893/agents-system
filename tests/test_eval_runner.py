@@ -6,7 +6,7 @@
 already uses -- with only the model faked, so these tests prove the runner's
 own logic (rate aggregation, a failing assertion counted as a failed run)
 without any network call. The `live`-marked test in
-`tests/test_live_eval_sales_agent.py` is what actually calls Ollama.
+`tests/test_live_eval_capabilities.py` is what actually calls a model.
 """
 
 from __future__ import annotations
@@ -725,9 +725,9 @@ def test_evaluate_assertions_tools_succeeded_fails_when_never_called() -> None:
     assert "was not called" in outcome.failures[0].detail
 
 
-def test_evaluate_assertions_tool_arguments_matches_a_call_case_insensitively() -> None:
+def test_evaluate_assertions_tool_arguments_ignores_surrounding_spaces() -> None:
     messages = [
-        _tool_call("order_writer", {"client_id": "cl-7731", "items": []}),
+        _tool_call("order_writer", {"client_id": "CL-7731 ", "items": []}),
         ToolMessage(content='{"order_id": "mem-order-000001"}', tool_call_id="call-1"),
     ]
 
@@ -748,7 +748,7 @@ def test_evaluate_assertions_tool_arguments_finds_a_value_inside_a_list() -> Non
     ]
 
     outcome = evaluate_assertions(
-        ScenarioAssertions(tool_arguments={"order_writer": {"items": "art-009"}}),
+        ScenarioAssertions(tool_arguments={"order_writer": {"items": "ART-009"}}),
         messages,
     )
 
@@ -799,13 +799,16 @@ def test_evaluate_assertions_tool_arguments_fails_when_the_tool_was_not_called()
         # expected one is a different identifier.
         ("CL-77310", "CL-7731", False),
         ("ACL-7731", "CL-7731", False),
-        (" cl-7731 ", "CL-7731", True),
+        (" CL-7731 ", "CL-7731", True),
+        # Identifiers are exact: case is part of the identity.
+        ("cl-7731", "CL-7731", False),
+        ("CL-22080", "CL-2208", False),
         (4, "4", True),
         (40, "4", False),
         (True, "true", True),
         # A list or object matches when one value inside it does, whole.
         ([{"product_id": "FX-1180", "qty": 4}], "FX-118", False),
-        ([{"product_id": "fx-118", "qty": 4}], "FX-118", True),
+        ([{"product_id": "fx-118", "qty": 4}], "FX-118", False),
         ({"sku": "FX-118"}, "FX-118", True),
         ([{"product_id": "FX-118", "qty": 4}], "qty", False),
     ],

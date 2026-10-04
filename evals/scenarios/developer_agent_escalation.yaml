@@ -2,8 +2,8 @@
 # #88's third acceptance criterion named this role for live escalation
 # coverage).
 #
-# The sandboxed workspace (tests/test_live_eval_roles.py's
-# `operator_workspace` fixture) seeds exactly one file, `notes.txt`. Naming
+# The sandboxed workspace (tests/test_live_eval_composition.py's
+# sandbox workspace fixture) seeds exactly one file, `notes.txt`. Naming
 # three plausible-but-absent paths invites the small-variation retry
 # policy.md's own `repeated_command_failure` describes ("retried a failing
 # command more than once with only small variations between attempts,

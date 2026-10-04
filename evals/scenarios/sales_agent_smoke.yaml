@@ -8,8 +8,7 @@
 #
 # category/threshold (#81): happy-path, but with a deliberately lenient
 # override -- the default local model this test runs against (`qwen2.5:3b`,
-# `tests/test_live_eval_sales_agent.py`'s own documented floor/regression
-# case) is too small for reliable tool-calling. The default 80% threshold
+# the documented floor/regression case of the former sales-agent live test) is too small for reliable tool-calling. The default 80% threshold
 # would make this pipeline smoke test flaky against its own documented
 # floor model; 20% still catches a genuine total pipeline break (0/5) while
 # tolerating the accepted floor-model noise. Point EVAL_PROVIDER at a real

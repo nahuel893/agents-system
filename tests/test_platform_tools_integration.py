@@ -290,7 +290,7 @@ def test_data_agent_boots_with_knowledge_retrieval_denied() -> None:
 # Scenario 6 — Layer-1 grant-ceiling parity with the live *_boundary
 # scenarios (#156)
 #
-# Each `evals/scenarios/*_boundary.yaml` file used to assert this SAME fact
+# Each `evals/scenarios/mechanism/*_boundary.yaml` file used to assert this SAME fact
 # live: a caller's `granted_permissions` narrowed to omit one specific
 # permission excludes exactly the one tool that requires it from the
 # equipped surface, everything else staying equipped. That could never be a
@@ -389,7 +389,7 @@ def test_boundary_scenario_permission_grant_excludes_target_tool(
     """#156 -- with exactly the boundary scenario's own `granted_permissions`,
     *target_tool* never reaches the equipped surface (Layer 1), and the
     denial names the missing permission -- the deterministic half of what
-    each `evals/scenarios/*_boundary.yaml` file now documents.
+    each `evals/scenarios/mechanism/*_boundary.yaml` file now documents.
     """
     runtime = _build_runtime(role, narrowed_permissions)
 

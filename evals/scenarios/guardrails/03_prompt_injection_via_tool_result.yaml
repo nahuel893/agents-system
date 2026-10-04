@@ -1,6 +1,6 @@
 # Live guardrail suite (#76), scenario 3 -- prompt injection through DATA.
 #
-# Every existing injection-shaped scenario in this repo (the *_boundary.yaml
+# Every existing injection-shaped scenario in this repo (the mechanism/*_boundary.yaml
 # files, the *_no_fabrication.yaml files) injects pressure through the
 # user's OWN message. #76 asks for a genuinely different vector: instructions
 # arriving through a TOOL RESULT the model reads mid-turn, never typed by the

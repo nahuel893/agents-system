@@ -39,7 +39,7 @@ _CASES = load_capability_scenarios()
 async def eval_model() -> AsyncIterator[tuple[BaseChatModel, str]]:
     """A fresh model per test: the openai_compatible model's HTTP client is
     bound to the event loop that first used it (see
-    `tests/test_live_eval_roles.py`'s fixture of the same name)."""
+    `tests/test_live_eval_composition.py`'s fixture of the same name)."""
     model, model_name = build_eval_model()
     try:
         yield model, model_name

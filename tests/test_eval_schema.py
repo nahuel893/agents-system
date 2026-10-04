@@ -718,7 +718,7 @@ def test_execution_limits_override_docstring_discloses_it_bypasses_the_ceiling_i
     `execution_limits` boundary in the codebase (a real deployment override,
     an importer agent). That gap is intentional here: a guardrail scenario
     sometimes needs to RAISE a limit past the platform/role ceiling (e.g.
-    `06_tool_call_timeout.yaml` raises `total_execution_timeout_s` past
+    `mechanism/06_tool_call_timeout.yaml` raises `total_execution_timeout_s` past
     operator-agent's own tightened baseline) so a slow real model's own
     latency does not swallow the very timeout being tested before it can be
     observed. Intentional is fine; undocumented is not -- this pins that the

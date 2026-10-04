@@ -12,7 +12,7 @@ sales-agent's only scenario (`sales_agent_smoke.yaml`) asserts
 This is a structural, offline check over the scenario files on disk (like
 `test_role_contract_suite.py`'s descriptions contract): it never talks to a
 model, and it never asserts a scenario's *success rate* -- `pytest -m live`
-(`tests/test_live_eval_roles.py`) already owns running it and reporting
+(`tests/test_live_eval_composition.py`) already owns running it and reporting
 that, a probabilistic signal deliberately excluded from CI.
 """
 
