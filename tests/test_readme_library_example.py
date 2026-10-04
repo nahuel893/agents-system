@@ -28,6 +28,7 @@ from langchain_core.language_models.fake_chat_models import (
 from langchain_core.messages import AIMessage, ToolMessage
 
 from agents_system.config import Settings, get_settings
+from agents_system.harness.loader import PredefinedRoleDeprecationWarning
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 
@@ -79,7 +80,12 @@ async def test_the_documented_library_example_runs_as_written(
 ) -> None:
     code = extract_example(REPO_ROOT / document)
     namespace: dict[str, Any] = {"__name__": "documented_example"}
-    exec(compile(code, document, "exec"), namespace)  # noqa: S102
+    # ADR-010 (#222): the example builds `sales-agent` by name, which is
+    # deprecated until the docs move off the concrete roles (#229).
+    with pytest.warns(
+        PredefinedRoleDeprecationWarning, match="examples/agents/sales-agent/"
+    ):
+        exec(compile(code, document, "exec"), namespace)  # noqa: S102
 
     model = ScriptedModel(
         responses=[

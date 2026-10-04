@@ -165,6 +165,14 @@ markers = [
 # seconds, and one of its scenarios (retries/terminal outbox failures) waits
 # out real exponential-backoff windows. It runs manually, never in CI.
 addopts = "-m 'not integration and not live and not load'"
+# ADR-010 (#222): resolving a concrete predefined role by name is deprecated.
+# A test that does so must assert the warning (`pytest.warns`) or filter it
+# explicitly (`pytest.mark.filterwarnings("ignore::...")`, as the modules that
+# still name the roles do until #229 moves them), so the suite cannot quietly
+# grow new uses of a deprecated path.
+filterwarnings = [
+    "error::agents_system.harness.loader.PredefinedRoleDeprecationWarning",
+]
 
 [tool.mypy]
 python_version = "3.12"

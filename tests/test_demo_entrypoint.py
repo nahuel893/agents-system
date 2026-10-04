@@ -14,6 +14,13 @@ from httpx import ASGITransport, AsyncClient
 from agents_system.config import Settings
 from agents_system.main import lifespan
 
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 # PR5 (ADR-004) moved `agents_system.demo` to `examples/demo/app.py`, which
 # ships no `__init__.py` (design.md D7) and is loaded by path through
 # `tests/_demo_app.py` instead of a normal import statement.

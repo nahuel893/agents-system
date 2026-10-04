@@ -53,6 +53,7 @@ import pathlib
 import re
 import shutil
 import stat
+import warnings
 from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -203,6 +204,63 @@ class RootConfig:
 
 class DefinitionError(Exception):
     """Raised when an agent definition violates a structural invariant."""
+
+
+class PredefinedRoleDeprecationWarning(DeprecationWarning):
+    """A concrete predefined role was resolved by name (ADR-010, #222).
+
+    The eight concrete roles became reference agents under
+    ``examples/agents/``: examples to copy, not supported API. Naming one
+    still resolves it from ``platform/roles/`` until the next breaking
+    release removes it. ``base`` and ``agent`` stay in the core and never
+    warn.
+    """
+
+
+#: ADR-010 Migration step 1 (#222): the concrete predefined roles, each
+#: copied to ``examples/agents/<name>/`` as a reference agent. Resolving one
+#: by name warns (``_warn_deprecated_role``).
+_DEPRECATED_PREDEFINED_ROLES = frozenset(
+    {
+        "accountant-agent",
+        "data-agent",
+        "developer-agent",
+        "operator-agent",
+        "orchestrator",
+        "sales-agent",
+        "summary-agent",
+        "support-agent",
+    }
+)
+
+#: Where the reference agents live, relative to the repository root. They are
+#: not in the wheel: an adopter copies one into their own project.
+_REFERENCE_AGENTS_FOLDER = "examples/agents"
+
+#: This package's directory. A deprecation warning is attributed to the first
+#: frame outside it, so it points at the caller's own line.
+_PACKAGE_DIR = str(pathlib.Path(__file__).parent.parent) + os.sep
+
+
+def _warn_deprecated_role(role_type: str) -> None:
+    """Warn that ``role_type``, a concrete predefined role named by the
+    caller, is deprecated, and name the reference agent to copy.
+
+    Also logged: Python's default filters show a ``DeprecationWarning`` only
+    when it is attributed to ``__main__``, so a served app registering the
+    role by name would otherwise never show it.
+    """
+    copy_from = f"{_REFERENCE_AGENTS_FOLDER}/{role_type}/"
+    logger.warning("role.deprecated", role=role_type, copy_from=copy_from)
+    warnings.warn(
+        f"Predefined role '{role_type}' is deprecated and will be removed from "
+        f"platform/roles/ in the next breaking release (ADR-010). Copy the "
+        f"reference agent {copy_from} from the agents-system repository into "
+        "your project and load it with Agent.from_folder(path) instead of "
+        "naming the role.",
+        PredefinedRoleDeprecationWarning,
+        skip_file_prefixes=(_PACKAGE_DIR,),
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2331,6 +2389,12 @@ def _resolve_role_chain(
     defaults. See ``_apply_importer_ceiling``. Only the importer end of a
     chain can be importer-authored: a platform role never ``extends:`` an
     importer folder, so platform-to-platform folds are never checked here.
+
+    A concrete predefined role named by the caller -- the leaf itself, or the
+    parent an importer-authored definition names -- emits a
+    ``PredefinedRoleDeprecationWarning`` (ADR-010, #222). One the platform
+    tree reaches on its own (``developer-agent`` -> ``operator-agent``) does
+    not: the caller did not name it.
     """
     # (definition, written by the importer?) -- leaf first.
     chain: list[tuple[RawDefinition, bool]] = []
@@ -2369,6 +2433,13 @@ def _resolve_role_chain(
 
         if key == original_key:
             leaf_is_abstract = is_abstract
+        named_by_caller = key == original_key or (bool(chain) and chain[-1][1])
+        if (
+            named_by_caller
+            and isinstance(current_locator, str)
+            and current_locator in _DEPRECATED_PREDEFINED_ROLES
+        ):
+            _warn_deprecated_role(current_locator)
         importer_authored = isinstance(current_locator, FolderLocator | InlineLocator)
         chain.append((definition, importer_authored))
         current_locator = parent

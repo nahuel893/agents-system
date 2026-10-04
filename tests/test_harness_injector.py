@@ -6,6 +6,13 @@ from agents_system.harness.loader import AgentDefinition
 from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
 from agents_system.permissions import Read, register
 
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 
 #: Test-local ancestor/descendant family for the R3 descendant-coverage
 #: scenarios below -- distinct, file-scoped wire names so registration

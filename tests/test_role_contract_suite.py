@@ -72,6 +72,13 @@ from platform_role_contract import (
 from agents_system.harness.injector import resolve_tool_surface
 from agents_system.harness.loader import resolve
 
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 
 def _registry() -> Any:
     from conftest import build_test_registry

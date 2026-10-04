@@ -19,6 +19,13 @@ from agents_system.config import Settings
 from agents_system.harness.loader import resolve
 from agents_system.main import _warn_if_turn_budget_below_request_timeout
 
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 _REQUEST_TIMEOUT_S = Settings.model_fields[
     "openai_compatible_request_timeout_s"
 ].default

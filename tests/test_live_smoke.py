@@ -31,7 +31,15 @@ from agents_system.evals.live_harness import (
     metric_value,
 )
 
-pytestmark = pytest.mark.live
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.filterwarnings(
+        "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+    ),
+]
 
 
 @pytest.fixture

@@ -87,7 +87,7 @@ model works in place of `ChatAnthropic`, which comes from
 | Comes from `agents_system` | You bring it |
 |---|---|
 | The harness: `ToolRegistry`, `RootConfig`, `resolve`, `build_runtime`, `AgentRuntime` | Your own `ToolSpec`s — the connectors that call *your* services |
-| The predefined platform roles (`platform/roles/*/{role,manifest,policy}.md`) — what a `sales-agent`, `orchestrator`, `data-agent`, or `summary-agent` *is allowed to do* | Your own deployment overrides (`deployments/{your-client}/`), if you want client-specific prompts, skills, or tighter policy |
+| The predefined platform roles (`platform/roles/*/{role,manifest,policy}.md`) — what a `sales-agent`, `orchestrator`, `data-agent`, or `summary-agent` *is allowed to do*. The eight concrete ones are deprecated in the next release in favor of the reference agents in `examples/agents/`, examples to copy (see "Import name and platform roles") | Your own deployment overrides (`deployments/{your-client}/`), if you want client-specific prompts, skills, or tighter policy |
 | RBAC enforcement (`InjectionError`, `FactoryError`, `DefinitionError`) | The permission grants for your caller/identity, and the `granted_permissions` you pass to `build_runtime` |
 | A LangGraph-backed `AgentRuntime` that turns an equipped runtime into something you can call `run_turn` on | Any LangChain `BaseChatModel` to bind it to, unless the agent declares its own `model:` |
 
@@ -227,6 +227,21 @@ via `[tool.hatch.build.targets.wheel.force-include]` in `pyproject.toml`).
 Your own deployment overrides are never part of the install; you keep them
 in your own application's repository and point `RootConfig` at them.
 
+**The concrete roles are deprecated (coming in the next release).** Only the
+generic parents, `base` and `agent`, stay supported API (ADR-010). The eight
+concrete roles (`sales-agent`, `support-agent`, `data-agent`, `summary-agent`,
+`accountant-agent`, `orchestrator`, `developer-agent`, `operator-agent`) have
+copies in the repository under `examples/agents/<name>/`: reference agents,
+examples to copy that carry no compatibility promise and are not in the
+wheel. Naming a concrete role (`build_runtime("sales-agent", ...)`,
+`extends="sales-agent"`, `create_app(agents=...)`, `AGENT_REGISTRATIONS`)
+still works and emits a `PredefinedRoleDeprecationWarning` naming the folder
+to copy; the next breaking release removes them from `platform/roles/`. Copy
+the folder into your project and pass `Agent.from_folder(path)` wherever the
+name went. Five of the copies differ from their role to fit the rules every
+agent folder follows; `docs/platform/role.md`, "Reference agents", lists each
+change.
+
 ---
 
 ## The public API
@@ -357,7 +372,7 @@ if __name__ == "__main__":
     print(messages[-1].content)
 ```
 
-Three things the example shows on purpose:
+Four things the example shows on purpose:
 
 - **Every tool the role declares must be registered**, inherited ones
   included, with one exception: `escalation_notifier`, which every
@@ -370,6 +385,11 @@ Three things the example shows on purpose:
   which is why a stub connector is enough for the tools this app does not use.
 - **`granted_permissions` is the only grant.** Here the caller holds
   `read:catalog`, so `catalog_search` is the only tool equipped.
+- **A deprecated name, for now.** `"sales-agent"` is a concrete predefined
+  role, so this example emits a `PredefinedRoleDeprecationWarning` in the
+  next release (see "Import name and platform roles"). With a copy of
+  `examples/agents/sales-agent/`, pass `agents_system.Agent.from_folder(path)`
+  in its place; the registry and the grants stay the same.
 - **No deployment override.** Without `client=`, `build_runtime` uses the
   predefined role exactly as shipped, and `RootConfig` is not needed. To
   narrow the role for your own deployment, add both — see Trap 1 for why

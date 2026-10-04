@@ -64,7 +64,15 @@ from agents_system.evals.live_harness import (
 from agents_system.evals.schema import DEFAULT_HAPPY_PATH_THRESHOLD
 from agents_system.harness.loader import RootConfig, resolve
 
-pytestmark = pytest.mark.live
+#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
+#: is deprecated. They move to `agent` or the reference agents in
+#: `examples/agents/` when the roles leave `platform/roles/` (#229).
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.filterwarnings(
+        "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+    ),
+]
 
 _RUNS = int(os.environ.get("EVAL_RUNS", "3"))
 

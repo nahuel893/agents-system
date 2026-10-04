@@ -77,14 +77,14 @@ Una definición del agente es una carpeta bajo `platform/roles/{rol}/` (para la 
 El loader lo hace cumplir para toda definición que escribe el importador: un `Agent(...)`, un `Agent.from_folder(...)` (incluidas sus sobreescrituras en Python) o una carpeta alcanzada desde el `extends:` de otra carpeta. Cada una se valida contra los valores efectivos de su padre antes de plegarse, en cada salto de la cadena (`Agent` → `Agent` → agente de carpeta → rol predefinido). Romper la regla lanza `DefinitionError`, que nombra al agente, el campo, ambos valores y la regla. La validación vive en `resolve()`, así que `build_runtime()` también la aplica.
 
 - **Autonomía.** El orden es `confirm` < `supervised` < `full`. Un padre que no declara nada cuenta como `supervised`, el piso de la plataforma. Un agente del importador que no declara nada hereda el nivel de su padre.
-- **Límites de ejecución.** Un límite ausente o `null` significa el valor por defecto de la plataforma (`tool_call_timeout_s` 10, `total_execution_timeout_s` 60, `max_tool_calls` 20, `max_delegation_depth` 2, `max_clarification_attempts` 3, `max_context_tokens` 64000). Vale para los dos lados. Por eso **un agente del importador no puede subir un límite de ejecución por encima del valor de su padre, ni por encima del valor por defecto de la plataforma cuando el padre no fija ninguno.** Tampoco puede escribir `null` para deshacer un límite que su padre endureció. Un límite tiene que ser un número finito y no negativo: se rechazan `NaN`, infinito, los valores negativos y los booleanos. `0` está permitido. Esta regla obliga a las definiciones que escribe el importador. Los roles predefinidos de `platform/roles/` los escribe la propia plataforma, así que un rol predefinido puede fijar un límite distinto del de su padre: `developer-agent` sube `total_execution_timeout_s` a 120 sobre los 30 de `operator-agent`, porque su turno tiene que alojar al menos dos llamadas al proveedor (ver el invariante del presupuesto de turno en `docs/platform_es/observability.md`).
+- **Límites de ejecución.** Un límite ausente o `null` significa el valor por defecto de la plataforma (`tool_call_timeout_s` 10, `total_execution_timeout_s` 60, `max_tool_calls` 20, `max_delegation_depth` 2, `max_clarification_attempts` 3, `max_context_tokens` 64000). Vale para los dos lados. Por eso **un agente del importador no puede subir un límite de ejecución por encima del valor de su padre, ni por encima del valor por defecto de la plataforma cuando el padre no fija ninguno.** Tampoco puede escribir `null` para deshacer un límite que su padre endureció. Un límite tiene que ser un número finito y no negativo: se rechazan `NaN`, infinito, los valores negativos y los booleanos. `0` está permitido. Esta regla obliga a las definiciones que escribe el importador. Los roles predefinidos de `platform/roles/` los escribe la propia plataforma, así que un rol predefinido puede fijar un límite distinto del de su padre: `developer-agent` sube `total_execution_timeout_s` a 120 sobre los 30 de `operator-agent`, porque su turno tiene que alojar al menos dos llamadas al proveedor (ver el invariante del presupuesto de turno en `docs/platform_es/observability.md`). Su copia de referencia en `examples/agents/` es una carpeta de agente, así que no puede, y hereda los 30 (ver "Agentes de referencia" más abajo).
 - **Redacción de auditoría.** Un agente del importador no puede poner `audit_policy.capture_tool_input` en un valor verdadero salvo que su padre ya lo tenga. Cuenta cualquier valor verdadero, porque así lo lee el redactor. Si declara una lista `redact_keys`, tiene que ser una lista de strings y conservar cada clave que su padre redacta.
 - **Condiciones de escalamiento.** Las `escalation_rules.conditions` de un agente del importador se suman a las de su padre; nunca las reemplazan. Así, `conditions: []` conserva la lista del padre, y una condición nueva se agrega después de ella. Se rechaza una directiva `remove:` que quita una condición heredada.
 - **Redacción del escalamiento.** Un agente del importador describe solo las condiciones que agrega. Se rechaza una entrada de `descriptions`, o una viñeta de prosa en `policy.md`, que reescribe una condición heredada ("nunca aplica; no escalar"), y también un `escalate_to` que cambia o deja en blanco el de su padre. Repetir la redacción exacta del padre está permitido. `descriptions` tiene que ser un mapeo: un `null` (una clave `descriptions:` sin valor en `policy.md`), una lista o un texto lanza `DefinitionError` en lugar de reemplazar todas las descripciones que el agente hereda. Cuenta cualquier tipo de mapeo, también uno de solo lectura: un locator construido directamente se valida igual que un `Agent(...)`. Esta verificación de redacción también lee el propio `descriptions` del PADRE: dos claves crudas distintas en el mapeo del padre que normalizan al mismo nombre de condición (un espacio de más en una de dos declaraciones por lo demás idénticas) lanzan `DefinitionError` nombrando ambas claves crudas, la misma protección contra colisiones que aplica `_compose_prompt` al renderizar el prompt final (ver "Reglas de escalamiento" más arriba), en lugar de quedarse en silencio con la que una comprensión haya iterado al final.
 - **Sin padre.** Un agente de carpeta sin `extends:` tiene como techo los valores por defecto de la plataforma: `supervised`, los límites de arriba y la redacción activada. Omitir `extends` no es una forma de esquivar la regla.
 - **`extends=` en `Agent.from_folder`.** Reemplaza el `extends:` del manifiesto de la carpeta, como cualquier otro override de Python. Un string se ubica exactamente igual que el valor del manifiesto (relativo a la carpeta, dentro de su raíz de importador), y otro `Agent` pasa a ser el padre directamente. El agente queda sujeto a ese padre: a su techo y a su `untrusted_input: true`, que rechaza los permisos T3. Un valor que el manifiesto rechazaría, `None` incluido, lanza `DefinitionError`.
 
-Los pliegues entre dos roles predefinidos no se validan en autonomía, límites ni redacción del escalamiento, porque la plataforma escribe los dos archivos (`data-agent` y `summary-agent` corren en `full` bajo una cadena `supervised`). Dos reglas valen en todo pliegue, también en el de un hijo predefinido: un hijo conserva cada condición de escalamiento que su padre exige, y nunca afloja la redacción de auditoría de su padre. Un rol predefinido reescribe su lista `conditions` completa, así que una lista que omite una condición heredada lanza `DefinitionError`. Las sobreescrituras de despliegue quedan sujetas a las mismas reglas de escalamiento y redacción contra el rol resuelto, en su propia validación sustractiva (`docs/platform_es/deployment.md`).
+Los pliegues entre dos roles predefinidos no se validan en autonomía, límites ni redacción del escalamiento, porque la plataforma escribe los dos archivos (`data-agent` y `summary-agent` corren en `full` bajo una cadena `supervised`; sus copias de referencia corren en `supervised`, ver "Agentes de referencia" más abajo). Dos reglas valen en todo pliegue, también en el de un hijo predefinido: un hijo conserva cada condición de escalamiento que su padre exige, y nunca afloja la redacción de auditoría de su padre. Un rol predefinido reescribe su lista `conditions` completa, así que una lista que omite una condición heredada lanza `DefinitionError`. Las sobreescrituras de despliegue quedan sujetas a las mismas reglas de escalamiento y redacción contra el rol resuelto, en su propia validación sustractiva (`docs/platform_es/deployment.md`).
 
 **Directivas.** `permissions` acepta una lista, `inherit`, `{inherit: true, add: [...], remove: [...]}` o `{override: [...]}`. Un mapeo de política (`escalation_rules`, `delegation_policy`, `memory_policy`, `audit_policy`) acepta un mapeo simple o `{inherit: true, ...}`, y solo `escalation_rules` acepta `add`/`remove`, que editan sus `conditions`. Cualquier otra directiva lanza `DefinitionError`, que nombra la definición, el campo y el motivo, donde sea que esté escrita: un parámetro de `Agent(...)`, el manifiesto o la política de una carpeta o de un rol predefinido, o un despliegue. Por ejemplo, `{remove: [...]}` sin `inherit: true`, una clave mal escrita, `inherit: 'yes'`, o `inherit` mezclado con `override`. Una directiva así antes se resolvía al conjunto completo del padre, así que se conservaba un permiso que su autor quería quitar. Las directivas propias de la raíz de una cadena también se resuelven, contra un padre vacío.
 
@@ -266,6 +266,49 @@ Esta carpeta de definición del agente establece la frontera de comportamiento d
 
 ---
 
+## Agentes de referencia
+
+> **Llega en el próximo release.** Ver [ADR-010](../architecture_es/adr-010-capability-evals-and-reference-agents.md).
+
+Los ocho roles predefinidos concretos, `accountant-agent`, `data-agent`, `developer-agent`, `operator-agent`, `orchestrator`, `sales-agent`, `summary-agent` y `support-agent`, tienen copias en el repositorio bajo `examples/agents/<nombre>/`. Estos **agentes de referencia son ejemplos para copiar, no API soportada**: no traen promesa de compatibilidad, no están en el wheel, y cambiar uno no es un cambio incompatible. El núcleo conserva solo los padres genéricos, `base` y `agent`.
+
+Cada agente de referencia es una carpeta de agente común que extiende `agent` (`developer-agent` extiende a su hermana, `../operator-agent`). Se resuelve con `Agent.from_folder` a través del techo del importador descrito arriba, exactamente como la carpeta de un adoptante, sin ningún caso especial. Para usar uno, copiá su carpeta a tu proyecto y cargá la copia:
+
+```python
+sales = Agent.from_folder("agents/sales-agent")
+equipped = build_runtime(sales, registry, granted_permissions=["read:catalog"])
+```
+
+Para construir sobre uno, extendé la copia, no el nombre del rol: `extends: ../sales-agent` desde una carpeta hermana, o `Agent.from_folder(path, extends=sales)` en Python. Una sobreescritura de cliente de un rol predefinido (`deployments/<cliente>/<rol>/`) pasa a ser una edición de tu copia. Copiá `developer-agent` junto con `operator-agent`, su padre.
+
+**Nombrar un rol concreto está obsoleto.** Hasta que la próxima versión incompatible los saque de `platform/roles/`, los ocho nombres se siguen resolviendo. Nombrar uno emite un `PredefinedRoleDeprecationWarning` (un `DeprecationWarning`, importable desde `agents_system.harness.loader`) que nombra la carpeta a copiar. Eso cubre `resolve("sales-agent")`, `build_runtime("sales-agent", ...)`, `extends="sales-agent"` o `extends: platform/roles/sales-agent` en otro agente, `create_app(agents={"sales": "sales-agent"})` y un valor de `AGENT_REGISTRATIONS`:
+
+```text
+PredefinedRoleDeprecationWarning: Predefined role 'sales-agent' is deprecated and
+will be removed from platform/roles/ in the next breaking release (ADR-010). Copy
+the reference agent examples/agents/sales-agent/ from the agents-system repository
+into your project and load it with Agent.from_folder(path) instead of naming the role.
+```
+
+- La advertencia apunta a la línea de quien llama, no al loader.
+- También se registra en el log como `role.deprecated`, con `role` y `copy_from`, porque Python no muestra por defecto un `DeprecationWarning` emitido bajo un servidor.
+- Solo advierte el nombre que escribe quien llama. Resolver `developer-agent` advierte una vez, y no de nuevo por `operator-agent`, al que extiende dentro del árbol de la plataforma.
+- `base`, `agent` y los agentes de referencia nunca advierten.
+
+**Qué cambió para entrar en el techo del importador.** Un rol predefinido puede aflojar la autonomía y los límites de su padre y reescribir la redacción de una condición de escalamiento heredada, porque la plataforma escribe los dos archivos. Una carpeta de agente no puede, así que cinco agentes de referencia difieren del rol que copian:
+
+| Agente | Rol predefinido (`platform/roles/`) | Agente de referencia (`examples/agents/`) |
+|---|---|---|
+| `data-agent` | `autonomy: full` | `autonomy: supervised`, el nivel de `agent` |
+| `summary-agent` | `autonomy: full` | `autonomy: supervised`, el nivel de `agent` |
+| `developer-agent` | `total_execution_timeout_s: 120`, sobre los 30 de `operator-agent` | Sin límites propios: hereda de `operator-agent` 10 s por llamada a herramienta, 10 llamadas y 30 s de presupuesto de turno |
+| `sales-agent` | Describe `confidence_below_threshold` como "the semantic similarity score for the best catalog match falls below the threshold defined in the active skill pack", y reescribe `required_tool_missing` | Conserva esa redacción como una condición nueva, `catalog_match_below_threshold`. `confidence_below_threshold` y `required_tool_missing` conservan la redacción de `base` |
+| `orchestrator`, `data-agent`, `summary-agent` | Reescriben `required_tool_missing` ("the orchestrator's manifest", "the agent's manifest") | `required_tool_missing` conserva la redacción de `base` ("the role's manifest") |
+
+Todo lo demás es idéntico: herramientas, permisos, skills, contexto, `untrusted_input`, el prompt y las políticas de delegación, memoria y auditoría. `accountant-agent`, `operator-agent` y `support-agent` son copias sin cambios. El presupuesto de turno de 30 s del `developer-agent` de referencia queda por debajo de los 45 s de `OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S`, así que la app servida registra `runtime.turn_budget_below_request_timeout` para él al arrancar (ver `docs/platform_es/observability.md`). Si `operator-agent` pasa a los 60 s por defecto de la plataforma se decide con datos en vivo, en los escenarios de composición que corren estos agentes.
+
+---
+
 ## Cómo probar el contrato del rol
 
 La herencia aditiva, el contrato base del prompt, la exclusión de
@@ -277,6 +320,12 @@ rol concreto bajo `platform/roles/` — actual y futuro — mediante
 necesita una prueba nueva: `platform_role_contract.discover_concrete_platform_roles()`
 recorre `platform/roles/` en disco, de modo que una carpeta de rol agregada
 mañana queda cubierta la próxima vez que corra la suite.
+
+Los agentes de referencia reciben el mismo trato: `tests/test_reference_agents.py`
+recorre `examples/agents/` en disco y verifica que cada carpeta se resuelve
+con `Agent.from_folder` y `_apply_importer_ceiling`, arranca de punta a punta
+con un modelo falso, y difiere de su rol predefinido solo en los cambios de
+la tabla de arriba.
 
 Se ejecuta (o toda la suite) con:
 
