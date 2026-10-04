@@ -84,7 +84,7 @@ Offline tests prove the code does what the tests say. Only a real model proves a
 
    `scripts/run-live-suite.sh` runs all of them, grouped as mechanism, behavior and composition, and reports each group's result and cost.
 
-   Always force the remote reference model; local inference is never used:
+   Always force the remote reference model; local inference is never used. This forced-variables form is a deliberate safety belt for automated runs; a developer sets `EVAL_PROVIDER` once in `.env` and runs `uv run --env-file .env pytest -m live <module>` (see `docs/platform/live-eval.md`):
 
    ```bash
    set -a; . .env; set +a

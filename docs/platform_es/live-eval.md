@@ -7,7 +7,7 @@ superficie de herramientas resuelve como fue declarada. No pueden probar que
 el *comportamiento* de un rol bajo un modelo real coincida con lo que su
 prompt y su política pretenden. El pipeline de live-eval en
 `src/agents_system/evals/` cierra esa brecha: corre el escenario de un rol N veces
-contra un modelo local real y reporta una tasa de éxito, nunca un único
+contra un modelo real y reporta una tasa de éxito, nunca un único
 pass/fail — la corrección de un sistema probabilístico es una tasa, no un
 booleano.
 
@@ -19,8 +19,31 @@ PR).
 ## Cómo correrlo
 
 ```bash
-pytest -m live
+uv run --env-file .env pytest -m live
 ```
+
+Definí el proveedor una sola vez en tu `.env` (`Settings` del repositorio lo
+lee; nunca lo imprimas ni lo commitees). Para el modelo de referencia en
+OpenRouter:
+
+```bash
+EVAL_PROVIDER=openai_compatible
+MODEL_PRICES={"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}
+```
+
+`OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_MODEL` y
+`OPENAI_COMPATIBLE_API_KEY` viven en el mismo archivo (tu propia clave, nunca
+en un doc ni en un commit). Después corré cualquier módulo en vivo con
+`uv run --env-file .env`, que además carga las variables que se leen del
+entorno del proceso, como `EVAL_RUNS`:
+
+```bash
+EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_smoke.py -rA
+```
+
+AGENTS.md y `scripts/run-live-suite.sh`, en cambio, fuerzan el proveedor y el
+modelo en la línea de comandos: un cinturón de seguridad deliberado para que
+las corridas automáticas nunca caigan en un modelo local.
 
 `live` es un marcador de pytest, deseleccionado por defecto igual que
 `integration` (el `addopts` de `pyproject.toml`). Necesitás un Ollama local
@@ -40,7 +63,7 @@ Apuntá el pipeline a otro modelo u otro host con los mismos campos de
 ```bash
 export OLLAMA_MODEL=qwen3:8b
 export OLLAMA_BASE_URL=http://localhost:11434   # vacío/sin definir = la resolución por defecto de ChatOllama
-pytest -m live
+uv run --env-file .env pytest -m live
 ```
 
 Ambos por defecto valen lo mismo que estaba hardcodeado antes de #169
@@ -50,7 +73,7 @@ configurar no cambia.
 ### Las pruebas offline nunca leen `.env`
 
 `Settings` (`agents_system.config`) lee un archivo `.env` por defecto, y
-`pytest -m live` / `pytest -m load` deliberadamente mantienen eso: necesitan
+`uv run --env-file .env pytest -m live` / `pytest -m load` deliberadamente mantienen eso: necesitan
 claves reales de proveedor. Cualquier otra prueba es el caso contrario
 (#158) — un fixture autouse en `tests/conftest.py` hace que la suite offline
 construya cada `Settings()` como si `.env` no existiera, y limpia las
@@ -157,7 +180,7 @@ export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
 export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
 export OPENAI_COMPATIBLE_API_KEY=...   # tu propia clave -- nunca la commitees
-pytest -m live
+uv run --env-file .env pytest -m live
 ```
 
 (O guardá estos valores en tu `.env` — `Settings` lo carga automáticamente;
@@ -454,7 +477,7 @@ ejercitadas (y al menos una ejercitada) para un escenario guardrail.
 
 ```bash
 EVAL_PROVIDER=openai_compatible OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol \
-EVAL_RUNS=3 pytest -m live tests/test_live_eval_capabilities.py -rA -s
+EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_eval_capabilities.py -rA -s
 ```
 
 No necesita base de datos ni Redis: todos los backends están en memoria. La
@@ -683,7 +706,7 @@ export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
 export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
 export OPENAI_COMPATIBLE_API_KEY=...
-EVAL_RUNS=3 pytest -m live tests/test_live_eval_guardrails.py -s
+EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_eval_guardrails.py -s
 ```
 
 Los demás escenarios de #76 pasaron a `evals/scenarios/mechanism/` (ver
@@ -740,7 +763,7 @@ apuntan a una herramienta distinta de la de su prueba offline de Layer 1:
 
 ## Compuertas de calidad — gating (issue #81)
 
-Antes de #81, `pytest -m live` solo contaba corridas -- `assert
+Antes de #81, `uv run --env-file .env pytest -m live` solo contaba corridas -- `assert
 len(result.runs) == runs` -- y reportaba una `success_rate` que nadie usaba.
 Ahora cada escenario declara una `category` (`schema.CATEGORY_GUARDRAIL` /
 `CATEGORY_HAPPY_PATH`, default `happy_path`), y `ScenarioResult.gate` de
@@ -1053,7 +1076,7 @@ ponga al día), `audit_rows` (leer las filas que coincidan de la tabla real
 `/metrics`), y `read_thread` (leer un hilo de LangGraph checkpointeado
 directo desde las tablas del checkpointer de Postgres).
 
-El escenario smoke (`tests/test_live_smoke.py`, `pytest -m live`) prueba el
+El escenario smoke (`tests/test_live_smoke.py`, `uv run --env-file .env pytest -m live`) prueba el
 cableado de punta a punta sobre el `sales-agent` de referencia por defecto,
 con un turno por la API y un turno por el webhook, ambos disparando la
 herramienta `catalog_search` (`session_state` se eliminó de los roles
@@ -1079,7 +1102,7 @@ de `/metrics`, el constructor de la consulta de auditoría) viven en
 
 ## Escenarios en vivo de la Fase 1 (issue #79)
 
-`tests/test_live_eval_phase1.py` (`pytest -m live`) prueba que las
+`tests/test_live_eval_phase1.py` (`uv run --env-file .env pytest -m live`) prueba que las
 funciones de la plataforma funcionan de punta a punta a través de
 `boot_live_harness` -- la API HTTP real o el webhook real de WhatsApp,
 nunca `AgentRuntime.run_turn` directamente. Cada aserción apunta a lo que
@@ -1170,7 +1193,7 @@ mano, en vez de una reimplementación paralela que podría desalinearse de él.
 
 ## Escenarios de composición sobre agentes de referencia (issue #225)
 
-`tests/test_live_eval_composition.py` (`pytest -m live`) es la cima de la
+`tests/test_live_eval_composition.py` (`uv run --env-file .env pytest -m live`) es la cima de la
 pirámide de pruebas de ADR-010: unos pocos escenarios de punta a punta sobre
 tres agentes de referencia de `examples/agents/`, con la forma de la Fase 1.
 Los escenarios de capacidad prueban el prompt genérico del kit sobre agentes
@@ -1201,7 +1224,7 @@ Hay una prueba por agente, así un cambio en un agente de referencia corre
 solo sus propios escenarios (parte 3 de ADR-010):
 
 ```bash
-EVAL_RUNS=3 pytest -m live tests/test_live_eval_composition.py -k developer_agent -s
+EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_eval_composition.py -k developer_agent -s
 ```
 
 `-k developer_agent` también cubre a `operator-agent`, su padre.
@@ -1303,7 +1326,7 @@ garantía debería sostenerse.
 
 ## Escenario en vivo de la Fase 4 (issue #84)
 
-`tests/test_live_eval_phase4.py` (`pytest -m live`) prueba el ciclo de vida
+`tests/test_live_eval_phase4.py` (`uv run --env-file .env pytest -m live`) prueba el ciclo de vida
 completo del agente personalizado -- definir, registrar, servir, conversar,
 auditar, actualizar -- como UN solo escenario en vivo a través de
 `boot_live_harness`, con la misma compuerta que la Fase 1 (`EVAL_RUNS`,
@@ -1380,7 +1403,7 @@ offline, mediante la misma llamada `build_runtime()` que el lifespan de
 `create_app` hace por cada agente registrado en un boot real. Reutiliza el
 mismo fixture `restock-helper` y no necesita ni un modelo en vivo ni un
 Postgres/Redis alcanzable, así que corre en la suite por defecto, no detrás
-de `pytest -m live`.
+de `uv run --env-file .env pytest -m live`.
 
 ## Correrlo como pipeline propio de un rol
 

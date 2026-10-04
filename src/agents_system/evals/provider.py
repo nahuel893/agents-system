@@ -67,9 +67,10 @@ def build_eval_model(
         raise EvalProviderNotConfiguredError(
             "EVAL_PROVIDER is not set, and there is no default provider: a live "
             "eval or the demo entrypoint would otherwise pick a model without "
-            f"telling you. Set EVAL_PROVIDER to one of {', '.join(_PROVIDERS)} "
-            "(openai_compatible for a remote model such as OpenRouter; see "
-            "docs/platform/live-eval.md) together with that provider's variables."
+            f"telling you. Set EVAL_PROVIDER in your .env or the environment to "
+            f"one of {', '.join(_PROVIDERS)} (openai_compatible for a remote "
+            "model such as OpenRouter; see docs/platform/live-eval.md) "
+            "together with that provider's variables."
         )
     model = _build_chat_model(provider, model_override=model_override)
     return model, model_display_name(model)

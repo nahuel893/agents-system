@@ -6,7 +6,7 @@ fixture agent and in-memory reference backends. Each scenario is held to its
 #81 gate: 80% for a happy-path scenario, 100% of exercised runs (and at least
 one exercised) for a guardrail scenario.
 
-Opt-in (`pytest -m live`); needs no database. The `commands` capability
+Opt-in (`uv run --env-file .env pytest -m live`); needs no database. The `commands` capability
 needs `bwrap` and coreutils `factor` and is skipped, naming them, without
 either. See docs/platform/live-eval.md.
 """

@@ -37,6 +37,9 @@ set -a
 # shellcheck disable=SC1091
 [[ -f "$repo/.env" ]] && . "$repo/.env"
 set +a
+# Forced on purpose, whatever .env says: automated runs must never fall back to
+# a local model. Developers set EVAL_PROVIDER in .env for one-off live runs
+# (see docs/platform/live-eval.md).
 export EVAL_PROVIDER="${EVAL_PROVIDER_OVERRIDE:-openai_compatible}"
 export EVAL_RUNS="$runs"
 default_prices='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}'

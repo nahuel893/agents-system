@@ -75,6 +75,7 @@ def test_build_eval_model_fails_fast_when_the_provider_is_unset(
     build_chat_model.assert_not_called()
     message = str(excinfo.value)
     assert "EVAL_PROVIDER" in message
+    assert ".env" in message
     for provider in ("ollama", "groq", "anthropic", "openai_compatible"):
         assert provider in message
 

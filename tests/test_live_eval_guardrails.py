@@ -1,7 +1,7 @@
 """Live guardrail suite driver (#76) -- a real LLM as the adversary,
 assertions on harness behavior.
 
-Excluded from the default run -- select it explicitly with `pytest -m live`,
+Excluded from the default run -- select it explicitly with `uv run --env-file .env pytest -m live`,
 like every other live module. See `docs/platform/live-eval.md` for the
 provider switch, the new assertion types, and where results land.
 

@@ -44,7 +44,8 @@ Principle -- the model's final wording is at most a soft signal.
 Requires the same live infra as `tests/test_live_eval_phase1.py` (see that
 file's own module docstring and `docs/platform/live-eval.md`).
 
-Run with: `pytest -m live tests/test_live_eval_phase4.py -v -s`.
+Run with: `uv run --env-file .env pytest -m live tests/test_live_eval_phase4.py -v -s`
+(EVAL_PROVIDER comes from `.env`; see docs/platform/live-eval.md).
 """
 
 from __future__ import annotations

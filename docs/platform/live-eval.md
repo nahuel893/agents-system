@@ -6,7 +6,7 @@ Deterministic per-PR tests (`build_test_registry`, fake models) prove the
 declared. They cannot prove a role's *behavior* under a real model matches
 what its prompt and policy intend. The live-eval pipeline in
 `src/agents_system/evals/` closes that gap: it runs a role's scenario N times
-against a real local model and reports a success rate, never a single
+against a real model and reports a success rate, never a single
 pass/fail — a probabilistic system's correctness is a rate, not a boolean.
 
 This pipeline is **manual or nightly, never per-PR** (real model calls are
@@ -16,8 +16,29 @@ wrong shape for a gate that blocks every PR).
 ## Running it
 
 ```bash
-pytest -m live
+uv run --env-file .env pytest -m live
 ```
+
+Set the provider once in your `.env` (the repository's `Settings` reads it;
+never print or commit it). For the reference model on OpenRouter:
+
+```bash
+EVAL_PROVIDER=openai_compatible
+MODEL_PRICES={"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}
+```
+
+`OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_MODEL` and
+`OPENAI_COMPATIBLE_API_KEY` live in the same file (your own key, never in a
+doc or a commit). Then run any live module with `uv run --env-file .env`, which
+also loads variables read from the process environment, such as `EVAL_RUNS`:
+
+```bash
+EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_smoke.py -rA
+```
+
+AGENTS.md and `scripts/run-live-suite.sh` instead force the provider and model
+on the command line: a deliberate safety belt so automated runs never fall back
+to a local model.
 
 `live` is a pytest marker, deselected by default exactly like `integration`
 (`pyproject.toml`'s `addopts`). You need a running local Ollama with the
@@ -37,7 +58,7 @@ fields `_build_chat_model` already reads for every other role:
 ```bash
 export OLLAMA_MODEL=qwen3:8b
 export OLLAMA_BASE_URL=http://localhost:11434   # empty/unset = ChatOllama's own default
-pytest -m live
+uv run --env-file .env pytest -m live
 ```
 
 Both default to what was hardcoded before #169 (`qwen2.5:3b`,
@@ -46,7 +67,7 @@ ChatOllama's own host resolution) — an unconfigured run is unchanged.
 ### Offline tests never read `.env`
 
 `Settings` (`agents_system.config`) reads a `.env` file by default, and
-`pytest -m live` / `pytest -m load` deliberately keep that: they need real
+`uv run --env-file .env pytest -m live` / `pytest -m load` deliberately keep that: they need real
 provider keys. Every other test is the opposite case (#158) — an autouse
 fixture in `tests/conftest.py` makes the offline suite build every
 `Settings()` as if `.env` did not exist, and clears ambient
@@ -146,7 +167,7 @@ export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
 export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
 export OPENAI_COMPATIBLE_API_KEY=...   # your own key -- never commit it
-pytest -m live
+uv run --env-file .env pytest -m live
 ```
 
 (Or keep these in your `.env` — `Settings` loads it automatically; never
@@ -424,7 +445,7 @@ exercised) for a guardrail scenario.
 
 ```bash
 EVAL_PROVIDER=openai_compatible OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol \
-EVAL_RUNS=3 pytest -m live tests/test_live_eval_capabilities.py -rA -s
+EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_eval_capabilities.py -rA -s
 ```
 
 It needs no database and no Redis: every backend is in memory. The `commands`
@@ -642,7 +663,7 @@ export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
 export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
 export OPENAI_COMPATIBLE_API_KEY=...
-EVAL_RUNS=3 pytest -m live tests/test_live_eval_guardrails.py -s
+EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_eval_guardrails.py -s
 ```
 
 The other #76 scenarios moved to `evals/scenarios/mechanism/` (see above):
@@ -697,7 +718,7 @@ their offline Layer-1 test:
 
 ## Gating (issue #81)
 
-Before #81, `pytest -m live` only counted runs -- `assert len(result.runs) ==
+Before #81, `uv run --env-file .env pytest -m live` only counted runs -- `assert len(result.runs) ==
 runs` -- and reported a `success_rate` nobody acted on. Every scenario now
 declares a `category` (`schema.CATEGORY_GUARDRAIL` / `CATEGORY_HAPPY_PATH`,
 default `happy_path`) and `run_scenario`'s `ScenarioResult.gate` turns that,
@@ -985,7 +1006,7 @@ matching rows from the real `audit_event` table), `scrape_metrics` /
 checkpointed LangGraph thread straight out of the Postgres checkpointer's
 tables).
 
-The smoke scenario (`tests/test_live_smoke.py`, `pytest -m live`) proves the
+The smoke scenario (`tests/test_live_smoke.py`, `uv run --env-file .env pytest -m live`) proves the
 wiring end to end on the default reference `sales-agent`, with one API turn
 and one webhook turn, both driving the
 `catalog_search` tool (`session_state` was removed from predefined roles in
@@ -1010,7 +1031,7 @@ Postgres, or Redis.
 
 ## Phase 1 live scenarios (issue #79)
 
-`tests/test_live_eval_phase1.py` (`pytest -m live`) proves the platform's
+`tests/test_live_eval_phase1.py` (`uv run --env-file .env pytest -m live`) proves the platform's
 features work end to end through `boot_live_harness` -- the real HTTP API
 or the real WhatsApp webhook, never `AgentRuntime.run_turn` directly.  Every
 assertion targets what the SYSTEM did (an executed row in the real
@@ -1089,7 +1110,7 @@ could drift from it.
 
 ## Composition scenarios on reference agents (issue #225)
 
-`tests/test_live_eval_composition.py` (`pytest -m live`) is the top of the
+`tests/test_live_eval_composition.py` (`uv run --env-file .env pytest -m live`) is the top of the
 ADR-010 test pyramid: a few end-to-end scenarios on three reference agents
 from `examples/agents/`, in the shape of Phase 1. The capability scenarios
 test the kit's generic prompt on minimal fixture agents, one capability at a
@@ -1119,7 +1140,7 @@ There is one test per agent, so a change to one reference agent runs its own
 scenarios only (ADR-010 part 3):
 
 ```bash
-EVAL_RUNS=3 pytest -m live tests/test_live_eval_composition.py -k developer_agent -s
+EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_eval_composition.py -k developer_agent -s
 ```
 
 `-k developer_agent` also covers `operator-agent`, its parent.
@@ -1217,7 +1238,7 @@ should hold.
 
 ## Phase 4 live scenario (issue #84)
 
-`tests/test_live_eval_phase4.py` (`pytest -m live`) proves the full
+`tests/test_live_eval_phase4.py` (`uv run --env-file .env pytest -m live`) proves the full
 custom-agent lifecycle -- define, register, serve, converse, audit, update --
 as ONE live scenario through `boot_live_harness`, gated the same way as Phase
 1 (`EVAL_RUNS`, `DEFAULT_HAPPY_PATH_THRESHOLD`).
@@ -1290,7 +1311,7 @@ instead in `tests/test_agent_lifecycle_safety_ceiling.py`, offline, through
 the exact `build_runtime()` call `create_app`'s lifespan makes for every
 registered agent at real boot. It reuses the same `restock-helper` fixture
 and needs neither a live model nor a reachable Postgres/Redis, so it runs in
-the default suite, not behind `pytest -m live`.
+the default suite, not behind `uv run --env-file .env pytest -m live`.
 
 ## Running it as a role's own pipeline
 
