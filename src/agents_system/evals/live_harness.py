@@ -141,10 +141,39 @@ DEFAULT_REDIS_URL = "redis://127.0.0.1:6379/0"
 #: each other's already-issued credentials.
 _boot_lock = asyncio.Lock()
 
-#: `platform/roles/sales-agent/manifest.md`'s own `permissions:` list,
+#: The reference agents (ADR-010, #222): the eight example agent folders in
+#: the repository's `examples/agents/`, outside the wheel. The live suite runs
+#: from a checkout (like `_run_migrations` and `_seed_demo_company` above), so
+#: it loads them from there with `Agent.from_folder`, the path an adopter's
+#: own folder takes -- never a concrete predefined role by name (#225).
+REFERENCE_AGENTS_ROOT = _REPO_ROOT / "examples" / "agents"
+
+
+def reference_agent(name: str) -> Agent:
+    """The reference agent *name* (`"sales-agent"`, `"developer-agent"`, ...),
+    loaded from `REFERENCE_AGENTS_ROOT` as an `Agent` (#225).
+
+    *name* must be the name of one folder directly under the root: anything
+    else (a path, an unknown name) raises `ValueError` listing the names
+    there are, before anything is booted.
+    """
+    available = sorted(
+        path.name for path in REFERENCE_AGENTS_ROOT.iterdir() if path.is_dir()
+    )
+    if name not in available:
+        raise ValueError(
+            f"{name!r} is not a reference agent; the reference agents under "
+            f"examples/agents/ are: {', '.join(available)}"
+        )
+    return Agent.from_folder(REFERENCE_AGENTS_ROOT / name)
+
+
+#: `examples/agents/sales-agent/manifest.md`'s own `permissions:` list,
 #: repeated here (not imported) because the manifest is data, not code --
 #: this is the deploy-time GRANT `create_app(grants=...)` requires per
-#: registered runtime id, independent of what the role happens to declare.
+#: registered runtime id, independent of what the agent happens to declare.
+#: `boot_live_harness` grants it to its default agent, the reference
+#: `sales-agent`; `tests/test_live_harness.py` checks it against the manifest.
 SALES_AGENT_PERMISSIONS: tuple[str, ...] = (
     "read:catalog",
     "read:client_registry",
@@ -162,7 +191,7 @@ _WEBHOOK_PLACEHOLDER_RUNTIME_ID = "live-harness-webhook-placeholder"
 def _webhook_placeholder_agent() -> Agent:
     """A minimal, always-boot-safe agent for `WHATSAPP_RUNTIME_ID` when a
     scenario's own *role* does not itself resolve `untrusted_input: true`
-    (most predefined platform roles, and a bare `Agent(...)`'s inherited
+    (most reference agents, and a bare `Agent(...)`'s inherited
     default, do not) and never calls `deliver_webhook` -- see
     `boot_live_harness`'s own `bind_webhook_to_role` docstring. Explicit
     `untrusted_input=True` overrides whatever its own `extends:` chain
@@ -918,7 +947,7 @@ def _resolve_eval_model(
 @contextlib.asynccontextmanager
 async def boot_live_harness(
     *,
-    role: Agent | str = "sales-agent",
+    role: Agent | str | None = None,
     runtime_id: str = "live-harness",
     permissions: Sequence[str] | None = None,
     terminal_policy: TerminalPolicy | None = None,
@@ -939,17 +968,19 @@ async def boot_live_harness(
     through whatever `EVAL_PROVIDER` is configured (see
     `docs/platform/live-eval.md`).
 
-    *role* (#79, Phase 1) accepts either a predefined platform-role name --
-    #78's original `str` -- or a Python-built `Agent` (`agent.spec.Agent`,
-    e.g. `Agent.from_folder(...)` or a bare `Agent(...)`), registered exactly
-    as `create_app(agents=...)` already accepts both. *permissions* is the
-    matching deploy-time grant; omitted, it keeps #78's original
-    `SALES_AGENT_PERMISSIONS` default, but ONLY when *role* is left at its
-    own `"sales-agent"` default -- for any other *role*, omitting
-    *permissions* raises `ValueError` instead of silently granting
-    `SALES_AGENT_PERMISSIONS` to a role it was never meant for (#119 review:
-    a fail-open default on this exact deploy-grant trust boundary). Every
-    non-default caller must state its own grant explicitly. *terminal_policy*
+    *role* (#79, Phase 1) accepts a Python-built `Agent` (`agent.spec.Agent`,
+    e.g. `reference_agent(...)`, `Agent.from_folder(...)` or a bare
+    `Agent(...)`) or a role name, registered exactly as
+    `create_app(agents=...)` already accepts both. Left unset, it serves the
+    reference `sales-agent` (`reference_agent("sales-agent")`, #225: an agent
+    folder, not the deprecated predefined role). *permissions* is the
+    matching deploy-time grant; omitted, it is `SALES_AGENT_PERMISSIONS`,
+    but ONLY when *role* is left unset -- for any *role* given, a
+    `"sales-agent"` name included, omitting *permissions* raises
+    `ValueError` instead of silently granting `SALES_AGENT_PERMISSIONS` to
+    an agent it was never meant for (#119 review: a fail-open default on
+    this exact deploy-grant trust boundary). Every caller that names its
+    agent states its own grant explicitly. *terminal_policy*
     is forwarded to the
     live registry so `use_term`/`read_file` can be genuinely exercised
     instead of always refusing. *seed_demo* additionally creates a SECOND
@@ -972,8 +1003,8 @@ async def boot_live_harness(
     as *role* itself, so `deliver_webhook` exercises *role* directly -- only
     correct when *role* resolves `untrusted_input: true` (ADR-002 C.11/C.13:
     `create_app` refuses to boot a WhatsApp-bound role that does not, since
-    the channel delivers untrusted external input). Most predefined roles do
-    NOT (`operator-agent`, `data-agent`, ...), and neither does a bare
+    the channel delivers untrusted external input). Most reference agents do
+    NOT (`developer-agent`, `data-agent`, ...), and neither does a bare
     `Agent(...)`'s inherited default -- pass `False` for any scenario that
     only drives *role* through `send_chat_completion`/the HTTP API and never
     calls `deliver_webhook`, which instead binds WHATSAPP_RUNTIME_ID to a
@@ -990,17 +1021,17 @@ async def boot_live_harness(
     redis_url = os.environ.get(_REDIS_URL_ENV, DEFAULT_REDIS_URL)
     db_name = f"live_harness_{uuid.uuid4().hex[:12]}"
     database_url = _with_database(admin_url, db_name)
-    if permissions is not None:
-        grant_list = list(permissions)
-    elif role == "sales-agent":
-        grant_list = list(SALES_AGENT_PERMISSIONS)
-    else:
+    if role is not None and permissions is None:
         raise ValueError(
             "boot_live_harness(): permissions must be given explicitly when "
-            'role is not the default "sales-agent" (got '
-            f"role={role!r}) -- omitting it must never silently grant "
-            "SALES_AGENT_PERMISSIONS to a different role"
+            f"role is (got role={role!r}) -- only the default reference "
+            "sales-agent is granted SALES_AGENT_PERMISSIONS by default"
         )
+    if role is None:
+        role = reference_agent("sales-agent")
+    grant_list = list(
+        permissions if permissions is not None else SALES_AGENT_PERMISSIONS
+    )
     agents: dict[str, Agent | str] = {runtime_id: role}
     grants: dict[str, list[str]] = {runtime_id: grant_list}
     whatsapp_runtime_id = runtime_id
