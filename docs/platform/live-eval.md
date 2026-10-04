@@ -64,13 +64,20 @@ is populated. The fixture is a no-op for any test carrying the `live` or
 
 ### The whole suite in one command
 
-`scripts/run-live-suite.sh` runs every live suite in order: smoke, the
-composition scenarios on the reference agents, guardrails, the read-only SQL
-tool, Phase 1, Phase 4, and both Phase 3 load layers. A failing suite does not
-stop the rest, and a PASS/FAIL summary is printed at the end.
+`scripts/run-live-suite.sh` runs every suite, grouped by layer (ADR-010
+part 3), and prints a PASS/FAIL line per group and per suite with the group's
+cost:
+
+| Group | Suites | Needs a model |
+|---|---|---|
+| `mechanism` | the offline mechanism suite (`tests/test_mechanism_suite.py`) and the fake-model load layer | No |
+| `behavior` | the capability scenarios, the guardrail behavior scenario, the read-only SQL tool, the folder target and Phase 4 (`Agent` API, `extends`, skills, importer) | Yes |
+| `composition` | smoke, the composition scenarios on the reference agents, Phase 1 and the real-model load layer | Yes |
+
+A failing suite does not stop the rest; its group is marked FAIL.
 
 ```bash
-scripts/run-live-suite.sh           # EVAL_RUNS=3 per scenario (about an hour)
+scripts/run-live-suite.sh           # EVAL_RUNS=3 per scenario (about 20 minutes)
 scripts/run-live-suite.sh --quick   # EVAL_RUNS=1, a cheap first pass
 ```
 
@@ -78,13 +85,37 @@ It needs Postgres on `127.0.0.1:5432` and Redis on `127.0.0.1:6379` (the
 `docker compose` services), the `agents_system_demo` database, `bwrap`, and
 provider keys in `.env`. It loads `.env` without printing it, and it uses
 `EVAL_PROVIDER=openai_compatible` unless `EVAL_PROVIDER_OVERRIDE` names
-another provider.
+another provider. The model comes from `OPENAI_COMPATIBLE_MODEL`; force
+`openai/gpt-6-sol` for a gate. When `MODEL_PRICES` is unset the script sets it
+to the reference model's prices, so the reported cost is never null; a value
+you export wins.
 
 For the SQL tool suite, it creates a throwaway database with the fixture views
 and the `sql_readonly` role, the same setup as CI's SQL integration job, and
 drops it on exit. Logs and `SUMMARY.txt` go to
-`evals/results/live-suite-<timestamp>/`. Per-scenario rates, tokens and cost
-stay in the usual `evals/results/` reports.
+`evals/results/live-suite-<timestamp>/`. Each suite's cost comes from the
+reports it wrote (`scripts/live_suite_cost.py`), or, for suites that boot the
+harness and write no report, from the `runtime.turn_usage` lines in its log;
+a group's cost is the sum of its suites (`n/a` for the offline `mechanism`
+group). A suite or group with any unknown cost is `n/a`, never a partial sum. Per-scenario rates, tokens and cost stay in the usual
+`evals/results/` reports.
+
+### Which scenarios a change runs
+
+The Definition of done in `AGENTS.md` maps what you changed to the live
+modules to run. For a change to a reference agent, that includes every agent
+that extends it. `scripts/agents_extending.py` reads the `extends:` graph from
+the manifests under `platform/roles/` and `examples/agents/`:
+
+```bash
+python scripts/agents_extending.py operator-agent   # developer-agent
+python scripts/agents_extending.py agent --direct   # direct children only
+```
+
+It prints one agent folder name per line, transitively unless `--direct`, and
+exits 2 for a name that is not in either root. `extends:` values are matched by
+their last path segment (`platform/roles/agent`, `../operator-agent` and
+`sales-agent` name `agent`, `operator-agent` and `sales-agent`).
 
 ## Switching providers (EVAL_PROVIDER)
 

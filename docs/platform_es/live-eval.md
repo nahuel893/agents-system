@@ -70,14 +70,20 @@ ven afectados.
 
 ### La suite completa en un comando
 
-`scripts/run-live-suite.sh` corre todas las suites en vivo en orden: smoke,
-los escenarios de composición sobre los agentes de referencia, guardrails, la
-tool de SQL de solo lectura, Fase 1, Fase 4 y las dos capas de carga de la
-Fase 3. Si una suite falla, las demás siguen, y al final imprime un resumen
-PASS/FAIL.
+`scripts/run-live-suite.sh` corre todas las suites, agrupadas por capa
+(ADR-010 parte 3), e imprime una línea PASS/FAIL por grupo y por suite con el
+costo del grupo:
+
+| Grupo | Suites | Necesita modelo |
+|---|---|---|
+| `mechanism` | la suite offline de mecanismos (`tests/test_mechanism_suite.py`) y la capa de carga con modelo falso | No |
+| `behavior` | los escenarios de capacidades, el escenario de comportamiento de guardrails, la tool de SQL de solo lectura, el target de carpeta y la Fase 4 (API de `Agent`, `extends`, skills, importer) | Sí |
+| `composition` | smoke, los escenarios de composición sobre los agentes de referencia, la Fase 1 y la capa de carga con modelo real | Sí |
+
+Si una suite falla, las demás siguen y su grupo queda marcado FAIL.
 
 ```bash
-scripts/run-live-suite.sh           # EVAL_RUNS=3 por escenario (alrededor de una hora)
+scripts/run-live-suite.sh           # EVAL_RUNS=3 por escenario (alrededor de 20 minutos)
 scripts/run-live-suite.sh --quick   # EVAL_RUNS=1, una primera pasada barata
 ```
 
@@ -85,13 +91,40 @@ Necesita Postgres en `127.0.0.1:5432` y Redis en `127.0.0.1:6379` (los
 servicios de `docker compose`), la base `agents_system_demo`, `bwrap` y las
 claves del proveedor en `.env`. Carga `.env` sin imprimirlo y usa
 `EVAL_PROVIDER=openai_compatible`, salvo que `EVAL_PROVIDER_OVERRIDE` indique
-otro proveedor.
+otro proveedor. El modelo sale de `OPENAI_COMPATIBLE_MODEL`; forzá
+`openai/gpt-6-sol` para una compuerta. Si `MODEL_PRICES` no está definida, el
+script la fija con los precios del modelo de referencia, así que el costo
+reportado nunca es nulo; un valor que vos exportes tiene prioridad.
 
 Para la suite de la tool de SQL crea una base descartable con las vistas de
 fixture y el rol `sql_readonly`, igual que el job de integración de SQL del
 CI, y la borra al terminar. Los logs y `SUMMARY.txt` quedan en
-`evals/results/live-suite-<timestamp>/`. Las tasas por escenario, los tokens y
-el costo siguen en los reportes de siempre en `evals/results/`.
+`evals/results/live-suite-<timestamp>/`. El costo de cada suite sale de los
+reportes que escribió (`scripts/live_suite_cost.py`) o, para las suites que
+levantan el harness y no escriben reporte, de las líneas `runtime.turn_usage`
+de su log; el costo de un grupo es la suma de sus suites (`n/a` para el grupo
+`mechanism`, que es offline). Una suite o grupo con algún costo desconocido
+es `n/a`, nunca una suma parcial. Las tasas por escenario, los tokens y el costo
+siguen en los reportes de siempre en `evals/results/`.
+
+### Qué escenarios corre un cambio
+
+La Definición de terminado de `AGENTS.md` asocia lo que cambiaste con los
+módulos en vivo a correr. Para un cambio en un agente de referencia, eso
+incluye a todos los agentes que lo extienden. `scripts/agents_extending.py`
+lee el grafo de `extends:` de los manifiestos de `platform/roles/` y
+`examples/agents/`:
+
+```bash
+python scripts/agents_extending.py operator-agent   # developer-agent
+python scripts/agents_extending.py agent --direct   # solo hijos directos
+```
+
+Imprime un nombre de carpeta de agente por línea, de forma transitiva salvo
+con `--direct`, y sale con código 2 si el nombre no está en ninguna de las dos
+raíces. Los valores de `extends:` se comparan por su último segmento de ruta
+(`platform/roles/agent`, `../operator-agent` y `sales-agent` nombran `agent`,
+`operator-agent` y `sales-agent`).
 
 ## Cambiar de proveedor (EVAL_PROVIDER)
 

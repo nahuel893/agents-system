@@ -49,6 +49,12 @@ disponibles localmente.
       scripts/run-live-suite.sh
       ```
 
+      El script agrupa sus corridas en `mechanism` (offline, sin modelo),
+      `behavior` y `composition`, y su resumen da el resultado y el costo de
+      cada grupo. Poné ese resumen en el cuerpo de la PR de release. Fija
+      `MODEL_PRICES` para el modelo de referencia si no lo hiciste vos, así
+      que el costo nunca es nulo.
+
    2. El smoke test del wheel instalado pasa (ver [Smoke test del wheel como
       biblioteca](#smoke-test-del-wheel-como-biblioteca)):
 
