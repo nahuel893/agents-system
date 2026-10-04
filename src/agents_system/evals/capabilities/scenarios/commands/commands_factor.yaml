@@ -1,0 +1,20 @@
+# Capability: commands and their output (ADR-010, #224).
+#
+# 3432276877 = 48611 x 70607. The factors of a ten-digit product of two
+# five-digit primes are not something a model produces without running the
+# command, so an answer that names both is an answer built on what `factor`
+# printed. The check is on those two numbers, never on the wording.
+#
+# No granted_permissions: `run:factor` exists only once the manifest declares
+# the command tool, so the runner's all-declared default grants it.
+agent: commands-agent
+category: happy_path
+description: >
+  Asks whether a ten-digit number is prime. The model runs the factor
+  command and answers with the two prime factors it printed.
+turns:
+  - "Is 3432276877 a prime number? Run the factor command on it and tell me its prime factors."
+assertions:
+  tools_called: [factor]
+  tools_succeeded: [factor]
+  reply_contains: ["48611", "70607"]

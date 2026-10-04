@@ -205,3 +205,30 @@ async def test_an_incomplete_order_is_rejected_before_the_writer_is_called(
     assert "error" in result
     assert "order_id" not in result
     assert writer.calls == []
+
+
+def test_the_tool_text_does_not_presume_a_client_lookup_tool() -> None:
+    """Issue #224: the description said client_id comes "from the client lookup
+    tool". Only sales-agent equips one; any other agent read that as a missing
+    tool and escalated with required_tool_missing instead of ordering (0 of 3
+    runs ordered in the grounding and memory capability scenarios on the
+    reference model). The text may mention a lookup, never require one."""
+    spec = build_order_writer_tool_spec(None)
+    client_id = spec.input_schema["properties"]["client_id"]["description"]
+
+    for text in (spec.description, client_id):
+        assert "the client lookup tool" not in text.lower()
+
+
+def test_the_tool_text_says_a_product_id_is_the_product_code() -> None:
+    """Issue #224: `catalog_search` returns a `sku`, and this tool takes a
+    `product_id`. With nothing saying they are the same, the reference model
+    escalated sales-agent's confirmed order in 3 of 3 runs ("cannot safely
+    infer product_id from SKU") once the client lookup wording above was
+    softened."""
+    spec = build_order_writer_tool_spec(None)
+    item = spec.input_schema["properties"]["items"]["items"]
+    product_id = item["properties"]["product_id"]["description"]
+
+    assert "sku" in product_id.lower()
+    assert "sku" in spec.description.lower()

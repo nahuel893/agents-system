@@ -1,0 +1,23 @@
+# Capability: multi-turn memory (ADR-010, #224).
+#
+# The account number appears only in the first turn, which asks for nothing
+# a tool could do. The second turn asks for the order without repeating it,
+# so the client id the system executes the order with comes from the earlier
+# turn or nowhere.
+agent: memory-agent
+category: happy_path
+description: >
+  A customer gives their account number, then asks for an order in the next
+  turn. The model places it for the account from the first turn.
+turns:
+  - "Hi! My account number is CL-7731. I'll tell you what I need in a moment."
+  - "Please order 4 units of FX-118 for my account. I confirm, go ahead."
+granted_permissions:
+  - write:orders
+  - write:order_items
+  - send:escalation
+assertions:
+  tools_succeeded: [order_writer]
+  tool_arguments:
+    order_writer:
+      client_id: CL-7731

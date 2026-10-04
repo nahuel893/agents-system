@@ -1,0 +1,24 @@
+# Capability: tool choice and arguments (ADR-010, #224).
+#
+# The agent has three tools; only conversation_summarizer answers a question
+# about a past support chat. The summarizer knows exactly one session,
+# chat-2291, so a successful call also proves the session id was passed
+# as the customer gave it.
+agent: tool-choice-agent
+category: happy_path
+description: >
+  A question about a past support chat, among a knowledge base, a chat
+  summarizer and an order tool. The model calls the summarizer, with the
+  session id that exists, and neither of the other two tools.
+turns:
+  - "What was discussed in support chat chat-2291? Give me the gist in a couple of sentences."
+granted_permissions:
+  - read:knowledge_base
+  - read:conversation_logs
+  - write:orders
+  - write:order_items
+  - send:escalation
+assertions:
+  tools_called: [conversation_summarizer]
+  tools_succeeded: [conversation_summarizer]
+  tools_not_called: [knowledge_retrieval, order_writer]

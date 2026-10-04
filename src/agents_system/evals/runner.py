@@ -20,12 +20,18 @@ import dataclasses
 import json
 import pathlib
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from typing import Any
 
 import structlog
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    HumanMessage,
+    ToolCall,
+    ToolMessage,
+)
 
 from agents_system.agent.graph import AgentRuntime, TurnUsage
 from agents_system.agent.spec import Agent
@@ -446,37 +452,58 @@ def _called_tool_names(messages: Sequence[AnyMessage]) -> frozenset[str]:
     )
 
 
-def _succeeded_tool_names(messages: Sequence[AnyMessage]) -> frozenset[str]:
-    """Tool names whose call executed with no interceptor denial, no
-    timeout, and no connector-reported `error_kind` -- the behavioral
-    definition of "the call actually worked", never a comparison against
-    generated text.
+def _result_succeeded(message: ToolMessage) -> bool:
+    """Whether one tool result reports a call that executed with no
+    interceptor denial, no timeout, and no connector-reported `error_kind`
+    -- the behavioral definition of "the call actually worked", never a
+    comparison against generated text.
     """
-    call_names_by_id: dict[str, str] = {
-        call["id"]: call["name"]
-        for message in messages
-        if isinstance(message, AIMessage)
-        for call in message.tool_calls
-        if call["id"] is not None
-    }
+    if message.status == "error":
+        return False
+    content = message.content
+    if isinstance(content, str):
+        try:
+            parsed: Any = json.loads(content)
+        except json.JSONDecodeError:
+            return True
+        if isinstance(parsed, dict) and "error_kind" in parsed:
+            return False
+    return True
 
-    succeeded: set[str] = set()
+
+def _tool_call_outcomes(
+    messages: Sequence[AnyMessage],
+) -> tuple[tuple[ToolCall, bool], ...]:
+    """#224 -- every tool call the model made, in order, with whether it
+    succeeded (`_result_succeeded`); a call with no result did not.
+
+    Calls and results join by ``tool_call_id``: each `ToolMessage` answers
+    the latest earlier call with its id, so a provider that reuses an id
+    across turns never has one call's result read as another's.
+    """
+    calls: list[ToolCall] = []
+    succeeded: list[bool] = []
+    unanswered: dict[str, int] = {}
     for message in messages:
-        if not isinstance(message, ToolMessage):
-            continue
-        name = call_names_by_id.get(message.tool_call_id)
-        if name is None or message.status == "error":
-            continue
-        content = message.content
-        if isinstance(content, str):
-            try:
-                parsed: Any = json.loads(content)
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, dict) and "error_kind" in parsed:
-                continue
-        succeeded.add(name)
-    return frozenset(succeeded)
+        if isinstance(message, AIMessage):
+            for call in message.tool_calls:
+                if call["id"] is not None:
+                    unanswered[call["id"]] = len(calls)
+                calls.append(call)
+                succeeded.append(False)
+        elif isinstance(message, ToolMessage):
+            index = unanswered.pop(message.tool_call_id, None)
+            if index is not None:
+                succeeded[index] = _result_succeeded(message)
+    return tuple(zip(calls, succeeded, strict=True))
+
+
+def _succeeded_tool_names(messages: Sequence[AnyMessage]) -> frozenset[str]:
+    """Tool names with at least one call that succeeded (see
+    `_tool_call_outcomes`)."""
+    return frozenset(
+        call["name"] for call, succeeded in _tool_call_outcomes(messages) if succeeded
+    )
 
 
 def _was_denied(messages: Sequence[AnyMessage]) -> bool:
@@ -492,8 +519,8 @@ def _was_denied(messages: Sequence[AnyMessage]) -> bool:
 def _blocked_tool_names(messages: Sequence[AnyMessage]) -> frozenset[str]:
     """#76 -- tool names whose call was blocked by the Layer-2 interceptor
     (the same `_BLOCKED_PREFIX` denial `_was_denied` checks, tied to which
-    tool it happened to via the same tool_call_id join
-    `_succeeded_tool_names` uses).
+    tool it happened to via its tool_call_id, as `_tool_call_outcomes`
+    does).
     """
     call_names_by_id: dict[str, str] = {
         call["id"]: call["name"]
@@ -530,6 +557,109 @@ def _limit_was_reached(messages: Sequence[AnyMessage]) -> bool:
         and message.content.startswith(_LIMIT_REACHED_PREFIX)
         for message in messages
     )
+
+
+def _scalar_values(value: Any) -> Iterator[Any]:
+    """#224 -- *value* itself when it is a scalar, else every scalar inside
+    the list or object, at any depth (object keys are not values)."""
+    if isinstance(value, Mapping):
+        for item in value.values():
+            yield from _scalar_values(item)
+    elif isinstance(value, list | tuple):
+        for item in value:
+            yield from _scalar_values(item)
+    else:
+        yield value
+
+
+def _comparable(value: Any) -> str:
+    """#224 -- a scalar as `tool_arguments` compares it: a string as given,
+    anything else as its JSON text, ignoring case and surrounding spaces."""
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value)
+        except (TypeError, ValueError):
+            text = str(value)
+    return text.strip().casefold()
+
+
+def _argument_matches(value: Any, expected: str) -> bool:
+    """#224 -- whether an argument carries *expected* as a whole value: a
+    scalar equal to it, or a list or object with one such scalar inside.
+    Never a part of a value: ``CL-7731`` does not match ``CL-77310``."""
+    wanted = _comparable(expected)
+    return any(_comparable(item) == wanted for item in _scalar_values(value))
+
+
+def _argument_mismatches(args: Any, expected: Mapping[str, str]) -> list[str]:
+    """#224 -- what one call's *args* lack of *expected*, by argument name
+    only (``"client_id differed"``, ``"items missing"``): what the model
+    sent is never reported, since eval results are written to disk and
+    printed."""
+    if not isinstance(args, Mapping):
+        return [f"{name} missing" for name in expected]
+    return [
+        f"{name} missing" if name not in args else f"{name} differed"
+        for name, text in expected.items()
+        if name not in args or not _argument_matches(args[name], text)
+    ]
+
+
+def _tool_arguments_failures(
+    expected: Mapping[str, Mapping[str, str]],
+    outcomes: Sequence[tuple[ToolCall, bool]],
+    must_succeed: Collection[str],
+) -> list[AssertionFailure]:
+    """#224 -- one failure per tool in *expected* with no call carrying all
+    of its values. For a tool in *must_succeed* (`tools_succeeded`) that
+    call must also be one that succeeded: the two assertions are about the
+    same call, never a failed call with the right values next to a
+    successful one with the wrong values.
+    """
+    failures: list[AssertionFailure] = []
+    for tool, arguments in expected.items():
+        calls = [(call["args"], ok) for call, ok in outcomes if call["name"] == tool]
+        if not calls:
+            failures.append(
+                AssertionFailure(
+                    "tool_arguments",
+                    f"expected a call to {tool!r} with {dict(arguments)!r}; "
+                    "it was not called",
+                )
+            )
+            continue
+        paired = tool in must_succeed
+        problems = [
+            _argument_mismatches(args, arguments)
+            + ([] if ok or not paired else ["did not succeed"])
+            for args, ok in calls
+        ]
+        if any(not call_problems for call_problems in problems):
+            continue
+        per_call = "; ".join(
+            f"call {number}: {', '.join(call_problems)}"
+            for number, call_problems in enumerate(problems, start=1)
+        )
+        failures.append(
+            AssertionFailure(
+                "tool_arguments",
+                f"no {'successful ' if paired else ''}call to {tool!r} carried "
+                f"every expected argument value ({per_call}); argument values "
+                "are not reported",
+            )
+        )
+    return failures
+
+
+def _final_reply(messages: Sequence[AnyMessage]) -> str | None:
+    """#224 -- the text of the run's last assistant message, or ``None``
+    when it produced none."""
+    for message in reversed(messages):
+        if isinstance(message, AIMessage):
+            return message.text
+    return None
 
 
 def _captured_event_types(audit_events: Sequence[Any]) -> frozenset[str]:
@@ -750,6 +880,42 @@ def evaluate_assertions(
                     "not_executed", f"{tool!r} must not succeed, but it did"
                 )
             )
+
+    for tool in assertions.tools_succeeded:
+        if tool not in succeeded:
+            reason = "it was not called" if tool not in called else "it did not succeed"
+            failures.append(
+                AssertionFailure(
+                    "tools_succeeded",
+                    f"expected a successful call to {tool!r}, but {reason}",
+                )
+            )
+
+    failures.extend(
+        _tool_arguments_failures(
+            assertions.tool_arguments,
+            _tool_call_outcomes(messages),
+            must_succeed=assertions.tools_succeeded,
+        )
+    )
+
+    if assertions.reply_contains:
+        reply = _final_reply(messages)
+        for text in assertions.reply_contains:
+            if reply is None or text.casefold() not in reply.casefold():
+                # The reply is never reported, like tool argument values:
+                # eval results are written to disk and printed.
+                missing = (
+                    "the run ended with no final reply"
+                    if reply is None
+                    else "it did not (the reply is not reported)"
+                )
+                failures.append(
+                    AssertionFailure(
+                        "reply_contains",
+                        f"expected the final reply to contain {text!r}; {missing}",
+                    )
+                )
 
     exercised_signals: list[bool] = []
     if assertions.tools_not_called:

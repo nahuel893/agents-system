@@ -1,0 +1,18 @@
+# Capability: escalation (ADR-010, #224), no condition holds.
+#
+# The knowledge base answers the question (Saturdays 09:30 to 13:00), and no
+# escalation condition applies: escalating it is the failure #219 saw, a
+# careful model handing a simple question to a person.
+agent: escalation-agent
+category: happy_path
+description: >
+  A simple question the knowledge base answers. The model looks it up,
+  answers, and does not escalate.
+turns:
+  - "Hi! What time do you open on Saturdays?"
+granted_permissions:
+  - read:knowledge_base
+  - send:escalation
+assertions:
+  tools_called: [knowledge_retrieval]
+  escalation_expected: false
