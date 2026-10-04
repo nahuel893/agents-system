@@ -99,10 +99,12 @@ reportado nunca es nulo; un valor que vos exportes tiene prioridad.
 Para la suite de la tool de SQL crea una base descartable con las vistas de
 fixture y el rol `sql_readonly`, igual que el job de integración de SQL del
 CI, y la borra al terminar. Los logs y `SUMMARY.txt` quedan en
-`evals/results/live-suite-<timestamp>/`. El costo por grupo suma los reportes
-escritos durante ese grupo (`scripts/live_suite_cost.py`); las tasas por
-escenario, los tokens y el costo siguen en los reportes de siempre en
-`evals/results/`.
+`evals/results/live-suite-<timestamp>/`. El costo de cada suite sale de los
+reportes que escribió (`scripts/live_suite_cost.py`) o, para las suites que
+levantan el harness y no escriben reporte, de las líneas `runtime.turn_usage`
+de su log; el costo de un grupo es la suma de sus suites (`n/a` para el grupo
+`mechanism`, que es offline). Las tasas por escenario, los tokens y el costo
+siguen en los reportes de siempre en `evals/results/`.
 
 ### Qué escenarios corre un cambio
 

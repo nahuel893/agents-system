@@ -93,9 +93,12 @@ you export wins.
 For the SQL tool suite, it creates a throwaway database with the fixture views
 and the `sql_readonly` role, the same setup as CI's SQL integration job, and
 drops it on exit. Logs and `SUMMARY.txt` go to
-`evals/results/live-suite-<timestamp>/`. The per-group cost sums the reports
-written during that group (`scripts/live_suite_cost.py`); per-scenario rates,
-tokens and cost stay in the usual `evals/results/` reports.
+`evals/results/live-suite-<timestamp>/`. Each suite's cost comes from the
+reports it wrote (`scripts/live_suite_cost.py`), or, for suites that boot the
+harness and write no report, from the `runtime.turn_usage` lines in its log;
+a group's cost is the sum of its suites (`n/a` for the offline `mechanism`
+group). Per-scenario rates, tokens and cost stay in the usual
+`evals/results/` reports.
 
 ### Which scenarios a change runs
 
