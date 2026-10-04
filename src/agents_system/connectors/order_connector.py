@@ -72,17 +72,20 @@ only safe instruction is to stop and escalate.
 """
 
 _ORDER_WRITER_DESCRIPTION = (
-    "Create a new order for a client. Requires the client's client_id (from "
-    "a client lookup, when one is available) and a list of items with "
-    "product_id and qty. An order exists only if this tool returns an "
-    "order_id — if it returns an error, no order was created and you must say "
-    "so."
+    "Create a new order for a client. Requires client_id (the client's "
+    "identifier, such as the one a client lookup returns) and a list of "
+    "items, each with product_id (the product's SKU or code) and qty. An "
+    "order exists only if this tool returns an order_id — if it returns an "
+    "error, no order was created and you must say so."
 )
-"""Mentions a client lookup without requiring one (issue #224).
+"""Names what each identifier is, not which tool supplies it (issue #224).
 
 It used to say client_id comes "from the client lookup tool". Only
 `sales-agent` equips one, so any other agent with this tool read that as a
-missing tool and escalated instead of placing the order.
+missing tool and escalated instead of placing the order. Softening that alone
+made the reference model refuse sales-agent's orders instead: `catalog_search`
+returns a `sku` and nothing said a `product_id` is one. So the text says what
+each identifier is.
 """
 
 _INPUT_SCHEMA: dict[str, Any] = {
@@ -91,7 +94,7 @@ _INPUT_SCHEMA: dict[str, Any] = {
         "client_id": {
             "type": "string",
             "description": (
-                "The client's ID (from a client lookup, when one is available)"
+                "The client's identifier, such as the one a client lookup returns"
             ),
         },
         "items": {
@@ -99,7 +102,10 @@ _INPUT_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "product_id": {"type": "string"},
+                    "product_id": {
+                        "type": "string",
+                        "description": "The product's SKU or code",
+                    },
                     "qty": {"type": "integer"},
                 },
                 "required": ["product_id", "qty"],
