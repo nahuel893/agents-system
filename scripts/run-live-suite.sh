@@ -90,7 +90,7 @@ close_group() {
   local secs=$((SECONDS - group_start))
   local cost
   cost="$(printf '%s\n' "${group_suite_costs[@]:-n/a}" \
-    | awk '$1 != "n/a" {s += $1; n++} END {if (n) printf "%.4f", s; else print "n/a"}')"
+    | awk '{if ($1 == "n/a") u = 1; else s += $1; n++} END {if (u || !n) print "n/a"; else printf "%.4f", s}')"
   group_names+=("$group")
   group_costs+=("$cost")
   if [[ $group_failed -eq 0 ]]; then

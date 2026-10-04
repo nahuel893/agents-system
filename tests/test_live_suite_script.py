@@ -58,11 +58,10 @@ def test_total_cost_falls_back_to_the_suite_log_turn_usage_lines(
     log = tmp_path / "suite.log"
     usage = {"event": "runtime.turn_usage", "cost_usd": 0.01}
     other = {"event": "something.else", "cost_usd": 5.0}
-    null_cost = {"event": "runtime.turn_usage", "cost_usd": None}
     log.write_text(
         "\n".join(
             ["plain text", json.dumps(usage), json.dumps(usage), json.dumps(other)]
-            + [json.dumps(null_cost), "{not json"]
+            + ["{not json"]
         ),
         encoding="utf-8",
     )
@@ -83,6 +82,35 @@ def test_reports_win_over_the_log_so_nothing_is_counted_twice(
         json.dumps({"event": "runtime.turn_usage", "cost_usd": 9.0}), encoding="utf-8"
     )
     assert total_cost(tmp_path, marker, log) == 0.5
+
+
+def test_total_cost_is_none_when_any_report_row_has_unknown_cost(
+    tmp_path: pathlib.Path,
+) -> None:
+    marker = tmp_path / "marker"
+    marker.touch()
+    os.utime(marker, (100, 100))
+    report = tmp_path / "r.json"
+    _report(report, 0.3, None)
+    os.utime(report, (200, 200))
+    assert total_cost(tmp_path, marker) is None
+
+
+def test_total_cost_is_none_when_any_turn_usage_line_has_unknown_cost(
+    tmp_path: pathlib.Path,
+) -> None:
+    marker = tmp_path / "marker"
+    marker.touch()
+    log = tmp_path / "suite.log"
+    known = {"event": "runtime.turn_usage", "cost_usd": 0.01}
+    unknown = {"event": "runtime.turn_usage", "cost_usd": None}
+    log.write_text("\n".join(json.dumps(r) for r in (known, unknown)), encoding="utf-8")
+    assert total_cost(tmp_path, marker, log) is None
+
+
+def test_group_cost_is_n_a_when_any_suite_cost_is_unknown() -> None:
+    assert 'if ($1 == "n/a") u = 1' in SCRIPT
+    assert "if (u || !n) print" in SCRIPT
 
 
 def test_cli_prints_n_a_for_no_cost(tmp_path: pathlib.Path) -> None:

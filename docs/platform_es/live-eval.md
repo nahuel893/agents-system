@@ -103,7 +103,8 @@ CI, y la borra al terminar. Los logs y `SUMMARY.txt` quedan en
 reportes que escribió (`scripts/live_suite_cost.py`) o, para las suites que
 levantan el harness y no escriben reporte, de las líneas `runtime.turn_usage`
 de su log; el costo de un grupo es la suma de sus suites (`n/a` para el grupo
-`mechanism`, que es offline). Las tasas por escenario, los tokens y el costo
+`mechanism`, que es offline). Una suite o grupo con algún costo desconocido
+es `n/a`, nunca una suma parcial. Las tasas por escenario, los tokens y el costo
 siguen en los reportes de siempre en `evals/results/`.
 
 ### Qué escenarios corre un cambio

@@ -12,7 +12,7 @@ the harness write no report, but the runtime logs one `runtime.turn_usage`
 line per turn; when no report carries a cost, the cost of those lines in the
 suite log is used instead, so nothing is counted twice. Prints the total in
 USD, or `n/a` when neither source has a cost (the model had no `MODEL_PRICES`
-entry).
+entry) or when any row's cost is unknown: a partial sum is never shown as a total.
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ def _report_cost(results_dir: pathlib.Path, marker: pathlib.Path) -> float | Non
             continue
         for row in json.loads(report.read_text(encoding="utf-8")):
             cost = row.get("total_cost_usd")
-            if cost is not None:
-                total = (total or 0.0) + float(cost)
+            if cost is None:
+                return None  # a partial amount is not a total
+            total = (total or 0.0) + float(cost)
     return total
 
 
@@ -44,8 +45,11 @@ def _log_cost(log: pathlib.Path) -> float | None:
             row = json.loads(line)
         except ValueError:
             continue
-        if row.get("event") == "runtime.turn_usage" and row.get("cost_usd") is not None:
-            total = (total or 0.0) + float(row["cost_usd"])
+        if row.get("event") != "runtime.turn_usage":
+            continue
+        if row.get("cost_usd") is None:
+            return None  # a partial amount is not a total
+        total = (total or 0.0) + float(row["cost_usd"])
     return total
 
 

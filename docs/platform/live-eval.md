@@ -97,7 +97,7 @@ drops it on exit. Logs and `SUMMARY.txt` go to
 reports it wrote (`scripts/live_suite_cost.py`), or, for suites that boot the
 harness and write no report, from the `runtime.turn_usage` lines in its log;
 a group's cost is the sum of its suites (`n/a` for the offline `mechanism`
-group). Per-scenario rates, tokens and cost stay in the usual
+group). A suite or group with any unknown cost is `n/a`, never a partial sum. Per-scenario rates, tokens and cost stay in the usual
 `evals/results/` reports.
 
 ### Which scenarios a change runs
