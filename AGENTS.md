@@ -72,12 +72,17 @@ Offline tests prove the code does what the tests say. Only a real model proves a
 
    | You changed | Run at least |
    |---|---|
-   | A role or agent prompt, escalation, no-fabrication | `tests/test_live_eval_composition.py` (`-k sales_agent`, `-k data_agent`, or `-k developer_agent`, which also covers `operator-agent`) |
-   | The permission model, the interceptor, guards or execution limits | `tests/test_live_eval_guardrails.py` |
-   | The SQL tool or parameterized reports | `tests/test_live_eval_sql_query.py` |
-   | The runtime, conversation memory, the served app, a channel, or a tool end to end | `tests/test_live_eval_phase1.py` and `tests/test_live_smoke.py` |
+   | The runtime, the graph, the interceptor, the permission model, limits, audit or the sandbox | The mechanism suite (`tests/test_mechanism_suite.py`, part of `pytest -q`) and every behavior capability scenario (`tests/test_live_eval_capabilities.py`), plus `tests/test_live_eval_guardrails.py` |
+   | `base`, `agent` or the base prompt contract | Every behavior capability scenario and every composition scenario (`tests/test_live_eval_composition.py`) |
+   | A tool's description or schema, or a connector | The capability scenarios that equip it (`-k <capability>` on `tests/test_live_eval_capabilities.py`), and the composition scenarios of every reference agent that declares it |
+   | A reference agent's prompt, policy or manifest in `examples/agents/` | That agent's composition scenarios (`tests/test_live_eval_composition.py -k sales_agent`, `-k data_agent`, `-k developer_agent`) and those of every agent that extends it: `python scripts/agents_extending.py <agent>` lists them (`operator-agent` lists `developer-agent`) |
+   | A channel, the served app or conversation memory | The composition scenarios through the harness, `tests/test_live_eval_phase1.py` and `tests/test_live_smoke.py` |
    | The `Agent` API, `extends`, skills or the importer | `tests/test_live_eval_phase4.py` |
    | Concurrency, the webhook worker, the outbox or connection pools | `tests/test_live_load_phase3.py` |
+   | The SQL tool or parameterized reports | `tests/test_live_eval_sql_query.py` |
+   | The eval runner or the capability suite | The capability scenarios on the reference model (`tests/test_live_eval_capabilities.py`) and `tests/test_live_eval_folder_target.py` |
+
+   `scripts/run-live-suite.sh` runs all of them, grouped as mechanism, behavior and composition, and reports each group's result and cost.
 
    Always force the remote reference model; local inference is never used:
 

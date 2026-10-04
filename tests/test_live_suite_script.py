@@ -1,0 +1,85 @@
+"""Offline tests for `scripts/live_suite_cost.py` and the structure of
+`scripts/run-live-suite.sh` (#227, ADR-010 part 3)."""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+from scripts.live_suite_cost import total_cost
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+SCRIPT = (REPO / "scripts" / "run-live-suite.sh").read_text(encoding="utf-8")
+
+
+def _report(path: pathlib.Path, *costs: float | None) -> None:
+    path.write_text(
+        json.dumps(
+            [{"scenario": f"s{i}", "total_cost_usd": c} for i, c in enumerate(costs)]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_total_cost_sums_reports_newer_than_the_marker(tmp_path: pathlib.Path) -> None:
+    old = tmp_path / "old.json"
+    _report(old, 9.0)
+    marker = tmp_path / "marker"
+    marker.touch()
+    os.utime(old, (1, 1))
+    os.utime(marker, (100, 100))
+    new = tmp_path / "new.json"
+    _report(new, 0.25, 0.5)
+    os.utime(new, (200, 200))
+    assert total_cost(tmp_path, marker) == 0.75
+
+
+def test_total_cost_is_none_when_no_report_carries_a_cost(
+    tmp_path: pathlib.Path,
+) -> None:
+    marker = tmp_path / "marker"
+    marker.touch()
+    os.utime(marker, (100, 100))
+    report = tmp_path / "r.json"
+    _report(report, None)
+    os.utime(report, (200, 200))
+    assert total_cost(tmp_path, marker) is None
+
+
+def test_cli_prints_n_a_for_no_cost(tmp_path: pathlib.Path) -> None:
+    marker = tmp_path / "marker"
+    marker.touch()
+    out = subprocess.run(
+        [sys.executable, "scripts/live_suite_cost.py", str(tmp_path), str(marker)],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert out.stdout.strip() == "n/a"
+
+
+def test_suite_script_is_valid_bash() -> None:
+    subprocess.run(
+        ["bash", "-n", str(REPO / "scripts" / "run-live-suite.sh")], check=True
+    )
+
+
+def test_suite_defaults_model_prices_for_the_reference_model() -> None:
+    assert re.search(r"default_prices='.*openai/gpt-6-sol", SCRIPT)
+    assert 'MODEL_PRICES="${MODEL_PRICES:-$default_prices}"' in SCRIPT
+    assert "export MODEL_PRICES" in SCRIPT
+
+
+def test_suite_groups_are_mechanism_behavior_composition() -> None:
+    groups = re.findall(r"^run_group\s+(\w+)", SCRIPT, flags=re.MULTILINE)
+    assert groups == ["mechanism", "behavior", "composition"]
+
+
+def test_every_pytest_module_the_suite_runs_exists() -> None:
+    for module in re.findall(r"tests/(test_\w+\.py)", SCRIPT):
+        assert (REPO / "tests" / module).is_file(), module

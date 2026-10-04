@@ -47,6 +47,12 @@ available locally.
       scripts/run-live-suite.sh
       ```
 
+      The script groups its runs as `mechanism` (offline, no model),
+      `behavior` and `composition`, and its summary gives each group's
+      result and cost. Put that summary in the release PR body. It sets
+      `MODEL_PRICES` for the reference model when you have not, so the cost
+      is never null.
+
    2. The installed-wheel smoke test passes (see [Smoke-testing the wheel as
       a library](#smoke-testing-the-wheel-as-a-library)):
 
