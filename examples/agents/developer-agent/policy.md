@@ -27,8 +27,11 @@ the model's own provider calls, and 30s is below the 45s
 `OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S`, so a single slow provider response can
 consume the whole turn, and the served app logs
 `runtime.turn_budget_below_request_timeout` at boot. Raising the budget is a
-change to `operator-agent`, the parent, which the composition scenarios
-decide with live data.
+change to `operator-agent`, the parent, and the composition scenarios decided
+it with live data (#225): on the reference model, no turn of
+`developer-agent`'s scenarios came near 30s (see "Composition scenarios on
+reference agents" in `docs/platform/live-eval.md`), so `operator-agent` keeps
+it.
 
 `repeated_command_failure` is added to the inherited conditions. An agent
 retrying a failing command with small variations is the specific loop this
