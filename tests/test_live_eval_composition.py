@@ -270,12 +270,20 @@ async def test_sales_agent_composition() -> None:
 
         async def sends_a_message() -> None:
             since = datetime.now(UTC)
+            # The exact text is given (#225 re-baseline). Asked to send "a
+            # short message confirming their order is ready", a fact no tool
+            # can verify, `openai/gpt-6-sol` sent it in 5 of 6 runs; in the
+            # sixth it answered without calling any tool, and in another it
+            # escalated first because the order status was unverifiable. A
+            # careful model acts on a complete request (#218); the assertion
+            # is unchanged.
             await _turn_text(
                 harness,
                 clock,
-                f"Use message_sender to send '{_DEMO_CLIENT_PHONE}' a short "
-                "message confirming their order is ready. You must "
-                "actually call message_sender.",
+                f"Use message_sender to send '{_DEMO_CLIENT_PHONE}' exactly "
+                "this text: 'Hello from the sales team, we received your "
+                "message and will reply shortly.' You must actually call "
+                "message_sender.",
             )
             await _assert_tool_executed(
                 harness, role="sales-agent", tool_name="message_sender", since=since

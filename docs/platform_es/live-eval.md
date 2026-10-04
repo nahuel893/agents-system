@@ -930,18 +930,24 @@ existen: sus escenarios nombraban roles predefinidos, y la suite de
 capacidades se ocupa de lo que medían.
 
 **Línea base.** Sobre `openai/gpt-6-sol` con `EVAL_RUNS=3` (2026-10-03), cada
-escenario aprobó 3 de 3 corridas. El turno de `order_writer` declara la línea
-del pedido de forma explícita ("el SKU es el product_id"): el catálogo de
-referencia devuelve `sku` y `description` y ningún `product_id`, que
-`order_writer` exige, y cuando solo se le pidió "SKU 'ART-001'" el modelo no
-quiso adivinar el id y escaló en 3 de 3 corridas. Es un modelo cuidadoso, no
-un defecto, y un escenario plantea un pedido completo (#218).
+escenario aprobó 3 de 3 corridas. Dos turnos plantean su pedido completo,
+porque un modelo cuidadoso no actuaría con menos (#218), y las aserciones no
+cambiaron:
+
+- El turno de `order_writer` nombra la línea del pedido ("el SKU es el
+  product_id"). El catálogo de referencia devuelve `sku` y `description` y
+  ningún `product_id`, que `order_writer` exige; cuando solo se le pidió "SKU
+  'ART-001'", el modelo no quiso adivinar el id y escaló en 3 de 3 corridas.
+- El turno de `message_sender` da el texto exacto. Cuando se le pidió enviar
+  "un mensaje que confirme que su pedido está listo", un hecho que ninguna
+  herramienta puede verificar, el modelo respondió sin llamar a ninguna
+  herramienta en 1 de 6 corridas.
 
 **El presupuesto de turno de `operator-agent` sigue en 30 s.** ADR-010 lo dejó
 en 30 s, para subirlo al valor por defecto de la plataforma, 60 s, si los
-escenarios necesitaban más. No lo necesitan: en los escenarios de
-`developer-agent` el turno más lento tardó unos 5 s, y ningún turno llegó al
-presupuesto (`agent_turns_total{outcome="timeout"}` quedó en 0). La app
+escenarios necesitaban más. No lo necesitan: en tres corridas de los escenarios de
+`developer-agent` (27 turnos) el turno más lento tardó 6 s, y ningún turno
+llegó al presupuesto (`agent_turns_total{outcome="timeout"}` quedó en 0). La app
 servida sigue registrando `runtime.turn_budget_below_request_timeout` al
 arrancar, porque 30 s está por debajo del timeout de 45 s de la request al
 proveedor; advierte que una respuesta del proveedor de más de 30 s terminaría

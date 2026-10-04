@@ -861,17 +861,23 @@ above. The per-role live drivers `tests/test_live_eval_roles.py` and
 predefined roles, and the capability suite owns what they measured.
 
 **Baseline.** On `openai/gpt-6-sol` with `EVAL_RUNS=3` (2026-10-03), every
-scenario passed 3 of 3 runs. The `order_writer` turn states the order line
-outright ("the SKU is the product_id"): the reference catalog returns `sku`
-and `description` and no `product_id`, which `order_writer` requires, and
-asked only for "SKU 'ART-001'" the model declined to guess the id and
-escalated in 3 of 3 runs. That is a careful model, not a defect, and a
-scenario states a complete request (#218).
+scenario passed 3 of 3 runs. Two turns state their request in full, because a
+careful model would not act on less (#218), and the assertions did not
+change:
+
+- The `order_writer` turn names the order line ("the SKU is the
+  product_id"). The reference catalog returns `sku` and `description` and no
+  `product_id`, which `order_writer` requires; asked only for "SKU
+  'ART-001'", the model declined to guess the id and escalated in 3 of 3
+  runs.
+- The `message_sender` turn gives the exact text. Asked to send "a message
+  confirming their order is ready", a fact no tool can verify, the model
+  answered without calling any tool in 1 of 6 runs.
 
 **`operator-agent`'s turn budget stays 30 s.** ADR-010 left it at 30 s, to
 be raised to the platform default of 60 s if the scenarios needed more. They
-do not: across `developer-agent`'s scenarios the slowest turn took about
-5 s, and no turn reached the budget (`agent_turns_total{outcome="timeout"}`
+do not: across three runs of `developer-agent`'s scenarios (27 turns) the
+slowest turn took 6 s, and no turn reached the budget (`agent_turns_total{outcome="timeout"}`
 stayed 0). The served app still logs `runtime.turn_budget_below_request_timeout`
 at boot, because 30 s is below the 45 s provider request timeout; it warns
 that one provider response slower than 30 s would end the turn, which these
