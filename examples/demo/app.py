@@ -4,8 +4,11 @@ Run ``uv run python examples/demo/app.py`` after loading the demo database with
 ``demo/load_demo_company.py``; this script is that loader's "serve it" half.
 Configuration is environment-variable only.
 
-Set ``AGENT_REGISTRATIONS``, ``ADAPTER_RUNTIMES`` and ``ADAPTER_API_KEY`` to
-publish a role on ``/v1/*``; this module deliberately sets none of them. Boot
+This module registers the reference ``sales-agent`` folder
+(``examples/agents/sales-agent``) as runtime id ``demo-sales-agent`` with
+``create_app(agents=...)``, so ``AGENT_REGISTRATIONS`` is not read. Set
+``ADAPTER_RUNTIMES`` and ``ADAPTER_API_KEY`` to publish it on ``/v1/*``; this
+module deliberately sets neither. Boot
 also requires an explicit ``DEPLOY_GRANTS`` entry for every registered
 runtime id (issue #38) -- this module does not set that either. See
 ``docs/platform/demo-entrypoint.md`` for the exact command.
@@ -34,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import pathlib
 from typing import Any
 
 import structlog
@@ -41,6 +45,7 @@ from fastapi import FastAPI
 from langchain_core.language_models import BaseChatModel
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from agents_system.agent.spec import Agent
 from agents_system.config import get_settings
 from agents_system.evals.live_registry import build_live_registry_factory
 from agents_system.evals.provider import build_eval_model
@@ -51,6 +56,8 @@ from agents_system.services.db_role import role_is_read_only
 _DEFAULT_DEMO_DATABASE_URL = (
     "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo"
 )
+_REFERENCE_AGENTS = pathlib.Path(__file__).resolve().parents[1] / "agents"
+_DEMO_RUNTIME_ID = "demo-sales-agent"
 _DEFAULT_HOST = "127.0.0.1"
 _DEFAULT_PORT = 8000
 
@@ -73,6 +80,7 @@ def build_app(*, engine: AsyncEngine, model: BaseChatModel) -> FastAPI:
     """Build the demo API without reading environment variables."""
     return create_app(
         registry_factory=_demo_registry_factory(engine, model),
+        agents={_DEMO_RUNTIME_ID: Agent.from_folder(_REFERENCE_AGENTS / "sales-agent")},
         title="agents_system demo",
     )
 

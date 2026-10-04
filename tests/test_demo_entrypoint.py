@@ -249,7 +249,6 @@ async def test_demo_build_app_boots_with_real_deploy_grants_through_lifespan() -
     test_settings = Settings(
         database_url="postgresql+asyncpg://localhost:5432/agentsys_test",
         redis_url="redis://localhost:6379/0",
-        agent_registrations={"demo-sales-agent": "sales-agent"},
         adapter_runtimes=["demo-sales-agent"],
         deploy_grants={
             "demo-sales-agent": (

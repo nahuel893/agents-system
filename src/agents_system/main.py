@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import os
+import pathlib
 import re
 import secrets
 import time
@@ -1075,8 +1077,54 @@ def _build_registrations(
     return registrations
 
 
+#: ``AGENT_REGISTRATIONS`` value prefix naming an agent folder under
+#: ``AGENTS_ROOT`` instead of a predefined role (ADR-010, #226).
+_FOLDER_PREFIX = "folder:"
+
+
+def _folder_registration(value: str, agents_root: str) -> Agent:
+    """Read a ``"folder:<name>"`` registration into an ``Agent``.
+
+    The root is the operator's (``AGENTS_ROOT``); the value is not trusted.
+    It must be one folder name directly under the root -- an absolute path,
+    a ``..`` segment or any separator fails the name rule -- and the folder,
+    once symlinks are followed, must still lie strictly inside the root.
+    An unset or relative root fails closed. The loader then holds every file
+    the folder supplies (and a sibling ``extends:``) to the same root.
+    """
+    name = value[len(_FOLDER_PREFIX) :]
+    if not agents_root or not os.path.isabs(agents_root):
+        raise DefinitionError(
+            "a folder registration needs AGENTS_ROOT set to an absolute "
+            "directory path; it is unset or relative."
+        )
+    if len(name) > _MAX_RUNTIME_ID_LENGTH or not _SAFE_SEGMENT.fullmatch(name):
+        raise DefinitionError(
+            f"Invalid folder registration {_bounded_repr(value)}. Expected "
+            f'"{_FOLDER_PREFIX}<name>", one folder name directly under '
+            f"AGENTS_ROOT matching {_SAFE_SEGMENT.pattern} (no path "
+            "separators, no '..', at most "
+            f"{_MAX_RUNTIME_ID_LENGTH} characters)."
+        )
+    try:
+        real_root = pathlib.Path(agents_root).resolve(strict=True)
+        folder = (real_root / name).resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise DefinitionError(
+            f"folder {name!r} is not a directory under AGENTS_ROOT."
+        ) from None
+    if folder == real_root or not folder.is_relative_to(real_root):
+        raise DefinitionError(
+            f"folder {name!r} resolves outside AGENTS_ROOT (a symlink leads out of it)."
+        )
+    if not folder.is_dir():
+        raise DefinitionError(f"folder {name!r} is not a directory under AGENTS_ROOT.")
+    return Agent.from_folder(real_root / name)
+
+
 def _settings_agents(
     agent_registrations: Mapping[str, str],
+    agents_root: str = "",
 ) -> tuple[dict[str, Agent | str], dict[str, str]]:
     """The Settings-driven fallback, used when ``create_app`` got no
     ``agents``: ``AGENT_REGISTRATIONS`` read into the ``agents``/``clients``
@@ -1091,6 +1139,14 @@ def _settings_agents(
             raise DefinitionError(
                 f"AGENT_REGISTRATIONS: {exc} Refusing to boot."
             ) from exc
+        if isinstance(value, str) and value.startswith(_FOLDER_PREFIX):
+            try:
+                agents[runtime_id] = _folder_registration(value, agents_root)
+            except DefinitionError as exc:
+                raise DefinitionError(
+                    f"AGENT_REGISTRATIONS[{runtime_id!r}]: {exc} Refusing to boot."
+                ) from exc
+            continue
         try:
             role, client = _parse_agent_registration(value)
         except DefinitionError as exc:
@@ -1277,7 +1333,9 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
                 "the same runtime ids as agents, so it needs agents to "
                 "register one. Refusing to boot."
             )
-        agents, clients = _settings_agents(settings.agent_registrations)
+        agents, clients = _settings_agents(
+            settings.agent_registrations, settings.agents_root
+        )
         source = "AGENT_REGISTRATIONS"
         # Static, never derived from the id: nothing parses it.
         hint = (

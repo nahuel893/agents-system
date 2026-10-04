@@ -19,6 +19,9 @@ Run with: `pytest -m live tests/test_live_smoke.py -v`.
 
 from __future__ import annotations
 
+import os
+import pathlib
+import shutil
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -26,6 +29,7 @@ from datetime import UTC, datetime
 import pytest
 
 from agents_system.evals.live_harness import (
+    SALES_AGENT_PERMISSIONS,
     LiveHarness,
     boot_live_harness,
     metric_value,
@@ -40,6 +44,11 @@ pytestmark = [
         "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
     ),
 ]
+
+
+#: Trials of the folder-agent scenario; the same ``EVAL_RUNS`` knob the other
+#: live modules read (#226: the folder-registered agent runs three times).
+_RUNS = int(os.environ.get("EVAL_RUNS", "3"))
 
 
 @pytest.fixture
@@ -154,3 +163,46 @@ async def test_smoke_api_turn_and_webhook_turn(live_harness: LiveHarness) -> Non
     # the real Postgres checkpointer, not just the fake outbound send.
     thread = await live_harness.read_thread(phone)
     assert thread is not None
+
+
+async def test_smoke_turn_through_a_folder_registered_reference_agent(
+    tmp_path: pathlib.Path,
+) -> None:
+    """#226: a reference agent folder under ``AGENTS_ROOT``, registered the way
+    ``AGENT_REGISTRATIONS='{"id": "folder:sales-agent"}'`` registers it, serves
+    a live turn through the served app and its tool audit.
+
+    The agent is resolved by ``main._settings_agents`` -- the function the env
+    boot path calls, with the same containment -- then handed to the harness
+    as an ``Agent`` because the harness registers through ``create_app(agents=)``.
+    """
+    from agents_system.main import _settings_agents
+
+    root = tmp_path / "agents"
+    root.mkdir()
+    reference = pathlib.Path(__file__).resolve().parents[1] / "examples" / "agents"
+    shutil.copytree(reference / "sales-agent", root / "sales-agent")
+
+    agents, _ = _settings_agents({"served": "folder:sales-agent"}, str(root))
+    folder_agent = agents["served"]
+
+    async with boot_live_harness(
+        role=folder_agent, permissions=SALES_AGENT_PERMISSIONS
+    ) as harness:
+        for trial in range(_RUNS):
+            response = await harness.send_chat_completion(
+                "This is an automated harness check. Call the catalog_search tool "
+                'with q="fernet". Then reply with one short sentence '
+                "confirming you searched for it. You must actually call the tool, "
+                "not just describe it."
+            )
+            assert response.status_code == 200, (trial, response.text)
+            assert response.json()["choices"][0]["message"]["content"], trial
+            rows = await harness.audit_rows(
+                correlation_id=response.headers["x-request-id"]
+            )
+            assert any(
+                row.event_type == "tool_call_attempted"
+                and row.tool_name == "catalog_search"
+                for row in rows
+            ), (trial, [(row.event_type, row.tool_name) for row in rows])

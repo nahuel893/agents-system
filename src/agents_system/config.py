@@ -309,6 +309,14 @@ class Settings(ProviderSettings):
     # AGENT_REGISTRATIONS='{"acme-sales": "sales-agent@acme", "support": "sales-agent"}'
     agent_registrations: dict[str, str] = {}
 
+    # ADR-010 open question 4 (#226) -- the directory an `AGENT_REGISTRATIONS`
+    # value of the form "folder:<name>" resolves under. Operator-set, never
+    # taken from a registration value: a value names one folder directly under
+    # it, and an absolute path, a '..' segment or a symlink leading out of it
+    # fails boot. Unset (the default) means no folder value is accepted.
+    # Must be an absolute path. e.g. AGENTS_ROOT=/srv/agents
+    agents_root: str = ""
+
     # permission-model PR3 (issue #38, design.md Resolved Decision 5) — the
     # SOLE grant source for main.py's lifespan when create_app got no
     # `grants=`. Keyed by the registered runtime id (the same opaque ids as

@@ -37,37 +37,36 @@ All entrypoint configuration comes from environment variables (or the project's
 | `OPENAI_COMPATIBLE_API_KEY` | optional | Credential for that endpoint; omit for keyless local servers. |
 | `DEMO_HOST` | `127.0.0.1` | HTTP bind host. |
 | `DEMO_PORT` | `8000` | HTTP bind port. |
-| `AGENT_REGISTRATIONS` | required to serve a role | JSON object mapping each runtime ID you choose to the predefined role it serves, as `"{role}"` or `"{role}@{client}"`, such as `{"demo-sales-agent": "sales-agent"}`. The ID is opaque: nothing parses it. A malformed entry fails boot, naming it. |
+| `AGENT_REGISTRATIONS` | not read | The entrypoint registers the reference `sales-agent` folder (`examples/agents/sales-agent`) itself, as runtime ID `demo-sales-agent`, with `create_app(agents=...)`; `agents=` wins over this variable. |
 | `ADAPTER_RUNTIMES` | required to expose a role | JSON list of the registered runtime IDs to publish, such as `["demo-sales-agent"]`. Empty (the default) exposes no `/v1/*` models. |
 | `ADAPTER_API_KEY` | required when publishing a role | Bearer token required by `/v1/*`. |
 | `DEPLOY_GRANTS` | required for every registered runtime id | JSON object mapping each registered id to the list of permission wire names actually granted to it, such as `{"demo-sales-agent": ["read:catalog"]}`. A registered runtime with no matching entry fails boot loudly, naming the runtime id. |
 
 For example, choose one provider and set its variables, then publish a
-predefined role without putting any credential values in source control:
+the reference agent without putting any credential values in source control:
 
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://your-compatible-endpoint.example/v1
 export OPENAI_COMPATIBLE_MODEL=your-model-id
 export OPENAI_COMPATIBLE_API_KEY="$YOUR_PROVIDER_API_KEY"
-export AGENT_REGISTRATIONS='{"demo-sales-agent": "sales-agent"}'
 export ADAPTER_RUNTIMES='["demo-sales-agent"]'
 export DEPLOY_GRANTS='{"demo-sales-agent": ["read:catalog", "read:client_registry", "write:orders", "write:order_items", "read:price_lists", "send:message"]}'
 export ADAPTER_API_KEY="$YOUR_DEMO_ADAPTER_API_KEY"
 ```
 
-`AGENT_REGISTRATIONS` builds the runtime, and `ADAPTER_RUNTIMES` and
-`ADAPTER_API_KEY` are what actually publish and protect it on `/v1/*`; this
-entrypoint sets none of them by default. Boot also requires an explicit
+The entrypoint builds the `demo-sales-agent` runtime from the reference folder,
+and `ADAPTER_RUNTIMES` and `ADAPTER_API_KEY` are what actually publish and
+protect it on `/v1/*`; this entrypoint sets neither by default. Boot also requires an explicit
 `DEPLOY_GRANTS` entry for every registered runtime id (issue #38) —
 `main.py`'s lifespan raises `DefinitionError` naming the runtime otherwise.
 Runtime IDs of the old `{deployment}__{role}` shape are no longer parsed; see
 [migrating](deployment.md#migrating-from-the-old-runtime-ids). The example
 above grants `demo-sales-agent` its full declared
-permission set (`platform/roles/sales-agent/manifest.md`): `read:catalog`,
+permission set (`examples/agents/sales-agent/manifest.md`): `read:catalog`,
 `read:client_registry`, `write:orders`, `write:order_items`,
 `read:price_lists`, `send:message`. `sales-agent` declares
-`untrusted_input: true` (`platform/roles/sales-agent/policy.md`), and none of
+`untrusted_input: true` (`examples/agents/sales-agent/policy.md`), and none of
 those six permissions is T3 (such as `exec:command` or `read:files`), so granting its
 full declared set here never hands a T3 permission to an untrusted-input role
 (ADR-002 C.11/C.13).
