@@ -395,19 +395,34 @@ def write_matrix(
     now: datetime.datetime | None = None,
 ) -> tuple[pathlib.Path, pathlib.Path]:
     """Write *matrix* as one timestamped JSON file plus a Markdown table
-    under *out_dir* (default ``evals/results/``, gitignored). Returns
+    under *out_dir* (default ``evals/results/``, gitignored). Never overwrites
+    an existing result: a name clash gets a ``-N`` suffix. Returns
     ``(json_path, markdown_path)``."""
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = (now or datetime.datetime.now(datetime.UTC)).strftime("%Y%m%dT%H%M%SZ")
-    json_path = out_dir / f"capability-matrix-{stamp}.json"
-    json_path.write_text(
-        json.dumps(matrix.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    markdown_path = out_dir / f"capability-matrix-{stamp}.md"
-    markdown_path.write_text(
-        matrix.to_markdown(title=f"Capability matrix -- {stamp}"), encoding="utf-8"
-    )
+    payload = json.dumps(matrix.to_dict(), indent=2, sort_keys=True) + "\n"
+    title = f"Capability matrix -- {stamp}"
+    attempt = 0
+    while True:
+        # Exclusive creation claims a stem atomically: a second export in the
+        # same second (or a concurrent job) gets a ``-N`` suffix instead of
+        # replacing an earlier measurement.
+        suffix = "" if attempt == 0 else f"-{attempt}"
+        json_path = out_dir / f"capability-matrix-{stamp}{suffix}.json"
+        markdown_path = json_path.with_suffix(".md")
+        attempt += 1
+        try:
+            with json_path.open("x", encoding="utf-8") as handle:
+                handle.write(payload)
+        except FileExistsError:
+            continue
+        try:
+            with markdown_path.open("x", encoding="utf-8") as handle:
+                handle.write(matrix.to_markdown(title=title))
+        except FileExistsError:
+            json_path.unlink()
+            continue
+        break
     return json_path, markdown_path
 
 

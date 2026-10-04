@@ -538,7 +538,7 @@ EVAL_RUNS=3 scripts/run-capability-matrix.py \
 `--capability` repeats (all seven by default), `--runs` overrides `EVAL_RUNS`
 (default 3) and `--out-dir` moves the output. It prints the Markdown table and
 writes `capability-matrix-<timestamp>.json` and `.md` under `evals/results/`
-(gitignored). It exits 1 when a cell misses its gate. It needs the same extras
+(gitignored); a clash gets a `-N` suffix, so an export never overwrites an earlier one. It exits 1 when a cell misses its gate. It needs the same extras
 as the rest of the live eval: `postgres` and the provider extra.
 
 From Python:

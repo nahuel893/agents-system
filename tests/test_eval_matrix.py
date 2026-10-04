@@ -404,6 +404,27 @@ async def test_write_matrix_writes_json_and_markdown(tmp_path: pathlib.Path) -> 
     assert md_path.read_text().startswith("# Capability matrix")
 
 
+async def test_write_matrix_never_overwrites_a_same_second_export(
+    tmp_path: pathlib.Path,
+) -> None:
+    import datetime
+
+    first = await _matrix()
+    second = await _matrix()
+    now = datetime.datetime(2026, 10, 4, 12, 0, 0, tzinfo=datetime.UTC)
+    out = tmp_path / "res"
+
+    json_1, md_1 = write_matrix(first, out_dir=out, now=now)
+    first_json = json_1.read_text()
+    json_2, md_2 = write_matrix(second, out_dir=out, now=now)
+
+    assert json_1 != json_2
+    assert md_1 != md_2
+    assert json_1.read_text() == first_json
+    assert json_2.stem == md_2.stem  # a pair shares one stem
+    assert len(list(out.iterdir())) == 4
+
+
 def test_candidates_from_names_builds_one_model_per_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

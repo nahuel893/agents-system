@@ -575,7 +575,7 @@ EVAL_RUNS=3 scripts/run-capability-matrix.py \
 `--capability` se repite (las siete por defecto), `--runs` pisa `EVAL_RUNS`
 (por defecto 3) y `--out-dir` cambia la salida. Imprime la tabla Markdown y
 escribe `capability-matrix-<timestamp>.json` y `.md` en `evals/results/`
-(ignorado por git). Sale con código 1 si una celda no cumple su gate. Necesita
+(ignorado por git); si el nombre ya existe agrega un sufijo `-N`, así una exportación nunca pisa otra anterior. Sale con código 1 si una celda no cumple su gate. Necesita
 los mismos extras que el resto de la eval en vivo: `postgres` y el extra del
 proveedor.
 
