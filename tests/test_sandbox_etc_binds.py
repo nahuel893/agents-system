@@ -170,3 +170,12 @@ async def test_a_network_command_cannot_read_etc_hosts(tmp_path: pathlib.Path) -
     result = await connector({"argv": ["cat", "/etc/hosts"]})
     assert result["exit_code"] != 0
     assert result["stdout"] == ""
+
+
+@pytest.mark.parametrize("doc", ["operations", "operations_es"])
+def test_docs_warn_localhost_may_not_resolve_without_etc_hosts(doc: str) -> None:
+    """#239 review: hosts without myhostname/resolve lose `localhost`."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    text = (root / "docs" / doc / "sandbox-bwrap.md").read_text()
+    assert "myhostname" in text
+    assert "127.0.0.1" in text

@@ -192,7 +192,10 @@ los nombres públicos se resuelven igual por DNS sin él (medido con
 `getent hosts` bajo `bwrap`, con y sin el archivo), y el `hosts` del host
 puede listar nombres y direcciones internos. Una herramienta que deba
 resolver un nombre privado lo hace por DNS, o por `extra_ro_binds` bajo
-riesgo explícito del operador. `passwd`, `group`,
+riesgo explícito del operador. En un host cuyo `nsswitch.conf` no tenga el módulo `myhostname` ni
+`resolve`, `localhost` puede dejar de resolverse dentro del sandbox (no probado
+en un host así): las herramientas de red deben usar `127.0.0.1` o `::1`
+literalmente, o montar `/etc/hosts` con `extra_ro_binds`. `passwd`, `group`,
 `shadow` y `/etc/agents-system` nunca se montan.
 
 La lista se obtuvo por experimento con `bwrap`: `factor`, `ls`, `cat`,

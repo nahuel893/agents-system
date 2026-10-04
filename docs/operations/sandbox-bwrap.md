@@ -174,7 +174,10 @@ gets `resolv.conf`; `/etc/hosts` is not bound (#239): public names still
 resolve through DNS without it (measured with `getent hosts` under `bwrap`,
 with and without the file), and the host's `hosts` file can list internal
 names and addresses. A tool that must resolve a private name gets it through
-DNS, or through `extra_ro_binds` at the deployer's explicit risk. `passwd`, `group`, `shadow` and
+DNS, or through `extra_ro_binds` at the deployer's explicit risk. On a host whose `nsswitch.conf` has neither the `myhostname` nor the
+`resolve` module, `localhost` may stop resolving inside the sandbox (not tested on
+such a host): have network tools use `127.0.0.1` or `::1` literally, or bind
+`/etc/hosts` through `extra_ro_binds`. `passwd`, `group`, `shadow` and
 `/etc/agents-system` are never bound.
 
 The list was found by experiment with `bwrap`: `factor`, `ls`, `cat`,
