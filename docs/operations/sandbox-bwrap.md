@@ -170,23 +170,40 @@ would print them. Only an explicit allowlist is bound read-only
 (`_SYSTEM_ETC_BINDS` in `connectors/operator.py`): `ld.so.cache`,
 `nsswitch.conf`, `localtime`, `ssl/certs`, `ca-certificates`,
 `pki/tls/certs` and `alternatives`. A tool that declares `network=True` also
-gets `resolv.conf` and `hosts`. `passwd`, `group`, `shadow` and
+gets `resolv.conf`; `/etc/hosts` is not bound (#239): public names still
+resolve through DNS without it (measured with `getent hosts` under `bwrap`,
+with and without the file), and the host's `hosts` file can list internal
+names and addresses. A tool that must resolve a private name gets it through
+DNS, or through `extra_ro_binds` at the deployer's explicit risk. `passwd`, `group`, `shadow` and
 `/etc/agents-system` are never bound.
 
 The list was found by experiment with `bwrap`: `factor`, `ls`, `cat`,
 `sleep`, `echo` and a venv Python run with no `/etc` at all, so the entries
 exist for portability (library cache, time zone, TLS roots, DNS). The
-`alternatives` entry (Debian-family symlinks such as `awk`) could not be
-verified on the Arch-family host used; it holds only symlinks into `/usr`.
+`alternatives` entry (Debian-family symlinks such as `awk`) was verified in
+a `debian:stable-slim` container (#239): without it `awk` fails with
+`execvp awk: No such file or directory`, with it `awk` runs. It holds only
+symlinks into `/usr`. (Docker blocks mounting `/proc` for `bwrap`, so that
+check ran without `--proc`.)
 
 A command that needs another `/etc` file gets it through
 `SandboxPolicy.extra_ro_binds` (for example `/etc/ssl`). **Risk:** each extra
-bind is readable by every command that tool runs; never bind
-`/etc/agents-system`, and `SandboxPolicy` refuses `/etc` itself. Other
+bind is readable by every command that tool runs; `SandboxPolicy` refuses `/etc` itself and
+`/etc/agents-system` with everything under it (compared by resolved path,
+so a symlink into it is refused too). Other `/etc` sub-paths are not refused
+by name: a deployer legitimately binds tool config, and the bind list is
+their explicit statement. Other
 reads outside the root were probed and are closed: a symlink in the root
 to a host file resolves to nothing (the target is not mounted), `/proc` is
 the sandbox's own PID namespace, and the environment is cleared. The
 directory holding `argv[0]` is also readable, as before.
+
+**Known, accepted exposure (#239):** `/proc/self/mountinfo` (and
+`/proc/1/mountinfo`) inside the sandbox lists the host's mount sources, such
+as device names and btrfs subvolume paths. It holds no secrets and cannot be
+hidden with `bwrap` options without breaking things: `self` resolves to the
+bind-setup process rather than the command, so only `/proc/1` could be
+masked, and `/proc/self` would still show the same data.
 
 ## Workspace scoping
 

@@ -75,6 +75,15 @@ def _forbidden_sandbox_paths() -> frozenset[pathlib.Path]:
     return frozenset(candidate.resolve() for candidate in candidates)
 
 
+#: The deployment's secrets directory (provider keys, database credentials).
+#: Refused as an `extra_ro_binds` entry, itself and everything under it,
+#: compared by resolved path (issue #239). Deliberately the only `/etc`
+#: sub-path refused by name: a deployer legitimately binds tool config such
+#: as `/etc/ssl` or `/etc/<tool>`, so a closed "allowlist of /etc" would break
+#: valid setups; the bind list is the deployer's explicit statement.
+_SECRETS_DIR = pathlib.Path("/etc/agents-system")
+
+
 @dataclasses.dataclass(frozen=True)
 class SandboxPolicy:
     """The bubblewrap (`bwrap`) sandbox a command runs inside (ADR-002 C.14).
@@ -108,6 +117,14 @@ class SandboxPolicy:
     def __post_init__(self) -> None:
         for path in self.extra_ro_binds:
             resolved = path.resolve()
+            if resolved.is_relative_to(_SECRETS_DIR.resolve()):
+                raise ValueError(
+                    f"SandboxPolicy.extra_ro_binds contains '{path}', which "
+                    f"resolves to '{resolved}', inside the deployment secrets "
+                    "directory /etc/agents-system -- binding it would expose "
+                    "the deployment env file to every command of the tool "
+                    "(issue #239)."
+                )
             if resolved in _forbidden_sandbox_paths():
                 raise ValueError(
                     f"SandboxPolicy.extra_ro_binds contains '{path}', which "
@@ -271,8 +288,12 @@ _SYSTEM_ETC_BINDS: tuple[str, ...] = (
     "/etc/alternatives",
 )
 
-#: Bound only when the tool declares `network=True`: the resolver needs them.
-_NETWORK_ETC_BINDS: tuple[str, ...] = ("/etc/resolv.conf", "/etc/hosts")
+#: Bound only when the tool declares `network=True`: the resolver needs it.
+#: `/etc/hosts` is deliberately NOT bound (issue #239): with only `resolv.conf`
+#: and `nsswitch.conf`, public names still resolve through DNS (measured with
+#: `getent hosts` under bwrap, with and without the file), and the host's
+#: `hosts` file can list internal names and addresses.
+_NETWORK_ETC_BINDS: tuple[str, ...] = ("/etc/resolv.conf",)
 
 _MAX_SYMLINK_HOPS = 80
 
