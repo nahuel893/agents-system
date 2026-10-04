@@ -32,6 +32,16 @@ the importer ceiling: an agent folder may match or tighten its parent's
 autonomy and limits, never loosen them, and describes only the escalation
 conditions it adds.
 
+## Which ones the live suite runs
+
+Three carry end-to-end composition scenarios against a real model
+(`tests/test_live_eval_composition.py`, ADR-010): `sales-agent`,
+`developer-agent` together with its parent `operator-agent`, and
+`data-agent`. The other five have offline tests only
+(`tests/test_reference_agents.py`). The live harness serves `sales-agent` by
+default. See "Composition scenarios on reference agents" in
+`docs/platform/live-eval.md`.
+
 ## How they differ from the predefined roles
 
 The same eight agents still ship as predefined roles in `platform/roles/`,

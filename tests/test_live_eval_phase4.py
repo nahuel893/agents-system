@@ -8,7 +8,9 @@ never `AgentRuntime.run_turn` directly:
 
 1. Define a custom agent with the public `Agent` API
    (`Agent.from_folder`, `tests/fixtures/agents/phase4_lifecycle/roles/restock-helper`)
-   that extends the predefined `sales-agent`, adds a skill
+   that extends the reference `sales-agent` (`examples/agents/sales-agent`,
+   supplied as `Agent.from_folder(..., extends=reference_agent("sales-agent"))`,
+   #225 -- never the predefined role by name), adds a skill
    (`restock_alert`) and a tool (the declarative `check_stock` command
    tool, ADR-002 C.12), and tightens `max_tool_calls` to 5.
 2. Register it with `create_app(agents={id: Agent}, grants=...)` under a
@@ -16,8 +18,8 @@ never `AgentRuntime.run_turn` directly:
 3. Serve it: `GET /v1/models` lists it.
 4. Converse with it over the real HTTP API and the real WhatsApp webhook.
 5. Confirm its tool calls land in the real `audit_event` table under its own
-   role name (`restock-helper`) -- the same taxonomy/redaction a predefined
-   role's rows use, since it inherits `sales-agent`'s own `audit_policy`
+   role name (`restock-helper`) -- the same taxonomy/redaction any agent's
+   rows use, since it inherits `sales-agent`'s own `audit_policy`
    unchanged.
 6. Update it: a new definition with a changed skill (an inline
    `skill_contents` override) and one fewer permission (`{"inherit": True,
@@ -60,19 +62,12 @@ from agents_system.evals.live_harness import (
     SALES_AGENT_PERMISSIONS,
     LiveHarness,
     boot_live_harness,
+    reference_agent,
 )
 from agents_system.evals.schema import DEFAULT_HAPPY_PATH_THRESHOLD
 from agents_system.harness.loader import RootConfig, resolve
 
-#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
-#: is deprecated. They move to `agent` or the reference agents in
-#: `examples/agents/` when the roles leave `platform/roles/` (#229).
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.filterwarnings(
-        "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
-    ),
-]
+pytestmark = pytest.mark.live
 
 _RUNS = int(os.environ.get("EVAL_RUNS", "3"))
 
@@ -85,7 +80,7 @@ _RESTOCK_HELPER_PATH = (
     / "restock-helper"
 )
 
-#: `restock-helper`'s full deploy-time grant: `sales-agent`'s own six
+#: `restock-helper`'s full deploy-time grant: the reference `sales-agent`'s own six
 #: permissions, `send:escalation` (inherited from the base `agent` role,
 #: which declares `escalation_notifier` -- otherwise denied at boot for the
 #: same reason `test_live_eval_phase1.py` grants it explicitly for its own
@@ -180,7 +175,10 @@ async def _assert_tool_attempted(
 
 async def test_custom_agent_full_lifecycle() -> None:
     # --- Step 1: define a custom agent with the public Agent API ---------
-    v1 = Agent.from_folder(_RESTOCK_HELPER_PATH)
+    # Its parent, the reference `sales-agent`, is supplied in Python: the
+    # fixture's own `extends: ../sales-agent` names a sibling a copied
+    # project would have, which this fixture folder does not (#225).
+    v1 = Agent.from_folder(_RESTOCK_HELPER_PATH, extends=reference_agent("sales-agent"))
     v1_definition = resolve(v1._to_locator(), roots=RootConfig())
     assert v1_definition.untrusted_input is True, (
         "restock-helper must inherit sales-agent's untrusted_input: true "
@@ -203,6 +201,7 @@ async def test_custom_agent_full_lifecycle() -> None:
     # reason -- there is nothing about v2 that depends on v1 having booted.
     v2 = Agent.from_folder(
         _RESTOCK_HELPER_PATH,
+        extends=reference_agent("sales-agent"),
         skill_contents={"restock_alert": _V2_SKILL_TEXT},
         permissions={"inherit": True, "remove": ["run:check_stock"]},
     )

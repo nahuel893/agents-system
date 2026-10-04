@@ -7,6 +7,7 @@ exercised by the opt-in `tests/test_live_smoke.py` (`pytest -m live`).
 from __future__ import annotations
 
 import asyncio
+import pathlib
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -578,7 +579,8 @@ async def test_boot_live_harness_requires_explicit_permissions_for_a_non_default
 
     with pytest.raises(ValueError, match="permissions"):
         async with live_harness.boot_live_harness(
-            role="operator-agent", runtime_id="probe-operator-agent"
+            role=live_harness.reference_agent("operator-agent"),
+            runtime_id="probe-operator-agent",
         ):
             pass
 
@@ -586,6 +588,146 @@ async def test_boot_live_harness_requires_explicit_permissions_for_a_non_default
         "operator-agent must never be deploy-granted through the "
         "sales-agent default when permissions is omitted"
     )
+
+
+# ---------------------------------------------------------------------------
+# #225 (ADR-010) -- the harness serves a reference agent from
+# `examples/agents/`, loaded as an `Agent`, never a predefined role by name.
+# ---------------------------------------------------------------------------
+
+_REFERENCE_AGENTS_ROOT = (
+    pathlib.Path(__file__).resolve().parents[1] / "examples" / "agents"
+)
+
+
+def _fake_boot(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Fake every I/O boundary `boot_live_harness` touches (the same fakes
+    as the tests above) and return the keyword arguments it hands
+    `create_app`, filled once it boots."""
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from agents_system.evals import live_harness
+
+    async def fake_create_database(admin_url: str, name: str) -> None:
+        return None
+
+    async def fake_drop_database(admin_url: str, name: str) -> None:
+        return None
+
+    def fake_run_migrations(database_url: str, *, repo_root: object) -> None:
+        return None
+
+    def fake_build_eval_model() -> tuple[object, str]:
+        return object(), "fake-model"
+
+    captured: dict[str, Any] = {}
+
+    def fake_create_app(**kwargs: Any) -> FastAPI:
+        captured.update(kwargs)
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+            app.state.engine = object()
+            yield
+
+        return FastAPI(lifespan=lifespan)
+
+    monkeypatch.setattr(live_harness, "_create_database", fake_create_database)
+    monkeypatch.setattr(live_harness, "_drop_database", fake_drop_database)
+    monkeypatch.setattr(live_harness, "_run_migrations", fake_run_migrations)
+    monkeypatch.setattr(live_harness, "build_eval_model", fake_build_eval_model)
+    monkeypatch.setattr(live_harness, "create_app", fake_create_app)
+    return captured
+
+
+async def test_boot_live_harness_serves_the_reference_sales_agent_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default is the reference `sales-agent` folder, loaded as an
+    `Agent` and granted exactly that folder's own permissions -- not the
+    deprecated predefined role resolved by name."""
+    from agents_system.agent.spec import Agent
+    from agents_system.evals import live_harness
+    from agents_system.harness.loader import FolderLocator
+
+    captured = _fake_boot(monkeypatch)
+
+    async with live_harness.boot_live_harness(runtime_id="default-probe"):
+        pass
+
+    served = captured["agents"]["default-probe"]
+    assert isinstance(served, Agent), f"expected an Agent, got {served!r}"
+    locator = served._to_locator()
+    assert isinstance(locator, FolderLocator)
+    assert locator.path.resolve() == _REFERENCE_AGENTS_ROOT / "sales-agent"
+    assert captured["grants"]["default-probe"] == list(
+        live_harness.SALES_AGENT_PERMISSIONS
+    )
+
+
+async def test_boot_live_harness_requires_permissions_for_a_role_name_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Naming `"sales-agent"` is no longer the default, so it gets no
+    default grant either: like any explicit role, it must state its own."""
+    from agents_system.evals import live_harness
+
+    captured = _fake_boot(monkeypatch)
+
+    with pytest.raises(ValueError, match="permissions"):
+        async with live_harness.boot_live_harness(
+            role="sales-agent", runtime_id="probe-sales-agent-name"
+        ):
+            pass
+
+    assert captured == {}, "nothing may be served or granted"
+
+
+def test_sales_agent_permissions_are_the_reference_manifest_permissions() -> None:
+    """The default grant is the reference `sales-agent`'s own manifest
+    `permissions:` list, repeated in code; a change to either side must
+    change the other."""
+    import yaml
+
+    from agents_system.evals.live_harness import SALES_AGENT_PERMISSIONS
+
+    manifest = (_REFERENCE_AGENTS_ROOT / "sales-agent" / "manifest.md").read_text(
+        encoding="utf-8"
+    )
+    frontmatter = yaml.safe_load(manifest.split("---")[1])
+
+    assert SALES_AGENT_PERMISSIONS == tuple(frontmatter["permissions"])
+
+
+def test_reference_agent_loads_the_named_folder_with_its_whole_chain() -> None:
+    """`developer-agent` extends its sibling `../operator-agent`, which
+    extends `agent`: the tools of all three levels resolve."""
+    from agents_system.evals.live_harness import reference_agent
+    from agents_system.harness.loader import RootConfig, resolve
+
+    definition = resolve(
+        reference_agent("developer-agent")._to_locator(), roots=RootConfig()
+    )
+
+    assert definition.role_name == "developer-agent"
+    assert {"use_term", "read_file", "knowledge_retrieval", "escalation_notifier"} <= (
+        set(definition.tools)
+    )
+
+
+@pytest.mark.parametrize(
+    "name", ["no-such-agent", "../sales-agent", "sales-agent/role.md", "", "/tmp"]
+)
+def test_reference_agent_refuses_anything_but_a_reference_agent_name(
+    name: str,
+) -> None:
+    from agents_system.evals.live_harness import reference_agent
+
+    with pytest.raises(ValueError, match="reference agent") as exc:
+        reference_agent(name)
+    assert "sales-agent" in str(exc.value), "the error lists the available names"
 
 
 async def test_boot_live_harness_drops_the_primary_database_when_the_demo_create_fails(

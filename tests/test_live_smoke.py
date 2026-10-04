@@ -35,15 +35,7 @@ from agents_system.evals.live_harness import (
     metric_value,
 )
 
-#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
-#: is deprecated. They move to `agent` or the reference agents in
-#: `examples/agents/` when the roles leave `platform/roles/` (#229).
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.filterwarnings(
-        "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
-    ),
-]
+pytestmark = pytest.mark.live
 
 
 #: Trials of the folder-agent scenario; the same ``EVAL_RUNS`` knob the other
@@ -53,6 +45,10 @@ _RUNS = int(os.environ.get("EVAL_RUNS", "3"))
 
 @pytest.fixture
 async def live_harness() -> AsyncIterator[LiveHarness]:
+    # The harness default (#225, ADR-010): the reference `sales-agent` from
+    # `examples/agents/`, loaded as an `Agent` and granted its own
+    # `SALES_AGENT_PERMISSIONS` -- never the predefined role by name. Its
+    # role name, and so its audit rows' `role`, is still "sales-agent".
     async with boot_live_harness() as harness:
         yield harness
 

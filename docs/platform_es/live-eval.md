@@ -71,9 +71,10 @@ ven afectados.
 ### La suite completa en un comando
 
 `scripts/run-live-suite.sh` corre todas las suites en vivo en orden: smoke,
-roles, guardrails, la tool de SQL de solo lectura, Fase 1, Fase 4 y las dos
-capas de carga de la Fase 3. Si una suite falla, las demás siguen, y al final
-imprime un resumen PASS/FAIL.
+los escenarios de composición sobre los agentes de referencia, guardrails, la
+tool de SQL de solo lectura, Fase 1, Fase 4 y las dos capas de carga de la
+Fase 3. Si una suite falla, las demás siguen, y al final imprime un resumen
+PASS/FAIL.
 
 ```bash
 scripts/run-live-suite.sh           # EVAL_RUNS=3 por escenario (alrededor de una hora)
@@ -369,8 +370,12 @@ cuidadoso ya no pueda dejar una protección sin probar.
 - **Comportamiento (en vivo, modelo real).** Lo que un modelo decide: elección
   de herramienta, escalamiento, fundamentación, resistencia a instrucciones
   inyectadas. Necesitan un modelo real y conservan las compuertas descritas en
-  "Compuertas de calidad". Hoy esta capa es `evals/scenarios/*.yaml` y
-  `evals/scenarios/guardrails/`.
+  "Compuertas de calidad". Hoy esta capa es `evals/scenarios/guardrails/`.
+  Los archivos por rol `evals/scenarios/*.yaml` salieron de la compuerta en
+  vivo en #225; los reemplazan escenarios de capacidad sobre agentes fixture
+  mínimos (#224). Encima de las dos capas hay unos pocos escenarios de
+  composición sobre tres agentes de referencia (ver "Escenarios de
+  composición sobre agentes de referencia" más abajo).
 
 **Cómo escribir un escenario de comportamiento.** Un escenario plantea un
 pedido completo y sin ambigüedad que un modelo cuidadoso ejecutaría: nombra lo
@@ -388,7 +393,10 @@ guardrail que necesita un modelo real: `03_prompt_injection_via_tool_result.yaml
 instrucciones inyectadas que llegan por un RESULTADO de herramienta, verificado
 con `tools_not_called` y `guardrail_exercised`. Es un subdirectorio dedicado que
 el glob no recursivo de `load_scenarios` no toca desde `evals/scenarios/*.yaml`.
-Se corre como cualquier otra suite marcada `live`:
+Desde #225 el escenario nombra la carpeta del `support-agent` de referencia
+(`agent: support-agent`), que el driver resuelve bajo `examples/agents/`
+(`run_scenario(agents_root=...)`), nunca el rol predefinido por nombre. Se
+corre como cualquier otra suite marcada `live`:
 
 ```bash
 export EVAL_PROVIDER=openai_compatible
@@ -400,9 +408,11 @@ EVAL_RUNS=3 pytest -m live tests/test_live_eval_guardrails.py -s
 
 Los demás escenarios de #76 pasaron a `evals/scenarios/mechanism/` (ver
 arriba): `02_layer2_revalidation`, `04_t3_containment_read_file`,
-`05_max_tool_calls` y `06_tool_call_timeout`. El escalamiento lo cubren los
-escenarios `*_escalation.yaml` y la no-fabricación los `*_no_fabrication.yaml`,
-ambos siguen en vivo y con la compuerta de #81.
+`05_max_tool_calls` y `06_tool_call_timeout`. Los escenarios por rol
+`*_escalation.yaml` y `*_no_fabrication.yaml` salieron de la compuerta en vivo
+en #225 junto con el resto de los escenarios por rol; los escenarios de
+composición conservan un escalamiento de punta a punta en `sales-agent` y en
+`developer-agent`.
 
 El fixture del escenario (`PROMPT_INJECTION_DOCUMENT`) se siembra solo en el
 registro de esta suite, mediante el parámetro `extra_documents` de
@@ -514,9 +524,10 @@ Los reportes JSON y markdown ahora llevan la compuerta: `category`,
 campos existentes de escenario/rol/modelo/corridas/tasa de éxito/tokens/
 costo/duración.
 
-`sales_agent_smoke.yaml` (el escenario de humo propio de este pipeline,
-corrido por `tests/test_live_eval_sales_agent.py` contra el modelo local
-por defecto `qwen2.5:3b`, un caso de piso deliberado) sobreescribe su
+`sales_agent_smoke.yaml` (el escenario de humo propio de este pipeline, que
+corría en vivo con `tests/test_live_eval_sales_agent.py` contra el modelo
+local por defecto `qwen2.5:3b`, un caso de piso deliberado; #225 quitó ese
+driver junto con los demás drivers por rol) sobreescribe su
 umbral a 20% con una razón documentada -- el 80% por defecto haría que la
 propia prueba de humo del pipeline sea inestable contra un modelo que esta
 misma sección ya nombra como un caso de piso/regresión deliberado (ver el
@@ -533,7 +544,9 @@ escenario de humo propio del pipeline (#169): prueba que `resolve()` →
 `build_runtime()` → `AgentRuntime.run_turn` funciona de punta a punta contra
 un modelo real. Deliberadamente no es una suite de corrección para
 `sales-agent` — la cobertura de escenarios por rol queda fuera del alcance de
-#169 y le corresponde a los issues hermanos bajo #52.
+#169 y le corresponde a los issues hermanos bajo #52. Desde #225 ningún
+módulo en vivo corre los archivos por rol de `evals/scenarios/*.yaml`; las
+pruebas offline todavía los parsean (`tests/test_eval_scenario_coverage.py`).
 
 ## Dónde van los resultados
 
@@ -684,12 +697,35 @@ worker diferido, una base de datos Postgres real (descartable) migrada con
 construyen sus propios escenarios en vivo sobre este harness.
 
 ```python
-from agents_system.evals.live_harness import boot_live_harness
+from agents_system.evals.live_harness import boot_live_harness, reference_agent
 
-async with boot_live_harness() as harness:
+async with boot_live_harness() as harness:  # el sales-agent de referencia
     response = await harness.send_chat_completion("...")
     ...
+
+async with boot_live_harness(
+    role=reference_agent("data-agent"),
+    permissions=("read:catalog", "read:reports"),
+    bind_webhook_to_role=False,
+) as harness:
+    ...
 ```
+
+**Qué agente sirve (issue #225).** Si no se indica, `role` es el
+`sales-agent` de referencia: `reference_agent("sales-agent")`, la carpeta
+`examples/agents/sales-agent` cargada con `Agent.from_folder`, con el grant
+`SALES_AGENT_PERMISSIONS` (los `permissions:` de esa misma carpeta, que una
+prueba offline compara con el manifest). `reference_agent(name)` carga
+cualquier agente de referencia de la misma forma, el camino que toma la
+carpeta propia de un adoptante, y lanza `ValueError` para un nombre que no es
+una carpeta de `examples/agents/`. Un `role` que se pase, un `Agent` o un
+nombre de rol, siempre necesita sus propios `permissions`: nombrar
+`"sales-agent"` ya no recibe el grant por defecto. Ninguna prueba en vivo
+nombra un rol predefinido. `pyproject.toml` convierte
+`PredefinedRoleDeprecationWarning` en error, así que resolver uno por nombre
+hace fallar la prueba, y `tests/test_reference_agents_in_live_tests.py`
+verifica que ningún módulo en vivo silencie la advertencia y que cada archivo
+de escenario en vivo nombre una carpeta de agente de referencia.
 
 Requiere, todo local por defecto (los servicios `postgres`/`redis` de
 `docker-compose.yml`):
@@ -734,9 +770,10 @@ ponga al día), `audit_rows` (leer las filas que coincidan de la tabla real
 directo desde las tablas del checkpointer de Postgres).
 
 El escenario smoke (`tests/test_live_smoke.py`, `pytest -m live`) prueba el
-cableado de punta a punta con un turno por la API y un turno por el
-webhook, ambos disparando la herramienta `catalog_search` (`session_state`
-se eliminó de los roles predefinidos en #118; la memoria conversacional
+cableado de punta a punta sobre el `sales-agent` de referencia por defecto,
+con un turno por la API y un turno por el webhook, ambos disparando la
+herramienta `catalog_search` (`session_state` se eliminó de los roles
+predefinidos en #118; la memoria conversacional
 reside en el checkpointer y la memoria estructurada pertenece a la Ola 3 de
 ADR-002 #29, #25), y hace assert sobre lo que hizo el SISTEMA: filas de
 auditoría, contadores de `/metrics`, y el mensaje que efectivamente recibió
@@ -770,18 +807,27 @@ según el Principio de este documento. Cada escenario corre `EVAL_RUNS`
 veces (3 por defecto) y aprueba cuando al menos `DEFAULT_HAPPY_PATH_THRESHOLD`
 (80%, #81) de las corridas tiene éxito.
 
+Desde #225 el módulo conserva los agentes construidos con la API `Agent`
+para una función cada uno: una herramienta de comando declarada
+(`check_stock`) y la herramienta SQL de solo lectura. Sus escenarios sobre
+los roles predefinidos pasaron a los escenarios de composición sobre los
+agentes de referencia (sección siguiente): `data-agent` y `sales-agent` tal
+como estaban, y las herramientas con sandbox de `operator-agent` a través de
+`developer-agent`, que las hereda. `summary-agent` no conserva escenarios en
+vivo (pregunta abierta 5 de ADR-010).
+
 Llegar ahí necesitó cuatro agregados a `boot_live_harness` más allá de la
 forma propia de #78, todos opt-in (cada llamada de #78 sigue funcionando
 sin cambios):
 
-- **`role: Agent | str`, `permissions`** -- cualquier rol predefinido (no
-  solo `sales-agent`) o un `Agent` construido en Python (`agent.spec.Agent`,
-  `Agent.from_folder(...)` incluido), con su propio grant de tiempo de
-  despliegue. Omitir `permissions` conserva el default original de #78
-  (`SALES_AGENT_PERMISSIONS`) SOLO cuando `role` queda en su propio default
-  `"sales-agent"`; para cualquier otro rol, omitir `permissions` lanza
-  `ValueError` (revisión #119) -- todo caller no-default debe declarar su
-  propio grant explícitamente, nunca heredar el de `sales-agent`.
+- **`role: Agent | str`, `permissions`** -- un `Agent` construido en Python
+  (`agent.spec.Agent`, `reference_agent(...)` y `Agent.from_folder(...)`
+  incluidos) o un nombre de rol, con su propio grant de tiempo de
+  despliegue. Omitir `permissions` otorga `SALES_AGENT_PERMISSIONS` SOLO
+  cuando `role` no se indica (el `sales-agent` de referencia, #225); para
+  cualquier `role` indicado, omitir `permissions` lanza `ValueError`
+  (revisión #119) -- todo caller que nombra su agente declara su propio
+  grant explícitamente, nunca hereda el de `sales-agent`.
 - **`seed_demo=True`** -- carga los datos de fixture de
   `demo/load_demo_company.py` (catálogo, clientes, ventas) para que
   `catalog_search`/`client_lookup`/`run_report` tengan filas reales para
@@ -815,16 +861,15 @@ sin cambios):
   `check_stock` de #79): esas se inyectan directamente desde la definición
   de rol resuelta, nunca a través del `ToolRegistry` sobre el que operan
   estos dos.
-- **`bind_webhook_to_role=False`** -- la mayoría de los roles predefinidos
+- **`bind_webhook_to_role=False`** -- la mayoría de los agentes de referencia
   (y el valor heredado por defecto de un `Agent(...)` a secas) resuelven
   `untrusted_input: false`, y `create_app` se niega a arrancar CUALQUIER rol
   conectado a `WHATSAPP_RUNTIME_ID` que no lo declare (ADR-002 C.11/C.13: el
   canal entrega entrada externa no confiable). `False` conecta el webhook en
   cambio a un agente placeholder separado, mínimo y siempre seguro, con el
-  que el escenario nunca habla -- solo el único escenario que realmente
-  llama a `deliver_webhook` (memoria de conversación, sobre `sales-agent`,
-  que ya declara `untrusted_input: true`) necesita el valor por defecto
-  `True`.
+  que el escenario nunca habla -- solo un escenario que realmente llama a
+  `deliver_webhook` (memoria de conversación, sobre `sales-agent`, que ya
+  declara `untrusted_input: true`) necesita el valor por defecto `True`.
 
 El rol de la herramienta SQL de solo lectura (`sql_readonly`, #80/ADR-007)
 se provisiona contra SU PROPIA base de datos descartable -- independiente
@@ -838,6 +883,75 @@ el script real (`render_provision_sql_readonly`, probado unitariamente en
 `tests/test_live_harness.py`) mantiene que una corrida en vivo provisione el
 rol de la herramienta a través del mismo instructivo que sigue un operador a
 mano, en vez de una reimplementación paralela que podría desalinearse de él.
+
+## Escenarios de composición sobre agentes de referencia (issue #225)
+
+`tests/test_live_eval_composition.py` (`pytest -m live`) es la cima de la
+pirámide de pruebas de ADR-010: unos pocos escenarios de punta a punta sobre
+tres agentes de referencia de `examples/agents/`, con la forma de la Fase 1.
+Los escenarios de capacidad prueban el prompt genérico del kit sobre agentes
+fixture mínimos, una capacidad por vez; estos cubren lo que aquellos no ven,
+un modelo que maneja muchas herramientas y un prompt largo en un agente real.
+
+| Agente de referencia | Qué compone | Escenarios |
+|---|---|---|
+| `sales-agent` | Entrada no confiable, escrituras, el webhook | `order_writer`; `message_sender`; escalamiento por un cliente no registrado (`client_lookup` y luego `escalation_notifier`); memoria entre dos turnos de webhook a través del checkpointer de Postgres |
+| `developer-agent` sobre `operator-agent` | El sandbox, una cadena de dos niveles | `use_term` (`ls`) y `read_file` en un sandbox real de bubblewrap, ambos heredados de `operator-agent`; escalamiento cuando la lista permitida del sandbox rechaza `uname` (la condición `command_refused_by_policy` viene de la política de `operator-agent`, la instrucción de escalar del prompt de `developer-agent` y `escalation_notifier` de `agent`) |
+| `data-agent` | Reportes | `catalog_search`, `client_lookup`, `knowledge_retrieval` y `run_report` ordenado por unidades |
+
+Cada agente es `reference_agent(name)`, la carpeta cargada con
+`Agent.from_folder` como la de un adoptante, servida por `boot_live_harness`
+con un grant explícito: todo lo que la carpeta declara más `send:escalation`.
+Antes de arrancar, cada prueba verifica que el grant coincida con los
+permisos resueltos del agente, y la prueba de developer verifica la cadena:
+`use_term`, `read_file` y los límites de ejecución vienen de
+`operator-agent`. Las aserciones apuntan a lo que hizo el sistema: una fila
+`tool_call_attempted` ejecutada registrada durante ese turno (así una
+corrida posterior nunca aprueba con la fila de una anterior), los argumentos
+y el resultado registrados de una herramienta, el hilo del checkpointer y los
+envíos del servidor falso de WhatsApp. Cada escenario corre `EVAL_RUNS` veces
+contra la compuerta de 80% de camino feliz (#81), y cada prueba imprime el
+modelo y el tiempo de reloj de cada turno.
+
+Hay una prueba por agente, así un cambio en un agente de referencia corre
+solo sus propios escenarios (parte 3 de ADR-010):
+
+```bash
+EVAL_RUNS=3 pytest -m live tests/test_live_eval_composition.py -k developer_agent -s
+```
+
+`-k developer_agent` también cubre a `operator-agent`, su padre.
+`accountant-agent`, `orchestrator`, `summary-agent` y `support-agent`
+conservan solo pruebas offline (`tests/test_reference_agents.py`, pregunta
+abierta 5 de ADR-010); `support-agent` sigue siendo el sujeto del único
+escenario de guardrail en vivo de más arriba. Los drivers en vivo por rol
+`tests/test_live_eval_roles.py` y `tests/test_live_eval_sales_agent.py` ya no
+existen: sus escenarios nombraban roles predefinidos, y la suite de
+capacidades se ocupa de lo que medían.
+
+**Línea base.** Sobre `openai/gpt-6-sol` con `EVAL_RUNS=3` (2026-10-03), cada
+escenario aprobó 3 de 3 corridas. Dos turnos plantean su pedido completo,
+porque un modelo cuidadoso no actuaría con menos (#218), y las aserciones no
+cambiaron:
+
+- El turno de `order_writer` nombra la línea del pedido ("el SKU es el
+  product_id"). El catálogo de referencia devuelve `sku` y `description` y
+  ningún `product_id`, que `order_writer` exige; cuando solo se le pidió "SKU
+  'ART-001'", el modelo no quiso adivinar el id y escaló en 3 de 3 corridas.
+- El turno de `message_sender` da el texto exacto. Cuando se le pidió enviar
+  "un mensaje que confirme que su pedido está listo", un hecho que ninguna
+  herramienta puede verificar, el modelo respondió sin llamar a ninguna
+  herramienta en 1 de 6 corridas.
+
+**El presupuesto de turno de `operator-agent` sigue en 30 s.** ADR-010 lo dejó
+en 30 s, para subirlo al valor por defecto de la plataforma, 60 s, si los
+escenarios necesitaban más. No lo necesitan: en tres corridas de los escenarios de
+`developer-agent` (27 turnos) el turno más lento tardó 6 s, y ningún turno
+llegó al presupuesto (`agent_turns_total{outcome="timeout"}` quedó en 0). La app
+servida sigue registrando `runtime.turn_budget_below_request_timeout` al
+arrancar, porque 30 s está por debajo del timeout de 45 s de la request al
+proveedor; advierte que una respuesta del proveedor de más de 30 s terminaría
+el turno, algo de lo que estos turnos están lejos.
 
 ## Escenarios de carga de la Fase 3 (issue #83)
 
@@ -916,8 +1030,14 @@ El agente personalizado
 con la API pública `Agent` (`Agent.from_folder`), nunca un rol predefinido de
 la plataforma:
 
-- **Definir.** `extends: platform/roles/sales-agent` (aditivo para
-  capacidad, `harness/loader.py::_fold_parent_into_child`), agrega su propia
+- **Definir.** Extiende el `sales-agent` de referencia (aditivo para
+  capacidad, `harness/loader.py::_fold_parent_into_child`). Su manifest
+  nombra el hermano `extends: ../sales-agent` que tendría un proyecto con una
+  copia de `examples/agents/sales-agent`; esta carpeta de fixture no lo
+  tiene, así que la prueba pasa el padre como
+  `Agent.from_folder(path, extends=reference_agent("sales-agent"))`, que
+  reemplaza esa línea (#225). Cargada sola, la carpeta falla de forma
+  explícita en vez de resolverse contra el rol predefinido obsoleto. Agrega su propia
   skill `restock_alert` (`skills/restock_alert.md` en la misma carpeta del
   fixture) y una entrada `command_tools` declarativa (`check_stock`, ADR-002
   C.12, sobre `/usr/bin/echo` -- la misma forma que ya valida
@@ -937,7 +1057,7 @@ la plataforma:
   `tool_call_attempted` y el mismo pipeline de redacción que usan las filas
   de un rol predefinido, ya que `restock-helper` hereda sin cambios el
   `audit_policy` de `sales-agent`.
-- **Actualizar.** Un segundo `Agent.from_folder(path, skill_contents={...},
+- **Actualizar.** Un segundo `Agent.from_folder(path, extends=..., skill_contents={...},
   permissions={"inherit": True, "remove": ["run:check_stock"]})` -- una
   skill cambiada y un permiso menos que el original -- se re-registra bajo
   el MISMO runtime id mediante una SEGUNDA llamada, independiente, a
@@ -1034,8 +1154,12 @@ de humo.
 - Código del runner: `src/agents_system/evals/{schema,runner,reporting,provider}.py`
 - Pruebas offline: `tests/test_eval_schema.py`, `tests/test_eval_runner.py`,
   `tests/test_eval_reporting.py`, `tests/test_eval_provider.py`
-- Pruebas en vivo: `tests/test_live_eval_sales_agent.py`, `tests/test_live_eval_roles.py`,
-  `tests/test_live_eval_guardrails.py` (issue #76)
+- Pruebas en vivo: `tests/test_live_eval_guardrails.py` (issue #76) y
+  `tests/test_live_eval_folder_target.py` (issue #221); los drivers por rol
+  `tests/test_live_eval_roles.py` y `tests/test_live_eval_sales_agent.py` se
+  quitaron en #225
+- Escenarios de composición sobre los agentes de referencia (#225):
+  `tests/test_live_eval_composition.py`, a través del harness como la Fase 1
 - Escenarios de la herramienta SQL de solo lectura (#80):
   `tests/test_live_eval_sql_query.py` — además necesita la configuración de
   PostgreSQL de `tests/test_sql_query_integration.py` (`DATABASE_URL`,

@@ -49,15 +49,10 @@ from agents_system.evals.live_harness import (
 from agents_system.evals.provider import build_eval_model
 from agents_system.services.outbox import MAX_OUTBOX_ATTEMPTS
 
-#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
-#: is deprecated. They move to `agent` or the reference agents in
-#: `examples/agents/` when the roles leave `platform/roles/` (#229).
-pytestmark = [
-    pytest.mark.load,
-    pytest.mark.filterwarnings(
-        "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
-    ),
-]
+#: Every scenario serves `boot_live_harness`'s default agent: the reference
+#: `sales-agent` from `examples/agents/` (#225, ADR-010), never the
+#: predefined role by name.
+pytestmark = pytest.mark.load
 
 #: Reserved, per #107's sizing rule (`services/admission.py`'s own module
 #: docstring; `Settings.__init__`'s own validator), for the in-process

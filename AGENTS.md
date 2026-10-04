@@ -72,7 +72,7 @@ Offline tests prove the code does what the tests say. Only a real model proves a
 
    | You changed | Run at least |
    |---|---|
-   | A role or agent prompt, escalation, no-fabrication | `tests/test_live_eval_roles.py` (plus `tests/test_live_eval_sales_agent.py` for the sales role) |
+   | A role or agent prompt, escalation, no-fabrication | `tests/test_live_eval_composition.py` (`-k sales_agent`, `-k data_agent`, or `-k developer_agent`, which also covers `operator-agent`) |
    | The permission model, the interceptor, guards or execution limits | `tests/test_live_eval_guardrails.py` |
    | The SQL tool or parameterized reports | `tests/test_live_eval_sql_query.py` |
    | The runtime, conversation memory, the served app, a channel, or a tool end to end | `tests/test_live_eval_phase1.py` and `tests/test_live_smoke.py` |

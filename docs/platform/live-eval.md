@@ -64,10 +64,10 @@ is populated. The fixture is a no-op for any test carrying the `live` or
 
 ### The whole suite in one command
 
-`scripts/run-live-suite.sh` runs every live suite in order: smoke, roles,
-guardrails, the read-only SQL tool, Phase 1, Phase 4, and both Phase 3 load
-layers. A failing suite does not stop the rest, and a PASS/FAIL summary is
-printed at the end.
+`scripts/run-live-suite.sh` runs every live suite in order: smoke, the
+composition scenarios on the reference agents, guardrails, the read-only SQL
+tool, Phase 1, Phase 4, and both Phase 3 load layers. A failing suite does not
+stop the rest, and a PASS/FAIL summary is printed at the end.
 
 ```bash
 scripts/run-live-suite.sh           # EVAL_RUNS=3 per scenario (about an hour)
@@ -345,7 +345,11 @@ no longer leave a guard untested.
 - **Behavior (live, real model).** What a model decides: tool choice,
   escalation, grounding, resistance to injected instructions. These need a
   real model and keep the gates described under "Gating". Today this layer is
-  `evals/scenarios/*.yaml` and `evals/scenarios/guardrails/`.
+  `evals/scenarios/guardrails/`. The per-role `evals/scenarios/*.yaml` files
+  left the live gate in #225; capability scenarios on minimal fixture agents
+  replace them (#224). On top of both layers sit a few composition scenarios
+  on three reference agents (see "Composition scenarios on reference agents"
+  below).
 
 **Writing a behavior scenario.** A scenario states a complete, unambiguous
 request that a careful model would act on: it names the thing to do, its
@@ -362,7 +366,10 @@ real model since #223: `03_prompt_injection_via_tool_result.yaml`, injected
 instructions arriving through a tool RESULT, asserted with `tools_not_called`
 and `guardrail_exercised`. It is a dedicated subdirectory that
 `load_scenarios`'s non-recursive glob never touches from
-`evals/scenarios/*.yaml`. Run it like any other `live`-marked suite:
+`evals/scenarios/*.yaml`. Since #225 the scenario names the reference
+`support-agent` folder (`agent: support-agent`), which the driver resolves
+under `examples/agents/` (`run_scenario(agents_root=...)`), never the
+predefined role by name. Run it like any other `live`-marked suite:
 
 ```bash
 export EVAL_PROVIDER=openai_compatible
@@ -374,9 +381,10 @@ EVAL_RUNS=3 pytest -m live tests/test_live_eval_guardrails.py -s
 
 The other #76 scenarios moved to `evals/scenarios/mechanism/` (see above):
 `02_layer2_revalidation`, `04_t3_containment_read_file`, `05_max_tool_calls`
-and `06_tool_call_timeout`. Escalation is covered by the `*_escalation.yaml`
-scenarios and no-fabrication by the `*_no_fabrication.yaml` ones, both still
-live and gated by #81.
+and `06_tool_call_timeout`. The per-role `*_escalation.yaml` and
+`*_no_fabrication.yaml` scenarios left the live gate in #225 with the rest of
+the per-role scenarios; the composition scenarios keep an end-to-end
+escalation on `sales-agent` and on `developer-agent`.
 
 The scenario's fixture (`PROMPT_INJECTION_DOCUMENT`) is seeded only into this
 suite's registry, via the `extra_documents` parameter of
@@ -480,9 +488,10 @@ The JSON and markdown reports both carry the gate: `category`, `exercised`
 (`PASS`/`FAIL`) markdown columns, alongside the existing scenario/role/model/
 runs/success-rate/tokens/cost/duration fields.
 
-`sales_agent_smoke.yaml` (this pipeline's own smoke scenario, run by
-`tests/test_live_eval_sales_agent.py` against the default local
-`qwen2.5:3b` floor model) overrides its threshold to 20% with a documented
+`sales_agent_smoke.yaml` (this pipeline's own smoke scenario, once run live
+by `tests/test_live_eval_sales_agent.py` against the default local
+`qwen2.5:3b` floor model; #225 removed that driver with the other per-role
+ones) overrides its threshold to 20% with a documented
 reason -- the default 80% would make the pipeline's own smoke test flaky
 against a model this section already names as a deliberate floor/regression
 case (see that file's header comment).
@@ -498,7 +507,9 @@ smoke scenario (#169): it proves `resolve()` → `build_runtime()` →
 `AgentRuntime.run_turn` works end to end against a real model. It is
 deliberately not a correctness suite for `sales-agent` — per-role scenario
 coverage is out of scope for #169 and belongs to the sibling issues under
-#52.
+#52. Since #225 no live module runs the per-role files in
+`evals/scenarios/*.yaml`; offline tests still parse them
+(`tests/test_eval_scenario_coverage.py`).
 
 ## Where results go
 
@@ -636,12 +647,34 @@ real `audit_event` table. Phase 1 (#79) and Phase 2 (extends #76) build their ow
 scenarios on top of it.
 
 ```python
-from agents_system.evals.live_harness import boot_live_harness
+from agents_system.evals.live_harness import boot_live_harness, reference_agent
 
-async with boot_live_harness() as harness:
+async with boot_live_harness() as harness:  # the reference sales-agent
     response = await harness.send_chat_completion("...")
     ...
+
+async with boot_live_harness(
+    role=reference_agent("data-agent"),
+    permissions=("read:catalog", "read:reports"),
+    bind_webhook_to_role=False,
+) as harness:
+    ...
 ```
+
+**Which agent it serves (issue #225).** Left unset, `role` is the reference
+`sales-agent`: `reference_agent("sales-agent")`, the folder
+`examples/agents/sales-agent` loaded with `Agent.from_folder`, granted
+`SALES_AGENT_PERMISSIONS` (that folder's own `permissions:`, which an offline
+test compares with the manifest). `reference_agent(name)` loads any reference
+agent the same way, the path an adopter's own folder takes, and raises
+`ValueError` for a name that is not a folder in `examples/agents/`. A `role`
+you pass, an `Agent` or a role name, always needs its own `permissions`:
+naming `"sales-agent"` no longer gets the default grant. No live test names a
+predefined role. `pyproject.toml` makes `PredefinedRoleDeprecationWarning` an
+error, so resolving one by name fails the test, and
+`tests/test_reference_agents_in_live_tests.py` checks that no live module
+silences the warning and that every live scenario file names a reference
+agent folder.
 
 Requires, all local by default (`docker-compose.yml`'s `postgres`/`redis`
 services):
@@ -683,7 +716,8 @@ checkpointed LangGraph thread straight out of the Postgres checkpointer's
 tables).
 
 The smoke scenario (`tests/test_live_smoke.py`, `pytest -m live`) proves the
-wiring end to end with one API turn and one webhook turn, both driving the
+wiring end to end on the default reference `sales-agent`, with one API turn
+and one webhook turn, both driving the
 `catalog_search` tool (`session_state` was removed from predefined roles in
 #118; conversation memory is in the checkpointer, and structured memory is
 ADR-002 Wave 3 #29, #25), and asserts on what the SYSTEM did: audit rows,
@@ -717,17 +751,24 @@ document's Principle. Each scenario runs `EVAL_RUNS` times (default 3) and
 passes when at least `DEFAULT_HAPPY_PATH_THRESHOLD` (80%, #81) of runs
 succeed.
 
+Since #225 the module keeps the agents built with the `Agent` API for one
+feature each: a declared command tool (`check_stock`) and the read-only SQL
+tool. Its scenarios on the predefined roles moved to the composition
+scenarios on the reference agents (next section): `data-agent` and
+`sales-agent` as they were, and `operator-agent`'s sandboxed tools through
+`developer-agent`, which inherits them. `summary-agent` keeps no live
+scenario (ADR-010 open question 5).
+
 Getting there needed four additions to `boot_live_harness` beyond #78's own
 shape, all opt-in (every #78 call keeps working with no changes):
 
-- **`role: Agent | str`, `permissions`** -- any predefined role (not just
-  `sales-agent`) or a Python-built `Agent` (`agent.spec.Agent`,
-  `Agent.from_folder(...)` included), with its own deploy-time grant.
-  Omitting `permissions` keeps #78's original `SALES_AGENT_PERMISSIONS`
-  default ONLY when `role` is left at its own `"sales-agent"` default; for
-  any other role, omitting `permissions` raises `ValueError` (#119 review) --
-  every non-default caller must state its own grant explicitly, never
-  inherit `sales-agent`'s.
+- **`role: Agent | str`, `permissions`** -- a Python-built `Agent`
+  (`agent.spec.Agent`, `reference_agent(...)` and `Agent.from_folder(...)`
+  included) or a role name, with its own deploy-time grant. Omitting
+  `permissions` grants `SALES_AGENT_PERMISSIONS` ONLY when `role` is left
+  unset (the reference `sales-agent`, #225); for any `role` given, omitting
+  `permissions` raises `ValueError` (#119 review) -- every caller that names
+  its agent states its own grant explicitly, never inherits `sales-agent`'s.
 - **`seed_demo=True`** -- loads `demo/load_demo_company.py`'s fixture data
   (catalog, clients, sales) so `catalog_search`/`client_lookup`/`run_report`
   have real rows to query. Seeds into a SECOND throwaway database, never
@@ -755,15 +796,14 @@ shape, all opt-in (every #78 call keeps working with no changes):
   reach a `command_tools:` declaration (e.g. #79's own `check_stock` fixture
   scenario): those are injected directly from the resolved role definition,
   never through the `ToolRegistry` these two operate on.
-- **`bind_webhook_to_role=False`** -- most predefined roles (and a bare
+- **`bind_webhook_to_role=False`** -- most reference agents (and a bare
   `Agent(...)`'s inherited default) resolve `untrusted_input: false`, and
   `create_app` refuses to boot ANY role bound to `WHATSAPP_RUNTIME_ID` that
   does (ADR-002 C.11/C.13: the channel delivers untrusted external input).
   `False` binds the webhook instead to a separate, minimal, always-safe
-  placeholder agent that the scenario never talks to -- only the one
-  scenario that actually calls `deliver_webhook` (conversation memory, over
-  `sales-agent`, which already declares `untrusted_input: true`) needs the
-  `True` default.
+  placeholder agent that the scenario never talks to -- only a scenario that
+  actually calls `deliver_webhook` (conversation memory, over `sales-agent`,
+  which already declares `untrusted_input: true`) needs the `True` default.
 
 The read-only SQL tool's role (`sql_readonly`, #80/ADR-007) is provisioned
 against its OWN throwaway database -- independent of any `boot_live_harness`
@@ -776,6 +816,72 @@ variables), run over one raw asyncpg connection. Rendering the real script
 keeps a live run provisioning the tool's role through the exact same runbook
 an operator follows by hand, rather than a parallel reimplementation that
 could drift from it.
+
+## Composition scenarios on reference agents (issue #225)
+
+`tests/test_live_eval_composition.py` (`pytest -m live`) is the top of the
+ADR-010 test pyramid: a few end-to-end scenarios on three reference agents
+from `examples/agents/`, in the shape of Phase 1. The capability scenarios
+test the kit's generic prompt on minimal fixture agents, one capability at a
+time; these catch what they miss, a model handling many tools and a long
+prompt in one real agent.
+
+| Reference agent | What it composes | Scenarios |
+|---|---|---|
+| `sales-agent` | Untrusted input, writes, the webhook | `order_writer`; `message_sender`; escalation for an unregistered customer (`client_lookup`, then `escalation_notifier`); memory across two webhook turns through the Postgres checkpointer |
+| `developer-agent` over `operator-agent` | The sandbox, a two-level chain | `use_term` (`ls`) and `read_file` in a real bubblewrap sandbox, both inherited from `operator-agent`; escalation when the sandbox's allowlist refuses `uname` (the `command_refused_by_policy` condition comes from `operator-agent`'s policy, the instruction to escalate from `developer-agent`'s prompt, and `escalation_notifier` from `agent`) |
+| `data-agent` | Reports | `catalog_search`, `client_lookup`, `knowledge_retrieval`, and `run_report` ranked by units |
+
+Each agent is `reference_agent(name)`, the folder loaded with
+`Agent.from_folder` like an adopter's own, served by `boot_live_harness`
+with an explicit grant: everything the folder declares plus
+`send:escalation`. Before booting, each test checks that the grant matches
+the agent's resolved permissions, and the developer test checks the chain:
+`use_term`, `read_file` and the execution limits come from `operator-agent`.
+Assertions target what the system did: an executed `tool_call_attempted` row
+recorded during that turn (so a later run never passes on an earlier run's
+row), a tool's own recorded arguments and result, the checkpointer's thread,
+and the fake WhatsApp server's sends. Each scenario runs `EVAL_RUNS` times
+against the 80% happy-path gate (#81), and each test prints the model and
+every turn's wall-clock time.
+
+There is one test per agent, so a change to one reference agent runs its own
+scenarios only (ADR-010 part 3):
+
+```bash
+EVAL_RUNS=3 pytest -m live tests/test_live_eval_composition.py -k developer_agent -s
+```
+
+`-k developer_agent` also covers `operator-agent`, its parent.
+`accountant-agent`, `orchestrator`, `summary-agent` and `support-agent` keep
+offline tests only (`tests/test_reference_agents.py`, ADR-010 open question
+5); `support-agent` is still the subject of the one live guardrail scenario
+above. The per-role live drivers `tests/test_live_eval_roles.py` and
+`tests/test_live_eval_sales_agent.py` are gone: their scenarios named
+predefined roles, and the capability suite owns what they measured.
+
+**Baseline.** On `openai/gpt-6-sol` with `EVAL_RUNS=3` (2026-10-03), every
+scenario passed 3 of 3 runs. Two turns state their request in full, because a
+careful model would not act on less (#218), and the assertions did not
+change:
+
+- The `order_writer` turn names the order line ("the SKU is the
+  product_id"). The reference catalog returns `sku` and `description` and no
+  `product_id`, which `order_writer` requires; asked only for "SKU
+  'ART-001'", the model declined to guess the id and escalated in 3 of 3
+  runs.
+- The `message_sender` turn gives the exact text. Asked to send "a message
+  confirming their order is ready", a fact no tool can verify, the model
+  answered without calling any tool in 1 of 6 runs.
+
+**`operator-agent`'s turn budget stays 30 s.** ADR-010 left it at 30 s, to
+be raised to the platform default of 60 s if the scenarios needed more. They
+do not: across three runs of `developer-agent`'s scenarios (27 turns) the
+slowest turn took 6 s, and no turn reached the budget (`agent_turns_total{outcome="timeout"}`
+stayed 0). The served app still logs `runtime.turn_budget_below_request_timeout`
+at boot, because 30 s is below the 45 s provider request timeout; it warns
+that one provider response slower than 30 s would end the turn, which these
+turns are far from.
 
 ## Phase 3 load scenarios (issue #83)
 
@@ -851,8 +957,14 @@ The custom agent
 the public `Agent` API (`Agent.from_folder`), never a predefined platform
 role:
 
-- **Define.** It `extends: platform/roles/sales-agent` (additive for
-  capability, `harness/loader.py::_fold_parent_into_child`), adds its own
+- **Define.** It extends the reference `sales-agent` (additive for
+  capability, `harness/loader.py::_fold_parent_into_child`). Its manifest
+  names the sibling `extends: ../sales-agent` that a project with a copy of
+  `examples/agents/sales-agent` would have; this fixture folder has none, so
+  the test supplies the parent as
+  `Agent.from_folder(path, extends=reference_agent("sales-agent"))`, which
+  replaces that line (#225). Loaded on its own, the folder fails loudly
+  instead of resolving against the deprecated predefined role. It adds its own
   `restock_alert` skill (`skills/restock_alert.md` in the same fixture
   folder) and a declarative `command_tools` entry (`check_stock`, ADR-002
   C.12, over `/usr/bin/echo` -- the same shape
@@ -872,7 +984,7 @@ role:
   deploy-time runtime id) -- the same `tool_call_attempted` taxonomy and the
   same redaction pipeline a predefined role's rows go through, since
   `restock-helper` inherits `sales-agent`'s own `audit_policy` unchanged.
-- **Update.** A second `Agent.from_folder(path, skill_contents={...},
+- **Update.** A second `Agent.from_folder(path, extends=..., skill_contents={...},
   permissions={"inherit": True, "remove": ["run:check_stock"]})` -- a
   changed skill and one fewer permission than the original -- is
   re-registered under the SAME runtime id through a SECOND, independent
@@ -960,8 +1072,12 @@ is what keeps this documented floor case from failing its own smoke test.
 - Runner code: `src/agents_system/evals/{schema,runner,reporting,provider}.py`
 - Offline tests: `tests/test_eval_schema.py`, `tests/test_eval_runner.py`,
   `tests/test_eval_reporting.py`, `tests/test_eval_provider.py`
-- Live tests: `tests/test_live_eval_sales_agent.py`, `tests/test_live_eval_roles.py`,
-  `tests/test_live_eval_guardrails.py` (issue #76)
+- Live tests: `tests/test_live_eval_guardrails.py` (issue #76) and
+  `tests/test_live_eval_folder_target.py` (issue #221); the per-role drivers
+  `tests/test_live_eval_roles.py` and `tests/test_live_eval_sales_agent.py`
+  were removed in #225
+- Composition scenarios on the reference agents (#225):
+  `tests/test_live_eval_composition.py`, through the harness like Phase 1
 - Read-only SQL tool scenarios (#80): `tests/test_live_eval_sql_query.py` —
   also needs the PostgreSQL setup of `tests/test_sql_query_integration.py`
   (`DATABASE_URL`, `SQL_DATABASE_URL`) and skips without it; its delete-request

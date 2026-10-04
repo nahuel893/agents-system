@@ -25,13 +25,6 @@ from agents_system.agent.spec import Agent
 from agents_system.harness.factory import build_runtime
 from agents_system.harness.loader import DefinitionError, RootConfig, resolve
 
-#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
-#: is deprecated. They move to `agent` or the reference agents in
-#: `examples/agents/` when the roles leave `platform/roles/` (#229).
-pytestmark = pytest.mark.filterwarnings(
-    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
-)
-
 ROOTS = RootConfig()
 
 _RESTOCK_HELPER_PATH = (
@@ -42,6 +35,23 @@ _RESTOCK_HELPER_PATH = (
     / "roles"
     / "restock-helper"
 )
+
+#: ADR-010 (#225): `restock-helper` extends the reference `sales-agent`
+#: (`examples/agents/sales-agent`), supplied through `Agent.from_folder(...,
+#: extends=...)` exactly as `tests/test_live_eval_phase4.py` does. Its own
+#: manifest names the sibling `../sales-agent` a copied project would have.
+_REFERENCE_SALES_AGENT_PATH = (
+    pathlib.Path(__file__).resolve().parents[1] / "examples" / "agents" / "sales-agent"
+)
+
+
+def _restock_helper(**overrides: object) -> Agent:
+    return Agent.from_folder(
+        _RESTOCK_HELPER_PATH,
+        extends=Agent.from_folder(_REFERENCE_SALES_AGENT_PATH),
+        **overrides,
+    )
+
 
 #: `restock-helper` extends `sales-agent`'s own six permissions plus
 #: `send:escalation` (inherited from the base `agent` role's own
@@ -65,14 +75,20 @@ _RESTOCK_HELPER_GRANT = (
 def test_restock_helper_resolves_cleanly_as_a_baseline() -> None:
     """Sanity check the fixture itself before probing its ceiling -- a
     failure here means the fixture is broken, not that the ceiling holds."""
-    definition = resolve(
-        Agent.from_folder(_RESTOCK_HELPER_PATH)._to_locator(), roots=ROOTS
-    )
+    definition = resolve(_restock_helper()._to_locator(), roots=ROOTS)
     assert definition.untrusted_input is True
     assert definition.execution_limits is not None
     assert definition.execution_limits["max_tool_calls"] == 5
     assert "run:check_stock" in definition.permissions
     assert any(tool.name == "check_stock" for tool in definition.command_tools)
+
+
+def test_restock_helper_needs_its_parent_supplied() -> None:
+    """Loaded on its own, the fixture names a sibling `../sales-agent` that
+    its folder does not have, so it fails loudly instead of resolving
+    against the deprecated predefined role."""
+    with pytest.raises(DefinitionError, match=r"\.\./sales-agent"):
+        resolve(Agent.from_folder(_RESTOCK_HELPER_PATH)._to_locator(), roots=ROOTS)
 
 
 def test_registering_a_variant_that_raises_the_limit_fails_at_boot() -> None:
@@ -83,9 +99,7 @@ def test_registering_a_variant_that_raises_the_limit_fails_at_boot() -> None:
     from conftest import build_test_registry
 
     registry = build_test_registry()
-    rogue = Agent.from_folder(
-        _RESTOCK_HELPER_PATH, execution_limits={"max_tool_calls": 999}
-    )
+    rogue = _restock_helper(execution_limits={"max_tool_calls": 999})
 
     with pytest.raises(DefinitionError, match="max_tool_calls") as exc:
         build_runtime(
@@ -107,7 +121,7 @@ def test_registering_a_variant_that_loosens_untrusted_input_fails_at_boot() -> N
     from conftest import build_test_registry
 
     registry = build_test_registry()
-    rogue = Agent.from_folder(_RESTOCK_HELPER_PATH, untrusted_input=False)
+    rogue = _restock_helper(untrusted_input=False)
 
     with pytest.raises(DefinitionError, match="untrusted_input") as exc:
         build_runtime(
