@@ -50,6 +50,41 @@ def test_total_cost_is_none_when_no_report_carries_a_cost(
     assert total_cost(tmp_path, marker) is None
 
 
+def test_total_cost_falls_back_to_the_suite_log_turn_usage_lines(
+    tmp_path: pathlib.Path,
+) -> None:
+    marker = tmp_path / "marker"
+    marker.touch()
+    log = tmp_path / "suite.log"
+    usage = {"event": "runtime.turn_usage", "cost_usd": 0.01}
+    other = {"event": "something.else", "cost_usd": 5.0}
+    null_cost = {"event": "runtime.turn_usage", "cost_usd": None}
+    log.write_text(
+        "\n".join(
+            ["plain text", json.dumps(usage), json.dumps(usage), json.dumps(other)]
+            + [json.dumps(null_cost), "{not json"]
+        ),
+        encoding="utf-8",
+    )
+    assert total_cost(tmp_path, marker, log) == 0.02
+
+
+def test_reports_win_over_the_log_so_nothing_is_counted_twice(
+    tmp_path: pathlib.Path,
+) -> None:
+    marker = tmp_path / "marker"
+    marker.touch()
+    os.utime(marker, (100, 100))
+    report = tmp_path / "r.json"
+    _report(report, 0.5)
+    os.utime(report, (200, 200))
+    log = tmp_path / "suite.log"
+    log.write_text(
+        json.dumps({"event": "runtime.turn_usage", "cost_usd": 9.0}), encoding="utf-8"
+    )
+    assert total_cost(tmp_path, marker, log) == 0.5
+
+
 def test_cli_prints_n_a_for_no_cost(tmp_path: pathlib.Path) -> None:
     marker = tmp_path / "marker"
     marker.touch()

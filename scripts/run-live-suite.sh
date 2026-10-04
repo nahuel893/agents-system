@@ -79,9 +79,9 @@ cleanup() {
 trap cleanup EXIT
 
 # --- Suites ----------------------------------------------------------------
-declare -a names=() results=() suite_groups=()
+declare -a names=() results=() suite_groups=() suite_costs=() group_suite_costs=()
 declare -a group_names=() group_results=() group_costs=()
-group="" group_failed=0 group_marker="" group_start=0
+group="" group_failed=0 group_start=0
 python_bin="$repo/.venv/bin/python"
 results_dir="$repo/evals/results"
 
@@ -89,7 +89,8 @@ close_group() {
   [[ -z "$group" ]] && return
   local secs=$((SECONDS - group_start))
   local cost
-  cost="$("$python_bin" "$repo/scripts/live_suite_cost.py" "$results_dir" "$group_marker")"
+  cost="$(printf '%s\n' "${group_suite_costs[@]:-n/a}" \
+    | awk '$1 != "n/a" {s += $1; n++} END {if (n) printf "%.4f", s; else print "n/a"}')"
   group_names+=("$group")
   group_costs+=("$cost")
   if [[ $group_failed -eq 0 ]]; then
@@ -104,9 +105,8 @@ run_group() {
   close_group
   group="$1"
   group_failed=0
+  group_suite_costs=()
   group_start=$SECONDS
-  group_marker="$out/.marker-$group"
-  touch "$group_marker"
   echo
   echo "##### group: $group #####"
 }
@@ -115,10 +115,15 @@ run_suite() {
   local name="$1"; shift
   echo
   echo "=== $group / $name ==="
-  local start=$SECONDS
+  local start=$SECONDS marker="$out/.marker-$name"
+  touch "$marker"
   "$@" 2>&1 | tee "$out/$name.log"
   local rc=${PIPESTATUS[0]}
   local secs=$((SECONDS - start))
+  local cost
+  cost="$("$python_bin" "$repo/scripts/live_suite_cost.py" "$results_dir" "$marker" "$out/$name.log")"
+  suite_costs+=("$cost")
+  group_suite_costs+=("$cost")
   names+=("$name")
   suite_groups+=("$group")
   if [[ $rc -eq 0 ]]; then
@@ -156,7 +161,7 @@ close_group
     printf '%-12s %s  cost_usd=%s\n' "${group_names[$g]}" "${group_results[$g]}" "${group_costs[$g]}"
     for i in "${!names[@]}"; do
       [[ "${suite_groups[$i]}" == "${group_names[$g]}" ]] || continue
-      printf '  %-16s %s\n' "${names[$i]}" "${results[$i]}"
+      printf '  %-16s %-20s cost_usd=%s\n' "${names[$i]}" "${results[$i]}" "${suite_costs[$i]}"
     done
   done
   echo "Logs: $out"
