@@ -6,6 +6,11 @@ exactly like `tests/test_live_eval_roles.py` and
 `tests/test_live_eval_sales_agent.py`. See `docs/platform/live-eval.md` for
 the provider switch, the new assertion types, and where results land.
 
+Since #223 (ADR-010) the deterministic mechanism scenarios (interceptor,
+limits, sandbox, the `*_boundary` files) live in `evals/scenarios/mechanism/`
+and run offline in `tests/test_mechanism_suite.py` with a scripted model, so
+only the behavior scenario that needs a real model remains here.
+
 This loads every scenario under `evals/scenarios/guardrails/` -- a dedicated
 subdirectory `load_scenarios(evals/scenarios/...)`'s own non-recursive glob
 never touches, so it never overlaps `tests/test_live_eval_roles.py`'s 21
@@ -38,23 +43,20 @@ from __future__ import annotations
 
 import os
 import pathlib
-import shutil
-import tempfile
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 
 import pytest
 from langchain_core.language_models import BaseChatModel
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from agents_system.connectors.operator import SandboxPolicy, TerminalPolicy
 from agents_system.evals.live_registry import (
     PROMPT_INJECTION_DOCUMENT,
     build_live_registry_factory,
 )
 from agents_system.evals.provider import build_eval_model
 from agents_system.evals.reporting import write_results
-from agents_system.evals.runner import RunOutcome, ScenarioResult, run_scenario
-from agents_system.evals.schema import CATEGORY_GUARDRAIL, Scenario, load_scenarios
+from agents_system.evals.runner import run_scenario
+from agents_system.evals.schema import Scenario, load_scenarios
 from agents_system.harness.loader import RootConfig
 
 #: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
@@ -80,13 +82,6 @@ _DEMO_DATABASE_URL = (
 #: repetitions to be informative than a happy-path success RATE does.
 _DEFAULT_RUNS = 3
 _RUNS = int(os.environ.get("EVAL_RUNS", str(_DEFAULT_RUNS)))
-
-#: `operator-agent` is the only role this suite's scenarios use that needs
-#: the bwrap sandbox (`read_file`, `use_term`) -- skip cleanly, with a clear
-#: reason, when bwrap is unavailable, the same posture
-#: `tests/test_live_eval_roles.py` already takes for its own operator/
-#: developer scenarios.
-_SANDBOXED_ROLES = frozenset({"operator-agent", "developer-agent"})
 
 _SCENARIOS: tuple[Scenario, ...] = load_scenarios(_SCENARIOS_DIR)
 
@@ -118,78 +113,6 @@ async def eval_model() -> AsyncIterator[tuple[BaseChatModel, str]]:
             await client.aclose()
 
 
-@pytest.fixture(scope="module")
-def operator_workspace() -> Iterator[pathlib.Path]:
-    """A dedicated, disposable sandbox root for scenario 4 (`read_file`
-    containment) and scenario 6 (`use_term` timeout) -- never the process's
-    own cwd or `$HOME` (`TerminalPolicy.__post_init__` refuses both)."""
-    with tempfile.TemporaryDirectory(prefix="agents_system-live-guardrails-") as tmp:
-        yield pathlib.Path(tmp)
-
-
-@pytest.fixture(scope="module")
-def terminal_policy(operator_workspace: pathlib.Path) -> TerminalPolicy:
-    """Adds "sleep" to the allowlist (scenario 6's deterministic slow
-    command) alongside the usual "ls"/"cat" -- no other scenario in this
-    suite or `tests/test_live_eval_roles.py` ever names "sleep", so this
-    addition changes nothing for anyone else.
-
-    `timeout_s` (the sandbox's OWN per-command kill timer, distinct from
-    the interceptor's `tool_call_timeout_s`) is left at a generous 30s so it
-    never races scenario 6's lowered `tool_call_timeout_s` override (3s) --
-    the interceptor's own timeout must be what fires, not the sandbox's.
-    """
-    return TerminalPolicy(
-        root=operator_workspace,
-        allowed_commands=frozenset({"ls", "cat", "sleep"}),
-        sandbox=SandboxPolicy(),
-        timeout_s=30.0,
-    )
-
-
-#: PR #102 review fix (#76) -- scenarios honestly documented (see the named
-#: scenario file's own header comment, and PR #102's live-run results table)
-#: as not yet reliably exercisable against the pinned live-eval model:
-#: `02_layer2_revalidation` never got an `order_writer` attempt in 3 live
-#: runs across several turn-wording iterations
-#: (deepseek/deepseek-v4-flash-0731). The mechanism itself is independently
-#: proven correct offline
-#: (`tests/test_eval_runner.py::
-#: test_run_scenario_turn_permissions_narrows_layer2_after_layer1_equips_it`,
-#: which uses a fake model that DOES attempt the call and confirms Layer 2
-#: blocks it) -- this is a live-adversary sourcing gap for THIS scenario
-#: against THIS model, not a broken guardrail. Named explicitly here, and
-#: `_is_known_non_exercised_gap` below only swallows the SPECIFIC "never
-#: exercised" failure mode, so a real regression -- on this scenario or any
-#: other -- still surfaces as a hard, unmistakable pytest failure.
-_KNOWN_NON_EXERCISABLE_SCENARIOS = frozenset({"02_layer2_revalidation"})
-
-
-def _is_known_non_exercised_gap(scenario_name: str, result: ScenarioResult) -> bool:
-    """True only when *scenario_name* is one of
-    `_KNOWN_NON_EXERCISABLE_SCENARIOS` AND *result*'s gate failed for the
-    single, narrow reason that it was never exercised
-    (`exercised_count == 0`) -- never for a scenario that DID exercise but
-    still broke (a real regression), and never for a scenario not
-    explicitly named here.
-
-    #130 review fix -- `exercised_count == 0` alone looks identical whether
-    the model genuinely never attempted the guardrail's tool, or every run
-    crashed before any assertion could be evaluated at all
-    (`RunOutcome.error` set -- its own docstring says such a run always
-    reports `exercised=False` too). The extra `not any(run.error ...)`
-    check keeps a real infrastructure crash a hard, unmistakable pytest
-    failure instead of being silently downgraded to this documented,
-    narrowly-scoped live-elicitation gap.
-    """
-    return (
-        scenario_name in _KNOWN_NON_EXERCISABLE_SCENARIOS
-        and not result.gate.passed
-        and result.exercised_count == 0
-        and not any(run.error for run in result.runs)
-    )
-
-
 @pytest.mark.live
 @pytest.mark.parametrize(
     "scenario", _SCENARIOS, ids=[scenario.name for scenario in _SCENARIOS]
@@ -198,16 +121,11 @@ async def test_guardrail_scenario_holds_against_a_real_model(
     scenario: Scenario,
     engine: AsyncEngine,
     eval_model: tuple[BaseChatModel, str],
-    terminal_policy: TerminalPolicy,
 ) -> None:
-    if scenario.role in _SANDBOXED_ROLES and shutil.which("bwrap") is None:
-        pytest.skip(reason="this scenario needs bwrap, which is not installed")
-
     model, model_name = eval_model
     registry_factory = build_live_registry_factory(
         engine,
         model,
-        terminal_policy=terminal_policy,
         # #130 -- this suite is the only caller that needs scenario 3's
         # prompt-injection fixture; see `build_live_registry`'s
         # `extra_documents` docstring for why it is no longer seeded by
@@ -240,141 +158,9 @@ async def test_guardrail_scenario_holds_against_a_real_model(
     # Structural completeness, same as the other live drivers.
     assert len(result.runs) == _RUNS
 
-    # PR #102 review fix -- a documented, narrowly-scoped non-exercise gap
-    # (see `_KNOWN_NON_EXERCISABLE_SCENARIOS` above) is reported as an
-    # expected failure, not a hard one: this is a live-adversary sourcing
-    # limitation of one named scenario against one pinned model, honestly
-    # disclosed in the PR, never a silent downgrade of the guardrail gate
-    # itself -- every OTHER failure (a real break, a crash, or this same
-    # scenario failing for any OTHER reason) still hits the strict assert
-    # below unchanged.
-    if _is_known_non_exercised_gap(scenario.name, result):
-        pytest.xfail(
-            "documented live-elicitation gap (see the scenario file's own "
-            f"header comment): {result.gate.reason}"
-        )
-
     # The actual guardrail gate: held in every exercised run, and exercised
     # at least once (#76/#81's Principle -- a guardrail never tried proves
     # nothing). A broken guardrail is a security finding, not a flaky test
     # -- this assertion is deliberately never weakened; see the PR body for
     # this run's actual held/broken/not-exercised results.
     assert result.gate.passed, result.gate.reason
-
-
-# ---------------------------------------------------------------------------
-# Offline tests (PR #102 review fixes) -- no live model, DB, or sandbox.
-# ---------------------------------------------------------------------------
-
-
-def _fake_result(
-    *, scenario: str, runs: tuple[RunOutcome, ...], category: str = CATEGORY_GUARDRAIL
-) -> ScenarioResult:
-    return ScenarioResult(
-        scenario=scenario,
-        role="sales-agent",
-        model="fake-model",
-        runs=runs,
-        category=category,
-    )
-
-
-def test_is_known_non_exercised_gap_true_for_the_named_scenario_never_exercised() -> (
-    None
-):
-    scenario_name = next(iter(_KNOWN_NON_EXERCISABLE_SCENARIOS))
-    result = _fake_result(
-        scenario=scenario_name,
-        runs=(RunOutcome(passed=True, exercised=False),) * 3,
-    )
-
-    assert result.gate.passed is False  # sanity: this IS the never-exercised gate
-    assert _is_known_non_exercised_gap(scenario_name, result) is True
-
-
-def test_is_known_non_exercised_gap_false_once_the_scenario_actually_exercises() -> (
-    None
-):
-    """If the scenario ever starts exercising (a mechanism or model
-    improvement), a genuine break must surface as a hard failure again, not
-    be swallowed by this escape hatch."""
-    scenario_name = next(iter(_KNOWN_NON_EXERCISABLE_SCENARIOS))
-    result = _fake_result(
-        scenario=scenario_name,
-        runs=(RunOutcome(passed=False, exercised=True),),
-    )
-
-    assert result.gate.passed is False  # broke, not merely never-exercised
-    assert _is_known_non_exercised_gap(scenario_name, result) is False
-
-
-def test_is_known_non_exercised_gap_false_for_an_unrelated_never_exercised_scenario() -> (
-    None
-):
-    result = _fake_result(
-        scenario="06_tool_call_timeout",
-        runs=(RunOutcome(passed=True, exercised=False),) * 3,
-    )
-
-    assert _is_known_non_exercised_gap("06_tool_call_timeout", result) is False
-
-
-def test_is_known_non_exercised_gap_false_when_the_named_scenario_already_passed() -> (
-    None
-):
-    scenario_name = next(iter(_KNOWN_NON_EXERCISABLE_SCENARIOS))
-    result = _fake_result(
-        scenario=scenario_name,
-        runs=(RunOutcome(passed=True, exercised=True),),
-    )
-
-    assert result.gate.passed is True
-    assert _is_known_non_exercised_gap(scenario_name, result) is False
-
-
-def test_is_known_non_exercised_gap_false_when_every_run_actually_crashed() -> None:
-    """#130 -- `exercised_count == 0` looks identical whether the model
-    genuinely never attempted the guardrail's tool, or whether every run
-    crashed before any assertion could even be evaluated
-    (`RunOutcome.error` set, per its own docstring always reporting
-    `exercised=False` too). A real infrastructure crash must surface as a
-    hard pytest failure, never be silently swallowed by this scenario's
-    documented live-elicitation-gap escape hatch.
-    """
-    scenario_name = next(iter(_KNOWN_NON_EXERCISABLE_SCENARIOS))
-    result = _fake_result(
-        scenario=scenario_name,
-        runs=(RunOutcome(passed=False, exercised=False, error="model call timed out"),)
-        * 3,
-    )
-
-    assert result.gate.passed is False  # still the never-exercised gate
-    assert _is_known_non_exercised_gap(scenario_name, result) is False
-
-
-def test_tool_call_timeout_scenario_names_what_proves_the_process_was_killed() -> None:
-    """PR #102 review fix, updated for #105 -- `06_tool_call_timeout.yaml`'s
-    assertions (`tools_called`/`not_executed` on `use_term`) read only the
-    harness's reported transcript, never real host process state, so a
-    "held" result here cannot by itself prove the sandboxed process was
-    terminated. #105 made `_run_argv` kill and reap it when the OUTER
-    (interceptor) timeout fires, and the tests that prove it live elsewhere.
-    The scenario's own header comment must keep both halves: what "held"
-    proves, and where process termination is proven -- so a future reader
-    never mistakes "held" for "resource-bounded", nor goes looking for a
-    proof this scenario never carried.
-    """
-    source = (_SCENARIOS_DIR / "06_tool_call_timeout.yaml").read_text(encoding="utf-8")
-    # Strip each line's leading "# " comment marker before collapsing
-    # whitespace, so a phrase that happens to wrap across two comment lines
-    # (like this file's own header) is still matched as one sentence.
-    stripped_lines = (line.lstrip("#").strip() for line in source.splitlines())
-    normalized = " ".join(stripped_lines).lower()
-
-    assert "read only the harness's reported transcript" in normalized
-    assert "is proven elsewhere, not here" in normalized
-    assert "test_an_outer_timeout_kills_and_reaps_the_process" in source
-    assert "test_a_sandboxed_command_is_killed_when_an_outer_timeout_cancels_it" in (
-        source
-    )
-    assert "#105" in source
