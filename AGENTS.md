@@ -84,12 +84,12 @@ Offline tests prove the code does what the tests say. Only a real model proves a
 
    `scripts/run-live-suite.sh` runs all of them, grouped as mechanism, behavior and composition, and reports each group's result and cost.
 
-   Always force the remote reference model; local inference is never used:
+   Always force the remote reference model; local inference is never used. This forced-variables form is a deliberate safety belt for automated runs; a developer sets `EVAL_PROVIDER` once in `.env` and runs `uv run --env-file .env pytest -m live <module>` (see `docs/platform/live-eval.md`):
 
    ```bash
    set -a; . .env; set +a
-   EVAL_PROVIDER=openai_compatible OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol \
-   MODEL_PRICES='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}' \
+   EVAL_PROVIDER=openai_compatible OPENAI_COMPATIBLE_MODEL=openai/gpt-6-luna \
+   MODEL_PRICES='{"openai/gpt-6-luna": {"input_per_million": 0.1, "output_per_million": 0.5}}' \
    EVAL_RUNS=3 pytest -m live <module> -k "<scenarios>" -rA
    ```
 

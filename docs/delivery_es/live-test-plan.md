@@ -262,7 +262,7 @@ de la Fase 3 en `docs/platform/live-eval.md` para los números completos.
 
 ## Fase 4 — Ciclo de vida completo (terminada, #84)
 
-**Estado: terminada (#84).** `tests/test_live_eval_phase4.py` (`pytest -m live`)
+**Estado: terminada (#84).** `tests/test_live_eval_phase4.py` (`uv run --env-file .env pytest -m live`)
 prueba el ciclo de vida completo del agente personalizado -- definir,
 registrar, servir, conversar, auditar, actualizar -- como UN solo escenario en
 vivo, a través de `boot_live_harness`, con compuerta al 80% sobre `EVAL_RUNS`

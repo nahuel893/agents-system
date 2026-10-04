@@ -14,7 +14,8 @@ Requires (see `docs/platform/live-eval.md`):
   - a real model reachable through `EVAL_PROVIDER` (and its provider-specific
     env vars, e.g. `OPENAI_COMPATIBLE_*` for OpenRouter).
 
-Run with: `pytest -m live tests/test_live_smoke.py -v`.
+Run with: `uv run --env-file .env pytest -m live tests/test_live_smoke.py -v`
+(EVAL_PROVIDER comes from `.env`; see docs/platform/live-eval.md).
 """
 
 from __future__ import annotations

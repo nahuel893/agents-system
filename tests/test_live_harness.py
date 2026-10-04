@@ -1,7 +1,7 @@
 """Offline tests for the #78 Phase 0 Slice 3 live harness helpers -- the
 ones that need no real model, Postgres, or Redis (`docs/platform/live-eval.md`
 "Live harness" section). The harness itself (`boot_live_harness`) is only
-exercised by the opt-in `tests/test_live_smoke.py` (`pytest -m live`).
+exercised by the opt-in `tests/test_live_smoke.py` (`uv run --env-file .env pytest -m live`).
 """
 
 from __future__ import annotations

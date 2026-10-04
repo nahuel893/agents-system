@@ -1,7 +1,7 @@
 """Live eval: one scenario through an agent-folder target (#221, ADR-010).
 
 Runs `tests/fixtures/agents/eval_targets/stock_lookup.yaml` on the real
-reference model. Opt-in (`pytest -m live`); see docs/platform/live-eval.md.
+reference model. Opt-in (`uv run --env-file .env pytest -m live`); see docs/platform/live-eval.md.
 """
 
 from __future__ import annotations

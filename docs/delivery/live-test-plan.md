@@ -132,7 +132,7 @@ Without real metrics there is nothing to assert against in later phases.
 
 ## Phase 1 — The agent works, end to end
 
-**Status: done (#79).** `tests/test_live_eval_phase1.py` (`pytest -m live`)
+**Status: done (#79).** `tests/test_live_eval_phase1.py` (`uv run --env-file .env pytest -m live`)
 covers every bullet below through `boot_live_harness` (#78) -- the real
 HTTP API or the real WhatsApp webhook, never the direct-runtime shortcut --
 gated at #81's `DEFAULT_HAPPY_PATH_THRESHOLD` (80%) over `EVAL_RUNS` (3
@@ -231,7 +231,7 @@ defect, but is reported here rather than assumed away; see
 
 ## Phase 4 — Full lifecycle (done, #84)
 
-**Status: done (#84).** `tests/test_live_eval_phase4.py` (`pytest -m live`)
+**Status: done (#84).** `tests/test_live_eval_phase4.py` (`uv run --env-file .env pytest -m live`)
 proves the full custom-agent lifecycle -- define, register, serve, converse,
 audit, update -- as ONE live scenario, through `boot_live_harness`, gated at
 80% over `EVAL_RUNS` (3 by default; observed 3/3, 100%, over

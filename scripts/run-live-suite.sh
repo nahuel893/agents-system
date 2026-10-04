@@ -16,7 +16,7 @@
 # defaults to openai_compatible (OpenRouter); set EVAL_PROVIDER_OVERRIDE to use another.
 # MODEL_PRICES defaults to the reference model's prices when unset, so the
 # reported cost is never null. The model itself always comes from
-# OPENAI_COMPATIBLE_MODEL (force openai/gpt-6-sol for a gate).
+# OPENAI_COMPATIBLE_MODEL (force openai/gpt-6-luna for a gate).
 # Every suite runs even if an earlier one fails; logs and a summary (per suite,
 # per group, with cost) land in evals/results/live-suite-<timestamp>/
 # (gitignored).
@@ -37,9 +37,12 @@ set -a
 # shellcheck disable=SC1091
 [[ -f "$repo/.env" ]] && . "$repo/.env"
 set +a
+# Forced on purpose, whatever .env says: automated runs must never fall back to
+# a local model. Developers set EVAL_PROVIDER in .env for one-off live runs
+# (see docs/platform/live-eval.md).
 export EVAL_PROVIDER="${EVAL_PROVIDER_OVERRIDE:-openai_compatible}"
 export EVAL_RUNS="$runs"
-default_prices='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}'
+default_prices='{"openai/gpt-6-luna": {"input_per_million": 0.1, "output_per_million": 0.5}}'
 MODEL_PRICES="${MODEL_PRICES:-$default_prices}"
 export MODEL_PRICES
 pytest_bin="$repo/.venv/bin/pytest"

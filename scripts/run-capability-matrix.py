@@ -4,7 +4,7 @@ matrix (#228, ADR-010 part 4).
 
 Usage:
     EVAL_PROVIDER=openai_compatible scripts/run-capability-matrix.py \\
-        --model openai/gpt-6-sol --model google/gemini-3.8-flash \\
+        --model openai/gpt-6-luna --model google/gemini-3.8-flash \\
         --capability grounding --capability memory --runs 3
 
 Models are built from the configured eval provider (``EVAL_PROVIDER`` and its

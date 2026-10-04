@@ -38,7 +38,8 @@ is decided from.
 Gating (#81): each scenario runs `EVAL_RUNS` times (default 3) and passes
 when at least `DEFAULT_HAPPY_PATH_THRESHOLD` (80%) of runs pass.
 
-Run with: `pytest -m live tests/test_live_eval_composition.py -v -s`.
+Run with: `uv run --env-file .env pytest -m live tests/test_live_eval_composition.py -v -s`
+(EVAL_PROVIDER comes from `.env`; see docs/platform/live-eval.md).
 """
 
 from __future__ import annotations

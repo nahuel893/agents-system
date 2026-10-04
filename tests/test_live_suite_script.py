@@ -133,7 +133,7 @@ def test_suite_script_is_valid_bash() -> None:
 
 
 def test_suite_defaults_model_prices_for_the_reference_model() -> None:
-    assert re.search(r"default_prices='.*openai/gpt-6-sol", SCRIPT)
+    assert re.search(r"default_prices='.*openai/gpt-6-luna", SCRIPT)
     assert 'MODEL_PRICES="${MODEL_PRICES:-$default_prices}"' in SCRIPT
     assert "export MODEL_PRICES" in SCRIPT
 

@@ -35,7 +35,8 @@ passes as a whole when at least `DEFAULT_HAPPY_PATH_THRESHOLD` (80%) of runs
 pass -- these are all happy-path scenarios, never guardrail ones (#76/#81's
 100%-of-exercised-runs rule is for Phase 2, not this file).
 
-Run with: `pytest -m live tests/test_live_eval_phase1.py -v -s`.
+Run with: `uv run --env-file .env pytest -m live tests/test_live_eval_phase1.py -v -s`
+(EVAL_PROVIDER comes from `.env`; see docs/platform/live-eval.md).
 """
 
 from __future__ import annotations

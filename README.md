@@ -868,16 +868,16 @@ scripts/smoke-installed-wheel.sh
 Two opt-in suites run against real infrastructure and are never part of CI:
 
 ```bash
-uv run pytest -m live               # live-eval pipeline against a real local model
-uv run pytest -m load               # concurrent-load scenarios against a real app
-uv run pytest -m 'load and live'    # a small load run against a real model
+uv run --env-file .env pytest -m live               # live-eval pipeline against a real model (EVAL_PROVIDER in .env)
+uv run --env-file .env pytest -m load  # concurrent-load scenarios against a real app
+uv run --env-file .env pytest -m 'load and live'  # a small load run against a real model
 ```
 
 They cover four phases: **Phase 1** (platform features end-to-end, HTTP API +
 WhatsApp webhook), **Phase 2** — the guardrail suite — (Layer-2
 revalidation, prompt-injection containment, sandbox containment, tool-call
 and timeout limits; run with
-`EVAL_RUNS=3 pytest -m live tests/test_live_eval_guardrails.py -s`),
+`EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_eval_guardrails.py -s`),
 **Phase 3** (concurrent load through the webhook path), and **Phase 4** (a
 full custom-agent lifecycle: define, register, serve, converse, audit,
 update).

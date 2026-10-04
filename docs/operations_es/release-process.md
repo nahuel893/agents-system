@@ -42,7 +42,7 @@ disponibles localmente.
    release registra sus resultados:
 
    1. La suite completa en vivo pasa con el modelo de referencia
-      (`openai/gpt-6-sol` a través de `EVAL_PROVIDER=openai_compatible`;
+      (`openai/gpt-6-luna` a través de `EVAL_PROVIDER=openai_compatible`;
       el entorno exacto está en la Definición de terminado de `AGENTS.md`):
 
       ```sh
@@ -67,7 +67,7 @@ disponibles localmente.
       línea del último release la nombra.
 
    El cuerpo de la PR de release también lleva la **matriz de capacidades**:
-   una tabla para el modelo de referencia (`openai/gpt-6-sol`) y los dos
+   una tabla para el modelo de referencia (`openai/gpt-6-luna`) y los dos
    modelos de segunda opinión (`google/gemini-3.8-flash` y
    `deepseek/deepseek-v4-flash`), generada con
    `scripts/run-capability-matrix.py`, `EVAL_RUNS=3` y `MODEL_PRICES` definido

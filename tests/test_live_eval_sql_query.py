@@ -1,6 +1,6 @@
 """Live eval: the read-only SQL tool against a real model (#80, live-test plan Phase 1).
 
-Excluded from the default run - select it with `pytest -m live`. Besides the
+Excluded from the default run - select it with `uv run --env-file .env pytest -m live`. Besides the
 provider settings every live eval needs (`docs/platform/live-eval.md`), it
 needs the same database as `tests/test_sql_query_integration.py`: the
 fixture views loaded, `sql_readonly` provisioned for
