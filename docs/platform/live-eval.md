@@ -462,8 +462,8 @@ assertions:
   tools_succeeded: [order_writer]   # each name needs one call with no denial, timeout or error_kind
   tool_arguments:                   # one call to the tool must carry every value listed
     order_writer:
-      client_id: CL-2208            # found case-insensitively in the argument
-      items: FX-118                 # a non-string argument is read as its JSON text
+      client_id: CL-2208            # the whole value, ignoring case and surrounding spaces
+      items: FX-118                 # in a list or object: one whole value inside it
   reply_contains: ["48611"]         # text in the run's final assistant message
 ```
 
@@ -471,14 +471,22 @@ assertions:
   accepts only a right argument (the summarizer knows one session id) makes a
   successful call proof the argument was right.
 - `tool_arguments` checks one call: two calls that each carry half of the
-  values do not pass. It looks at the call regardless of its outcome; pair it
-  with `tools_succeeded` when the call must also have worked.
+  values do not pass. A value matches whole, never in part: `CL-7731` does not
+  match `CL-77310`, and `FX-118` does not match a line for `FX-1180`. It looks
+  at the call regardless of its outcome; name the tool in `tools_succeeded`
+  too when the call must also have worked, and then the call that carries the
+  values must be one that succeeded (a failed call with the right values next
+  to a successful one with the wrong values does not pass). A failure names
+  the arguments that differed, never the values the model sent: results are
+  written to `evals/results/` and printed.
 - `reply_contains` is for a value the model cannot produce without the tool
   result or the earlier turn under test, such as the factors `factor`
   printed. It is never for wording: ADR-002 E.18 rules out assertions on
-  phrasing, not on whether an answer carries the data it was given.
+  phrasing, not on whether an answer carries the data it was given. A failure
+  names the expected text, never the reply.
 
-None of the three changes how a run is judged exercised.
+None of the three changes how a run is judged exercised, and none reports what
+the model sent.
 
 ## Live guardrail suite (issue #76)
 

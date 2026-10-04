@@ -495,8 +495,8 @@ assertions:
   tools_succeeded: [order_writer]   # cada nombre necesita una llamada sin denegación, timeout ni error_kind
   tool_arguments:                   # una llamada a la herramienta debe llevar todos los valores listados
     order_writer:
-      client_id: CL-2208            # se busca sin distinguir mayúsculas dentro del argumento
-      items: FX-118                 # un argumento que no es texto se lee como su texto JSON
+      client_id: CL-2208            # el valor entero, sin distinguir mayúsculas ni espacios alrededor
+      items: FX-118                 # en una lista u objeto: un valor entero dentro de él
   reply_contains: ["48611"]         # texto en el último mensaje del asistente de la corrida
 ```
 
@@ -505,16 +505,24 @@ assertions:
   solo id de sesión) hace de una llamada exitosa la prueba de que el
   argumento era el correcto.
 - `tool_arguments` mira una sola llamada: dos llamadas que llevan cada una la
-  mitad de los valores no pasan. Mira la llamada sea cual sea su resultado;
-  combinala con `tools_succeeded` cuando la llamada además tiene que haber
-  funcionado.
+  mitad de los valores no pasan. Un valor coincide entero, nunca en parte:
+  `CL-7731` no coincide con `CL-77310`, ni `FX-118` con una línea de
+  `FX-1180`. Mira la llamada sea cual sea su resultado; nombrá la herramienta
+  también en `tools_succeeded` cuando la llamada además tiene que haber
+  funcionado, y entonces la llamada que lleva los valores tiene que ser una
+  que funcionó (una llamada fallida con los valores correctos junto a una
+  exitosa con valores equivocados no pasa). Una falla nombra los argumentos
+  que no coincidieron, nunca los valores que mandó el modelo: los resultados
+  se escriben en `evals/results/` y se imprimen.
 - `reply_contains` es para un valor que el modelo no puede producir sin el
   resultado de la herramienta o el turno anterior bajo prueba, como los
   factores que imprimió `factor`. Nunca es para la redacción: ADR-002 E.18
   descarta aserciones sobre la forma de decir algo, no sobre si una respuesta
-  lleva los datos que recibió.
+  lleva los datos que recibió. Una falla nombra el texto esperado, nunca la
+  respuesta.
 
-Ninguna de las tres cambia cómo se decide si una corrida fue ejercitada.
+Ninguna de las tres cambia cómo se decide si una corrida fue ejercitada, y
+ninguna reporta lo que mandó el modelo.
 
 ## Suite de guardrails en vivo (issue #76)
 

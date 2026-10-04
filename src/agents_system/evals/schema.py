@@ -118,12 +118,14 @@ class ScenarioAssertions:
     #: arguments, the exact identifier a tool only accepts when right).
     tools_succeeded: tuple[str, ...] = ()
     #: #224 -- per tool, argument values at least ONE call to it must carry,
-    #: all in that same call (any outcome; pair with `tools_succeeded` when
-    #: the call must also have worked). Each expected value is text found
-    #: case-insensitively inside the argument; a non-string argument is read
-    #: as its JSON text, so ``items: ART-009`` matches a list of order lines
-    #: naming that product. It checks what the system executed, never the
-    #: model's prose.
+    #: all in that same call. Any outcome counts, unless the tool is also in
+    #: `tools_succeeded`: then that call must be one that succeeded. A value
+    #: matches whole, ignoring case and surrounding spaces, never in part
+    #: (``CL-7731`` does not match ``CL-77310``); a non-string scalar is
+    #: compared as its JSON text, and a list or object matches when one
+    #: value inside it does, so ``items: ART-009`` matches a list of order
+    #: lines naming that product. It checks what the system executed, never
+    #: the model's prose, and a failure names arguments, never their values.
     tool_arguments: Mapping[str, Mapping[str, str]] = dataclasses.field(
         default_factory=dict
     )
@@ -132,7 +134,7 @@ class ScenarioAssertions:
     #: the tool result or the earlier turn under test (a command's printed
     #: output, a fact only a fixture holds), never for wording: ADR-002 E.18
     #: rules out assertions on phrasing, not on whether an answer carries the
-    #: data it was given.
+    #: data it was given. A failure names the expected text, never the reply.
     reply_contains: tuple[str, ...] = ()
 
 

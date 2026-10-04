@@ -739,7 +739,7 @@ def test_evaluate_assertions_tool_arguments_matches_a_call_case_insensitively() 
     assert outcome.passed
 
 
-def test_evaluate_assertions_tool_arguments_reads_a_non_string_value_as_json() -> None:
+def test_evaluate_assertions_tool_arguments_finds_a_value_inside_a_list() -> None:
     messages = [
         _tool_call(
             "order_writer",
@@ -792,6 +792,161 @@ def test_evaluate_assertions_tool_arguments_fails_when_the_tool_was_not_called()
     assert "was not called" in outcome.failures[0].detail
 
 
+@pytest.mark.parametrize(
+    ("value", "expected", "matches"),
+    [
+        # A scalar matches whole: an identifier that merely contains the
+        # expected one is a different identifier.
+        ("CL-77310", "CL-7731", False),
+        ("ACL-7731", "CL-7731", False),
+        (" cl-7731 ", "CL-7731", True),
+        (4, "4", True),
+        (40, "4", False),
+        (True, "true", True),
+        # A list or object matches when one value inside it does, whole.
+        ([{"product_id": "FX-1180", "qty": 4}], "FX-118", False),
+        ([{"product_id": "fx-118", "qty": 4}], "FX-118", True),
+        ({"sku": "FX-118"}, "FX-118", True),
+        ([{"product_id": "FX-118", "qty": 4}], "qty", False),
+    ],
+)
+def test_evaluate_assertions_tool_arguments_compares_whole_values(
+    value: Any, expected: str, matches: bool
+) -> None:
+    messages = [_tool_call("order_writer", {"client_id": "CL-1", "items": value})]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tool_arguments={"order_writer": {"items": expected}}),
+        messages,
+    )
+
+    assert outcome.passed is matches
+
+
+def test_evaluate_assertions_tool_arguments_with_tools_succeeded_needs_one_call_to_do_both() -> (
+    None
+):
+    """A failed call with the right client and a successful call with the
+    wrong one do not add up to a successful order for the right client."""
+    messages = [
+        _tool_call("order_writer", {"client_id": "CL-7731", "items": []}, "call-1"),
+        ToolMessage(content='{"error_kind": "invalid_order"}', tool_call_id="call-1"),
+        _tool_call("order_writer", {"client_id": "CL-0001", "items": []}, "call-2"),
+        ToolMessage(content='{"order_id": "mem-order-000001"}', tool_call_id="call-2"),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(
+            tools_succeeded=("order_writer",),
+            tool_arguments={"order_writer": {"client_id": "CL-7731"}},
+        ),
+        messages,
+    )
+
+    assert not outcome.passed
+    assert [failure.kind for failure in outcome.failures] == ["tool_arguments"]
+    detail = outcome.failures[0].detail
+    assert "successful call" in detail
+    assert "call 1: did not succeed" in detail
+    assert "call 2: client_id differed" in detail
+
+
+def test_evaluate_assertions_tool_arguments_with_tools_succeeded_passes_on_the_successful_call() -> (
+    None
+):
+    messages = [
+        _tool_call("order_writer", {"client_id": "CL-0001", "items": []}, "call-1"),
+        ToolMessage(content='{"error_kind": "invalid_order"}', tool_call_id="call-1"),
+        _tool_call("order_writer", {"client_id": "CL-7731", "items": []}, "call-2"),
+        ToolMessage(content='{"order_id": "mem-order-000001"}', tool_call_id="call-2"),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(
+            tools_succeeded=("order_writer",),
+            tool_arguments={"order_writer": {"client_id": "CL-7731"}},
+        ),
+        messages,
+    )
+
+    assert outcome.passed
+
+
+def test_evaluate_assertions_tool_arguments_alone_looks_at_a_call_of_any_outcome() -> (
+    None
+):
+    messages = [
+        _tool_call("order_writer", {"client_id": "CL-7731", "items": []}),
+        ToolMessage(content='{"error_kind": "invalid_order"}', tool_call_id="call-1"),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tool_arguments={"order_writer": {"client_id": "CL-7731"}}),
+        messages,
+    )
+
+    assert outcome.passed
+
+
+def test_evaluate_assertions_tool_arguments_pairs_each_result_with_its_own_call() -> (
+    None
+):
+    """A provider that reuses a call id across turns: each result answers the
+    call right before it, so the later failure is not read as the earlier
+    call's success."""
+    messages = [
+        _tool_call("order_writer", {"client_id": "CL-0001", "items": []}, "call-1"),
+        ToolMessage(content='{"order_id": "mem-order-000001"}', tool_call_id="call-1"),
+        _tool_call("order_writer", {"client_id": "CL-7731", "items": []}, "call-1"),
+        ToolMessage(content='{"error_kind": "invalid_order"}', tool_call_id="call-1"),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(
+            tools_succeeded=("order_writer",),
+            tool_arguments={"order_writer": {"client_id": "CL-7731"}},
+        ),
+        messages,
+    )
+
+    assert not outcome.passed
+    assert [failure.kind for failure in outcome.failures] == ["tool_arguments"]
+
+
+def test_evaluate_assertions_tool_arguments_failure_never_reports_argument_values() -> (
+    None
+):
+    """Eval results are written to evals/results/ and printed by the live
+    modules: a failure names the arguments that differed, never what the
+    model sent."""
+    messages = [
+        _tool_call(
+            "order_writer",
+            {
+                "client_id": "private-marker-client",
+                "items": [{"product_id": "private-marker-sku"}],
+                "note": "private-marker-note",
+            },
+        ),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(
+            tool_arguments={
+                "order_writer": {"client_id": "CL-7731", "items": "FX-118", "qty": "4"}
+            }
+        ),
+        messages,
+    )
+
+    assert not outcome.passed
+    detail = outcome.failures[0].detail
+    assert "private-marker" not in detail
+    assert "client_id differed" in detail
+    assert "items differed" in detail
+    assert "qty missing" in detail
+
+
 def test_evaluate_assertions_reply_contains_reads_the_final_reply_only() -> None:
     """The token in a tool result proves nothing about the answer: only the
     last assistant message counts."""
@@ -826,6 +981,23 @@ def test_evaluate_assertions_reply_contains_fails_when_there_is_no_reply() -> No
     outcome = evaluate_assertions(ScenarioAssertions(reply_contains=("48611",)), [])
 
     assert not outcome.passed
+    assert "no final reply" in outcome.failures[0].detail
+
+
+def test_evaluate_assertions_reply_contains_failure_never_reports_the_reply() -> None:
+    """Like tool arguments, the reply is what the model sent: a failure
+    names the expected text, never the reply, which can carry whatever the
+    model read from an adopter's tools."""
+    messages = [AIMessage(content="Your account private-marker-account is ready.")]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(reply_contains=("48611",)), messages
+    )
+
+    assert not outcome.passed
+    detail = outcome.failures[0].detail
+    assert "48611" in detail
+    assert "private-marker" not in detail
 
 
 # ---------------------------------------------------------------------------
