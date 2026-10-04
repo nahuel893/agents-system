@@ -426,18 +426,25 @@ capacidad `commands` necesita `bwrap` y el `factor` de coreutils en el host,
 y sin alguno de los dos se omite nombrándolos. Desde Python:
 
 ```python
+import asyncio
+
 from agents_system.evals import build_eval_model
 from agents_system.evals.capabilities import (
     load_capability_scenarios,
     run_capability_scenario,
 )
 
-model, model_name = build_eval_model()
-for case in load_capability_scenarios(["grounding", "memory"]):  # None: todas
-    result = await run_capability_scenario(
-        case, model=model, model_name=model_name, runs=3
-    )
-    print(case.capability.id, result.gate.reason)
+
+async def main() -> None:
+    model, model_name = build_eval_model()
+    for case in load_capability_scenarios(["grounding", "memory"]):  # None: todas
+        result = await run_capability_scenario(
+            case, model=model, model_name=model_name, runs=3
+        )
+        print(case.capability.id, result.gate.reason)
+
+
+asyncio.run(main())
 ```
 
 `CAPABILITIES` lista las siete capacidades, `missing_requirements(capability)`

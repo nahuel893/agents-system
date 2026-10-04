@@ -18,6 +18,8 @@ These tests prove what can be proven without one:
 
 from __future__ import annotations
 
+import ast
+import importlib
 import pathlib
 import shutil
 from collections.abc import Sequence
@@ -487,3 +489,33 @@ def test_missing_requirements_names_absent_host_commands(
 
     assert missing_requirements(capability) == capability.requires
     assert missing_requirements(get_capability("memory")) == ()
+
+
+# ---------------------------------------------------------------------------
+# Docs
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = pathlib.Path(__file__).parent.parent
+
+
+@pytest.mark.parametrize(
+    "document", ["docs/platform/live-eval.md", "docs/platform_es/live-eval.md"]
+)
+def test_the_documented_python_example_compiles_and_its_imports_exist(
+    document: str,
+) -> None:
+    """The "From Python" example of the capability section, in each language:
+    it compiles as a script (no top-level ``await``) and every name it
+    imports exists."""
+    text = (_REPO_ROOT / document).read_text(encoding="utf-8")
+    blocks = [block.split("\n```", 1)[0] for block in text.split("```python\n")[1:]]
+    examples = [block for block in blocks if "run_capability_scenario" in block]
+    assert len(examples) == 1, f"{document}: expected one capability example"
+
+    tree = ast.parse(examples[0])
+    compile(tree, f"<{document}: capability example>", "exec")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            module = importlib.import_module(node.module)
+            for alias in node.names:
+                assert hasattr(module, alias.name), f"{node.module}.{alias.name}"
