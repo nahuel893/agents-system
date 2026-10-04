@@ -24,7 +24,7 @@ whether a limit or timeout node fired -- never the model's own wording.
 
 Scenario 1 (grant ceiling, Layer 1) and scenario 7 (escalation) are already
 covered by pre-existing scenarios and are not duplicated here. Scenario 1 --
-#162 retargeted every `evals/scenarios/*_boundary.yaml` file into a live
+#162 retargeted every `evals/scenarios/mechanism/*_boundary.yaml` file into a live
 Layer-2 revalidation scenario (the target tool IS equipped and the model
 attempts it), since a tool excluded at Layer 1 is never offered to the model
 to attempt, so it can never be a meaningful LIVE "exercised" (#81)

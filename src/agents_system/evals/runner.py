@@ -574,7 +574,8 @@ def _scalar_values(value: Any) -> Iterator[Any]:
 
 def _comparable(value: Any) -> str:
     """#224 -- a scalar as `tool_arguments` compares it: a string as given,
-    anything else as its JSON text, ignoring case and surrounding spaces."""
+    anything else as its JSON text, exactly (case matters) apart from
+    surrounding spaces."""
     if isinstance(value, str):
         text = value
     else:
@@ -582,7 +583,7 @@ def _comparable(value: Any) -> str:
             text = json.dumps(value)
         except (TypeError, ValueError):
             text = str(value)
-    return text.strip().casefold()
+    return text.strip()
 
 
 def _argument_matches(value: Any, expected: str) -> bool:

@@ -293,3 +293,47 @@ def test_scenario_keeps_positional_name_role_turns_order() -> None:
     assert scenario.role == "sales-agent"
     assert scenario.turns == ("hello",)
     assert scenario.assertions == ScenarioAssertions()
+
+
+def test_scenario_rejects_an_empty_agent_folder() -> None:
+    with pytest.raises(ScenarioError, match="must be non-empty"):
+        _scenario(agent_folder="")
+    with pytest.raises(ScenarioError, match="must be non-empty"):
+        _scenario(agent_folder="   ")
+
+
+async def test_a_role_with_an_inline_agent_names_its_agent_more_than_once() -> None:
+    from conftest import build_test_registry
+
+    with pytest.raises(ScenarioError, match="names its agent more than once"):
+        await run_scenario(
+            _scenario(role="sales-agent"),
+            model=_model(),
+            model_name="fake",
+            registry=build_test_registry(),
+            agent=Agent(name="inline-bot", extends="agent"),
+        )
+
+
+async def test_no_audit_sink_starts_when_target_resolution_fails() -> None:
+    from conftest import build_test_registry
+
+    from agents_system.evals.runner import _CapturingAuditSink
+
+    built: list[_CapturingAuditSink] = []
+
+    def factory() -> _CapturingAuditSink:
+        sink = _CapturingAuditSink()
+        built.append(sink)
+        return sink
+
+    with pytest.raises(ScenarioError, match="no agent"):
+        await run_scenario(
+            _scenario(),
+            model=_model(),
+            model_name="fake",
+            registry=build_test_registry(),
+            audit_sink_factory=factory,
+        )
+
+    assert built == []

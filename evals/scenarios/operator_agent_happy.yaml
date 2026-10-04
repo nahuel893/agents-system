@@ -1,7 +1,7 @@
 # Happy path for operator-agent (#171).
 #
 # A command request within the sandboxed workspace the live-eval driver
-# provisions (tests/test_live_eval_roles.py builds a TerminalPolicy allowing
+# provisions (tests/test_live_eval_composition.py builds a TerminalPolicy allowing
 # "ls", rooted at a workspace seeded with notes.txt). role.md: "Inspect and
 # operate on a working tree: run approved commands, read files, report what
 # it found." use_term is deliberately used here rather than read_file, since

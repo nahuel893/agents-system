@@ -58,8 +58,8 @@ from agents_system.services.reference import (
 #:
 #: #130 review fix -- this tuple used to also carry `PROMPT_INJECTION_DOCUMENT`
 #: (below), which meant EVERY caller of `build_live_registry`/
-#: `build_live_registry_factory` got it: `examples/demo/app.py`, every role
-#: scenario in `tests/test_live_eval_roles.py`, not only
+#: `build_live_registry_factory` got it: `examples/demo/app.py`, every
+#: composition scenario in `tests/test_live_eval_composition.py`, not only
 #: `tests/test_live_eval_guardrails.py`'s scenario 3, which is the only one
 #: that actually needs it. A scenario-3-shaped query landing on this document
 #: by accident in an unrelated role's registry would have been a false

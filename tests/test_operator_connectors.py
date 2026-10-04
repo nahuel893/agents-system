@@ -450,7 +450,7 @@ async def test_an_outer_timeout_kills_and_reaps_the_process(
     tool: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The interceptor's `tool_call_timeout_s` firing first, as it does in
-    `evals/scenarios/guardrails/06_tool_call_timeout.yaml`."""
+    `evals/scenarios/mechanism/06_tool_call_timeout.yaml`."""
     import uuid
 
     marker = f"outer-timeout-{uuid.uuid4().hex}"

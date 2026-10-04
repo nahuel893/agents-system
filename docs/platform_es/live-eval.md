@@ -535,7 +535,7 @@ assertions:
   tools_succeeded: [order_writer]   # cada nombre necesita una llamada sin denegación, timeout ni error_kind
   tool_arguments:                   # una llamada a la herramienta debe llevar todos los valores listados
     order_writer:
-      client_id: CL-2208            # el valor entero, sin distinguir mayúsculas ni espacios alrededor
+      client_id: CL-2208            # el valor entero, mayúsculas exactas, sin contar espacios alrededor
       items: FX-118                 # en una lista u objeto: un valor entero dentro de él
   reply_contains: ["48611"]         # texto en el último mensaje del asistente de la corrida
 ```
@@ -545,8 +545,8 @@ assertions:
   solo id de sesión) hace de una llamada exitosa la prueba de que el
   argumento era el correcto.
 - `tool_arguments` mira una sola llamada: dos llamadas que llevan cada una la
-  mitad de los valores no pasan. Un valor coincide entero, nunca en parte:
-  `CL-7731` no coincide con `CL-77310`, ni `FX-118` con una línea de
+  mitad de los valores no pasan. Un valor coincide entero y exacto, nunca en parte ni con
+  otras mayúsculas: `CL-7731` no coincide con `CL-77310` ni con `cl-7731`, ni `FX-118` con una línea de
   `FX-1180`. Mira la llamada sea cual sea su resultado; nombrá la herramienta
   también en `tools_succeeded` cuando la llamada además tiene que haber
   funcionado, y entonces la llamada que lleva los valores tiene que ser una

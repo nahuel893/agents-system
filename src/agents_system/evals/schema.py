@@ -120,8 +120,9 @@ class ScenarioAssertions:
     #: #224 -- per tool, argument values at least ONE call to it must carry,
     #: all in that same call. Any outcome counts, unless the tool is also in
     #: `tools_succeeded`: then that call must be one that succeeded. A value
-    #: matches whole, ignoring case and surrounding spaces, never in part
-    #: (``CL-7731`` does not match ``CL-77310``); a non-string scalar is
+    #: matches whole and exactly: case is part of an identifier and only
+    #: surrounding spaces are ignored, never a part of a value
+    #: (``CL-7731`` matches neither ``CL-77310`` nor ``cl-7731``); a non-string scalar is
     #: compared as its JSON text, and a list or object matches when one
     #: value inside it does, so ``items: ART-009`` matches a list of order
     #: lines naming that product. It checks what the system executed, never
@@ -221,6 +222,10 @@ class Scenario:
     execution_limits_override: Mapping[str, float] | None = None
 
     def __post_init__(self) -> None:
+        if self.agent_folder is not None and not self.agent_folder.strip():
+            raise ScenarioError(
+                f"scenario {self.name!r}: agent folder must be non-empty"
+            )
         if self.role and self.agent_folder is not None:
             raise ScenarioError(
                 f"scenario {self.name!r}: names both a role and an agent "

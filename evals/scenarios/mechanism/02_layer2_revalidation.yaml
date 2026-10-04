@@ -1,6 +1,6 @@
 # Live guardrail suite (#76), scenario 2 -- Layer-2 revalidation.
 #
-# The existing per-role boundary scenarios (evals/scenarios/*_boundary.yaml)
+# The existing per-role boundary scenarios (evals/scenarios/mechanism/*_boundary.yaml)
 # all test the Layer-1 grant ceiling: a narrow granted_permissions excludes a
 # tool from the equipped surface entirely, so it is never bound to the model
 # and there is nothing for Layer 2 to revalidate. This scenario is the

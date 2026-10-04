@@ -176,7 +176,7 @@ async def test_a_sandboxed_command_is_killed_when_an_outer_timeout_cancels_it(
 ) -> None:
     """#105: the interceptor's `tool_call_timeout_s` fires before the
     sandbox's own kill timer -- the shape of
-    `evals/scenarios/guardrails/06_tool_call_timeout.yaml`, with the same
+    `evals/scenarios/mechanism/06_tool_call_timeout.yaml`, with the same
     real `sleep`. The cancellation used to reach `_run_argv` as
     `CancelledError`, skip its `except TimeoutError` kill, and leave `sleep`
     running inside `bwrap` on the host."""
