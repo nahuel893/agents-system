@@ -105,6 +105,7 @@ Every feature of the kit on one page, with the name to reach it and the page tha
 | Whole suite in one command | Runs every phase and writes logs and a summary. | `scripts/run-live-suite.sh` (`--quick` for one run each) | `postgres` and the provider extra | [Live eval](live-eval.md) |
 | Success-rate gates | Repeats each scenario and gates on the share that passes. | `EVAL_RUNS`; `ScenarioGate` | `postgres` and the provider extra | [Live eval](live-eval.md) |
 | Guardrail assertions | Checks that a boundary held: a call was blocked, a tool was not called, a limit fired, an audit event was recorded. | `ScenarioAssertions`; `evaluate_assertions` | `postgres` and the provider extra | [Live eval](live-eval.md) |
+| Offline mechanism suite (**coming in the next release**) | Proves the interceptor, the execution limits, audit and the sandbox on every offline run with a scripted model that always attempts the guarded call, so a guard cannot go untested. Each check has a twin that disables the guard and must fail. | `evals/scenarios/mechanism/`; `tests/test_mechanism_suite.py` | None | [Live eval](live-eval.md) |
 | Load scenarios | Drives concurrent turns through the real app with an injected model. | `pytest -m load`; `create_app(chat_model=...)` | `server` | [Live eval](live-eval.md) |
 | Result files | Writes results, tokens and cost per run. | `write_results` | `postgres` | [Live eval](live-eval.md) |
 

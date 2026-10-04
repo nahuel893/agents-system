@@ -184,7 +184,7 @@ class Scenario:
     #: mapping straight over the resolved role's `execution_limits` with no
     #: equivalent validation, so a scenario MAY raise a limit past the
     #: platform default or the role's own tightened baseline (e.g.
-    #: `evals/scenarios/guardrails/06_tool_call_timeout.yaml` raises
+    #: `evals/scenarios/mechanism/06_tool_call_timeout.yaml` raises
     #: `total_execution_timeout_s` well past operator-agent's own 30s
     #: policy). That is intentional: a guardrail scenario often needs MORE
     #: turn budget than production allows, so a slow real model's own
