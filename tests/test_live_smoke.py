@@ -19,6 +19,7 @@ Run with: `pytest -m live tests/test_live_smoke.py -v`.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import shutil
 import uuid
@@ -43,6 +44,11 @@ pytestmark = [
         "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
     ),
 ]
+
+
+#: Trials of the folder-agent scenario; the same ``EVAL_RUNS`` knob the other
+#: live modules read (#226: the folder-registered agent runs three times).
+_RUNS = int(os.environ.get("EVAL_RUNS", "3"))
 
 
 @pytest.fixture
@@ -183,17 +189,20 @@ async def test_smoke_turn_through_a_folder_registered_reference_agent(
     async with boot_live_harness(
         role=folder_agent, permissions=SALES_AGENT_PERMISSIONS
     ) as harness:
-        response = await harness.send_chat_completion(
-            "This is an automated harness check. Call the catalog_search tool "
-            'with q="fernet". Then reply with one short sentence '
-            "confirming you searched for it. You must actually call the tool, "
-            "not just describe it."
-        )
-        assert response.status_code == 200, response.text
-        assert response.json()["choices"][0]["message"]["content"]
-        rows = await harness.audit_rows(correlation_id=response.headers["x-request-id"])
-        assert any(
-            row.event_type == "tool_call_attempted"
-            and row.tool_name == "catalog_search"
-            for row in rows
-        ), [(row.event_type, row.tool_name) for row in rows]
+        for trial in range(_RUNS):
+            response = await harness.send_chat_completion(
+                "This is an automated harness check. Call the catalog_search tool "
+                'with q="fernet". Then reply with one short sentence '
+                "confirming you searched for it. You must actually call the tool, "
+                "not just describe it."
+            )
+            assert response.status_code == 200, (trial, response.text)
+            assert response.json()["choices"][0]["message"]["content"], trial
+            rows = await harness.audit_rows(
+                correlation_id=response.headers["x-request-id"]
+            )
+            assert any(
+                row.event_type == "tool_call_attempted"
+                and row.tool_name == "catalog_search"
+                for row in rows
+            ), (trial, [(row.event_type, row.tool_name) for row in rows])
