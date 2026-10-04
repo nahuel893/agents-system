@@ -177,3 +177,16 @@ def test_live_suites_build_the_eval_model_once_per_test() -> None:
                     shared.append(f"{module.name}: scope={scope!r}")
 
     assert shared == [], f"eval_model must be function-scoped: {shared}"
+
+
+def test_build_eval_model_accepts_a_model_override() -> None:
+    """#228: the capability matrix builds one model per candidate name from
+    the same provider settings."""
+    settings = _settings(eval_provider="ollama", ollama_model="qwen2.5:3b")
+    provider_patch, main_patch = _patched_settings(settings)
+
+    with provider_patch, main_patch:
+        model, name = build_eval_model(model_override="llama3.2:1b")
+
+    assert isinstance(model, ChatOllama)
+    assert name == "llama3.2:1b"

@@ -60,6 +60,17 @@ disponibles localmente.
       filas marcadas "llega en el próximo release" pasan a esta versión, y la
       línea del último release la nombra.
 
+   El cuerpo de la PR de release también lleva la **matriz de capacidades**:
+   una tabla para el modelo de referencia (`openai/gpt-6-sol`) y los dos
+   modelos de segunda opinión (`google/gemini-3.8-flash` y
+   `deepseek/deepseek-v4-flash`), generada con
+   `scripts/run-capability-matrix.py`, `EVAL_RUNS=3` y `MODEL_PRICES` definido
+   para los tres, de modo que el costo nunca quede en `n/a`. Es información
+   para quien lee, no una cuarta compuerta: cada celda es una tasa de un modelo
+   con el prompt genérico del kit y un fixture mínimo, no un veredicto sobre
+   ningún agente. Ver [Matriz de capacidades por
+   modelo](../platform_es/live-eval.md#matriz-de-capacidades-por-modelo-issue-228).
+
 3. **Creá el tag y el GitHub Release:**
 
    ```sh

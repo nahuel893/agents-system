@@ -58,6 +58,15 @@ available locally.
       "coming in the next release" now belong to this version, and the
       latest-release line names it.
 
+   The release PR body also carries the **capability matrix**: one table for
+   the reference model (`openai/gpt-6-sol`) and the two second-opinion models
+   (`google/gemini-3.8-flash` and `deepseek/deepseek-v4-flash`), from
+   `scripts/run-capability-matrix.py` with `EVAL_RUNS=3` and `MODEL_PRICES`
+   set for all three, so cost is never `n/a`. It is information for the
+   reader, not a fourth gate: each cell is a rate for one model on the kit's
+   generic prompt and a minimal fixture, not a verdict on any agent. See
+   [Per-model capability matrix](../platform/live-eval.md#per-model-capability-matrix-issue-228).
+
 3. **Create the tag and GitHub Release:**
 
    ```sh
