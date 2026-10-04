@@ -1,0 +1,24 @@
+# Capability: grounding (ADR-010, #224).
+#
+# The knowledge base records Bar Lucero's standing order: client id CL-2208,
+# 6 units of FX-118. Neither value can be guessed, so an order the system
+# executes with both carries what the tool returned.
+agent: grounding-agent
+category: happy_path
+description: >
+  A customer confirms this week's standing order. The model looks it up and
+  places it with the client id and product the knowledge base returned.
+turns:
+  - "Please place this week's standing order for Bar Lucero, exactly as it is recorded in the knowledge base. I confirm, go ahead."
+granted_permissions:
+  - read:knowledge_base
+  - write:orders
+  - write:order_items
+  - send:escalation
+assertions:
+  tools_called: [knowledge_retrieval]
+  tools_succeeded: [order_writer]
+  tool_arguments:
+    order_writer:
+      client_id: CL-2208
+      items: FX-118
