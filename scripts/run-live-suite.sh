@@ -35,7 +35,7 @@ mkdir -p "$out"
 # Provider keys and settings. .env is loaded, never printed.
 set -a
 # shellcheck disable=SC1091
-. "$repo/.env"
+[[ -f "$repo/.env" ]] && . "$repo/.env"
 set +a
 export EVAL_PROVIDER="${EVAL_PROVIDER_OVERRIDE:-openai_compatible}"
 export EVAL_RUNS="$runs"
