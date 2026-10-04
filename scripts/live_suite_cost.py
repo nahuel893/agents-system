@@ -33,7 +33,8 @@ def _report_cost(
 ) -> tuple[float | None, bool]:
     """The summed cost of the reports newer than *marker*, and whether any row
     had an unknown cost (then there is no total, and the log must not stand in
-    for it). A file that is not a list of row objects is skipped with a warning."""
+    for it). A file that is not a list of row objects is skipped with a warning; a row
+    whose cost cannot be read makes the cost unknown."""
     since = marker.stat().st_mtime
     total: float | None = None
     for report in sorted(results_dir.glob("*.json")):
@@ -45,16 +46,19 @@ def _report_cost(
                 isinstance(row, dict) for row in rows
             ):
                 raise ValueError("not a list of row objects")
-            costs = [row.get("total_cost_usd") for row in rows]
-            if any(cost is not None for cost in costs):
-                [float(cost) for cost in costs if cost is not None]
-        except (OSError, ValueError, TypeError) as error:
+        except (OSError, ValueError) as error:
             _warn(f"skipping {report.name}: {error}")
             continue
-        for cost in costs:
+        for row in rows:
+            cost = row.get("total_cost_usd")
             if cost is None:
                 return None, True  # a partial amount is not a total
-            total = (total or 0.0) + float(cost)
+            try:
+                amount = float(cost)
+            except (ValueError, TypeError):
+                _warn(f"{report.name}: unusable cost {cost!r}; the cost is unknown")
+                return None, True
+            total = (total or 0.0) + amount
     return total, False
 
 

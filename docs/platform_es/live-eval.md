@@ -104,7 +104,7 @@ reportes que escribió (`scripts/live_suite_cost.py`) o, para las suites que
 levantan el harness y no escriben reporte, de las líneas `runtime.turn_usage`
 de su log; el costo de un grupo es la suma de sus suites (`n/a` para el grupo
 `mechanism`, que es offline). Una suite o grupo con algún costo desconocido
-es `n/a`, nunca una suma parcial; un reporte con una fila de costo desconocido
+es `n/a`, nunca una suma parcial; un reporte con una fila de costo desconocido o ilegible
 también deja su suite en `n/a` (el total del log nunca lo reemplaza), y un
 JSON en `evals/results/` que no sea una lista de objetos fila se omite con una
 advertencia. Las tasas por escenario, los tokens y el costo siguen en los

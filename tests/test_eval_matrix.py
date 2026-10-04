@@ -567,3 +567,68 @@ async def test_candidates_from_names_closes_earlier_clients_inside_a_loop(
         matrix_module.candidates_from_names(["a", "bad"])
 
     assert closed == ["a"]
+
+
+def _real_models() -> dict[str, BaseChatModel]:
+    from langchain_anthropic import ChatAnthropic
+    from langchain_groq import ChatGroq
+    from langchain_openai import ChatOpenAI
+
+    return {
+        "groq": ChatGroq(model="m", api_key="dummy"),  # type: ignore[arg-type]
+        "anthropic": ChatAnthropic(model="m", api_key="dummy"),  # type: ignore[arg-type]
+        "openai": ChatOpenAI(model="m", api_key="dummy"),  # type: ignore[arg-type]
+    }
+
+
+def _sdk_clients(name: str, model: BaseChatModel) -> list[Any]:
+    """The SDK clients that own the HTTP connections, per provider."""
+    if name == "groq":
+        return [model.client._client, model.async_client._client]  # type: ignore[attr-defined]
+    if name == "anthropic":
+        return [model._client, model._async_client]  # type: ignore[attr-defined]
+    return [model.root_client, model.root_async_client]  # type: ignore[attr-defined]
+
+
+def _all_closed(clients: list[Any]) -> bool:
+    return all(c.is_closed() for c in clients)
+
+
+def _fail_on_bad(
+    monkeypatch: pytest.MonkeyPatch, models: dict[str, BaseChatModel]
+) -> None:
+    def fake_build(model_override: str | None = None) -> tuple[BaseChatModel, str]:
+        if model_override == "bad":
+            raise RuntimeError("boom")
+        return models[str(model_override)], str(model_override)
+
+    monkeypatch.setattr(matrix_module, "build_eval_model", fake_build)
+
+
+@pytest.mark.parametrize("provider", ["groq", "anthropic", "openai"])
+def test_failure_cleanup_closes_the_sdk_clients_of_each_provider(
+    monkeypatch: pytest.MonkeyPatch, provider: str
+) -> None:
+    models = _real_models()
+    _fail_on_bad(monkeypatch, models)
+    clients = _sdk_clients(provider, models[provider])
+    assert not _all_closed(clients)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        matrix_module.candidates_from_names([provider, "bad"])
+
+    assert _all_closed(clients)
+
+
+@pytest.mark.parametrize("provider", ["groq", "anthropic", "openai"])
+async def test_failure_cleanup_closes_the_sdk_clients_inside_a_loop(
+    monkeypatch: pytest.MonkeyPatch, provider: str
+) -> None:
+    models = _real_models()
+    _fail_on_bad(monkeypatch, models)
+    clients = _sdk_clients(provider, models[provider])
+
+    with pytest.raises(RuntimeError, match="boom"):
+        matrix_module.candidates_from_names([provider, "bad"])
+
+    assert _all_closed(clients)

@@ -57,7 +57,7 @@ def test_sums_rows_of_a_report(tmp_path: pathlib.Path) -> None:
 
 @pytest.mark.parametrize(
     "payload",
-    ['{"rows": []}', "not json", '[1, "x"]', '[{"total_cost_usd": "abc"}]'],
+    ['{"rows": []}', "not json", '[1, "x"]'],
 )
 def test_a_report_that_is_not_rows_of_dicts_is_skipped_with_a_warning(
     tmp_path: pathlib.Path, payload: str, capsys: pytest.CaptureFixture[str]
@@ -178,3 +178,25 @@ def test_group_arithmetic_sums_costs_and_flags_failures(
     assert "cost_usd=n/a" in summary.split("behavior")[1].splitlines()[0]
     comp = summary.split("composition")[1].splitlines()[0]
     assert "PASS" in comp
+
+
+@pytest.mark.parametrize("bad", ["unavailable", "abc", [1], {"a": 1}])
+def test_a_row_with_an_invalid_cost_makes_the_suite_cost_unknown(
+    tmp_path: pathlib.Path, bad: object
+) -> None:
+    results = _results(tmp_path)
+    (results / "a.json").write_text(json.dumps([{"total_cost_usd": bad}]))
+    (results / "b.json").write_text(json.dumps([{"total_cost_usd": 1.0}]))
+
+    assert cost.total_cost(results, _marker(tmp_path)) is None
+
+
+def test_a_row_with_an_invalid_cost_does_not_fall_back_to_the_log(
+    tmp_path: pathlib.Path,
+) -> None:
+    results = _results(tmp_path)
+    (results / "a.json").write_text(json.dumps([{"total_cost_usd": "unavailable"}]))
+    log = tmp_path / "run.log"
+    log.write_text(json.dumps({"event": "runtime.turn_usage", "cost_usd": 0.03}) + "\n")
+
+    assert cost.total_cost(results, _marker(tmp_path), log) is None

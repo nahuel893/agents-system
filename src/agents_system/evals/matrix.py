@@ -31,6 +31,7 @@ import asyncio
 import contextlib
 import dataclasses
 import datetime
+import inspect
 import json
 import os
 import pathlib
@@ -102,6 +103,42 @@ def candidates_from_names(names: Iterable[str]) -> list[ModelCandidate]:
     return candidates
 
 
+#: Attributes of the LangChain chat models that hold an HTTP client: a custom
+#: httpx client the caller passed in, or the provider SDK's own client (some
+#: expose it directly, some only through the `_client` of a resource wrapper).
+_CLIENT_ATTRIBUTES = (
+    "http_async_client",
+    "http_client",
+    "root_async_client",
+    "root_client",
+    "async_client",
+    "client",
+    "_async_client",
+    "_client",
+)
+
+
+def _owned_clients(model: BaseChatModel) -> list[Any]:
+    """The distinct closable HTTP clients behind *model* (each listed once)."""
+    found: dict[int, Any] = {}
+    for attribute in _CLIENT_ATTRIBUTES:
+        value = getattr(model, attribute, None)
+        if value is None:
+            continue
+        if not (hasattr(value, "aclose") or hasattr(value, "close")):
+            value = getattr(value, "_client", None)  # a resource wrapper
+        if value is not None and (hasattr(value, "aclose") or hasattr(value, "close")):
+            found.setdefault(id(value), value)
+    return list(found.values())
+
+
+async def _close_one(client: Any) -> None:
+    closer = getattr(client, "aclose", None) or client.close
+    result = closer()
+    if inspect.isawaitable(result):
+        await result
+
+
 def _close_clients(candidates: Sequence[ModelCandidate]) -> None:
     """Close the HTTP clients of *candidates* from synchronous code, whether or
     not an event loop is running; a client that fails to close is ignored (the
@@ -109,10 +146,9 @@ def _close_clients(candidates: Sequence[ModelCandidate]) -> None:
 
     async def close_all() -> None:
         for candidate in candidates:
-            client = getattr(candidate.model, "http_async_client", None)
-            if client is not None:
+            for client in _owned_clients(candidate.model):
                 with contextlib.suppress(Exception):
-                    await client.aclose()
+                    await _close_one(client)
 
     try:
         asyncio.get_running_loop()
