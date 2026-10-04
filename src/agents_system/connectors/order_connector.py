@@ -72,18 +72,27 @@ only safe instruction is to stop and escalate.
 """
 
 _ORDER_WRITER_DESCRIPTION = (
-    "Create a new order for a client. Requires client_id (from the client "
-    "lookup tool) and a list of items with product_id and qty. An order "
-    "exists only if this tool returns an order_id — if it returns an error, "
-    "no order was created and you must say so."
+    "Create a new order for a client. Requires the client's client_id (from "
+    "a client lookup, when one is available) and a list of items with "
+    "product_id and qty. An order exists only if this tool returns an "
+    "order_id — if it returns an error, no order was created and you must say "
+    "so."
 )
+"""Mentions a client lookup without requiring one (issue #224).
+
+It used to say client_id comes "from the client lookup tool". Only
+`sales-agent` equips one, so any other agent with this tool read that as a
+missing tool and escalated instead of placing the order.
+"""
 
 _INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "client_id": {
             "type": "string",
-            "description": "Client ID obtained from the client lookup tool",
+            "description": (
+                "The client's ID (from a client lookup, when one is available)"
+            ),
         },
         "items": {
             "type": "array",

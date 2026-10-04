@@ -46,7 +46,7 @@ class OrderWriter(Protocol):
         Args:
             session: Turn-scoped async session, or whatever the deployment
                 binds in its place.
-            client_id: Identifier from the client lookup tool.
+            client_id: The client's identifier.
             items: Line items, each `{"product_id": str, "qty": int}`.
 
         Returns:
