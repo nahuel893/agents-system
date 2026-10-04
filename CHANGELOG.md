@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.6.0](https://github.com/nahuel893/agents-system/compare/v0.5.1...v0.6.0) (2026-10-04)
+
+
+### Features
+
+* **evals:** a scenario can target an agent folder or an inline Agent ([#221](https://github.com/nahuel893/agents-system/issues/221)) ([#230](https://github.com/nahuel893/agents-system/issues/230)) ([674246b](https://github.com/nahuel893/agents-system/commit/674246b76171a8bb1e1f04e7d78bd9d028d2c2db))
+* **evals:** behavior capability suite shipped in agents_system.evals ([#224](https://github.com/nahuel893/agents-system/issues/224)) ([#234](https://github.com/nahuel893/agents-system/issues/234)) ([25b5b75](https://github.com/nahuel893/agents-system/commit/25b5b75822faeac336c77e162b00b651d6f5cb2f))
+* **evals:** composition scenarios on reference agents, live tests off the predefined roles ([#225](https://github.com/nahuel893/agents-system/issues/225)) ([#235](https://github.com/nahuel893/agents-system/issues/235)) ([22345bd](https://github.com/nahuel893/agents-system/commit/22345bd641336d5ef50aca179e0ba6710d0dc338))
+* **evals:** Definition of done by change type, live suite by layer and an extends-graph helper ([#227](https://github.com/nahuel893/agents-system/issues/227)) ([#237](https://github.com/nahuel893/agents-system/issues/237)) ([e793785](https://github.com/nahuel893/agents-system/commit/e793785c7a792cb60b7baffe3a3a400611a3d3c1))
+* **evals:** per-model capability matrix API, script and docs ([#228](https://github.com/nahuel893/agents-system/issues/228)) ([#236](https://github.com/nahuel893/agents-system/issues/236)) ([aa14c84](https://github.com/nahuel893/agents-system/commit/aa14c84912b5028f9d87423ec9189cc34800b8a2))
+* **roles:** reference agents in examples/agents and a deprecation warning on concrete roles ([#222](https://github.com/nahuel893/agents-system/issues/222)) ([#231](https://github.com/nahuel893/agents-system/issues/231)) ([cad1ce0](https://github.com/nahuel893/agents-system/commit/cad1ce04d0e20e907b62ace0d5b4a0eafde6ca13))
+* **serve:** AGENT_REGISTRATIONS folder values under AGENTS_ROOT and a demo that registers a reference agent ([#226](https://github.com/nahuel893/agents-system/issues/226)) ([#233](https://github.com/nahuel893/agents-system/issues/233)) ([a0f91dc](https://github.com/nahuel893/agents-system/commit/a0f91dc29d13072de00b9523ba22ce71ec45934c))
+
+
+### Bug Fixes
+
+* **evals:** empty agent folder, exact tool_arguments, stale references ([#239](https://github.com/nahuel893/agents-system/issues/239)) ([#243](https://github.com/nahuel893/agents-system/issues/243)) ([4b706c5](https://github.com/nahuel893/agents-system/commit/4b706c5cd33fd000e43f6805db735cdffa4ba241))
+* **evals:** harden matrix and live-suite cost tooling, docs parity ([#239](https://github.com/nahuel893/agents-system/issues/239)) ([#241](https://github.com/nahuel893/agents-system/issues/241)) ([d2bfced](https://github.com/nahuel893/agents-system/commit/d2bfced85a6f62c2cbf630bac746560a9ca09413))
+* **sandbox:** bind a short /etc allowlist instead of the whole host /etc ([#238](https://github.com/nahuel893/agents-system/issues/238)) ([#240](https://github.com/nahuel893/agents-system/issues/240)) ([1beaef4](https://github.com/nahuel893/agents-system/commit/1beaef4d60f38361c32ad3f4adbe62ed08838f0f))
+* **sandbox:** refuse the secrets dir as a bind, drop /etc/hosts ([#239](https://github.com/nahuel893/agents-system/issues/239)) ([#242](https://github.com/nahuel893/agents-system/issues/242)) ([7051046](https://github.com/nahuel893/agents-system/commit/70510465c49d6eaa01387a7dd80a6bf2d1cc2117))
+
+
+### Documentation
+
+* **adr:** add ADR-010 capability-based evals and reference agents ([#219](https://github.com/nahuel893/agents-system/issues/219)) ([#220](https://github.com/nahuel893/agents-system/issues/220)) ([6e128c2](https://github.com/nahuel893/agents-system/commit/6e128c2a7fbbd2f22eaf11c5517d378cb8c21ee2))
+* **evals:** live runs from .env through uv, with gpt-6-luna as the reference model ([#245](https://github.com/nahuel893/agents-system/issues/245)) ([#246](https://github.com/nahuel893/agents-system/issues/246)) ([1c04715](https://github.com/nahuel893/agents-system/commit/1c04715e0089b250e6fb5cf96b901da30603ad91))
+* **evals:** make openai/gpt-6-sol the live-eval reference model ([#216](https://github.com/nahuel893/agents-system/issues/216)) ([#217](https://github.com/nahuel893/agents-system/issues/217)) ([01f6116](https://github.com/nahuel893/agents-system/commit/01f6116489985bab2c2efb6069eb1427eae8ef72))
+* **features:** mark every listed feature as released in v0.6.0 ([#247](https://github.com/nahuel893/agents-system/issues/247)) ([f2d701e](https://github.com/nahuel893/agents-system/commit/f2d701eff7eadf9a5d51a6bd53858ce7a6c8b32a))
+* **process:** add a definition of done and a release gate with live evals ([#214](https://github.com/nahuel893/agents-system/issues/214)) ([#215](https://github.com/nahuel893/agents-system/issues/215)) ([c0f22c0](https://github.com/nahuel893/agents-system/commit/c0f22c0e38447656b5ba2d1bb565afdbf400119e))
+
 ## [0.5.1](https://github.com/nahuel893/agents-system/compare/v0.5.0...v0.5.1) (2026-10-01)
 
 
