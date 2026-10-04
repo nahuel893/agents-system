@@ -88,8 +88,8 @@ Offline tests prove the code does what the tests say. Only a real model proves a
 
    ```bash
    set -a; . .env; set +a
-   EVAL_PROVIDER=openai_compatible OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol \
-   MODEL_PRICES='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}' \
+   EVAL_PROVIDER=openai_compatible OPENAI_COMPATIBLE_MODEL=openai/gpt-6-luna \
+   MODEL_PRICES='{"openai/gpt-6-luna": {"input_per_million": 0.1, "output_per_million": 0.5}}' \
    EVAL_RUNS=3 pytest -m live <module> -k "<scenarios>" -rA
    ```
 

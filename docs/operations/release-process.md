@@ -40,7 +40,7 @@ available locally.
    hold, and the release PR body records their results:
 
    1. The full live suite passes against the reference model
-      (`openai/gpt-6-sol` through `EVAL_PROVIDER=openai_compatible`;
+      (`openai/gpt-6-luna` through `EVAL_PROVIDER=openai_compatible`;
       see the Definition of done in `AGENTS.md` for the exact environment):
 
       ```sh
@@ -65,7 +65,7 @@ available locally.
       latest-release line names it.
 
    The release PR body also carries the **capability matrix**: one table for
-   the reference model (`openai/gpt-6-sol`) and the two second-opinion models
+   the reference model (`openai/gpt-6-luna`) and the two second-opinion models
    (`google/gemini-3.8-flash` and `deepseek/deepseek-v4-flash`), from
    `scripts/run-capability-matrix.py` with `EVAL_RUNS=3` and `MODEL_PRICES`
    set for all three, so cost is never `n/a`. It is information for the

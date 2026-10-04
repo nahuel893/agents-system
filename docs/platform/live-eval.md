@@ -24,7 +24,7 @@ never print or commit it). For the reference model on OpenRouter:
 
 ```bash
 EVAL_PROVIDER=openai_compatible
-MODEL_PRICES={"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}
+MODEL_PRICES='{"openai/gpt-6-luna": {"input_per_million": 0.1, "output_per_million": 0.5}}'
 ```
 
 `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_MODEL` and
@@ -107,7 +107,7 @@ It needs Postgres on `127.0.0.1:5432` and Redis on `127.0.0.1:6379` (the
 provider keys in `.env`. It loads `.env` without printing it, and it uses
 `EVAL_PROVIDER=openai_compatible` unless `EVAL_PROVIDER_OVERRIDE` names
 another provider. The model comes from `OPENAI_COMPATIBLE_MODEL`; force
-`openai/gpt-6-sol` for a gate. When `MODEL_PRICES` is unset the script sets it
+`openai/gpt-6-luna` for a gate. When `MODEL_PRICES` is unset the script sets it
 to the reference model's prices, so the reported cost is never null; a value
 you export wins.
 
@@ -165,7 +165,7 @@ router. OpenRouter, for example:
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
+export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-luna
 export OPENAI_COMPATIBLE_API_KEY=...   # your own key -- never commit it
 uv run --env-file .env pytest -m live
 ```
@@ -180,11 +180,13 @@ whatever the provider actually used.
 
 ### Reference model
 
-The reference model for live evaluation is `openai/gpt-6-sol` through
-OpenRouter (tool calling and reasoning supported; USD 2.00 per million input
-tokens and 10.00 per million output tokens), since 2026-10-01 (#216).
-Baselines measured before that date, including those in the role-tuning
-issues, were taken on `google/gemini-3.8-flash`. `google/gemini-3.8-flash`
+The reference model for live evaluation is `openai/gpt-6-luna` through
+OpenRouter (tool calling and reasoning supported; USD 0.10 per million input
+tokens and 0.50 per million output tokens), since 2026-10-04: live tests run on
+a light model. From 2026-10-01 (#216) to 2026-10-03 it was `openai/gpt-6-sol`
+(USD 2.00 and 10.00), and the baselines and calibration notes dated in that
+window were measured on it. Baselines measured before 2026-10-01, including
+those in the role-tuning issues, were taken on `google/gemini-3.8-flash`. `google/gemini-3.8-flash`
 and `deepseek/deepseek-v4-flash` stay valid second opinions, for information
 only. No script hardcodes a model: the model always comes from
 `OPENAI_COMPATIBLE_MODEL`.
@@ -192,9 +194,9 @@ only. No script hardcodes a model: the model always comes from
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
+export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-luna
 export OPENAI_COMPATIBLE_API_KEY=...   # your own key -- never commit it
-export MODEL_PRICES='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}'
+export MODEL_PRICES='{"openai/gpt-6-luna": {"input_per_million": 0.1, "output_per_million": 0.5}}'
 ```
 
 Without a `MODEL_PRICES` entry for the model, every turn reports
@@ -444,7 +446,7 @@ exercised) for a guardrail scenario.
 ### Running it
 
 ```bash
-EVAL_PROVIDER=openai_compatible OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol \
+EVAL_PROVIDER=openai_compatible OPENAI_COMPATIBLE_MODEL=openai/gpt-6-luna \
 EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_eval_capabilities.py -rA -s
 ```
 
@@ -585,9 +587,9 @@ configured eval provider (`EVAL_PROVIDER` and its variables, see
 ```bash
 set -a; . .env; set +a
 EVAL_PROVIDER=openai_compatible \
-MODEL_PRICES='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}, "google/gemini-3.8-flash": {"input_per_million": 0.75, "output_per_million": 3.75}}' \
+MODEL_PRICES='{"openai/gpt-6-luna": {"input_per_million": 0.1, "output_per_million": 0.5}, "google/gemini-3.8-flash": {"input_per_million": 0.75, "output_per_million": 3.75}}' \
 EVAL_RUNS=3 scripts/run-capability-matrix.py \
-  --model openai/gpt-6-sol --model google/gemini-3.8-flash \
+  --model openai/gpt-6-luna --model google/gemini-3.8-flash \
   --capability grounding --capability memory
 ```
 
@@ -607,7 +609,7 @@ from agents_system.evals import (
 )
 
 matrix = await run_capability_matrix(
-    candidates_from_names(["openai/gpt-6-sol", "google/gemini-3.8-flash"]),
+    candidates_from_names(["openai/gpt-6-luna", "google/gemini-3.8-flash"]),
     capabilities=["grounding", "memory"],  # None: all
     runs=3,
 )
@@ -661,7 +663,7 @@ predefined role by name. Run it like any other `live`-marked suite:
 ```bash
 export EVAL_PROVIDER=openai_compatible
 export OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-sol
+export OPENAI_COMPATIBLE_MODEL=openai/gpt-6-luna
 export OPENAI_COMPATIBLE_API_KEY=...
 EVAL_RUNS=3 uv run --env-file .env pytest -m live tests/test_live_eval_guardrails.py -s
 ```
@@ -857,7 +859,7 @@ a registered runtime id (the OpenAI adapter's request `model`) -- valued by USD
 price per million input/output tokens:
 
 ```bash
-export MODEL_PRICES='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}}'
+export MODEL_PRICES='{"openai/gpt-6-luna": {"input_per_million": 0.1, "output_per_million": 0.5}}'
 ```
 
 `AgentRuntime` derives this key itself, at construction time, from the
