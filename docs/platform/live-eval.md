@@ -495,6 +495,98 @@ assertions:
 None of the three changes how a run is judged exercised, and none reports what
 the model sent.
 
+## Per-model capability matrix (issue #228)
+
+The capability suite is a kit feature: given candidate models, it runs each
+capability's scenarios `EVAL_RUNS` times per model and reports a model x
+capability table, so you can compare models before you commit one to an agent.
+
+**What a cell means.** A cell is the success rate of one model on the kit's
+generic prompt and a minimal fixture agent. It is not a verdict on your own
+agent: a model that passes `grounding` here can still fail on a prompt and
+tools of yours. Use the matrix to rule models in or out, then measure your own
+agent with your own scenarios (below).
+
+Each cell carries, aggregated over the capability's scenarios:
+
+| Field | Meaning |
+|---|---|
+| success rate | Passed runs over all runs, with the counts |
+| gate | PASS only when every scenario in the cell meets its own #81 gate (80% for a happy path; 100% of exercised runs, at least one exercised, for a guardrail) |
+| exercised | Runs that put a guardrail assertion to the test |
+| tokens, cost, duration | Summed over the cell's runs; `n/a` when any run did not report it, never a partial sum |
+
+A capability whose host commands are missing (`commands` needs `bwrap` and
+`factor`) is reported as `skipped`, naming them.
+
+### Running it
+
+The script is a thin wrapper over the API. It builds each model from the
+configured eval provider (`EVAL_PROVIDER` and its variables, see
+[Switching providers](#switching-providers-eval_provider)), so pass
+`MODEL_PRICES` for every model or cost is `n/a`:
+
+```bash
+set -a; . .env; set +a
+EVAL_PROVIDER=openai_compatible \
+MODEL_PRICES='{"openai/gpt-6-sol": {"input_per_million": 2.0, "output_per_million": 10.0}, "google/gemini-3.8-flash": {"input_per_million": 0.75, "output_per_million": 3.75}}' \
+EVAL_RUNS=3 scripts/run-capability-matrix.py \
+  --model openai/gpt-6-sol --model google/gemini-3.8-flash \
+  --capability grounding --capability memory
+```
+
+`--capability` repeats (all seven by default), `--runs` overrides `EVAL_RUNS`
+(default 3) and `--out-dir` moves the output. It prints the Markdown table and
+writes `capability-matrix-<timestamp>.json` and `.md` under `evals/results/`
+(gitignored). It exits 1 when a cell misses its gate. It needs the same extras
+as the rest of the live eval: `postgres` and the provider extra.
+
+From Python:
+
+```python
+from agents_system.evals import (
+    candidates_from_names,
+    run_capability_matrix,
+    write_matrix,
+)
+
+matrix = await run_capability_matrix(
+    candidates_from_names(["openai/gpt-6-sol", "google/gemini-3.8-flash"]),
+    capabilities=["grounding", "memory"],  # None: all
+    runs=3,
+)
+print(matrix.to_markdown())
+write_matrix(matrix)  # evals/results/
+```
+
+`ModelCandidate(name, model)` takes any chat model you built yourself.
+
+### Adding your own scenarios
+
+Your scenarios on your own agents join the same matrix as extra columns:
+`scenario_case(column, scenario, ...)` takes `run_scenario`'s keyword
+arguments (`agent=`, `agents_root=`, `registry_factory=`, ...).
+
+```python
+from agents_system.evals import load_scenario, run_capability_matrix, scenario_case
+
+matrix = await run_capability_matrix(
+    candidates,
+    capabilities=["grounding"],
+    extra_cases=[
+        scenario_case(
+            "my-support-agent",
+            load_scenario("evals/scenarios/my_refund.yaml"),
+            agent=my_agent,
+            registry_factory=build_my_registry,
+        )
+    ],
+)
+```
+
+A column name cannot reuse a capability id. `MatrixCase(column, run)` accepts
+any coroutine returning a `ScenarioResult`.
+
 ## Live guardrail suite (issue #76)
 
 `evals/scenarios/guardrails/` holds the one guardrail scenario that needs a
