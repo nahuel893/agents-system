@@ -23,6 +23,7 @@ from agents_system.evals.schema import (
     ScenarioError,
     load_scenario,
 )
+from agents_system.harness.loader import PredefinedRoleDeprecationWarning
 
 
 class ToolAwareFakeModel(FakeMessagesListChatModel):
@@ -130,12 +131,17 @@ async def test_folder_agent_runs_under_the_configured_root(
 async def test_role_scenario_keeps_resolving_and_reports_kind_role() -> None:
     from conftest import build_test_registry
 
-    result = await run_scenario(
-        _scenario(role="sales-agent"),
-        model=_model(),
-        model_name="fake",
-        registry=build_test_registry(),
-    )
+    # ADR-010 (#222): a role scenario names a concrete predefined role, which
+    # still resolves and is deprecated.
+    with pytest.warns(
+        PredefinedRoleDeprecationWarning, match="examples/agents/sales-agent/"
+    ):
+        result = await run_scenario(
+            _scenario(role="sales-agent"),
+            model=_model(),
+            model_name="fake",
+            registry=build_test_registry(),
+        )
     assert result.agent == "sales-agent"
     assert result.role == "sales-agent"
     assert result.agent_kind == "role"
