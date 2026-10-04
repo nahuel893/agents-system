@@ -187,24 +187,44 @@ permitido los imprimiría. Solo se monta, de solo lectura, una lista
 explícita (`_SYSTEM_ETC_BINDS` en `connectors/operator.py`): `ld.so.cache`,
 `nsswitch.conf`, `localtime`, `ssl/certs`, `ca-certificates`,
 `pki/tls/certs` y `alternatives`. Una herramienta que declara
-`network=True` recibe además `resolv.conf` y `hosts`. `passwd`, `group`,
+`network=True` recibe además `resolv.conf`; `/etc/hosts` no se monta (#239):
+los nombres públicos se resuelven igual por DNS sin él (medido con
+`getent hosts` bajo `bwrap`, con y sin el archivo), y el `hosts` del host
+puede listar nombres y direcciones internos. Una herramienta que deba
+resolver un nombre privado lo hace por DNS, o por `extra_ro_binds` bajo
+riesgo explícito del operador. En un host cuyo `nsswitch.conf` no tenga el módulo `myhostname` ni
+`resolve`, `localhost` puede dejar de resolverse dentro del sandbox (no probado
+en un host así): las herramientas de red deben usar `127.0.0.1` o `::1`
+literalmente, o montar `/etc/hosts` con `extra_ro_binds`. `passwd`, `group`,
 `shadow` y `/etc/agents-system` nunca se montan.
 
 La lista se obtuvo por experimento con `bwrap`: `factor`, `ls`, `cat`,
 `sleep`, `echo` y un Python de venv corren sin ningún `/etc`, así que las
 entradas existen por portabilidad (caché de bibliotecas, zona horaria,
 raíces TLS, DNS). La entrada `alternatives` (symlinks de la familia Debian,
-como `awk`) no pudo verificarse en el host de la familia Arch usado; solo
-contiene symlinks hacia `/usr`.
+como `awk`) se verificó en un contenedor `debian:stable-slim` (#239): sin
+ella `awk` falla con `execvp awk: No such file or directory`, con ella
+corre. Solo contiene symlinks hacia `/usr`. (Docker impide montar `/proc`
+para `bwrap`, así que esa prueba se hizo sin `--proc`.)
 
 Un comando que necesite otro archivo de `/etc` lo obtiene con
 `SandboxPolicy.extra_ro_binds` (por ejemplo `/etc/ssl`). **Riesgo:** cada
-bind extra lo lee todo comando de esa herramienta; nunca montes
-`/etc/agents-system`, y `SandboxPolicy` rechaza `/etc` completo. Se
+bind extra lo lee todo comando de esa herramienta; `SandboxPolicy` rechaza `/etc` completo y
+`/etc/agents-system` con todo lo que contiene (se compara la ruta resuelta,
+así que un symlink hacia allí también se rechaza). Otras subrutas de `/etc`
+no se rechazan por nombre: un operador monta configuración de herramientas
+legítimamente, y la lista de binds es su declaración explícita. Se
 sondearon otras lecturas fuera de la raíz y están cerradas: un symlink en
 la raíz hacia un archivo del host no resuelve a nada (el destino no está
 montado), `/proc` es el namespace de PID del propio sandbox y el entorno se
 limpia. El directorio de `argv[0]` sigue siendo legible, como antes.
+
+**Exposición conocida y aceptada (#239):** `/proc/self/mountinfo` (y
+`/proc/1/mountinfo`) dentro del sandbox lista los orígenes de montaje del
+host, como nombres de dispositivo y rutas de subvolúmenes btrfs. No contiene
+secretos y no se puede ocultar con opciones de `bwrap` sin romper cosas:
+`self` se resuelve al proceso que prepara los binds y no al comando, así
+que solo se podría tapar `/proc/1` y `/proc/self` mostraría lo mismo.
 
 ## Delimitación del espacio de trabajo
 

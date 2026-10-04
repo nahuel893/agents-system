@@ -66,6 +66,40 @@ def test_extra_ro_binds_refuses_the_whole_etc(forbidden: pathlib.Path) -> None:
         SandboxPolicy(extra_ro_binds=(forbidden,))
 
 
+@pytest.mark.parametrize(
+    "forbidden",
+    [
+        "/etc/agents-system",
+        "/etc/agents-system/agents-system.env",
+        "/etc/agents-system/x/y",
+    ],
+)
+def test_extra_ro_binds_refuses_the_deployment_secrets_dir(forbidden: str) -> None:
+    with pytest.raises(ValueError, match="agents-system"):
+        SandboxPolicy(extra_ro_binds=(pathlib.Path(forbidden),))
+
+
+def test_extra_ro_binds_refuses_a_symlink_into_the_secrets_dir(
+    tmp_path: pathlib.Path,
+) -> None:
+    link = tmp_path / "link"
+    link.symlink_to("/etc/agents-system")
+    with pytest.raises(ValueError, match="agents-system"):
+        SandboxPolicy(extra_ro_binds=(link,))
+
+
+def test_extra_ro_binds_allows_a_lookalike_sibling_of_the_secrets_dir() -> None:
+    SandboxPolicy(extra_ro_binds=(pathlib.Path("/etc/agents-system-docs"),))
+
+
+def test_network_commands_do_not_get_etc_hosts(tmp_path: pathlib.Path) -> None:
+    opened = _binds(
+        _bwrap_argv(["x"], policy=_policy(tmp_path, "x", network=True), bwrap="bwrap")
+    )
+    assert "/etc/hosts" not in opened
+    assert "/etc/resolv.conf" in opened
+
+
 def test_extra_ro_binds_can_still_add_an_etc_subpath() -> None:
     SandboxPolicy(extra_ro_binds=(pathlib.Path("/etc/ssl"),))  # must not raise
 
@@ -128,3 +162,20 @@ async def test_the_commands_the_repo_uses_still_run(
     connector = build_terminal_connector(_policy(tmp_path, argv[0]))
     result = await connector({"argv": argv})
     assert result["exit_code"] == 0, result
+
+
+@needs_bwrap
+async def test_a_network_command_cannot_read_etc_hosts(tmp_path: pathlib.Path) -> None:
+    connector = build_terminal_connector(_policy(tmp_path, "cat", network=True))
+    result = await connector({"argv": ["cat", "/etc/hosts"]})
+    assert result["exit_code"] != 0
+    assert result["stdout"] == ""
+
+
+@pytest.mark.parametrize("doc", ["operations", "operations_es"])
+def test_docs_warn_localhost_may_not_resolve_without_etc_hosts(doc: str) -> None:
+    """#239 review: hosts without myhostname/resolve lose `localhost`."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    text = (root / "docs" / doc / "sandbox-bwrap.md").read_text()
+    assert "myhostname" in text
+    assert "127.0.0.1" in text
