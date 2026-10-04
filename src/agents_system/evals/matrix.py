@@ -27,11 +27,15 @@ or with ``scripts/run-capability-matrix.py``. See `docs/platform/live-eval.md`.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import dataclasses
 import datetime
+import inspect
 import json
 import os
 import pathlib
+import threading
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any
 
@@ -84,10 +88,76 @@ def candidates_from_names(names: Iterable[str]) -> list[ModelCandidate]:
     """One `ModelCandidate` per model name, built from the configured eval
     provider (``EVAL_PROVIDER`` and that provider's variables) with the name
     as the model override. The name you typed is the name reported."""
-    return [
-        ModelCandidate(name=name, model=build_eval_model(model_override=name)[0])
-        for name in names
-    ]
+    candidates: list[ModelCandidate] = []
+    try:
+        for name in names:
+            candidates.append(
+                ModelCandidate(
+                    name=name, model=build_eval_model(model_override=name)[0]
+                )
+            )
+    except BaseException:
+        # A failure on the Nth model must not leak the earlier ones' clients.
+        _close_clients(candidates)
+        raise
+    return candidates
+
+
+#: Attributes of the LangChain chat models that hold an HTTP client: a custom
+#: httpx client the caller passed in, or the provider SDK's own client (some
+#: expose it directly, some only through the `_client` of a resource wrapper).
+_CLIENT_ATTRIBUTES = (
+    "http_async_client",
+    "http_client",
+    "root_async_client",
+    "root_client",
+    "async_client",
+    "client",
+    "_async_client",
+    "_client",
+)
+
+
+def _owned_clients(model: BaseChatModel) -> list[Any]:
+    """The distinct closable HTTP clients behind *model* (each listed once)."""
+    found: dict[int, Any] = {}
+    for attribute in _CLIENT_ATTRIBUTES:
+        value = getattr(model, attribute, None)
+        if value is None:
+            continue
+        if not (hasattr(value, "aclose") or hasattr(value, "close")):
+            value = getattr(value, "_client", None)  # a resource wrapper
+        if value is not None and (hasattr(value, "aclose") or hasattr(value, "close")):
+            found.setdefault(id(value), value)
+    return list(found.values())
+
+
+async def _close_one(client: Any) -> None:
+    closer = getattr(client, "aclose", None) or client.close
+    result = closer()
+    if inspect.isawaitable(result):
+        await result
+
+
+def _close_clients(candidates: Sequence[ModelCandidate]) -> None:
+    """Close the HTTP clients of *candidates* from synchronous code, whether or
+    not an event loop is running; a client that fails to close is ignored (the
+    original error is the one to report)."""
+
+    async def close_all() -> None:
+        for candidate in candidates:
+            for client in _owned_clients(candidate.model):
+                with contextlib.suppress(Exception):
+                    await _close_one(client)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(close_all())
+        return
+    worker = threading.Thread(target=lambda: asyncio.run(close_all()))
+    worker.start()
+    worker.join()
 
 
 def scenario_case(
@@ -343,6 +413,11 @@ async def run_capability_matrix(
         if capabilities is None
         else [get_capability(capability_id) for capability_id in capabilities]
     )
+    repeated = sorted(
+        {c.id for c in selected if [s.id for s in selected].count(c.id) > 1}
+    )
+    if repeated:
+        raise ValueError(f"duplicate capability id(s): {', '.join(repeated)}")
     ids = {capability.id for capability in selected}
     for extra in extra_cases:
         if extra.column in ids:

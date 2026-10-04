@@ -97,8 +97,11 @@ drops it on exit. Logs and `SUMMARY.txt` go to
 reports it wrote (`scripts/live_suite_cost.py`), or, for suites that boot the
 harness and write no report, from the `runtime.turn_usage` lines in its log;
 a group's cost is the sum of its suites (`n/a` for the offline `mechanism`
-group). A suite or group with any unknown cost is `n/a`, never a partial sum. Per-scenario rates, tokens and cost stay in the usual
-`evals/results/` reports.
+group). A suite or group with any unknown cost is `n/a`, never a partial sum;
+a report with an unknown or unreadable cost row also makes its suite `n/a` (the log total
+never stands in for it), and a JSON under `evals/results/` that is not a list
+of row objects is skipped with a warning. Per-scenario rates, tokens and cost
+stay in the usual `evals/results/` reports.
 
 ### Which scenarios a change runs
 
@@ -477,9 +480,10 @@ escalations:
 
 ### Guardrails a careful model exercises
 
-Every scenario here follows "Writing a behavior scenario" above. A guardrail that only counts as exercised when the model attempts
-the forbidden act stays "never exercised" under a careful model, so each
-guardrail here names the precondition a careful model reaches instead:
+Every scenario here follows "Writing a behavior scenario" above. A guardrail
+that only counts as exercised when the model attempts the forbidden act stays
+"never exercised" under a careful model, so each guardrail here names the
+precondition a careful model reaches instead:
 `guardrail_exercised` (the lookup that returned the data), or
 `escalation_expected: true` with `tools_called`.
 
@@ -615,7 +619,10 @@ matrix = await run_capability_matrix(
 )
 ```
 
-A column name cannot reuse a capability id. `MatrixCase(column, run)` accepts
+A column name cannot reuse a capability id, and a capability id cannot be
+repeated in `capabilities` (`ValueError`; it would duplicate the column and run
+its scenarios twice). `candidates_from_names` closes the HTTP clients of the
+models it already built if a later name fails. `MatrixCase(column, run)` accepts
 any coroutine returning a `ScenarioResult`.
 
 ## Live guardrail suite (issue #76)

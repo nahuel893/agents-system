@@ -14,8 +14,7 @@ Este documento es para quien integra `agents_system` en su propia aplicación,
 no para quien trabaja en la plataforma. Para la arquitectura de la plataforma,
 leé primero `docs/platform_es/harness.md` y `docs/platform_es/deployment.md`.
 
-Versión en inglés: `docs/platform/library-usage.md`. Para ver todas las
-funcionalidades del kit en una sola página, consulta
+Para ver todas las funcionalidades del kit en una sola página, mirá
 [`docs/platform_es/features.md`](features.md).
 
 ---
@@ -730,3 +729,4 @@ confirmar que un override efectivamente se aplicó.
 - Uso de tokens y costo (`MODEL_PRICES`): `docs/platform_es/live-eval.md`
 - Backends de referencia para los cuatro puertos genéricos de la plataforma (conocimiento, resumen, escalamiento, escritor de pedidos): `docs/platform_es/reference-backends.md`
 - Código fuente: `src/agents_system/harness/{registry,loader,injector,factory,defaults}.py`, `src/agents_system/agent/graph.py`, `src/agents_system/audit/sink.py`, `src/agents_system/__init__.py`
+- Versión en inglés: `docs/platform/library-usage.md`
