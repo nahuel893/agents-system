@@ -41,7 +41,7 @@ command -v bwrap >/dev/null || echo "warning: bwrap missing, sandbox scenarios w
 
 psql_c() { docker exec -i "$pg_container" psql -U postgres -v ON_ERROR_STOP=1 "$@"; }
 
-# The role suites read demo data from agents_system_demo.
+# The guardrail suite reads demo data from agents_system_demo.
 if ! psql_c -Atc "select 1 from pg_database where datname='agents_system_demo'" | grep -q 1; then
   echo "agents_system_demo is missing: load it with demo/load_demo_company.py first (see docs/platform/reference-backends.md)" >&2
   exit 1
@@ -80,7 +80,7 @@ run_suite() {
 }
 
 run_suite 01-smoke          "$pytest_bin" -m live tests/test_live_smoke.py -q -rA
-run_suite 02-roles          "$pytest_bin" -m live tests/test_live_eval_roles.py tests/test_live_eval_sales_agent.py -q -rA
+run_suite 02-composition    "$pytest_bin" -m live tests/test_live_eval_composition.py -q -rA -s
 run_suite 03-guardrails     "$pytest_bin" -m live tests/test_live_eval_guardrails.py -q -rA -s
 run_suite 04-sql-tool       env DATABASE_URL="$sql_admin_url" SQL_DATABASE_URL="$sql_role_url" \
                             "$pytest_bin" -m live tests/test_live_eval_sql_query.py -q -rA

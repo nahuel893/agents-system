@@ -2,9 +2,8 @@
 assertions on harness behavior.
 
 Excluded from the default run -- select it explicitly with `pytest -m live`,
-exactly like `tests/test_live_eval_roles.py` and
-`tests/test_live_eval_sales_agent.py`. See `docs/platform/live-eval.md` for
-the provider switch, the new assertion types, and where results land.
+like every other live module. See `docs/platform/live-eval.md` for the
+provider switch, the new assertion types, and where results land.
 
 Since #223 (ADR-010) the deterministic mechanism scenarios (interceptor,
 limits, sandbox, the `*_boundary` files) live in `evals/scenarios/mechanism/`
@@ -13,8 +12,11 @@ only the behavior scenario that needs a real model remains here.
 
 This loads every scenario under `evals/scenarios/guardrails/` -- a dedicated
 subdirectory `load_scenarios(evals/scenarios/...)`'s own non-recursive glob
-never touches, so it never overlaps `tests/test_live_eval_roles.py`'s 21
-scenarios or `tests/test_eval_scenario_coverage.py`'s structural check. Each
+never touches, so it never overlaps the per-role scenarios or
+`tests/test_eval_scenario_coverage.py`'s structural check. Since #225
+(ADR-010) each one names a reference agent folder (`agent:`), resolved under
+`examples/agents/` like an adopter's own folder, never a predefined role by
+name. Each
 scenario proves ONE Phase-2 guardrail (docs/delivery/live-test-plan.md) holds
 against a real, adversarial-primed model: which tools were bound and
 executed, which calls were blocked and why, which audit events landed, and
@@ -30,13 +32,14 @@ assertion -- the deterministic Layer-1 grant-ceiling fact itself now lives in
 the offline
 `tests/test_platform_tools_integration.py::test_boundary_scenario_permission_grant_excludes_target_tool`
 (one parametrized case per role, pinned independently of the YAML files; see
-that test's own header comment). Scenario 7 by
-`data_agent_escalation.yaml`/`sales_agent_escalation.yaml`/
-`developer_agent_escalation.yaml`/`summary_agent_escalation.yaml`
-(`category: guardrail`, `escalation_expected: true`, already gated by #81's
-"exercised" machinery). Scenario 8 (no-fabrication under pressure) is
-explicitly out of scope for #76 -- see the issue's own acceptance criteria
-(scenarios 1-7) and `*_no_fabrication.yaml`'s existing coverage.
+that test's own header comment). Scenario 7 was covered by the per-role
+`*_escalation.yaml` files (`category: guardrail`, `escalation_expected:
+true`), which left the live gate with the rest of the per-role scenarios in
+#225 (ADR-010): escalation is a behavior capability (#224), and the
+composition scenarios (`tests/test_live_eval_composition.py`) keep an
+end-to-end escalation on `sales-agent` and on `developer-agent`. Scenario 8
+(no-fabrication under pressure) is explicitly out of scope for #76 -- see
+the issue's own acceptance criteria (scenarios 1-7).
 """
 
 from __future__ import annotations
@@ -59,20 +62,15 @@ from agents_system.evals.runner import run_scenario
 from agents_system.evals.schema import Scenario, load_scenarios
 from agents_system.harness.loader import RootConfig
 
-#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
-#: is deprecated. They move to `agent` or the reference agents in
-#: `examples/agents/` when the roles leave `platform/roles/` (#229).
-pytestmark = pytest.mark.filterwarnings(
-    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
-)
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+_SCENARIOS_DIR = _REPO_ROOT / "evals" / "scenarios" / "guardrails"
 
-_SCENARIOS_DIR = (
-    pathlib.Path(__file__).resolve().parents[1] / "evals" / "scenarios" / "guardrails"
-)
+#: #225 -- the root every scenario's `agent:` folder is resolved under: the
+#: reference agents (ADR-010), loaded like an adopter's own agent folder.
+_REFERENCE_AGENTS_ROOT = _REPO_ROOT / "examples" / "agents"
 
 #: The disposable local dev Postgres this issue's demo data was loaded into
-#: (docker-compose's dev-only credentials, not a secret) -- same database
-#: `tests/test_live_eval_roles.py` already points at.
+#: (docker-compose's dev-only credentials, not a secret).
 _DEMO_DATABASE_URL = (
     "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agents_system_demo"
 )
@@ -88,10 +86,10 @@ _SCENARIOS: tuple[Scenario, ...] = load_scenarios(_SCENARIOS_DIR)
 
 @pytest.fixture
 async def engine() -> AsyncIterator[AsyncEngine]:
-    """A fresh `AsyncEngine` per test function -- see
-    `tests/test_live_eval_roles.py::engine`'s docstring for why this must
-    stay function-scoped (a pooled asyncpg connection is bound to whichever
-    event loop was running when it was created)."""
+    """A fresh `AsyncEngine` per test function: it must stay function-scoped,
+    because pytest-asyncio gives each test its own event loop and a pooled
+    asyncpg connection is bound to whichever loop was running when it was
+    created (reusing it on another loop corrupts it)."""
     eng = create_async_engine(_DEMO_DATABASE_URL)
     try:
         yield eng
@@ -101,9 +99,8 @@ async def engine() -> AsyncIterator[AsyncEngine]:
 
 @pytest.fixture
 async def eval_model() -> AsyncIterator[tuple[BaseChatModel, str]]:
-    """A fresh model per test function -- see
-    `tests/test_live_eval_roles.py::eval_model`'s docstring for why it must
-    not be shared across tests (its HTTP client is bound to one event loop)."""
+    """A fresh model per test function, for the same reason as `engine`: the
+    openai_compatible model's HTTP client is bound to one event loop (#145)."""
     model, model_name = build_eval_model()
     try:
         yield model, model_name
@@ -140,12 +137,13 @@ async def test_guardrail_scenario_holds_against_a_real_model(
         registry_factory=registry_factory,
         roots=RootConfig(),
         runs=_RUNS,
+        agents_root=_REFERENCE_AGENTS_ROOT,
     )
 
     write_results([result])
 
     print(
-        f"\nlive-guardrail: scenario={result.scenario} role={result.role} "
+        f"\nlive-guardrail: scenario={result.scenario} agent={result.agent} "
         f"model={result.model} runs={len(result.runs)} "
         f"exercised={result.exercised_count} held={result.held_count} "
         f"gate={'pass' if result.gate.passed else 'FAIL'} -- {result.gate.reason}"

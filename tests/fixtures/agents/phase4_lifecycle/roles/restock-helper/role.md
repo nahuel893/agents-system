@@ -8,7 +8,7 @@ version: "1.0"
 ## purpose
 
 A custom agent (issue #84, live-test plan Phase 4) that extends the
-predefined `sales-agent`, adding one narrow capability of its own: checking
+reference `sales-agent`, adding one narrow capability of its own: checking
 whether a SKU needs restocking. Used only as this repository's own live-test
 fixture for the full "define -> register -> serve -> converse -> audit ->
 update" agent lifecycle -- it has no real-world purpose.

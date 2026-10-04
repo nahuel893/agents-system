@@ -14,6 +14,14 @@ recorded sends, the real Postgres checkpointer's thread state) -- the model's
 own final wording is at most a soft signal, consistent with the live-test
 plan's own Principle.
 
+Since #225 (ADR-010) this module keeps the agents built with the `Agent` API
+for one feature each: a declared command tool and the read-only SQL tool.
+Its scenarios on the predefined roles moved to the composition scenarios on
+the reference agents (`tests/test_live_eval_composition.py`): `data-agent`
+and `sales-agent` as they were, and `operator-agent`'s sandboxed tools
+through `developer-agent`, which inherits them. `summary-agent` keeps no
+live scenario (ADR-010 open question 5).
+
 Requires (see `docs/platform/live-eval.md` and `live_harness.py`'s own
 module docstring):
   - a reachable Postgres able to `CREATE DATABASE` (docker-compose's
@@ -44,14 +52,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agents_system.agent.spec import Agent
-from agents_system.connectors.operator import SandboxPolicy, TerminalPolicy
 from agents_system.connectors.sql_query_connector import (
     SqlQueryConfig,
     build_sql_query_tool_spec,
 )
 from agents_system.evals import live_harness as lh
 from agents_system.evals.live_harness import (
-    SALES_AGENT_PERMISSIONS,
     LiveHarness,
     boot_live_harness,
     provision_sql_readonly_fixture,
@@ -60,26 +66,12 @@ from agents_system.evals.schema import DEFAULT_HAPPY_PATH_THRESHOLD
 from agents_system.harness.registry import ToolSpec
 from agents_system.models.base import get_engine
 
-#: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
-#: is deprecated. They move to `agent` or the reference agents in
-#: `examples/agents/` when the roles leave `platform/roles/` (#229).
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.filterwarnings(
-        "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
-    ),
-]
+pytestmark = pytest.mark.live
 
 _RUNS = int(os.environ.get("EVAL_RUNS", "3"))
 
-#: A demo client id guaranteed to exist regardless of how many
-#: `demo/company/03_seed.sql` seeds (it seeds 12; see the module's own
-#: `padron_clientes` insert) -- id 1 is always in range.
-_DEMO_CLIENT_PHONE = "+5491100000001"
-#: A demo client id guaranteed to NOT exist -- `padron_clientes` only ever
-#: seeds ids 1-12 (`1 + (i % 12)` over `facturas`), so 99 is safely outside.
-_UNKNOWN_CLIENT_PHONE = "+5491100000099"
-#: A demo SKU guaranteed to exist (`articulos` seeds `ART-001..ART-0NN`).
+#: An arbitrary SKU `check_stock`'s declared pattern accepts (it is echoed
+#: back, never looked up).
 _DEMO_SKU = "ART-001"
 
 
@@ -170,366 +162,6 @@ async def _assert_tool_attempted(
         f"for role={role!r}; got "
         f"{[(r.tool_name, r.payload.get('executed')) for r in rows]}"
     )
-
-
-# ---------------------------------------------------------------------------
-# data-agent: catalog_search (RAG-shaped lexical search), client_lookup,
-# run_report ("top products by units" ordering), knowledge_retrieval.
-# One boot (seed_demo=True): all four read from the SAME seeded demo company.
-# ---------------------------------------------------------------------------
-
-_DATA_AGENT_PERMISSIONS = (
-    "read:catalog",
-    "read:client_registry",
-    "read:knowledge_base",
-    "read:reports",
-    "read:session",
-)
-
-
-async def test_data_agent_reads_the_real_seeded_demo_database() -> None:
-    catalog_calls: list[tuple[dict[str, object], object]] = []
-    client_calls: list[tuple[dict[str, object], object]] = []
-    report_calls: list[tuple[dict[str, object], object]] = []
-
-    async with boot_live_harness(
-        role="data-agent",
-        runtime_id="phase1-data-agent",
-        permissions=_DATA_AGENT_PERMISSIONS,
-        seed_demo=True,
-        bind_webhook_to_role=False,
-        tool_wrappers={
-            "catalog_search": lambda spec: _wrap_recorder(spec, catalog_calls),
-            "client_lookup": lambda spec: _wrap_recorder(spec, client_calls),
-            "run_report": lambda spec: _wrap_recorder(spec, report_calls),
-        },
-    ) as harness:
-
-        async def catalog_search_hit() -> None:
-            catalog_calls.clear()
-            await _turn_text(
-                harness,
-                f"Call catalog_search with q='{_DEMO_SKU}', then tell me the "
-                "product's description in one short sentence. You must "
-                "actually call the tool, not just answer from memory.",
-            )
-            await _assert_tool_attempted(
-                harness, role="data-agent", tool_name="catalog_search"
-            )
-            assert catalog_calls, "catalog_search was not recorded by the wrapper"
-            _, result = catalog_calls[-1]
-            assert isinstance(result, dict)
-            assert result.get("classification") != "no_match", (
-                f"catalog_search for {_DEMO_SKU!r} found no match: {result!r}"
-            )
-            assert result.get("results"), f"catalog_search returned no rows: {result!r}"
-
-        await _run_gated("data-agent.catalog_search", catalog_search_hit)
-
-        async def client_lookup_hit() -> None:
-            client_calls.clear()
-            await _turn_text(
-                harness,
-                f"Call client_lookup with phone='{_DEMO_CLIENT_PHONE}', then "
-                "tell me the client's name. You must actually call the tool.",
-            )
-            await _assert_tool_attempted(
-                harness, role="data-agent", tool_name="client_lookup"
-            )
-            assert client_calls, "client_lookup was not recorded by the wrapper"
-            _, result = client_calls[-1]
-            assert isinstance(result, dict)
-            assert result.get("client_id") is not None, (
-                f"client_lookup for {_DEMO_CLIENT_PHONE!r} found no client: {result!r}"
-            )
-
-        await _run_gated("data-agent.client_lookup", client_lookup_hit)
-
-        async def knowledge_retrieval_hit() -> None:
-            await _turn_text(
-                harness,
-                "Use knowledge_retrieval to find our shipping and delivery "
-                "policy, then summarize it in one sentence. You must "
-                "actually call the tool.",
-            )
-            await _assert_tool_attempted(
-                harness, role="data-agent", tool_name="knowledge_retrieval"
-            )
-
-        await _run_gated("data-agent.knowledge_retrieval", knowledge_retrieval_hit)
-
-        async def top_products_by_units() -> None:
-            report_calls.clear()
-            await _turn_text(
-                harness,
-                "Call run_report with report='top_products' and "
-                "params={'order_by': 'units', 'months_back': 24, 'limit': "
-                "5}. You must call it with EXACTLY those parameters, then "
-                "name the single top product by units sold.",
-            )
-            await _assert_tool_attempted(
-                harness, role="data-agent", tool_name="run_report"
-            )
-            assert report_calls, "run_report was not recorded by the wrapper"
-            inputs, result = report_calls[-1]
-            assert isinstance(result, dict)
-            params = inputs.get("params")
-            assert isinstance(params, dict) and params.get("order_by") == "units", (
-                f"run_report was not called with order_by='units': {inputs!r}"
-            )
-            rows = result.get("rows")
-            assert rows, f"run_report(top_products, units) returned no rows: {result!r}"
-            quantities = [row["total_quantity"] for row in rows]
-            assert quantities == sorted(quantities, reverse=True), (
-                f"rows are not sorted by units descending: {quantities!r}"
-            )
-
-        await _run_gated("data-agent.top_products_by_units", top_products_by_units)
-
-
-# ---------------------------------------------------------------------------
-# sales-agent: order_writer, message_sender, escalation
-# (customer_not_registered), and conversation memory across two webhook
-# turns via the real Postgres checkpointer. One boot (seed_demo=True).
-# ---------------------------------------------------------------------------
-
-
-async def test_sales_agent_orders_messages_escalates_and_remembers() -> None:
-    async with boot_live_harness(
-        role="sales-agent",
-        runtime_id="phase1-sales-agent",
-        permissions=(*SALES_AGENT_PERMISSIONS, "send:escalation"),
-        seed_demo=True,
-    ) as harness:
-
-        async def places_an_order() -> None:
-            # Even directed not to, the model still calls catalog_search
-            # first -- the reference backend now reports a real confidence
-            # signal for the exact SKU (#117: `classification: "direct"`,
-            # `similarity: 1.0`), so this no longer routes the model into
-            # `confidence_below_threshold`.
-            await _turn_text(
-                harness,
-                f"This is {_DEMO_CLIENT_PHONE}. I confirm I want to order 2 "
-                f"units of the exact catalog SKU '{_DEMO_SKU}' -- this code "
-                "is already verified and confirmed, so you do not need to "
-                "call catalog_search for it. Call order_writer now to place "
-                "this order; do not escalate and do not ask again, the "
-                "product match is certain.",
-            )
-            await _assert_tool_attempted(
-                harness, role="sales-agent", tool_name="order_writer"
-            )
-
-        # #117 fixed the root cause (the reference `catalog_search` backend's
-        # constant `classification: "ambiguous"` / `similarity: None`, even
-        # for an exact SKU match). Re-verified live (EVAL_RUNS=3): 3/3
-        # `order_writer` calls, up from the earlier 1/6 across two real
-        # attempts -- no longer a documented xfail (formerly
-        # `_run_gated_xfail`, tracked at #79/#117).
-        await _run_gated("sales-agent.order_writer", places_an_order)
-
-        async def sends_a_message() -> None:
-            await _turn_text(
-                harness,
-                f"Use message_sender to send '{_DEMO_CLIENT_PHONE}' a short "
-                "message confirming their order is ready. You must "
-                "actually call message_sender.",
-            )
-            await _assert_tool_attempted(
-                harness, role="sales-agent", tool_name="message_sender"
-            )
-
-        await _run_gated("sales-agent.message_sender", sends_a_message)
-
-        async def escalates_for_an_unregistered_customer() -> None:
-            await _turn_text(
-                harness,
-                f"Hi, this is {_UNKNOWN_CLIENT_PHONE} -- I'd like to order "
-                "5 units of Item Alpha.",
-            )
-            await _assert_tool_attempted(
-                harness, role="sales-agent", tool_name="client_lookup"
-            )
-            await _assert_tool_attempted(
-                harness, role="sales-agent", tool_name="escalation_notifier"
-            )
-
-        await _run_gated(
-            "sales-agent.escalation_customer_not_registered",
-            escalates_for_an_unregistered_customer,
-        )
-
-        async def remembers_across_a_second_webhook_turn() -> None:
-            phone = f"+1555{uuid.uuid4().int % 10_000_000:07d}"
-
-            # Only this conversation's replies: `outbound.sent` is shared by
-            # every scenario and run of this boot, so counting all of it let
-            # an earlier run's late reply stand in for this one's (#24).
-            def replies() -> list[str]:
-                digits = "".join(filter(str.isdigit, phone))
-                return [
-                    entry["text"]["body"]
-                    for entry in harness.outbound.sent
-                    if "".join(filter(str.isdigit, entry.get("to", ""))) == digits
-                ]
-
-            first = await harness.deliver_webhook(
-                phone=phone,
-                text=(
-                    f"Please check catalog_search for '{_DEMO_SKU}' and "
-                    "tell me its description. You must call the tool."
-                ),
-            )
-            assert first.status_code == 200, first.text
-            await harness.wait_until(lambda: len(replies()) >= 1, timeout=60.0)
-
-            second = await harness.deliver_webhook(
-                phone=phone,
-                text=(
-                    "Without searching again, what item code did I just ask you about?"
-                ),
-            )
-            assert second.status_code == 200, second.text
-            await harness.wait_until(lambda: len(replies()) >= 2, timeout=60.0)
-
-            reply = replies()[-1]
-            assert _DEMO_SKU in reply, (
-                f"second turn's reply did not recall {_DEMO_SKU!r}: {reply!r}"
-            )
-
-            thread = await harness.read_thread(phone)
-            assert thread is not None, (
-                "no checkpointed thread found for the conversation's phone "
-                "number -- the Postgres checkpointer did not persist it"
-            )
-
-        await _run_gated(
-            "sales-agent.conversation_memory_two_webhook_turns",
-            remembers_across_a_second_webhook_turn,
-        )
-
-
-# ---------------------------------------------------------------------------
-# summary-agent: conversation_summarizer, over the reference backend's own
-# pre-seeded transcript (`evals.live_registry.DEMO_SUMMARY_SESSION_ID`) --
-# no demo-company seeding needed.
-# ---------------------------------------------------------------------------
-
-_SUMMARY_AGENT_PERMISSIONS = (
-    "read:conversation_logs",
-    "read:knowledge_base",
-    "read:session",
-    "write:summary_output",
-)
-
-
-async def test_summary_agent_summarizes_a_seeded_conversation() -> None:
-    from agents_system.evals.live_registry import DEMO_SUMMARY_SESSION_ID
-
-    async with boot_live_harness(
-        role="summary-agent",
-        runtime_id="phase1-summary-agent",
-        permissions=_SUMMARY_AGENT_PERMISSIONS,
-        bind_webhook_to_role=False,
-    ) as harness:
-
-        async def summarizes() -> None:
-            await _turn_text(
-                harness,
-                f"Use conversation_summarizer on session_id="
-                f"'{DEMO_SUMMARY_SESSION_ID}' and give me the summary. You "
-                "must actually call the tool.",
-            )
-            await _assert_tool_attempted(
-                harness,
-                role="summary-agent",
-                tool_name="conversation_summarizer",
-            )
-
-        await _run_gated("summary-agent.conversation_summarizer", summarizes)
-
-
-# ---------------------------------------------------------------------------
-# operator-agent: use_term and read_file, against a REAL bubblewrap sandbox
-# (never the always-refusing default `terminal_policy=None`).
-# ---------------------------------------------------------------------------
-
-_OPERATOR_AGENT_PERMISSIONS = ("exec:command", "read:files")
-_SANDBOX_NOTE_CONTENT = "Sprint status: green. No blockers."
-
-
-@pytest.fixture
-def operator_workspace(tmp_path: pathlib.Path) -> pathlib.Path:
-    """A dedicated, disposable sandbox root -- never the process's own cwd
-    or `$HOME` (`TerminalPolicy.__post_init__` refuses both), mirroring
-    `tests/test_live_eval_roles.py`'s own fixture for the same two tools."""
-    (tmp_path / "notes.txt").write_text(_SANDBOX_NOTE_CONTENT, encoding="utf-8")
-    return tmp_path
-
-
-async def test_operator_agent_runs_sandboxed_commands(
-    operator_workspace: pathlib.Path,
-) -> None:
-    use_term_calls: list[tuple[dict[str, object], object]] = []
-    read_file_calls: list[tuple[dict[str, object], object]] = []
-    policy = TerminalPolicy(
-        root=operator_workspace,
-        allowed_commands=frozenset({"ls", "cat"}),
-        sandbox=SandboxPolicy(),
-    )
-
-    async with boot_live_harness(
-        role="operator-agent",
-        runtime_id="phase1-operator-agent",
-        permissions=_OPERATOR_AGENT_PERMISSIONS,
-        terminal_policy=policy,
-        bind_webhook_to_role=False,
-        tool_wrappers={
-            "use_term": lambda spec: _wrap_recorder(spec, use_term_calls),
-            "read_file": lambda spec: _wrap_recorder(spec, read_file_calls),
-        },
-    ) as harness:
-
-        async def runs_ls_via_use_term() -> None:
-            use_term_calls.clear()
-            await _turn_text(
-                harness,
-                "Use the use_term tool to run `ls` (argv=['ls']) in the "
-                "workspace root, then tell me what files you see. You must "
-                "actually call the tool.",
-            )
-            await _assert_tool_attempted(
-                harness, role="operator-agent", tool_name="use_term"
-            )
-            assert use_term_calls, "use_term was not recorded by the wrapper"
-            _, result = use_term_calls[-1]
-            assert isinstance(result, dict)
-            assert result.get("exit_code") == 0, f"use_term failed: {result!r}"
-            assert "notes.txt" in result.get("stdout", ""), (
-                f"the real sandboxed `ls` did not see notes.txt: {result!r}"
-            )
-
-        await _run_gated("operator-agent.use_term", runs_ls_via_use_term)
-
-        async def reads_notes_via_read_file() -> None:
-            read_file_calls.clear()
-            await _turn_text(
-                harness,
-                "Use the read_file tool to read 'notes.txt', then tell me "
-                "what it says. You must actually call the tool.",
-            )
-            await _assert_tool_attempted(
-                harness, role="operator-agent", tool_name="read_file"
-            )
-            assert read_file_calls, "read_file was not recorded by the wrapper"
-            _, result = read_file_calls[-1]
-            assert isinstance(result, dict)
-            assert _SANDBOX_NOTE_CONTENT in result.get("content", ""), (
-                f"read_file did not return the real file's content: {result!r}"
-            )
-
-        await _run_gated("operator-agent.read_file", reads_notes_via_read_file)
 
 
 # ---------------------------------------------------------------------------
