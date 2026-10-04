@@ -178,6 +178,34 @@ arranque limpio significa que el sandbox funciona; la aplicación real
 sigue ocurriendo en cada llamada, sin importar si esta línea fue leída o
 no.
 
+## Qué expone el sandbox de `/etc`
+
+El sandbox nunca monta el `/etc` del host completo (#238). Ahí viven el
+archivo de secretos del despliegue (`/etc/agents-system/agents-system.env`)
+y `passwd`/`group`, y `use_term` solo revisa `argv[0]`, así que un `cat`
+permitido los imprimiría. Solo se monta, de solo lectura, una lista
+explícita (`_SYSTEM_ETC_BINDS` en `connectors/operator.py`): `ld.so.cache`,
+`nsswitch.conf`, `localtime`, `ssl/certs`, `ca-certificates`,
+`pki/tls/certs` y `alternatives`. Una herramienta que declara
+`network=True` recibe además `resolv.conf` y `hosts`. `passwd`, `group`,
+`shadow` y `/etc/agents-system` nunca se montan.
+
+La lista se obtuvo por experimento con `bwrap`: `factor`, `ls`, `cat`,
+`sleep`, `echo` y un Python de venv corren sin ningún `/etc`, así que las
+entradas existen por portabilidad (caché de bibliotecas, zona horaria,
+raíces TLS, DNS). La entrada `alternatives` (symlinks de la familia Debian,
+como `awk`) no pudo verificarse en el host de la familia Arch usado; solo
+contiene symlinks hacia `/usr`.
+
+Un comando que necesite otro archivo de `/etc` lo obtiene con
+`SandboxPolicy.extra_ro_binds` (por ejemplo `/etc/ssl`). **Riesgo:** cada
+bind extra lo lee todo comando de esa herramienta; nunca montes
+`/etc/agents-system`, y `SandboxPolicy` rechaza `/etc` completo. Se
+sondearon otras lecturas fuera de la raíz y están cerradas: un symlink en
+la raíz hacia un archivo del host no resuelve a nada (el destino no está
+montado), `/proc` es el namespace de PID del propio sandbox y el entorno se
+limpia. El directorio de `argv[0]` sigue siendo legible, como antes.
+
 ## Delimitación del espacio de trabajo
 
 `TerminalPolicy.root` — el directorio montado en **lectura-escritura**

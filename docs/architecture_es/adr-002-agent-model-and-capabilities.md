@@ -1198,9 +1198,9 @@ comando en `bwrap --unshare-all --die-with-parent` (también pasaba
 nombres que soporta bubblewrap (usuario, ipc, pid, red, uts,
 cgroup) se separa por defecto, y `--share-net` reincorpora la red solo
 cuando `sandbox.network=True`. Las rutas fijas del sistema (`/usr`, `/bin`,
-`/sbin`, `/lib`, `/lib64`, `/etc`, cada una probada vía `--ro-bind-try` para
+`/sbin`, `/lib`, `/lib64`, cada una probada vía `--ro-bind-try` para
 que funcione tanto un host con `/usr` fusionado como uno separado) se
-montan de solo lectura; `policy.root` se monta de lectura-escritura en la
+montan de solo lectura, más una lista corta de `/etc`, nunca el `/etc` completo (#238); `policy.root` se monta de lectura-escritura en la
 MISMA ruta dentro del sandbox que fuera de él, de modo que `cwd` y la propia
 verificación de raíz de `read_file` no se ven afectadas por el sandboxing;
 `/tmp` es un `tmpfs` privado y nuevo; el entorno se limpia con `--clearenv`

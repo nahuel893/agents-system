@@ -165,7 +165,7 @@ y `allowed_commands`. Todo comando que pasa por el mecanismo compartido de
 arriba (`use_term` y cada entrada de `command_tools`) corre dentro de
 `bwrap`: sin red salvo que la política de la herramienta la declare
 explícitamente, las rutas fijas del sistema (`/usr`, `/bin`, `/sbin`,
-`/lib`, `/lib64`, `/etc`) de solo lectura, un `/tmp` privado, `policy.root`
+`/lib`, `/lib64`, más una lista corta de `/etc`) de solo lectura, un `/tmp` privado, `policy.root`
 de lectura-escritura, un entorno limpio, y un techo de memoria/CPU impuesto
 vía `RLIMIT_AS`/`RLIMIT_CPU` (bubblewrap en sí no tiene banderas de límite
 de recursos). Si `bwrap` no está presente en el host, el comando se niega

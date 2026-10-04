@@ -1072,8 +1072,8 @@ until a #105 follow-up removed it; `docs/operations/sandbox-bwrap.md`
 explains why): every namespace bubblewrap supports (user, ipc, pid, net, uts, cgroup) is unshared by
 default, and `--share-net` opts back into network only when
 `sandbox.network=True`. Fixed system paths (`/usr`, `/bin`, `/sbin`, `/lib`,
-`/lib64`, `/etc`, each tried via `--ro-bind-try` so both a merged-`/usr` host
-and a split one work) are bound read-only; `policy.root` is bound
+`/lib64`, each tried via `--ro-bind-try` so both a merged-`/usr` host
+and a split one work) are bound read-only, plus a short `/etc` allowlist, never the whole `/etc` (#238); `policy.root` is bound
 read-write at the SAME path inside the sandbox as outside, so `cwd` and
 `read_file`'s own root check are unaffected by sandboxing; `/tmp` is a
 fresh, private `tmpfs`; the environment is `--clearenv`'d and rebuilt from
