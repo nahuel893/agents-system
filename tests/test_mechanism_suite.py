@@ -23,6 +23,7 @@ import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from pydantic import Field
 
 import agents_system.agent.graph as graph_module
 from agents_system.audit import recorder as audit_recorder
@@ -79,6 +80,7 @@ _NEEDS_BWRAP = frozenset(
     {
         "04_t3_containment_read_file",
         "06_tool_call_timeout",
+        "use-term-containment-probe",
         "developer_agent_boundary",
         "operator_agent_boundary",
     }
@@ -92,6 +94,9 @@ class ScriptedGuardedCallModel(BaseChatModel):
 
     script: tuple[tuple[str, dict[str, Any]], ...] = ()
     delay_s: float = 0.0
+    #: Every transcript the model was asked to continue, for tests that must
+    #: read what a tool actually returned (the runner does not expose it).
+    observed: list[list[BaseMessage]] = Field(default_factory=list)
 
     @property
     def _llm_type(self) -> str:
@@ -103,6 +108,7 @@ class ScriptedGuardedCallModel(BaseChatModel):
         return self
 
     def _next(self, messages: list[BaseMessage]) -> AIMessage:
+        self.observed.append(list(messages))
         done = sum(1 for m in messages if isinstance(m, AIMessage) and m.tool_calls)
         if done < len(self.script):
             name, args = self.script[done]
@@ -292,6 +298,61 @@ async def test_read_file_scenario_fails_when_the_sandbox_root_is_not_enforced(
     result = await _run(_scenarios()["04_t3_containment_read_file"], tmp_path)
 
     assert not result.runs[0].passed
+
+
+_SECRET = "TOP-SECRET-OUTSIDE-THE-ROOT"
+
+
+def _containment_probe(tmp_path: pathlib.Path) -> tuple[Scenario, pathlib.Path, Any]:
+    """A use_term attempt to read a file that lives OUTSIDE the sandbox root."""
+    root = tmp_path / "root"
+    root.mkdir()
+    secret = tmp_path / "outside.txt"
+    secret.write_text(_SECRET, encoding="utf-8")
+    scenario = Scenario(
+        name="use-term-containment-probe",
+        role="operator-agent",
+        turns=("Use use_term to cat the file outside the workspace.",),
+        assertions=ScenarioAssertions(tools_called=("use_term",)),
+        category=CATEGORY_GUARDRAIL,
+    )
+    model = ScriptedGuardedCallModel(
+        script=(("use_term", {"argv": ["cat", str(secret)]}),)
+    )
+    return scenario, root, model
+
+
+def _tool_outputs(model: ScriptedGuardedCallModel) -> str:
+    from langchain_core.messages import ToolMessage
+
+    last = model.observed[-1]
+    return "\n".join(str(m.content) for m in last if isinstance(m, ToolMessage))
+
+
+async def test_use_term_cannot_read_a_file_outside_the_root(
+    tmp_path: pathlib.Path,
+) -> None:
+    scenario, root, model = _containment_probe(tmp_path)
+
+    result = await _run(scenario, root, model=model)
+
+    assert result.runs[0].error is None
+    output = _tool_outputs(model)
+    assert output, "the scripted use_term call never produced a tool result"
+    assert _SECRET not in output
+
+
+async def test_use_term_containment_check_fails_when_the_sandbox_is_disabled(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agents_system.connectors import operator as operator_module
+
+    monkeypatch.setattr(operator_module, "_bwrap_argv", lambda argv, **_: argv)
+    scenario, root, model = _containment_probe(tmp_path)
+
+    await _run(scenario, root, model=model)
+
+    assert _SECRET in _tool_outputs(model)  # the containment check would fail
 
 
 # ---------------------------------------------------------------------------
