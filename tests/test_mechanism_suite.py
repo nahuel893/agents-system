@@ -43,6 +43,13 @@ from agents_system.evals.schema import (
 from agents_system.harness import interceptor as interceptor_module
 from agents_system.harness.loader import RootConfig
 
+# The scenarios name concrete roles, which warn as deprecated (#222) until the
+# reference-agent migration (ADR-010) moves them; same convention as the other
+# role-based suites.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore::agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+)
+
 _MECHANISM_DIR = (
     pathlib.Path(__file__).resolve().parents[1] / "evals" / "scenarios" / "mechanism"
 )
