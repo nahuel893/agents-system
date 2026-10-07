@@ -23,6 +23,7 @@ from agents_system.services.scope_postgres import (
 )
 from agents_system.subject import TurnActor
 from agents_system.subject_data import (
+    DEFAULT_REGISTRY,
     SubjectDataRegistry,
     SubjectRef,
     delete_subject,
@@ -121,3 +122,13 @@ async def test_a_table_with_a_subject_key_and_no_store_is_reported(
     registered = SubjectDataRegistry()
     registered.register(NotesStore(PostgresScopeProvider(app), table))
     assert table not in await find_unregistered_subject_tables(admin, registered)
+
+
+async def test_the_deployed_schema_has_no_unregistered_subject_table(
+    env: tuple[AsyncEngine, AsyncEngine, str],
+) -> None:
+    # The fixture table is the only one allowed to be missing from the real
+    # registry; any other subject_key table in the schema needs a store.
+    admin, _, table = env
+    leftover = await find_unregistered_subject_tables(admin, DEFAULT_REGISTRY)
+    assert leftover - {table} == set()

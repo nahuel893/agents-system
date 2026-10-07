@@ -191,3 +191,62 @@ def test_purger_refuses_retention_for_an_unknown_or_unpurgeable_store() -> None:
 
 def test_default_registry_starts_empty_for_the_core() -> None:
     assert isinstance(DEFAULT_REGISTRY, SubjectDataRegistry)
+
+
+async def test_delete_without_a_sink_warns_and_reports_unaudited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import structlog
+
+    monkeypatch.setattr(AuditSink, "registered", classmethod(lambda cls: None))
+    reg, facts, _ = _registry()
+    facts.add(ALICE, text="x")
+    with structlog.testing.capture_logs() as logs:
+        result = await delete_subject(reg, ALICE, actor=OPERATOR)
+    assert result["audited"] is False
+    assert any(
+        e["event"] == "subject_data.delete_unaudited" and e["log_level"] == "warning"
+        for e in logs
+    )
+
+
+async def test_a_failing_sink_does_not_lose_the_deletion_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Down:
+        async def record(self, event: Any) -> None:
+            raise RuntimeError("audit down")
+
+    monkeypatch.setattr(AuditSink, "registered", classmethod(lambda cls: Down()))
+    reg, facts, _ = _registry()
+    facts.add(ALICE, text="x")
+    result = await delete_subject(reg, ALICE, actor=OPERATOR)
+    assert result["stores"] == {"facts": 1, "usage": 0}
+    assert result["audited"] is False
+
+
+async def test_delete_audited_reports_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(AuditSink, "registered", classmethod(lambda cls: _Sink()))
+    reg, _, _ = _registry()
+    assert (await delete_subject(reg, ALICE, actor=OPERATOR))["audited"] is True
+
+
+async def test_a_failing_thread_does_not_stop_the_remaining_threads() -> None:
+    reg, _, _ = _registry()
+    threads = MemThreads()
+    threads.threads = {"t1": ["a"], "t2": ["b"], "t3": ["c"]}
+    real = threads.delete_thread
+
+    async def flaky(thread_id: str) -> int:
+        if thread_id == "t1":
+            raise RuntimeError("redis down")
+        return await real(thread_id)
+
+    threads.delete_thread = flaky  # type: ignore[method-assign]
+    with pytest.raises(SubjectDeletionError) as err:
+        await delete_subject(
+            reg, ALICE, actor=OPERATOR, threads=threads, thread_ids=["t1", "t2", "t3"]
+        )
+    assert "t2" not in threads.threads and "t3" not in threads.threads
+    assert err.value.failed == ["checkpointer: 1 thread(s)"]
+    assert err.value.threads == 2

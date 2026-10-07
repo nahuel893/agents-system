@@ -4,8 +4,9 @@
 ``{runtime_id, subject_key, thread_ids?}`` in a JSON body, so the subject key
 never lands in an access log. They cover every store in
 ``app.state.subject_data_registry`` and the subject's checkpointer threads:
-the ids the deployment's ``subject_threads`` hook returns plus any the
-operator names.
+the ids the deployment's ``subject_threads`` hook returns for the subject.
+Ids the operator names must be among them (403 otherwise); without the hook,
+routes fail closed (409) while a checkpointer exists.
 
 They authenticate with ``operator_api_key``, compared with the adapter's
 constant-time check, and ``create_app`` mounts them only when that key is
@@ -72,9 +73,33 @@ router = APIRouter(
 
 
 async def _thread_ids(request: Request, ref: SubjectRef, named: list[str]) -> list[str]:
-    hook: SubjectThreads | None = getattr(request.app.state, "subject_threads", None)
-    found = await hook(ref) if hook is not None else []
-    return list(dict.fromkeys([*found, *named]))
+    """The subject's threads, from the deployment's ownership hook only.
+
+    Named ids narrow the set but can never widen it: one the hook does not
+    return for this subject is refused, so deleting one subject cannot erase
+    another's conversation. Without a hook the subject's threads cannot be
+    enumerated, so the call fails closed whenever a checkpointer exists.
+    """
+    state = request.app.state
+    hook: SubjectThreads | None = getattr(state, "subject_threads", None)
+    if hook is None:
+        if getattr(state, "checkpoint_threads", None) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Conversation threads exist but no subject_threads hook is "
+                    "configured, so this subject's threads cannot be enumerated."
+                ),
+            )
+        return []
+    owned = list(dict.fromkeys(await hook(ref)))
+    foreign = [t for t in named if t not in owned]
+    if foreign:
+        raise HTTPException(
+            status_code=403,
+            detail="A named thread does not belong to this subject.",
+        )
+    return list(dict.fromkeys(named)) if named else owned
 
 
 def _actor(operator_id: str | None) -> TurnActor:

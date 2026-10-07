@@ -68,10 +68,13 @@ class ThreadStore(Protocol):
 class SubjectDeletionError(RuntimeError):
     """At least one store failed; the others were still attempted."""
 
-    def __init__(self, failed: list[str], deleted: dict[str, int]) -> None:
+    def __init__(
+        self, failed: list[str], deleted: dict[str, int], threads: int = 0
+    ) -> None:
         super().__init__(f"subject data deletion failed in: {', '.join(failed)}")
         self.failed = failed
         self.deleted = deleted
+        self.threads = threads
 
 
 class SubjectDataRegistry:
@@ -150,8 +153,10 @@ async def delete_subject(
 ) -> dict[str, Any]:
     """Delete ``subject``'s data everywhere, audited with ``actor``.
 
-    Every store is attempted even when one fails; the failures are raised as
-    one ``SubjectDeletionError`` after the audit event is recorded.
+    Every store and every thread is attempted even when one fails; the
+    failures are raised as one ``SubjectDeletionError`` after the audit event
+    is recorded. The result carries ``audited``: false when no sink took the
+    event (the sink is fire-and-forget, so this is best effort).
     """
     deleted: dict[str, int] = {}
     failed: list[str] = []
@@ -162,22 +167,29 @@ async def delete_subject(
             logger.exception("subject_data.delete_failed", store=name)
             failed.append(name)
     thread_count = 0
+    failed_threads = 0
     if threads is not None:
         for thread_id in thread_ids:
             try:
                 thread_count += await threads.delete_thread(thread_id)
             except Exception:
-                logger.exception("subject_data.delete_failed", store="checkpointer")
-                failed.append("checkpointer")
-                break
-    await _audit_deletion(subject, actor, deleted, thread_count, failed)
+                logger.exception(
+                    "subject_data.delete_failed",
+                    store="checkpointer",
+                    thread_id=thread_id,
+                )
+                failed_threads += 1
+    if failed_threads:
+        failed.append(f"checkpointer: {failed_threads} thread(s)")
+    audited = await _audit_deletion(subject, actor, deleted, thread_count, failed)
     if failed:
-        raise SubjectDeletionError(failed, deleted)
+        raise SubjectDeletionError(failed, deleted, thread_count)
     return {
         "runtime_id": subject.runtime_id,
         "subject_key": subject.subject_key,
         "stores": deleted,
         "threads": thread_count,
+        "audited": audited,
     }
 
 
@@ -187,22 +199,35 @@ async def _audit_deletion(
     stores: dict[str, int],
     threads: int,
     failed: list[str],
-) -> None:
+) -> bool:
+    """Record the deletion; ``False`` when it could not be (the data is gone either way).
+
+    The deletion already happened, so an audit failure must not discard its
+    result: it is logged loudly and reported as ``audited: false``.
+    """
     from agents_system.audit.recorder import record_subject_data_deleted
     from agents_system.audit.sink import AuditSink
 
     sink = AuditSink.registered()
     if sink is None:
-        return
-    event = await record_subject_data_deleted(
-        runtime_id=subject.runtime_id,
-        subject_key=subject.subject_key,
-        actor=actor.label,
-        stores={**{n: 0 for n in stores}, **stores},
-        threads=threads,
-        failed=failed,
-    )
-    await sink.record(event)
+        logger.warning(
+            "subject_data.delete_unaudited", reason="no audit sink registered"
+        )
+        return False
+    try:
+        event = await record_subject_data_deleted(
+            runtime_id=subject.runtime_id,
+            subject_key=subject.subject_key,
+            actor=actor.label,
+            stores={**{n: 0 for n in stores}, **stores},
+            threads=threads,
+            failed=failed,
+        )
+        await sink.record(event)
+    except Exception:
+        logger.exception("subject_data.delete_unaudited", reason="audit write failed")
+        return False
+    return True
 
 
 class SubjectDataPurger:

@@ -163,3 +163,49 @@ def test_subject_data_retention_parses_never_and_seconds() -> None:
     assert s.subject_data_retention == {"facts": None, "usage": 60}
     with pytest.raises(ValueError):
         Settings(subject_data_retention={"facts": 0})  # type: ignore[call-arg]
+
+
+def test_a_named_thread_the_subject_does_not_own_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _, threads = _client(monkeypatch)
+    body = {**BODY, "thread_ids": ["t2"]}
+    for path in ("export", "delete"):
+        r = client.post(f"/operator/subjects/{path}", json=body, headers=AUTH)
+        assert r.status_code == 403
+    assert "t2" in threads.threads and "t1" in threads.threads
+
+
+def test_a_named_thread_the_subject_owns_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _, threads = _client(monkeypatch)
+    body = {**BODY, "thread_ids": ["t1"]}
+    assert (
+        client.post("/operator/subjects/delete", json=body, headers=AUTH).json()[
+            "threads"
+        ]
+        == 1
+    )
+    assert "t1" not in threads.threads
+
+
+@pytest.mark.parametrize("path", ["export", "delete"])
+def test_threads_without_an_ownership_hook_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    client, store, threads = _client(monkeypatch)
+    client.app.state.subject_threads = None  # type: ignore[attr-defined]
+    r = client.post(f"/operator/subjects/{path}", json=BODY, headers=AUTH)
+    assert r.status_code == 409
+    assert ("rt", "participant:1") in store.rows and "t1" in threads.threads
+
+
+def test_no_saver_and_no_hook_still_serves_the_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _, _ = _client(monkeypatch)
+    client.app.state.subject_threads = None  # type: ignore[attr-defined]
+    client.app.state.checkpoint_threads = None  # type: ignore[attr-defined]
+    r = client.post("/operator/subjects/delete", json=BODY, headers=AUTH)
+    assert r.status_code == 200 and r.json()["threads"] == 0
