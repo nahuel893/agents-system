@@ -149,6 +149,30 @@ async def test_superuser_bypasses_rls_so_the_provider_refuses_it(
     await PostgresScopeProvider(app).verify()  # the dedicated role passes
 
 
+async def test_preexisting_permissive_policy_does_not_unfence_the_table(
+    fenced: tuple[AsyncEngine, AsyncEngine, str],
+) -> None:
+    admin, app, table = fenced
+    # A legacy permissive policy is OR-combined with ours; the subject
+    # predicate must therefore also be RESTRICTIVE (AND-combined).
+    async with admin.begin() as conn:
+        await conn.execute(
+            text(f"CREATE POLICY legacy_read ON {table} FOR SELECT USING (true)")
+        )
+        await conn.execute(
+            text(f"INSERT INTO {table} VALUES ('rt', 'participant:b', 'secret')")
+        )
+    scope = PostgresScopeProvider(app).scope("rt", "participant:a")
+    async with scope.transaction() as conn:
+        rows = (await conn.execute(text(f"SELECT body FROM {table}"))).all()
+    assert rows == []
+
+
+def test_policy_includes_a_restrictive_subject_predicate() -> None:
+    joined = "\n".join(subject_policy_statements("per_user_facts"))
+    assert "AS RESTRICTIVE" in joined
+
+
 def test_policy_statements_force_rls_and_reject_bad_identifiers() -> None:
     statements = subject_policy_statements("per_user_facts")
     joined = "\n".join(statements)
