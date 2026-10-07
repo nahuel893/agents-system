@@ -438,3 +438,5 @@ The following decisions are still intentionally open:
    - architecture corrections to the agent model, prompts, tool permissions, and persistence described in this document — includes the formal "agent" definition (`docs/platform/agent.md`) and records the correction of this document's folder-path references from `agents/` to `platform/roles/` (ADR-002 F.19)
 5. `docs/architecture/adr-010-capability-evals-and-reference-agents.md` (Accepted)
    - capability-based evals in two layers, and the predefined roles as reference agents instead of supported API
+6. `docs/architecture/adr-011-end-user-scope.md` (Accepted)
+   - the end user of each turn as a platform-bound subject, with per-user data isolation, untrusted-data blocks, per-user budgets, authorized proactive recipients and per-user retention
