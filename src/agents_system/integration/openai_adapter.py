@@ -77,13 +77,26 @@ async def verify_bearer(
         # Open mode — already warned at startup
         return
 
+    check_bearer(credentials, expected_key)
+
+
+def check_bearer(
+    credentials: HTTPAuthorizationCredentials | None, expected_key: str
+) -> None:
+    """Raise 401 unless ``credentials`` is a Bearer token equal to ``expected_key``.
+
+    The one constant-time comparison every bearer-keyed surface shares: the
+    adapter, and the operator routes with their own key (ADR-011 part 6).
+    """
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=401,
             detail="Missing or malformed Authorization header (expected Bearer token).",
         )
 
-    if not secrets.compare_digest(credentials.credentials, expected_key):
+    if not secrets.compare_digest(
+        credentials.credentials.encode(), expected_key.encode()
+    ):
         raise HTTPException(status_code=401, detail="Invalid bearer token.")
 
 

@@ -62,6 +62,8 @@ from agents_system.harness.loader import (
 )
 from agents_system.harness.registry import RegistryFactory, ToolRegistry
 from agents_system.integration import openai_router, webhook_router
+from agents_system.integration.operator_api import SubjectThreads
+from agents_system.integration.operator_api import router as operator_router
 from agents_system.integration.whatsapp_client import WhatsAppClient
 from agents_system.models.base import get_bi_engine, get_engine, get_session_factory
 from agents_system.observability import RequestIdMiddleware, setup_logging
@@ -71,6 +73,14 @@ from agents_system.observability.metrics import (
     Metrics,
 )
 from agents_system.scope import ScopeProvider
+from agents_system.services.checkpointer import CheckpointThreads
+from agents_system.subject_data import (
+    DEFAULT_REGISTRY as DEFAULT_SUBJECT_DATA,
+)
+from agents_system.subject_data import (
+    SubjectDataPurger,
+    SubjectDataRegistry,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -460,6 +470,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 if purger is not None:
                     await purger.start()
                     resource_stack.push_async_callback(purger.stop)
+
+            # ADR-011 part 6 (#257): the operator routes delete and export a
+            # subject's conversation threads through the same saver.
+            app.state.checkpoint_threads = (
+                CheckpointThreads(checkpointer) if checkpointer is not None else None
+            )
+            # One purger enforces every per-user store's retention. A name in
+            # SUBJECT_DATA_RETENTION that no store registered fails the boot.
+            if settings.subject_data_retention:
+                subject_purger = SubjectDataPurger(
+                    app.state.subject_data_registry,
+                    retention=settings.subject_data_retention,
+                    interval_s=settings.subject_data_purge_interval_s,
+                )
+                await subject_purger.start()
+                resource_stack.push_async_callback(subject_purger.stop)
 
             roots: RootConfig | None = getattr(app.state, "roots", None)
 
@@ -1447,6 +1473,8 @@ def create_app(
     ) = None,
     conversation_recorder: ConversationRecorder | None = None,
     subject_resolver: SubjectResolver | None = None,
+    subject_data: SubjectDataRegistry | None = None,
+    subject_threads: SubjectThreads | None = None,
     scope_provider_factory: Callable[[AsyncEngine], ScopeProvider] | None = None,
     roots: RootConfig | None = None,
     title: str = "agents_system",
@@ -1556,6 +1584,11 @@ def create_app(
     application.state.participant_directory = participant_directory
     application.state.conversation_recorder = conversation_recorder
     application.state.subject_resolver = subject_resolver
+    application.state.subject_data_registry = (
+        subject_data if subject_data is not None else DEFAULT_SUBJECT_DATA
+    )
+    application.state.subject_threads = subject_threads
+    application.state.checkpoint_threads = None
     application.state.scope_provider_factory = scope_provider_factory
     application.state.roots = roots
     application.state.chat_model_override = chat_model
@@ -1577,6 +1610,9 @@ def create_app(
     application.add_middleware(RequestIdMiddleware)
     application.include_router(webhook_router)
     application.include_router(openai_router)
+    # ADR-011 part 6: no operator key, no operator routes (fail closed).
+    if get_settings().operator_api_key:
+        application.include_router(operator_router)
 
     logger = structlog.get_logger()
 

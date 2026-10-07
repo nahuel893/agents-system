@@ -456,3 +456,30 @@ class CheckpointPurger:
                     retention_s=self._retention_s,
                 )
             await asyncio.sleep(self._interval_s)
+
+
+class CheckpointThreads:
+    """Per-thread export and delete over any LangGraph saver (ADR-011 part 6).
+
+    The purger only removes idle threads by age; this removes one thread on
+    demand, which the operator's ``delete_subject`` needs. Postgres and the
+    in-memory saver both implement ``adelete_thread``, so no SQL lives here.
+    """
+
+    def __init__(self, saver: Any) -> None:
+        self._saver = saver
+
+    async def export_thread(self, thread_id: str) -> dict[str, Any] | None:
+        from langchain_core.messages import messages_to_dict
+
+        found = await self._saver.aget_tuple({"configurable": {"thread_id": thread_id}})
+        if found is None:
+            return None
+        messages = found.checkpoint.get("channel_values", {}).get("messages", [])
+        return {"thread_id": thread_id, "messages": messages_to_dict(messages)}
+
+    async def delete_thread(self, thread_id: str) -> int:
+        """Delete every checkpoint, write and blob of the thread; 1 if it existed."""
+        existed = await self.export_thread(thread_id) is not None
+        await self._saver.adelete_thread(thread_id)
+        return 1 if existed else 0

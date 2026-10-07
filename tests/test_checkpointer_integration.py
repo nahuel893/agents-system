@@ -30,6 +30,7 @@ from agents_system.models.base import get_engine
 from agents_system.services.checkpointer import (
     CHECKPOINT_SCHEMA_VERSION,
     CheckpointSchemaError,
+    CheckpointThreads,
     open_postgres_checkpointer,
     purge_checkpoints,
 )
@@ -313,6 +314,28 @@ async def test_the_purge_deletes_idle_threads_and_keeps_active_ones(
         "re: recent",
         "again",
     ]
+
+
+async def test_delete_thread_removes_one_thread_on_the_real_saver(
+    migrated: str,
+) -> None:
+    """ADR-011 part 6 (#257): on-demand delete, not by age."""
+    gone, kept = "+5491100024010", "+5491100024011"
+    await _turns(migrated, gone, ["forget me"])
+    await _turns(migrated, kept, ["keep me"])
+
+    async with open_postgres_checkpointer(
+        migrated, pool_size=1, timeout_s=5.0
+    ) as saver:
+        threads = CheckpointThreads(saver)
+        exported = await threads.export_thread(gone)
+        assert exported is not None
+        assert "forget me" in repr(exported["messages"])
+        assert await threads.delete_thread(gone) == 1
+        assert await threads.delete_thread(gone) == 0
+
+    assert set((await _thread_rows(migrated, gone)).values()) == {0}
+    assert (await _thread_rows(migrated, kept))["checkpoints"] >= 1
 
 
 async def test_the_purge_keeps_only_each_threads_latest_checkpoint(

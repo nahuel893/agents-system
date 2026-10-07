@@ -149,6 +149,17 @@ class EscalationNotDelivered(_AuditEventBase):
     reason: str
 
 
+class SubjectDataDeleted(_AuditEventBase):
+    """Emitted when an operator deletes one subject's data (ADR-011 part 6, #257).
+
+    ``actor`` is the operator, ``subject`` the pseudonymous subject key. The
+    payload holds the runtime id and per-store row counts, never an address,
+    a thread id (thread ids are phone numbers) or any deleted content.
+    """
+
+    event_type: Literal["subject_data_deleted"] = "subject_data_deleted"
+
+
 # Discriminator dispatch table — used by AuditEvent.model_validate
 _EVENT_DISPATCH: dict[str, type[_AuditEventBase]] = {
     "tool_call_attempted": ToolCallAttempted,
@@ -158,6 +169,7 @@ _EVENT_DISPATCH: dict[str, type[_AuditEventBase]] = {
     "unknown_tool": UnknownTool,
     "skill_loaded": SkillLoaded,
     "skill_missing": SkillMissing,
+    "subject_data_deleted": SubjectDataDeleted,
     "runtime_built": RuntimeBuilt,
     "runtime_initialized": RuntimeInitialized,
     "runtime_timeout": RuntimeTimeout,

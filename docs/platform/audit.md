@@ -87,8 +87,9 @@ else stays in `payload`.
 | `tool_call_attempted` | `harness/interceptor.py` | A call reached Layer 2 |
 | `tool_call_blocked` | `harness/interceptor.py` | Layer 2 refused the call |
 | `escalation_not_delivered` | `harness/defaults.py` | The built-in default `escalation_notifier` handled an escalation: no human was reached (in-process library use only, never the served app). Payload: `tool_name`, `reason` (cut to 200 characters, then redacted) and `details_chars`, never the details text |
+| `subject_data_deleted` | `subject_data.py` | An operator deleted one subject's data (`delete_subject`, `POST /operator/subjects/delete`). `actor` is `operator:<id>`, `subject` the pseudonymous key. Payload: `runtime_id`, per-store row counts, `threads` (a count) and `failed` store names, never an address, a thread id or deleted content |
 
-Fourteen call sites for twelve event types. `tool_call_blocked` is emitted from three
+Fifteen call sites for thirteen event types. `tool_call_blocked` is emitted from three
 distinct branches of the interceptor — `not_in_surface`, `revalidation_required`,
 and `permission_revoked` — which is why the counts differ.
 

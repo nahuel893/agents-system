@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from agents_system.extras import raise_missing_extra
+from agents_system.subject_data import SubjectDataRegistry
 
 try:
     from sqlalchemy import text
@@ -126,3 +127,23 @@ class PostgresScopeProvider:
                 "BYPASSRLS, so row-level security does not apply to it; connect "
                 "per-user features as a dedicated non-superuser role"
             )
+
+
+async def find_unregistered_subject_tables(
+    engine: AsyncEngine, registry: SubjectDataRegistry
+) -> set[str]:
+    """Tables with a ``subject_key`` column that no registered store claims.
+
+    The guard behind ADR-011 part 6: a per-user table must have a store that
+    can export and delete it, so a test asserts this is empty and a new store
+    cannot be forgotten.
+    """
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            text(
+                "SELECT table_name FROM information_schema.columns "
+                "WHERE column_name = 'subject_key' AND table_schema = current_schema()"
+            )
+        )
+        found = {r[0] for r in rows}
+    return found - set(registry.tables)
