@@ -280,6 +280,8 @@ importa solo lo que ese nombre necesita, nada más:
 | `Agent` | `agents_system.agent.spec` | Un agente propio definido en Python (`Agent(...)`), desde una carpeta (`Agent.from_folder(path)`), o ambos; pasalo donde va un nombre de rol (`resolve`, `build_runtime`). Ver `docs/platform_es/role.md` |
 | `ModelPrice` | `agents_system.config` | El precio de un modelo por millón de tokens de entrada/salida, para `AgentRuntime(model_prices=...)` |
 | `AuditSink` | `agents_system.audit.sink` | El sink de eventos de auditoría; registrá uno con `AuditSink.set_current(sink)` para registrar eventos (ver "Correr sin el servidor") |
+| `TurnSubject` | `agents_system.subject` | El usuario final para quien es un turno; pasalo a `run_turn(..., subject=)` (ver [Alcance del usuario final](end-user-scope.md)) |
+| `TurnActor` | `agents_system.subject` | Quién inició el turno (`kind` cerrado + `id`); pasalo a `run_turn(..., actor=)` |
 
 También está disponible `agents_system.__version__`, resuelto desde los
 metadatos del paquete instalado (con un valor provisorio en un checkout de

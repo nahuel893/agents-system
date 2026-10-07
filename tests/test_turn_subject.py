@@ -157,3 +157,19 @@ async def test_run_turn_without_subject_logs_none_and_still_works() -> None:
     usage_logs = [e for e in logs if e["event"] == "runtime.turn_usage"]
     assert usage_logs[0].get("subject") is None
     assert usage_logs[0].get("actor") is None
+
+
+def test_unscoped_nested_turn_does_not_inherit_outer_log_identity() -> None:
+    outer_subject = TurnSubject.for_participant("alice")
+    outer_actor = TurnActor(kind="api", id="first")
+    with turn_scope(outer_subject, outer_actor):
+        with turn_scope(None, None):
+            ctx = structlog.contextvars.get_contextvars()
+            assert ctx.get("subject") is None
+            assert ctx.get("actor") is None
+        ctx = structlog.contextvars.get_contextvars()
+        assert ctx["subject"] == "participant:alice"
+        assert ctx["actor"] == "api:first"
+    ctx = structlog.contextvars.get_contextvars()
+    assert "subject" not in ctx
+    assert "actor" not in ctx

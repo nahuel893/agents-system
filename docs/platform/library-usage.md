@@ -269,6 +269,8 @@ nothing more:
 | `Agent` | `agents_system.agent.spec` | A custom agent defined in Python (`Agent(...)`), from a folder (`Agent.from_folder(path)`), or both; pass it wherever a role name goes (`resolve`, `build_runtime`). See `docs/platform/role.md` |
 | `ModelPrice` | `agents_system.config` | One model's price per million input/output tokens, for `AgentRuntime(model_prices=...)` |
 | `AuditSink` | `agents_system.audit.sink` | The audit event sink; register one with `AuditSink.set_current(sink)` to record audit events (see "Running without the server") |
+| `TurnSubject` | `agents_system.subject` | The end user a turn is for; pass it to `run_turn(..., subject=)` (see [End-user scope](end-user-scope.md)) |
+| `TurnActor` | `agents_system.subject` | Who started the turn (closed `kind` plus `id`); pass it to `run_turn(..., actor=)` |
 
 `agents_system.__version__` is also available, resolved from the installed
 package's metadata (falling back to a placeholder in a source checkout that

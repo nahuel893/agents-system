@@ -103,11 +103,12 @@ def turn_scope(subject: TurnSubject | None, actor: TurnActor | None) -> Iterator
     """
     subject_token = _subject.set(subject)
     actor_token = _actor.set(actor)
-    log_context: dict[str, str] = {}
-    if subject is not None:
-        log_context["subject"] = subject.key
-    if actor is not None:
-        log_context["actor"] = actor.label
+    # Always bind both keys, None included, so a nested turn without a
+    # subject or actor never logs under the enclosing turn's identity.
+    log_context: dict[str, str | None] = {
+        "subject": subject.key if subject is not None else None,
+        "actor": actor.label if actor is not None else None,
+    }
     try:
         with structlog.contextvars.bound_contextvars(**log_context):
             yield
