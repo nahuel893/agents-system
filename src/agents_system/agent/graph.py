@@ -1390,6 +1390,7 @@ class AgentRuntime:
                 permissions=permissions,
                 thread_id=thread_id,
                 model_id=model_id,
+                untrusted_data=untrusted_data,
             )
 
     async def _run_turn_scoped(
@@ -1400,6 +1401,7 @@ class AgentRuntime:
         permissions: tuple[str, ...] | None,
         thread_id: str | None,
         model_id: str | None,
+        untrusted_data: Sequence[UntrustedData],
     ) -> TurnResult:
         """The turn itself, run inside `turn_scope`."""
         # #78 Phase 0 (review finding 4) -- an explicit override always wins;
