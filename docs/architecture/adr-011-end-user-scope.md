@@ -1,6 +1,8 @@
 # ADR-011 — End-user scope: turn subject, per-user data, budgets and proactive actions
 
-**Status:** Proposed · **Date:** 2026-10-07 · **Amends (on acceptance):** ADR-002 A.2, A.3 · **Issue:** #253
+**Status:** Accepted (2026-10-07) · **Date:** 2026-10-07 · **Amends:** ADR-002 A.2, A.3 · **Issue:** #253
+
+**Acceptance.** The owner accepted this ADR on 2026-10-07, and every open question below is resolved as its recommendation states.
 
 ## Summary
 

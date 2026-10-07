@@ -1,6 +1,8 @@
 # ADR-011 — Alcance por usuario final: sujeto del turno, datos por usuario, presupuestos y acciones proactivas
 
-**Estado:** Propuesto · **Fecha:** 2026-10-07 · **Enmienda (al aceptarse):** ADR-002 A.2, A.3 · **Issue:** #253
+**Estado:** Aceptado (2026-10-07) · **Fecha:** 2026-10-07 · **Enmienda:** ADR-002 A.2, A.3 · **Issue:** #253
+
+**Aceptación.** El responsable aceptó este ADR el 2026-10-07, y cada pregunta abierta de abajo queda resuelta según su recomendación.
 
 ## Resumen
 
