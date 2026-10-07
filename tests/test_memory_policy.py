@@ -306,3 +306,72 @@ def test_the_gate_is_visible_outside_the_loader() -> None:
     ]
     assert "memory_policy.py" in hits
     assert SimpleNamespace  # keep import used
+
+
+# --- conversational roles keep their history (review fix) ---------------------
+
+_CONVERSATIONAL = (
+    "agent",
+    "support-agent",
+    "sales-agent",
+    "accountant-agent",
+    "operator-agent",
+    "developer-agent",
+)
+_STATELESS = ("summary-agent", "data-agent", "orchestrator")
+
+
+@pytest.mark.parametrize("role", _CONVERSATIONAL)
+def test_conversational_roles_persist_the_conversation(role: str) -> None:
+    import warnings
+
+    from agents_system.harness.loader import resolve
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        definition = resolve(role)
+    assert MemoryPolicy.from_mapping(definition.memory_policy).persist_conversation
+
+
+@pytest.mark.parametrize("role", _STATELESS)
+def test_stateless_roles_keep_opting_out(role: str) -> None:
+    import warnings
+
+    from agents_system.harness.loader import resolve
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        definition = resolve(role)
+    assert not MemoryPolicy.from_mapping(definition.memory_policy).persist_conversation
+
+
+async def test_support_agent_remembers_the_first_turn_on_the_second() -> None:
+    import warnings
+
+    from agents_system.harness.loader import resolve
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        definition = resolve("support-agent")
+    saver = _Saver()
+    equipped = EquippedRuntime(
+        definition=definition,
+        system_prompt="support",
+        tools=(),
+        denied_tools=(),
+        skills=(),
+    )
+    agent = AgentRuntime(
+        equipped,
+        _Model(responses=[AIMessage(content="one"), AIMessage(content="two")]),
+        checkpointer=saver,
+    )
+    for text in ("first", "second"):
+        await agent.run_turn_with_usage(
+            [HumanMessage(content=text)],
+            session_id="s",
+            permissions=(),
+            thread_id="same-thread",
+        )
+    assert saver.reads > 0
+    assert saver.puts > 0
