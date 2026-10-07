@@ -66,6 +66,7 @@ from agents_system.observability.metrics import (
     record_turn,
 )
 from agents_system.permissions.permission_registry import permission_registry
+from agents_system.scope import ScopeProvider
 from agents_system.subject import (
     TurnActor,
     TurnSubject,
@@ -492,6 +493,8 @@ async def _execute_tools(
     permissions: tuple[str, ...],
     tool_call_timeout_s: float,
     metrics: Metrics,
+    scope_provider: ScopeProvider | None = None,
+    runtime_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute all tool_calls in the last AIMessage through the Layer-2 interceptor.
 
@@ -546,6 +549,8 @@ async def _execute_tools(
                         equipped,
                         current_permissions=permissions,
                         session=session,
+                        scope_provider=scope_provider,
+                        runtime_id=runtime_id,
                     )
                 output = call_result.output
                 content = (
@@ -690,6 +695,8 @@ def _build_graph(
     tool_call_timeout_s: float,
     metrics: Metrics,
     max_context_tokens: int | None = None,
+    scope_provider: ScopeProvider | None = None,
+    runtime_id: str | None = None,
 ) -> StateGraph[AgentState]:
     """Build the StateGraph with call_model, execute_tools and limit_reached nodes."""
     graph = StateGraph(AgentState)
@@ -714,6 +721,8 @@ def _build_graph(
             permissions=permissions,
             tool_call_timeout_s=tool_call_timeout_s,
             metrics=metrics,
+            scope_provider=scope_provider,
+            runtime_id=runtime_id,
         ),
     )
     graph.add_node(_LIMIT_REACHED_NODE, partial(_limit_reached, metrics=metrics))
@@ -1072,7 +1081,16 @@ class AgentRuntime:
         metrics: Metrics | None = None,
         model_prices: Mapping[str, ModelPrice] | None = None,
         checkpointer_timeout_s: float = DEFAULT_CHECKPOINTER_TIMEOUT_S,
+        scope_provider: ScopeProvider | None = None,
     ) -> None:
+        if scope_provider is not None and runtime_id is None:
+            # ADR-011 part 1: per-user data is keyed by the runtime id, and
+            # the fallback is the model's display name, which two agents on
+            # one model share. Refuse rather than mix their users' data.
+            raise ValueError(
+                "an AgentRuntime with a scope_provider (any per-user store) "
+                "needs an explicit runtime_id; the default is the model name"
+            )
         if not checkpointer_timeout_s > 0:
             raise ValueError(
                 f"checkpointer_timeout_s must be positive, got {checkpointer_timeout_s!r}"
@@ -1099,6 +1117,7 @@ class AgentRuntime:
         # #78 Phase 0 Slice 2 -- see the `runtime_id`/`metrics` parameter
         # docs above.
         self._runtime_id = runtime_id if runtime_id is not None else self._model_id
+        self._scope_provider = scope_provider
         self._metrics = metrics if metrics is not None else DEFAULT_METRICS
         # Issue #166 -- copied, so a caller mutating its own dict later cannot
         # reprice turns behind this runtime's back.
@@ -1294,6 +1313,8 @@ class AgentRuntime:
             tool_call_timeout_s=effective_limits["tool_call_timeout_s"],
             metrics=self._metrics,
             max_context_tokens=int(effective_limits["max_context_tokens"]),
+            scope_provider=self._scope_provider,
+            runtime_id=self._runtime_id,
         )
         # Issue #24 -- a thread's history is read here, before the turn, and
         # the turn is saved once at the end (see `_Thread` for the failure

@@ -66,6 +66,12 @@ class ToolSpec:
     revalidation to a specific T0/T1 read tool without reclassifying it.
     Defaults to False — zero behavior change for existing tools.
     """
+    subject_scoped: bool = False
+    """ADR-011 part 1: the tool touches per-user data. The interceptor passes
+    its (async) connector a ``scope=`` handle bound to the turn's runtime id
+    and subject key, and refuses, with an audit event, to run it in a turn
+    that has no subject. The tool never holds or chooses a subject key.
+    """
 
     def __post_init__(self) -> None:
         """Fail closed at construction (ADR-002 C.10 review follow-up,

@@ -41,6 +41,8 @@ from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.registry import Tier, ToolSpec
 from agents_system.permissions import UnknownPermissionNameError, covers, resolve
+from agents_system.scope import ScopeProvider
+from agents_system.subject import current_subject
 
 logger = structlog.get_logger()
 
@@ -82,6 +84,8 @@ async def intercept(
     *,
     current_permissions: Iterable[str] | None = None,
     session: Any = None,
+    scope_provider: ScopeProvider | None = None,
+    runtime_id: str | None = None,
 ) -> CallResult:
     """Validate and execute a tool call against the injected surface.
 
@@ -101,6 +105,11 @@ async def intercept(
         Forwarded as a keyword argument to async connectors only. Sync
         connectors do not receive it (they run in asyncio.to_thread and must
         not access async session objects from a thread context).
+    scope_provider, runtime_id:
+        ADR-011 part 3. A ``subject_scoped`` tool receives ``scope=`` built by
+        the provider for (``runtime_id``, the turn's subject key). Without a
+        subject in the turn, a provider or an async connector the call is
+        refused and audited; it never runs against a default.
     """
     surface: dict[str, ToolSpec] = {t.name: t for t in runtime.tools}
 
@@ -182,9 +191,33 @@ async def intercept(
 
         revalidated = True
 
+    scope: Any = None
+    if spec.subject_scoped:
+        subject = current_subject()
+        if subject is None:
+            reason = "subject_required"
+        elif scope_provider is None or runtime_id is None:
+            reason = "scope_unavailable"
+        elif not asyncio.iscoroutinefunction(spec.connector):
+            reason = "scope_requires_async_connector"
+        else:
+            reason = ""
+            scope = scope_provider.scope(runtime_id, subject.key)
+        if reason:
+            logger.warning("interceptor.call_blocked", tool=tool_name, reason=reason)
+            _emit(
+                "record_tool_call_blocked",
+                definition=runtime.definition,
+                tool_name=tool_name,
+                reason=reason,
+            )
+            raise PolicyViolation(tool_name, reason)
+
     logger.info("interceptor.call_allowed", tool=tool_name, sensitive=sensitive)
 
-    if asyncio.iscoroutinefunction(spec.connector):
+    if scope is not None:
+        output = await spec.connector(tool_input, session=session, scope=scope)
+    elif asyncio.iscoroutinefunction(spec.connector):
         output = await spec.connector(tool_input, session=session)
     else:
         output = await asyncio.to_thread(spec.connector, tool_input)
