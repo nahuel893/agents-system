@@ -50,4 +50,24 @@ app = create_app(registry_factory=..., subject_resolver=MyResolver())
 - **Turn logs:** `runtime.turn_usage` and every log line of the turn carry `subject` (the key) and `actor`, never the address.
 - **Participant ids:** a `Participant.id` must be unique across every channel the directory serves. See [Channel](channel.md).
 
-Tools do not receive the subject yet: the scoped handle and per-user stores come with ADR-011 part 3.
+## Subject-scoped tools and the scope handle
+
+A tool never holds a subject key. Mark a tool `ToolSpec(..., subject_scoped=True)` and its **async** connector receives a `scope=` keyword, a handle bound to (runtime id, subject key) that the interceptor builds from the turn's subject. The handle's methods take neither value; the model never sees or passes them.
+
+```python
+from agents_system.scope import InMemoryScopeProvider
+
+async def remember(inputs, *, session=None, scope):
+    scope.put("notes", inputs["id"], inputs["text"])      # reference backend
+    return {"notes": scope.rows("notes")}                  # only this subject's rows
+
+ToolSpec(name="remember", ..., connector=remember, subject_scoped=True)
+runtime = AgentRuntime(equipped, scope_provider=InMemoryScopeProvider(), runtime_id="support")
+```
+
+- **No subject, no run.** A subject-scoped tool called in a turn with no subject, with no `scope_provider`, or with a sync connector is refused (`subject_required`, `scope_unavailable`, `scope_requires_async_connector`) and audited as a blocked tool call. It never runs against a default.
+- **Explicit runtime id.** An `AgentRuntime` given a `scope_provider` (any per-user store) and no `runtime_id` raises `ValueError`: the fallback is the model's name, which two agents share. Treat a runtime id as permanent once per-user features are on; renaming it orphans the data.
+- **Reference backend.** `InMemoryScopeProvider` keeps rows in a dict keyed by (runtime id, subject key), so library mode keeps the contract without Postgres.
+- **Postgres backend (extra `postgres`).** `PostgresScopeProvider(engine)` opens each handle transaction with `app.runtime_id` and `app.subject_key` as transaction-local settings (`handle.transaction()` yields the connection). `create_subject_policy(conn, table)` fences a per-user table (columns `runtime_id`, `subject_key`) with a row-level security policy and `FORCE ROW LEVEL SECURITY`, so a query that forgets its filter still returns only the current subject's rows, and a transaction with no scope returns none.
+- **The database role matters.** Superusers and roles with `BYPASSRLS` skip row-level security even under FORCE. `PostgresScopeProvider.verify()` refuses such a role. The served app calls it at boot only when you pass `create_app(scope_provider_factory=lambda engine: PostgresScopeProvider(engine))`; without a per-user feature, existing deployments boot on any role.
+- **Structural test.** `await assert_subject_isolation(provider, write=..., read_all=...)` (from `agents_system.scope`) writes as two subjects and runs your deliberately unfiltered `read_all` as each; it fails if either sees the other's rows. Every per-user store ships one. Test the Postgres side with a dedicated non-superuser role, never the docker superuser.

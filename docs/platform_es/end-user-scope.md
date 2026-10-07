@@ -50,4 +50,24 @@ app = create_app(registry_factory=..., subject_resolver=MyResolver())
 - **Logs del turno:** `runtime.turn_usage` y cada línea de log del turno llevan `subject` (la clave) y `actor`, nunca la dirección.
 - **Ids de participante:** un `Participant.id` debe ser único en todos los canales que sirve el directorio. Ver [Channel](channel.md).
 
-Las herramientas todavía no reciben el sujeto: el handle acotado y los almacenes por usuario llegan con la parte 3 del ADR-011.
+## Herramientas acotadas al sujeto y el handle de alcance
+
+Una herramienta nunca tiene la clave del sujeto. Marcá una herramienta con `ToolSpec(..., subject_scoped=True)` y su conector **async** recibe un argumento `scope=`, un handle atado a (id de runtime, clave del sujeto) que construye el interceptor a partir del sujeto del turno. Los métodos del handle no reciben ninguno de los dos valores; el modelo nunca los ve ni los pasa.
+
+```python
+from agents_system.scope import InMemoryScopeProvider
+
+async def remember(inputs, *, session=None, scope):
+    scope.put("notes", inputs["id"], inputs["text"])      # backend de referencia
+    return {"notes": scope.rows("notes")}                  # solo las filas de este sujeto
+
+ToolSpec(name="remember", ..., connector=remember, subject_scoped=True)
+runtime = AgentRuntime(equipped, scope_provider=InMemoryScopeProvider(), runtime_id="support")
+```
+
+- **Sin sujeto, no corre.** Una herramienta acotada al sujeto llamada en un turno sin sujeto, sin `scope_provider` o con un conector sync se rechaza (`subject_required`, `scope_unavailable`, `scope_requires_async_connector`) y se audita como llamada bloqueada. Nunca corre contra un valor por defecto.
+- **Id de runtime explícito.** Un `AgentRuntime` con `scope_provider` (cualquier almacén por usuario) y sin `runtime_id` lanza `ValueError`: el valor por defecto es el nombre del modelo, que dos agentes comparten. Tratá el id de runtime como permanente una vez activas funciones por usuario; renombrarlo deja huérfanos los datos.
+- **Backend de referencia.** `InMemoryScopeProvider` guarda las filas en un dict con clave (id de runtime, clave del sujeto), así el modo biblioteca conserva el contrato sin Postgres.
+- **Backend Postgres (extra `postgres`).** `PostgresScopeProvider(engine)` abre la transacción de cada handle con `app.runtime_id` y `app.subject_key` como ajustes locales a la transacción (`handle.transaction()` entrega la conexión). `create_subject_policy(conn, table)` protege una tabla por usuario (columnas `runtime_id`, `subject_key`) con una política de row-level security y `FORCE ROW LEVEL SECURITY`: una consulta que olvida su filtro igual devuelve solo las filas del sujeto actual, y una transacción sin alcance no devuelve ninguna.
+- **El rol de la base importa.** Los superusuarios y los roles con `BYPASSRLS` ignoran row-level security incluso con FORCE. `PostgresScopeProvider.verify()` rechaza ese rol. La app servida lo llama al arrancar solo si pasás `create_app(scope_provider_factory=lambda engine: PostgresScopeProvider(engine))`; sin funciones por usuario, los despliegues existentes arrancan con cualquier rol.
+- **Test estructural.** `await assert_subject_isolation(provider, write=..., read_all=...)` (de `agents_system.scope`) escribe como dos sujetos y ejecuta tu `read_all` deliberadamente sin filtrar como cada uno; falla si alguno ve filas del otro. Cada almacén por usuario trae uno. Probá el lado Postgres con un rol dedicado no superusuario, nunca con el superusuario de docker.

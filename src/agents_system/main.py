@@ -21,7 +21,7 @@ from collections.abc import (
 )
 from contextlib import AsyncExitStack, asynccontextmanager
 from functools import partial
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import httpx
 import structlog
@@ -70,6 +70,11 @@ from agents_system.observability.metrics import (
     DEFAULT_REGISTRY,
     Metrics,
 )
+from agents_system.scope import ScopeProvider
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
 from agents_system.services.admission import TurnAdmissionLimiter
 from agents_system.services.db_role import role_is_read_only
 from agents_system.services.outbox import (
@@ -192,6 +197,25 @@ async def verify_metrics_access(
         raise HTTPException(status_code=401, detail="Invalid bearer token.")
 
 
+async def _start_scope_provider(
+    factory: Callable[[AsyncEngine], ScopeProvider] | None, engine: AsyncEngine
+) -> ScopeProvider | None:
+    """Build the per-user scope provider and refuse an unfenced database role.
+
+    ADR-011 part 3: only when a per-user feature is configured (``factory`` is
+    given), so deployments without one keep booting on any role. A provider
+    with a ``verify()`` (Postgres: superuser / BYPASSRLS refusal) is checked
+    before any runtime is built.
+    """
+    if factory is None:
+        return None
+    provider = factory(engine)
+    verify = getattr(provider, "verify", None)
+    if verify is not None:
+        await verify()
+    return provider
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage startup / shutdown resources.
@@ -229,6 +253,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Startup — create async engine and store on app state
         app.state.engine = get_engine(settings.database_url, settings)
         resource_stack.push_async_callback(app.state.engine.dispose)
+        scope_provider = await _start_scope_provider(
+            getattr(app.state, "scope_provider_factory", None), app.state.engine
+        )
 
         # #46 (ADR-001 D-033) — one process-wide bound on concurrent turns,
         # shared by every entry point that runs one: the webhook worker
@@ -598,6 +625,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     # client, so a database that stops answering cannot hold
                     # the turn, its admission slot or its outbox lease.
                     checkpointer_timeout_s=settings.checkpointer_timeout_s,
+                    scope_provider=scope_provider,
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
 
@@ -1419,6 +1447,7 @@ def create_app(
     ) = None,
     conversation_recorder: ConversationRecorder | None = None,
     subject_resolver: SubjectResolver | None = None,
+    scope_provider_factory: Callable[[AsyncEngine], ScopeProvider] | None = None,
     roots: RootConfig | None = None,
     title: str = "agents_system",
     chat_model: BaseChatModel | None = None,
@@ -1527,6 +1556,7 @@ def create_app(
     application.state.participant_directory = participant_directory
     application.state.conversation_recorder = conversation_recorder
     application.state.subject_resolver = subject_resolver
+    application.state.scope_provider_factory = scope_provider_factory
     application.state.roots = roots
     application.state.chat_model_override = chat_model
     application.state.provider_probe = ProviderHealthProbe()
