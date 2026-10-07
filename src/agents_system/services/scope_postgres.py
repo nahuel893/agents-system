@@ -43,14 +43,26 @@ class UnfencedRoleError(RuntimeError):
     """The database role bypasses row-level security, so nothing is fenced."""
 
 
-def subject_policy_statements(table: str) -> list[str]:
-    """DDL that fences ``table`` (columns ``runtime_id``, ``subject_key``)."""
+def subject_policy_statements(
+    table: str, *, open_setting: str | None = None
+) -> list[str]:
+    """DDL that fences ``table`` (columns ``runtime_id``, ``subject_key``).
+
+    ``open_setting`` names a transaction-local setting that, set to ``on``,
+    lifts the fence for a platform worker that must act across subjects (the
+    proactive dispatcher claims whichever message is due). Tool code never
+    sets it: a scope handle only sets the runtime and subject settings.
+    """
     if not _IDENTIFIER.match(table):
         raise ValueError(f"not a plain table identifier: {table!r}")
     match = (
         f"runtime_id = nullif(current_setting('{RUNTIME_SETTING}', true), '') "
         f"AND subject_key = nullif(current_setting('{SUBJECT_SETTING}', true), '')"
     )
+    if open_setting is not None:
+        if not re.fullmatch(r"[a-z_]+\.[a-z_]+", open_setting):
+            raise ValueError(f"not a plain setting name: {open_setting!r}")
+        match = f"(({match}) OR current_setting('{open_setting}', true) = 'on')"
     return [
         f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY",
         f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY",
@@ -100,9 +112,11 @@ def expired_purge_policy_statements(table: str) -> list[str]:
     ]
 
 
-async def create_subject_policy(conn: AsyncConnection, table: str) -> None:
+async def create_subject_policy(
+    conn: AsyncConnection, table: str, *, open_setting: str | None = None
+) -> None:
     """Create the row-level security policy for a per-user table."""
-    for statement in subject_policy_statements(table):
+    for statement in subject_policy_statements(table, open_setting=open_setting):
         await conn.execute(text(statement))
 
 
@@ -141,6 +155,10 @@ class PostgresScope:
 class PostgresScopeProvider:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
+
+    @property
+    def engine(self) -> AsyncEngine:
+        return self._engine
 
     def scope(self, runtime_id: str, subject_key: str) -> PostgresScope:
         return PostgresScope(self._engine, runtime_id, subject_key)

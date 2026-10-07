@@ -102,6 +102,10 @@ app = create_app(
 - Registrar cualquier canal exige un directorio de participantes que conozca
   el canal (sección siguiente), o el arranque falla.
 
+## Enviar sin un turno entrante
+
+`send_text` solo responde al turno en curso. Un canal que además puede iniciar una conversación implementa el opcional `ProactiveChannel.send_proactive(to, body)`, que lanza `ProviderRateLimited(retry_after_s)` ante un `429` del proveedor y `ProviderRejected` ante un rechazo definitivo. La parte de la plataforma (directorio de destinatarios, `send:proactive`, cola durable a lo sumo una vez, límites de tasa, auditoría) está en [Entrega proactiva](proactive.md).
+
 ## La identidad del participante es por canal (requisito de seguridad)
 
 Una dirección de remitente solo significa algo dentro del canal que la

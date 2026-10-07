@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         BudgetRefused,
         ContextTrimmed,
         EscalationNotDelivered,
+        ProactiveDelivery,
         RuntimeBuilt,
         RuntimeInitialized,
         RuntimeTimeout,
@@ -603,6 +604,46 @@ async def record_subject_data_deleted(
         "failed": list(failed),
     }
     return SubjectDataDeleted(
+        event_id=uuid.uuid4(),
+        occurred_at=_now_utc(),
+        correlation_id=_correlation_id_from_context(),
+        sequence=PLACEHOLDER_SEQUENCE,
+        role="platform",
+        actor=actor,
+        subject=subject_key,
+        payload=payload,
+        pii_keys=[],
+    )
+
+
+async def record_proactive_delivery(
+    *,
+    outcome: str,
+    runtime_id: str,
+    subject_key: str,
+    actor: str,
+    message_id: str,
+    channel: str | None = None,
+    reason: str | None = None,
+) -> ProactiveDelivery:
+    """Build a ProactiveDelivery event (ADR-011 part 5, #251).
+
+    A proactive message is not a turn, so actor and subject are explicit.
+    Only the outcome, channel name and a reason code are recorded: never the
+    address (it can be reassigned) or the message text.
+    """
+    from agents_system.audit.events import ProactiveDelivery
+
+    payload: dict[str, Any] = {
+        "outcome": outcome,
+        "runtime_id": runtime_id,
+        "message_id": message_id,
+    }
+    if channel is not None:
+        payload["channel"] = channel
+    if reason is not None:
+        payload["reason"] = reason
+    return ProactiveDelivery(
         event_id=uuid.uuid4(),
         occurred_at=_now_utc(),
         correlation_id=_correlation_id_from_context(),

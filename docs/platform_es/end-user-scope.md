@@ -112,6 +112,8 @@ DEFAULT_REGISTRY.register(NotesStore())  # o create_app(subject_data=registry)
 - **Retención.** `SUBJECT_DATA_RETENTION='{"notes": 2592000, "usage": "never"}'` fija una retención por almacén, en segundos o `never`, con el mismo formato que `CHECKPOINTER_RETENTION_S`; un almacén que no figura conserva sus filas. Un único `SubjectDataPurger` corre cada `SUBJECT_DATA_PURGE_INTERVAL_S` segundos (3600 por defecto), registra un almacén que falla y sigue con el resto. Un nombre que ningún almacén registró hace fallar el arranque.
 - **El id de runtime es permanente** una vez activas funciones por usuario: las filas se indexan con él, así que renombrarlo las deja huérfanas y las llamadas del operador ya no las encuentran.
 
+- **Entrega proactiva.** La cola proactiva (`proactive_outbox`) es un almacén registrado con su propia retención; ver [Entrega proactiva](proactive.md).
+
 ## Uso y presupuestos por usuario final
 
 *Llegará en la próxima versión.* Decidido en la parte 5 del [ADR-011](../architecture_es/adr-011-end-user-scope.md). El runtime registra el uso de cada turno contra el sujeto del turno y puede rechazar a un sujeto que alcanzó un tope.

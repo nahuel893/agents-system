@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
+import httpx
 import structlog
 
 from agents_system.extras import raise_missing_extra
@@ -39,6 +40,7 @@ from agents_system.channels.port import (
 )
 from agents_system.integration.meta_signature import verify_signature
 from agents_system.models.outbox import LEGACY_CHANNEL
+from agents_system.proactive import ProviderRateLimited, ProviderRejected
 
 if TYPE_CHECKING:
     from agents_system.config import Settings
@@ -195,6 +197,40 @@ class WhatsAppChannel:
         if self._sender is None:
             raise RuntimeError("WhatsAppChannel has no outbound sender")
         await self._sender.send_text(to=to, body=body)
+
+    async def send_proactive(self, to: str, body: str) -> None:
+        """Send with no inbound turn (#251), classifying the provider's answer.
+
+        A 429 proves nothing was sent and becomes ``ProviderRateLimited``
+        with the ``Retry-After`` delay; any other 4xx is a definitive
+        ``ProviderRejected``. A 5xx or a transport error is re-raised as is:
+        the message may have reached Meta, so the dispatcher must not retry.
+        Outside the 24-hour customer-service window Meta accepts only
+        approved templates; this sends plain text (see docs/platform/channel.md).
+        """
+        try:
+            await self.send_text(to, body)
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            if status == 429:
+                raise ProviderRateLimited(
+                    _retry_after(error.response.headers.get("Retry-After"))
+                ) from error
+            if 400 <= status < 500:
+                raise ProviderRejected(f"provider answered {status}") from error
+            raise
+
+
+_DEFAULT_RETRY_AFTER_S = 60.0
+
+
+def _retry_after(value: str | None) -> float:
+    """Seconds from a ``Retry-After`` header; a default when absent or not seconds."""
+    try:
+        seconds = float(value) if value is not None else 0.0
+    except ValueError:
+        return _DEFAULT_RETRY_AFTER_S
+    return seconds if seconds > 0 else _DEFAULT_RETRY_AFTER_S
 
 
 def _walk_messages(entries: list[Any]) -> list[dict[str, Any]]:

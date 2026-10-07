@@ -111,6 +111,7 @@ DEFAULT_REGISTRY.register(NotesStore())  # or create_app(subject_data=registry)
 - **Audit.** A deletion records `subject_data_deleted` with the operator as actor (`operator:<X-Operator-Id>`, default `operator:operator`). The result carries `audited`: it is `false`, with a warning logged, when no audit sink is registered or the write failed; the deletion itself is never undone or hidden. The served app's sink is fire-and-forget, so the event is best effort. Audit rows keep only the pseudonymous subject key and stay under their own retention. The consumer's `ConversationRecorder` belongs to the deployment, which deletes from it.
 - **Retention.** `SUBJECT_DATA_RETENTION='{"notes": 2592000, "usage": "never"}'` sets one retention per store, in seconds or `never`, parsed like `CHECKPOINTER_RETENTION_S`; a store not listed keeps its rows. One `SubjectDataPurger` runs every `SUBJECT_DATA_PURGE_INTERVAL_S` seconds (default 3600), logs a failing store and continues with the rest. A name no store registered fails the boot.
 - **A runtime id is permanent** once per-user features are on: rows are keyed by it, so renaming it orphans them and the operator calls no longer find them.
+- **Proactive delivery.** The proactive queue (`proactive_outbox`) is a registered store with its own retention; see [Proactive delivery](proactive.md).
 
 ## Usage and budgets per end user
 

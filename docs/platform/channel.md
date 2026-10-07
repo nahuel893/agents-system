@@ -97,6 +97,10 @@ app = create_app(
 - Registering any channel requires a channel-aware participant directory
   (next section), or boot fails.
 
+## Sending without an inbound turn
+
+`send_text` only answers the turn in progress. A channel that can also start a conversation implements the optional `ProactiveChannel.send_proactive(to, body)`, raising `ProviderRateLimited(retry_after_s)` on a provider `429` and `ProviderRejected` on a definitive refusal. The platform side (recipient directory, `send:proactive`, durable at-most-once queue, rate limits, audit) is in [Proactive delivery](proactive.md).
+
 ## Participant identity is per channel (security requirement)
 
 A sender address only means something inside the channel that authenticated

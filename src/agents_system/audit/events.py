@@ -171,6 +171,18 @@ class BudgetRefused(_AuditEventBase):
     event_type: Literal["budget_refused"] = "budget_refused"
 
 
+class ProactiveDelivery(_AuditEventBase):
+    """Emitted at each step of a proactive message (ADR-011 part 5, #251).
+
+    ``actor`` is who triggered it (scheduler, operator or tool) and
+    ``subject`` the subject key. ``payload["outcome"]`` is one of queued,
+    sent, failed, ambiguous, rate_limited or deferred. Neither the address
+    nor the text is ever recorded.
+    """
+
+    event_type: Literal["proactive_delivery"] = "proactive_delivery"
+
+
 # Discriminator dispatch table — used by AuditEvent.model_validate
 _EVENT_DISPATCH: dict[str, type[_AuditEventBase]] = {
     "tool_call_attempted": ToolCallAttempted,
@@ -181,6 +193,7 @@ _EVENT_DISPATCH: dict[str, type[_AuditEventBase]] = {
     "skill_loaded": SkillLoaded,
     "skill_missing": SkillMissing,
     "subject_data_deleted": SubjectDataDeleted,
+    "proactive_delivery": ProactiveDelivery,
     "runtime_built": RuntimeBuilt,
     "runtime_initialized": RuntimeInitialized,
     "runtime_timeout": RuntimeTimeout,
