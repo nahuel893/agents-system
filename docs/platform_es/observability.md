@@ -84,10 +84,10 @@ objetos de métricas viven en `src/agents_system/observability/metrics.py`.
 
 | Métrica | Tipo | Labels | Se registra cuando |
 |---|---|---|---|
-| `agent_turns_total` | Counter | `runtime_id`, `outcome` | Cada turno termina: `outcome` es `ok`, `timeout`, o `error`. |
+| `agent_turns_total` | Counter | `runtime_id`, `outcome`, `actor_kind` | Cada turno termina: `outcome` es `ok`, `timeout`, `budget_refused` (un tope por usuario, [Alcance de usuario final](end-user-scope.md)) o `error`. |
 | `agent_turn_duration_seconds` | Histogram | `runtime_id`, `outcome` | Igual que arriba -- duración real (wall-clock) de toda la llamada a `run_turn_with_usage`. |
-| `agent_tokens_total` | Counter | `runtime_id`, `direction` (`input`/`output`) | El uso de un turno es conocido (ver la regla de honestidad abajo). |
-| `agent_cost_usd_total` | Counter | `runtime_id` | El `cost_usd` de un turno es conocido (mismo lookup de `Settings.model_prices` que el Slice 1). |
+| `agent_tokens_total` | Counter | `runtime_id`, `direction` (`input`/`output`), `actor_kind` | El uso de un turno es conocido (ver la regla de honestidad abajo). |
+| `agent_cost_usd_total` | Counter | `runtime_id`, `actor_kind` | El `cost_usd` de un turno es conocido (mismo lookup de `Settings.model_prices` que el Slice 1). |
 | `agent_tool_calls_total` | Counter | `tool`, `outcome` | Cada intento de llamada a herramienta: `outcome` es `ok`, `denied`, `blocked`, `timeout`, o `error`. |
 | `agent_tool_call_duration_seconds` | Histogram | `tool`, `outcome` | Igual que arriba. |
 | `agent_limit_trips_total` | Counter | `limit` | Un límite de ejecución se dispara -- `"max_tool_calls"` (el nodo terminal `_limit_reached`) y `"max_context_tokens"` (se recortó la entrada del modelo o se envió por encima del presupuesto, `docs/platform_es/context-size.md`); los "limit trips" de ADR-005 sección 6. |
