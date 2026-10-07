@@ -456,3 +456,64 @@ class CheckpointPurger:
                     retention_s=self._retention_s,
                 )
             await asyncio.sleep(self._interval_s)
+
+
+class CheckpointThreads:
+    """Per-thread export and delete over any LangGraph saver (ADR-011 part 6).
+
+    The purger only removes idle threads by age; this removes one thread on
+    demand, which the operator's ``delete_subject`` needs. Postgres and the
+    in-memory saver both implement ``adelete_thread``, so no SQL lives here.
+    """
+
+    def __init__(self, saver: Any) -> None:
+        self._saver = saver
+
+    async def export_thread(self, thread_id: str) -> dict[str, Any] | None:
+        """Every retained checkpoint of the thread, with all channel values and writes.
+
+        ``messages`` is the latest conversation; ``checkpoints`` is the full
+        history (newest first), the same data ``delete_thread`` erases.
+        """
+        from langchain_core.messages import messages_to_dict
+        from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+        serde = JsonPlusSerializer()
+        history = [
+            t
+            async for t in self._saver.alist({"configurable": {"thread_id": thread_id}})
+        ]
+        if not history:
+            return None
+        checkpoints = [
+            {
+                "checkpoint_id": t.config["configurable"].get("checkpoint_id"),
+                "metadata": _jsonable(serde, t.metadata),
+                "channel_values": _jsonable(serde, t.checkpoint.get("channel_values")),
+                "pending_writes": _jsonable(serde, list(t.pending_writes or [])),
+            }
+            for t in history
+        ]
+        latest = history[0].checkpoint.get("channel_values", {}).get("messages", [])
+        return {
+            "thread_id": thread_id,
+            "messages": messages_to_dict(latest),
+            "checkpoints": checkpoints,
+        }
+
+    async def delete_thread(self, thread_id: str) -> int:
+        """Delete every checkpoint, write and blob of the thread; 1 if it existed."""
+        existed = await self.export_thread(thread_id) is not None
+        await self._saver.adelete_thread(thread_id)
+        return 1 if existed else 0
+
+
+def _jsonable(serde: Any, value: Any) -> Any:
+    """Plain JSON for any saver value: the saver's own serializer, then ``repr`` as a last resort."""
+    import json
+
+    try:
+        _, blob = serde.dumps_typed(value)
+        return json.loads(blob)
+    except Exception:
+        return repr(value)

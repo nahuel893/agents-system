@@ -89,8 +89,9 @@ permanece en `payload`.
 | `tool_call_attempted` | `harness/interceptor.py` | Una llamada alcanzó la Capa 2 |
 | `tool_call_blocked` | `harness/interceptor.py` | La Capa 2 rechazó la llamada |
 | `escalation_not_delivered` | `harness/defaults.py` | El `escalation_notifier` por defecto incorporado atendió un escalamiento: no se contactó a ningún humano (solo en uso como biblioteca en proceso, nunca en la app servida). Payload: `tool_name`, `reason` (cortado a 200 caracteres y luego redactado) y `details_chars`, nunca el texto de los detalles |
+| `subject_data_deleted` | `subject_data.py` | Un operador borró los datos de un sujeto (`delete_subject`, `POST /operator/subjects/delete`). `actor` es `operator:<id>` y `subject` la clave seudónima. Payload: `runtime_id`, conteos de filas por almacén, `threads` (un conteo) y los nombres de los almacenes que `failed`, nunca una dirección, un id de hilo ni contenido borrado |
 
-Catorce sitios de llamada para doce tipos de evento. `tool_call_blocked` se emite
+Quince sitios de llamada para trece tipos de evento. `tool_call_blocked` se emite
 desde tres ramas distintas del interceptor — `not_in_surface`,
 `revalidation_required` y `permission_revoked` — y por eso los conteos difieren.
 

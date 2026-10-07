@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         RuntimeTimeout,
         SkillLoaded,
         SkillMissing,
+        SubjectDataDeleted,
         ToolCallAttempted,
         ToolCallBlocked,
         ToolDenied,
@@ -545,4 +546,39 @@ async def record_escalation_not_delivered(
         reason=redacted_payload["reason"],
         payload=redacted_payload,
         pii_keys=pii_keys,
+    )
+
+
+async def record_subject_data_deleted(
+    *,
+    runtime_id: str,
+    subject_key: str,
+    actor: str,
+    stores: dict[str, int],
+    threads: int,
+    failed: list[str],
+) -> SubjectDataDeleted:
+    """Build a SubjectDataDeleted event (ADR-011 part 6, #257).
+
+    Takes the actor and subject explicitly: an operator call is not a turn, so
+    no turn scope is bound. Only counts and store names are recorded.
+    """
+    from agents_system.audit.events import SubjectDataDeleted
+
+    payload = {
+        "runtime_id": runtime_id,
+        "stores": dict(stores),
+        "threads": threads,
+        "failed": list(failed),
+    }
+    return SubjectDataDeleted(
+        event_id=uuid.uuid4(),
+        occurred_at=_now_utc(),
+        correlation_id=_correlation_id_from_context(),
+        sequence=PLACEHOLDER_SEQUENCE,
+        role="platform",
+        actor=actor,
+        subject=subject_key,
+        payload=payload,
+        pii_keys=[],
     )

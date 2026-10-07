@@ -289,6 +289,16 @@ class Settings(ProviderSettings):
     # payload, not tuned to the byte.
     adapter_max_body_bytes: int = Field(default=1_048_576, gt=0)
     adapter_api_key: str = ""
+    # ADR-011 part 6 (#257): the operator's own key for exporting and deleting
+    # one end user's data. Unset means the /operator routes are not mounted at
+    # all (fail closed). It must differ from adapter_api_key: the adapter key
+    # is shared with chat clients, this one reads and erases personal data.
+    operator_api_key: str = ""
+    # Per-user data retention, store name -> seconds or "never" (a JSON object
+    # in the environment), parsed like CHECKPOINTER_RETENTION_S. A store that
+    # is not listed keeps its rows. One purger enforces them all.
+    subject_data_retention: dict[str, int | None] = Field(default_factory=dict)
+    subject_data_purge_interval_s: float = Field(default=3_600.0, gt=0)
     adapter_provider: Literal["ollama", "groq", "anthropic", "openai_compatible"] = (
         "ollama"
     )
@@ -460,6 +470,27 @@ class Settings(ProviderSettings):
                 "rag_threshold_direct must be greater than rag_threshold_ambiguous"
             )
 
+        return self
+
+    @field_validator("subject_data_retention", mode="before")
+    @classmethod
+    def parse_subject_data_retention(cls, value: object) -> object:
+        from agents_system.subject_data import parse_retention
+
+        if isinstance(value, dict):
+            return {name: parse_retention(v) for name, v in value.items()}
+        return value
+
+    @model_validator(mode="after")
+    def validate_operator_key_is_its_own(self) -> "Settings":
+        if self.operator_api_key and self.operator_api_key in (
+            self.adapter_api_key,
+            self.metrics_api_key,
+        ):
+            raise ValueError(
+                "operator_api_key must differ from adapter_api_key and "
+                "metrics_api_key: it reads and erases personal data"
+            )
         return self
 
     @field_validator("checkpointer_retention_s", mode="before")

@@ -71,3 +71,42 @@ runtime = AgentRuntime(equipped, scope_provider=InMemoryScopeProvider(), runtime
 - **Postgres backend (extra `postgres`).** `PostgresScopeProvider(engine)` opens each handle transaction with `app.runtime_id` and `app.subject_key` as transaction-local settings (`handle.transaction()` yields the connection). `create_subject_policy(conn, table)` fences a per-user table (columns `runtime_id`, `subject_key`) with a row-level security policy and `FORCE ROW LEVEL SECURITY`, installed as both a permissive and a restrictive policy (a restrictive policy is AND-combined, so a pre-existing permissive policy on the table cannot widen it), so a query that forgets its filter still returns only the current subject's rows, and a transaction with no scope returns none.
 - **The database role matters.** Superusers and roles with `BYPASSRLS` skip row-level security even under FORCE. `PostgresScopeProvider.verify()` refuses such a role. The served app calls it at boot only when you pass `create_app(scope_provider_factory=lambda engine: PostgresScopeProvider(engine))`; without a per-user feature, existing deployments boot on any role.
 - **Structural test.** `await assert_subject_isolation(provider, write=..., read_all=...)` (from `agents_system.scope`) writes as two subjects and runs your deliberately unfiltered `read_all` as each; it fails if either sees the other's rows. Every per-user store ships one. Test the Postgres side with a dedicated non-superuser role, never the docker superuser.
+
+## Per-user data: registry, export, delete and retention
+
+Every store that keeps data per end user implements `SubjectDataStore` and registers it, so one operator call reaches all of them and a store cannot be forgotten.
+
+```python
+from agents_system.subject_data import DEFAULT_REGISTRY, SubjectRef
+
+
+class NotesStore:
+    name = "notes"
+    tables = frozenset({"notes"})  # every table with a subject_key column
+
+    async def export(self, subject: SubjectRef) -> list[dict]: ...
+    async def delete(self, subject: SubjectRef) -> int: ...
+    async def purge(
+        self, *, retention_s: int
+    ) -> int: ...  # optional: rows older than the retention
+
+
+DEFAULT_REGISTRY.register(NotesStore())  # or create_app(subject_data=registry)
+```
+
+- **Library.** `export_subject(registry, SubjectRef(runtime_id, subject_key), threads=..., thread_ids=[...])` and `delete_subject(..., actor=TurnActor(kind="operator", id="ops"))`. `delete_subject` attempts every store and every thread even when one fails, then raises `SubjectDeletionError` carrying the failed stores, the failed thread count and the counts that did delete.
+- **Conversation threads.** Checkpointer threads are keyed by conversation, not by subject, so they are named: the deployment passes `create_app(subject_threads=async_fn)` (subject reference to thread ids) and it is the only authority on which threads belong to a subject. An operator may name `thread_ids` in the request to narrow the set, but a named id the hook does not return for that subject is refused with 403, and without the hook the routes fail closed with 409 while a checkpointer exists. Export returns every retained checkpoint (all channel values, metadata and pending writes), the same data the delete erases. `CheckpointThreads(saver)` exports and deletes one thread on demand; the purger still removes idle threads by age.
+- **Nothing forgotten.** `await find_unregistered_subject_tables(engine, registry)` (Postgres, from `agents_system.services.scope_postgres`) returns the tables with a `subject_key` column that no registered store claims. Assert it is empty in your store's test.
+- **Operator routes.** Set `OPERATOR_API_KEY` and the served app mounts `POST /operator/subjects/export` and `POST /operator/subjects/delete`. Without the key the routes do not exist (404). The key must differ from `ADAPTER_API_KEY` and `METRICS_API_KEY`, and is checked with the same constant-time comparison as the adapter's.
+
+  ```bash
+  curl -X POST $HOST/operator/subjects/delete \
+    -H "Authorization: Bearer $OPERATOR_API_KEY" -H "X-Operator-Id: ops-ana" \
+    -H "Content-Type: application/json" \
+    -d '{"runtime_id": "support", "subject_key": "participant:42"}'
+  ```
+
+  The subject travels in the body, so it never lands in an access log. A partial failure answers 500 with the failed stores and what was deleted.
+- **Audit.** A deletion records `subject_data_deleted` with the operator as actor (`operator:<X-Operator-Id>`, default `operator:operator`). The result carries `audited`: it is `false`, with a warning logged, when no audit sink is registered or the write failed; the deletion itself is never undone or hidden. The served app's sink is fire-and-forget, so the event is best effort. Audit rows keep only the pseudonymous subject key and stay under their own retention. The consumer's `ConversationRecorder` belongs to the deployment, which deletes from it.
+- **Retention.** `SUBJECT_DATA_RETENTION='{"notes": 2592000, "usage": "never"}'` sets one retention per store, in seconds or `never`, parsed like `CHECKPOINTER_RETENTION_S`; a store not listed keeps its rows. One `SubjectDataPurger` runs every `SUBJECT_DATA_PURGE_INTERVAL_S` seconds (default 3600), logs a failing store and continues with the rest. A name no store registered fails the boot.
+- **A runtime id is permanent** once per-user features are on: rows are keyed by it, so renaming it orphans them and the operator calls no longer find them.
