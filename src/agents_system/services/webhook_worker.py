@@ -417,6 +417,9 @@ class DeferredWebhookWorker:
         # scoped to its channel so two channels never share one thread.
         conversation = channel_scoped_key(channel, address)
         replay = _persisted_reply(work)
+        # #26: a runtime whose memory_policy says `persist_conversation: false`
+        # gets no checkpointer thread and no ConversationRecorder write.
+        persist = getattr(binding.runtime, "persist_conversation", True) is not False
         if replay is None:
             try:
                 # #78 Phase 0 (review finding 4, PR #87) -- no `model_id` is
@@ -429,7 +432,9 @@ class DeferredWebhookWorker:
                 result_messages = await binding.runtime.run_turn(
                     messages=[HumanMessage(content=turn.text)],
                     session_id=inbound.meta_message_id,
-                    thread_id=conversation if binding.checkpointer_enabled else None,
+                    thread_id=conversation
+                    if binding.checkpointer_enabled and persist
+                    else None,
                     # ADR-011: the verified sender is who the turn is for; the
                     # channel that authenticated it is who started it.
                     subject=TurnSubject.for_participant(
@@ -442,12 +447,13 @@ class DeferredWebhookWorker:
                 await self._record_failure(work, exc)
                 return
 
-            await self._record_turn(
-                thread_id=conversation,
-                participant_id=participant.id,
-                user_text=turn.text,
-                assistant_text=assistant_text,
-            )
+            if persist:
+                await self._record_turn(
+                    thread_id=conversation,
+                    participant_id=participant.id,
+                    user_text=turn.text,
+                    assistant_text=assistant_text,
+                )
             if not assistant_text:
                 await self._complete_or_retry(work, "agent produced no reply")
                 return

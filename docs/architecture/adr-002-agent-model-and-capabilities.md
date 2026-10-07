@@ -10,7 +10,7 @@
 | 2 | Per-principal identity into `granted_permissions` | A. Agent model | ⏳ pending | #15 |
 | 3 | Three memory types, platform-enforced isolation by `agent_id` | A. Agent model | ⏳ pending | #25 (blocked by #15 and #29) |
 | 4 | Durable working memory (checkpointer persistence) | A. Agent model | ✅ done | #24 |
-| 5 | `memory_policy` folded but unenforced | A. Agent model | ⏳ pending | #26 (blocked by #25 and #29) |
+| 5 | `memory_policy` folded but unenforced | A. Agent model | ✅ done (enforced at the platform layer; see the implementation note under A.5) | #26 |
 | 6 | Delegation declared, not executable | A. Agent model | ⏳ pending | #15 (per-principal identity); #170 (ADR-006, agent-to-agent delegation) |
 | 7 | `agent.md` as reference definition | A. Agent model | ✅ done | `bcca9a0` |
 | 8 | BUG: role.md prose leaks as system prompt / design notes leak to users | B. Prompts | ✅ done | `307cc8a` (with 9) |
@@ -355,6 +355,8 @@ is not saved, a failed save returns the answer and re-runs nothing. See
 ---
 
 #### A.5 — `memory_policy` declared, folded, and unenforced
+
+> **Implemented in #26.** `read_scope`/`write_scope` gate any tool that declares `ToolSpec.memory_access`, in the interceptor and before its connector runs, and `persist_conversation` gates the checkpointer thread and the `ConversationRecorder` write. `agents_system.memory_policy` owns the parsing and the decision. The section below is the original analysis.
 
 **Current state.** `memory_policy` (fields `read_scope`, `write_scope`,
 `persist_conversation`) is declared in every role's `policy.md`

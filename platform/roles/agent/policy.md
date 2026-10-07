@@ -9,6 +9,10 @@ escalation_rules:
     - required_tool_missing
     - confidence_below_threshold
     - explicit_user_request
+memory_policy:
+  read_scope: session
+  write_scope: session
+  persist_conversation: true
 execution_limits: null
 ---
 
@@ -30,3 +34,10 @@ gets one.
 
 `required_tool_missing` and `confidence_below_threshold` keep `base`'s
 description; only the condition this role actually adds needs one here.
+
+## memory_policy
+
+`persist_conversation: true` overrides `base`'s `false`. This role holds a
+conversation and keeps its state across turns, so its thread is persisted;
+`base` is abstract and never served. A descendant that must not keep a
+thread (the summary, data and orchestrator roles) sets `false` itself.

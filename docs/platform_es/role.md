@@ -264,6 +264,16 @@ el catálogo de productos y la lista de precios del cliente.
 
 Esta carpeta de definición del agente establece la frontera de comportamiento del Agente de Preventa. Al momento de la instanciación, la plataforma inyecta exactamente las cuatro herramientas listadas en `manifest.md`, las tres habilidades declaradas, el contexto de sesión y de identidad del usuario, y valida que el usuario solicitante cuente con los seis permisos requeridos. (`session_state` se eliminó de los roles predefinidos en #118; la memoria conversacional reside en el checkpointer y la memoria estructurada corresponde a la Ola 3 de ADR-002 #29, #25). El agente no puede delegar (`policy.md` declara `allowed: false`), por lo que no se inyectará ninguna política de orquestación. Cualquier condición presente en `escalation_rules` de `policy.md` abortará el camino de ejecución actual del agente y transferirá el control a un operador humano.
 
+### Aplicación
+
+`memory_policy` tiene efecto real, no solo se combina (#26). La aplica la plataforma, nunca el modelo:
+
+- **`read_scope` / `write_scope`.** Una herramienta que declara `ToolSpec(memory_access="read" | "write" | "readwrite", memory_scope="local" | "team" | "org")` es rechazada por el interceptor, antes de que corra su conector, cuando `memory_scope` es más amplio de lo que permite la política (`local` < `team` < `org`). La llamada se audita como bloqueada con el motivo `memory_read_denied` o `memory_write_denied`. Una herramienta que no declara `memory_access` no se controla. Una herramienta de memoria acotada al sujeto (ADR-011) se suma con los mismos dos campos.
+- **`persist_conversation`.** En `false`, `AgentRuntime` ignora `thread_id` (el checkpointer no se lee ni se escribe) y el worker del canal omite la escritura del `ConversationRecorder`.
+- **Grafías.** El rol `base` y los agentes de referencia escriben `session` y `deployment`; se aceptan como `local` y `org`.
+- **Heredado de `base`.** `base` declara `persist_conversation: false`, así que un rol que no lo sobrescribe no persiste ninguna conversación: declara `persist_conversation: true` en el `policy.md` del rol para conservar un hilo o registrar turnos. El rol predefinido `agent` lo sobrescribe a `true`, así que todo descendiente conversacional (soporte, ventas, contabilidad, operador, desarrollador) conserva su historial; los roles de resumen, datos y orquestador lo desactivan con `false`.
+- **Valores por defecto y fallos.** Una política no declarada equivale a `local`/`local` y `persist_conversation: true`. Una política que no cumple el esquema (un alcance desconocido, un valor no booleano, un campo desconocido) falla cerrada: las herramientas de memoria se rechazan con `memory_policy_invalid` y no se persiste nada.
+
 ---
 
 ## Agentes de referencia

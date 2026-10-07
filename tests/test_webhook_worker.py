@@ -1394,3 +1394,43 @@ async def test_process_claimed_work_admitted_releases_slot_on_cancellation(
 
     assert limiter.in_flight == 0, "the reserved slot must be released on cancellation"
     record_failure.assert_not_awaited()
+
+
+async def test_persist_conversation_false_skips_thread_and_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#26: a runtime whose memory_policy says `persist_conversation: false`
+    gets no thread_id (nothing durable in the checkpointer) and no
+    ConversationRecorder write, whatever the channel binding enables."""
+    inbound = _inbound()
+    work = _work(inbound)
+    _install_claim(monkeypatch, work)
+    monkeypatch.setattr(
+        "agents_system.services.webhook_worker.persist_outbound_intent", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "agents_system.services.webhook_worker.complete_outbox_work", AsyncMock()
+    )
+    runtime = MagicMock()
+    runtime.persist_conversation = False
+    runtime.run_turn = AsyncMock(return_value=[AIMessage(content="reply")])
+    whatsapp = MagicMock()
+    whatsapp.send_text = AsyncMock()
+    recorder = MagicMock()
+    recorder.record_turn = AsyncMock()
+
+    worker = DeferredWebhookWorker(
+        session_factory=_SessionFactory(inbound),
+        worker_id="worker-a",
+        directory=_Directory(_Participant()),
+        runtime=runtime,
+        whatsapp_client=whatsapp,
+        recorder=recorder,
+        checkpointer_enabled=True,
+    )
+
+    await worker.process_available(limit=1)
+
+    assert runtime.run_turn.await_args.kwargs["thread_id"] is None
+    recorder.record_turn.assert_not_awaited()
+    whatsapp.send_text.assert_awaited()
