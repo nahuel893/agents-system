@@ -11,6 +11,7 @@ without any network call. The `live`-marked test in
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from typing import Any
 from unittest.mock import patch
@@ -2501,3 +2502,33 @@ async def test_run_scenario_to_dict_carries_gate_fields() -> None:
     assert payload["gate_passed"] is True
     assert isinstance(payload["gate_reason"], str)
     assert payload["run_details"][0]["exercised"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_scenario_hands_the_scenario_untrusted_data_to_every_turn() -> None:
+    from conftest import build_test_registry
+
+    from agents_system.agent.untrusted import UntrustedData
+
+    seen: list[str] = []
+
+    class _Recording(ToolAwareFakeModel):
+        async def ainvoke(self, input: Any, *args: Any, **kwargs: Any) -> AIMessage:  # type: ignore[override]
+            seen.append("\n".join(str(m.content) for m in input))
+            return await super().ainvoke(input, *args, **kwargs)
+
+    scenario = dataclasses.replace(
+        _scenario(),
+        untrusted_data=(UntrustedData("customer_note", "planted-text"),),
+    )
+
+    await run_scenario(
+        scenario,
+        model=_Recording(responses=[AIMessage(content="ok")]),
+        model_name="fake-model",
+        registry=build_test_registry(),
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    assert seen and "planted-text" in seen[0] and "customer_note" in seen[0]
