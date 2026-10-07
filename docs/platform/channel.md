@@ -122,6 +122,8 @@ class ChannelParticipantDirectory(Protocol):
   person on another. Otherwise the contract is `ParticipantDirectory`'s:
   `ValueError` from normalization drops the delivery, and resolution owns its
   session's transaction.
+- A `Participant.id` must be unique across every channel the directory serves. Per-user data is keyed `participant:<id>` ([ADR-011](../architecture/adr-011-end-user-scope.md)), so two channels share a subject only when the directory returns the same id for them. A directory that reuses ids across channels must namespace them before the deployment enables any per-user feature.
+- The worker binds the participant it resolves as the turn's subject and `channel:<name>` as its actor. See [End-user scope](end-user-scope.md).
 - A plain, channel-blind `ParticipantDirectory` keeps working for a
   WhatsApp-only deployment: WhatsApp is the address space it was written for.
 - A worker bound to **any** other channel refuses a channel-blind directory.

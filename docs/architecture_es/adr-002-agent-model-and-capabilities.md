@@ -164,6 +164,8 @@ identidad.
 
 #### A.2 — Identidad por principal
 
+> **Extendido por ADR-011:** el sujeto y el actor del turno, que llevan la identidad del usuario final hasta `run_turn`, se deciden en [ADR-011 — Alcance del usuario final](adr-011-end-user-scope.md); un principal de #15 aporta luego los mismos campos.
+
 > **Reemplazado por ADR-003:** el comportamiento de auto-grant de AD-5 en esta sección es solo histórico. [ADR-003 — Jerarquía de permisos](adr-003-permission-hierarchy.md) registra el modelo entregado de `DEPLOY_GRANTS` explícito.
 
 **Estado actual.** Al arrancar la aplicación, el `lifespan` de `create_app`
@@ -271,6 +273,8 @@ delegación.
 ---
 
 #### A.3 — Tres tipos de memoria con aislamiento impuesto por la plataforma
+
+> **Enmendado por ADR-011:** los datos por usuario se identifican por (id de runtime, clave del sujeto) y los protege row-level security, no un filtro por consulta. Ver [ADR-011 — Alcance del usuario final](adr-011-end-user-scope.md).
 
 **Estado actual.** No existe hoy ningún aislamiento indexado por
 `agent_id` en ninguna parte del código, porque todavía no existe un

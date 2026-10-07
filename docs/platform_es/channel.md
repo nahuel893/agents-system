@@ -128,6 +128,8 @@ class ChannelParticipantDirectory(Protocol):
   que una dirección en un canal es la misma persona en otro. Por lo demás el
   contrato es el de `ParticipantDirectory`: un `ValueError` al normalizar
   descarta la entrega, y la resolución es dueña de la transacción de su sesión.
+- Un `Participant.id` debe ser único en todos los canales que sirve el directorio. Los datos por usuario se identifican con `participant:<id>` ([ADR-011](../architecture_es/adr-011-end-user-scope.md)), así que dos canales comparten sujeto solo cuando el directorio devuelve el mismo id para ambos. Un directorio que reutiliza ids entre canales debe darles un espacio de nombres antes de que el despliegue active cualquier función por usuario.
+- El worker vincula al participante que resuelve como sujeto del turno y a `channel:<nombre>` como su actor. Ver [Alcance del usuario final](end-user-scope.md).
 - Un `ParticipantDirectory` común, que no conoce el canal, sigue funcionando
   en una implementación solo de WhatsApp: WhatsApp es el espacio de
   direcciones para el que se escribió.

@@ -479,7 +479,9 @@ def test_chat_completions_uses_the_shared_admission_limiter_around_run_turn(
     app_instance = create_test_app()
     events: list[str] = []
 
-    async def run_turn_with_usage(*, messages: object, session_id: str) -> TurnResult:
+    async def run_turn_with_usage(
+        *, messages: object, session_id: str, **_scope: object
+    ) -> TurnResult:
         events.append("run_turn")
         return TurnResult(
             messages=[AIMessage(content="ok")],
@@ -801,3 +803,99 @@ async def test_v1_exposes_only_adapter_runtimes_never_the_whole_cache() -> None:
     assert completion.status_code == 404, (
         "an unauthenticated caller reached a runtime never meant for /v1"
     )
+
+
+# ---------------------------------------------------------------------------
+# ADR-011 -- the turn subject and actor of an API turn (#255)
+# ---------------------------------------------------------------------------
+
+
+class _Resolved:
+    def __init__(self, id: object, active: bool = True) -> None:
+        self.id = id
+        self.active = active
+
+
+class _Resolver:
+    def __init__(self, participant: object | None) -> None:
+        self.participant = participant
+        self.seen: list[object] = []
+
+    async def resolve(self, request: object) -> object | None:
+        self.seen.append(request)
+        return self.participant
+
+
+def _post_with_user(client: TestClient, user: str | None):
+    payload: dict[str, object] = {
+        "model": "acme__sales-agent",
+        "messages": [{"role": "user", "content": "hola"}],
+    }
+    if user is not None:
+        payload["user"] = user
+    return client.post(
+        "/v1/chat/completions",
+        json=payload,
+        headers={"Authorization": "Bearer test-key"},
+    )
+
+
+def test_api_turn_has_no_subject_without_a_resolver_and_ignores_user_field(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client = _make_client(["acme__sales-agent"], "test-key", monkeypatch)
+    response = _post_with_user(client, user="participant:99")
+    assert response.status_code == 200
+    kwargs = client.app.state.runtimes[
+        "acme__sales-agent"
+    ].run_turn_with_usage.await_args.kwargs
+    assert kwargs["subject"] is None
+    from agents_system.subject import TurnActor
+
+    assert kwargs["actor"] == TurnActor(kind="api", id="acme__sales-agent")
+
+
+def test_api_turn_subject_comes_only_from_the_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from agents_system.subject import TurnSubject
+
+    client = _make_client(["acme__sales-agent"], "test-key", monkeypatch)
+    resolver = _Resolver(_Resolved("u-1"))
+    client.app.state.subject_resolver = resolver
+    response = _post_with_user(client, user="participant:99")
+    assert response.status_code == 200
+    assert len(resolver.seen) == 1
+    kwargs = client.app.state.runtimes[
+        "acme__sales-agent"
+    ].run_turn_with_usage.await_args.kwargs
+    assert kwargs["subject"] == TurnSubject(key="participant:u-1", channel="api")
+
+
+def test_api_turn_resolver_returning_none_means_no_subject(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client = _make_client(["acme__sales-agent"], "test-key", monkeypatch)
+    client.app.state.subject_resolver = _Resolver(None)
+    assert _post_with_user(client, user="x").status_code == 200
+    kwargs = client.app.state.runtimes[
+        "acme__sales-agent"
+    ].run_turn_with_usage.await_args.kwargs
+    assert kwargs["subject"] is None
+
+
+def test_api_turn_inactive_participant_is_refused_without_a_turn(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client = _make_client(["acme__sales-agent"], "test-key", monkeypatch)
+    client.app.state.subject_resolver = _Resolver(_Resolved("u-1", active=False))
+    assert _post_with_user(client, user=None).status_code == 403
+    client.app.state.runtimes[
+        "acme__sales-agent"
+    ].run_turn_with_usage.assert_not_awaited()
+
+
+def test_create_app_stores_the_subject_resolver():
+    resolver = _Resolver(None)
+    app = create_test_app(subject_resolver=resolver)
+    assert app.state.subject_resolver is resolver

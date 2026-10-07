@@ -25,6 +25,7 @@ class _AuditEventBase(BaseModel):
     pii_keys: list[str] = Field(default_factory=list)
     deployment: str | None = None
     actor: str | None = None
+    subject: str | None = None
 
 
 class ToolCallAttempted(_AuditEventBase):

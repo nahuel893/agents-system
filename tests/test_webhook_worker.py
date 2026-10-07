@@ -173,6 +173,16 @@ async def test_processor_persists_reply_before_at_least_once_provider_send(
     runtime.run_turn.assert_awaited_once()
     assert runtime.run_turn.await_args.kwargs["session_id"] == "wamid.1"
     assert runtime.run_turn.await_args.kwargs["thread_id"] == "+5491123456789"
+    # ADR-011: the participant the worker resolved is the turn's subject and
+    # the channel is the actor. The address rides along for delivery only.
+    from agents_system.subject import TurnActor, TurnSubject
+
+    assert runtime.run_turn.await_args.kwargs["subject"] == TurnSubject(
+        key="participant:7", channel="whatsapp", address="+5491123456789"
+    )
+    assert runtime.run_turn.await_args.kwargs["actor"] == TurnActor(
+        kind="channel", id="whatsapp"
+    )
     whatsapp.send_text.assert_awaited_once_with(to="+5491123456789", body="reply")
     assert completed == [work]
     assert events == ["persisted", "sent", "completed"]

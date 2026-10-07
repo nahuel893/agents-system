@@ -96,6 +96,8 @@ class AuditEvent(Base):
     role: Mapped[str | None] = mapped_column(nullable=True)
     deployment: Mapped[str | None] = mapped_column(nullable=True)
     actor: Mapped[str | None] = mapped_column(nullable=True)
+    # ADR-011: the subject KEY (participant:<id>), never an address.
+    subject: Mapped[str | None] = mapped_column(nullable=True)
     tool_name: Mapped[str | None] = mapped_column(nullable=True)
 
     # Policy decision
@@ -176,6 +178,7 @@ def map_to_audit_event(event_data: dict[str, Any]) -> AuditEvent:
         role=event_data.get("role"),
         deployment=event_data.get("deployment"),
         actor=event_data.get("actor"),
+        subject=event_data.get("subject"),
         tool_name=event_data.get("tool_name"),
         policy_decision=event_data.get("policy_decision"),
         policy_reason=event_data.get("policy_reason"),
