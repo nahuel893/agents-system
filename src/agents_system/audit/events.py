@@ -160,6 +160,17 @@ class SubjectDataDeleted(_AuditEventBase):
     event_type: Literal["subject_data_deleted"] = "subject_data_deleted"
 
 
+class BudgetRefused(_AuditEventBase):
+    """Emitted when a turn or a model call is refused by a per-user cap (ADR-011 part 5, #252).
+
+    ``subject`` is the pseudonymous subject key. The payload holds the runtime
+    id, the cap that was reached, its limit and the usage at refusal, never an
+    address or message text.
+    """
+
+    event_type: Literal["budget_refused"] = "budget_refused"
+
+
 # Discriminator dispatch table — used by AuditEvent.model_validate
 _EVENT_DISPATCH: dict[str, type[_AuditEventBase]] = {
     "tool_call_attempted": ToolCallAttempted,
@@ -174,6 +185,7 @@ _EVENT_DISPATCH: dict[str, type[_AuditEventBase]] = {
     "runtime_initialized": RuntimeInitialized,
     "runtime_timeout": RuntimeTimeout,
     "context_trimmed": ContextTrimmed,
+    "budget_refused": BudgetRefused,
     "escalation_not_delivered": EscalationNotDelivered,
 }
 

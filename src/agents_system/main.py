@@ -72,7 +72,7 @@ from agents_system.observability.metrics import (
     DEFAULT_REGISTRY,
     Metrics,
 )
-from agents_system.scope import ScopeProvider
+from agents_system.scope import InMemoryScopeProvider, ScopeProvider
 from agents_system.services.checkpointer import CheckpointThreads
 from agents_system.subject_data import (
     DEFAULT_REGISTRY as DEFAULT_SUBJECT_DATA,
@@ -80,6 +80,12 @@ from agents_system.subject_data import (
 from agents_system.subject_data import (
     SubjectDataPurger,
     SubjectDataRegistry,
+)
+from agents_system.usage import (
+    BudgetCaps,
+    InMemoryUsageLedger,
+    UsageLedger,
+    parse_budgets,
 )
 
 if TYPE_CHECKING:
@@ -207,6 +213,38 @@ async def verify_metrics_access(
         raise HTTPException(status_code=401, detail="Invalid bearer token.")
 
 
+def _build_usage_ledger(
+    scope_provider: ScopeProvider | None,
+    registry: SubjectDataRegistry,
+    budgets: Mapping[str, BudgetCaps],
+) -> UsageLedger | None:
+    """The per-user usage ledger over the scope provider (ADR-011 part 5, #252).
+
+    With a scope provider every runtime records its subjects' turns; with
+    budgets and no provider there is nowhere to count, so the boot fails
+    rather than run uncapped. The ledger is registered as a subject data
+    store so the operator export and delete reach it.
+    """
+    if scope_provider is None:
+        if budgets:
+            raise ValueError(
+                "USER_BUDGETS / create_app(budgets=...) need a usage ledger: "
+                "pass create_app(scope_provider_factory=...)"
+            )
+        return None
+    ledger: UsageLedger
+    if isinstance(scope_provider, InMemoryScopeProvider):
+        ledger = InMemoryUsageLedger(scope_provider)
+    else:
+        from agents_system.services.usage_postgres import USAGE_LEDGER
+
+        USAGE_LEDGER.bind(scope_provider)  # type: ignore[arg-type]
+        ledger = USAGE_LEDGER
+    if "usage" not in registry.stores:
+        registry.register(ledger)
+    return ledger
+
+
 async def _start_scope_provider(
     factory: Callable[[AsyncEngine], ScopeProvider] | None, engine: AsyncEngine
 ) -> ScopeProvider | None:
@@ -266,6 +304,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scope_provider = await _start_scope_provider(
             getattr(app.state, "scope_provider_factory", None), app.state.engine
         )
+
+        budgets: dict[str, BudgetCaps] = parse_budgets(
+            app.state.budgets
+            if getattr(app.state, "budgets", None) is not None
+            else settings.user_budgets
+        )
+        usage_ledger = _build_usage_ledger(
+            scope_provider, app.state.subject_data_registry, budgets
+        )
+        app.state.usage_ledger = usage_ledger
 
         # #46 (ADR-001 D-033) — one process-wide bound on concurrent turns,
         # shared by every entry point that runs one: the webhook worker
@@ -652,8 +700,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     # the turn, its admission slot or its outbox lease.
                     checkpointer_timeout_s=settings.checkpointer_timeout_s,
                     scope_provider=scope_provider,
+                    # ADR-011 part 5 (#252): per-user caps of this runtime id,
+                    # from the deployment only; never from the definition.
+                    budget=budgets.get(runtime_id),
+                    usage_ledger=usage_ledger,
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
+
+            unknown_budgets = sorted(set(budgets) - set(runtimes))
+            if unknown_budgets:
+                raise ValueError(
+                    "budgets name runtime id(s) that are not built: "
+                    + ", ".join(unknown_budgets)
+                )
 
             app.state.runtimes = runtimes
             # What /v1 may publish, which is NOT the whole cache. The cache
@@ -1475,6 +1534,7 @@ def create_app(
     subject_resolver: SubjectResolver | None = None,
     subject_data: SubjectDataRegistry | None = None,
     subject_threads: SubjectThreads | None = None,
+    budgets: Mapping[str, BudgetCaps | Mapping[str, Any]] | None = None,
     scope_provider_factory: Callable[[AsyncEngine], ScopeProvider] | None = None,
     roots: RootConfig | None = None,
     title: str = "agents_system",
@@ -1536,6 +1596,13 @@ def create_app(
         a ``ChannelParticipantDirectory``, or boot fails.
     conversation_recorder:
         Records completed turns. Absent means none are recorded.
+    budgets:
+        ADR-011 part 5 (#252): per-user caps by runtime id, e.g.
+        ``{"support": {"daily_usd": 1.0, "monthly_tokens": 500000,
+        "message": "..."}}``; falls back to ``USER_BUDGETS``. Set by the
+        deployment only. Needs ``scope_provider_factory`` (the usage ledger
+        lives behind the scope handle) and, for a USD cap, a ``MODEL_PRICES``
+        entry for the runtime's model; boot fails otherwise.
     roots:
         Consumer-owned path configuration for platform and deployment roles.
         A client override (``clients[id]``, or an ``AGENT_REGISTRATIONS``
@@ -1588,6 +1655,8 @@ def create_app(
         subject_data if subject_data is not None else DEFAULT_SUBJECT_DATA
     )
     application.state.subject_threads = subject_threads
+    application.state.budgets = budgets
+    application.state.usage_ledger = None
     application.state.checkpoint_threads = None
     application.state.scope_provider_factory = scope_provider_factory
     application.state.roots = roots

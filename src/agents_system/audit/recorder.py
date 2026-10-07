@@ -25,6 +25,7 @@ from agents_system.subject import current_actor, current_subject
 
 if TYPE_CHECKING:
     from agents_system.audit.events import (
+        BudgetRefused,
         ContextTrimmed,
         EscalationNotDelivered,
         RuntimeBuilt,
@@ -491,6 +492,36 @@ async def record_context_trimmed(
         max_context_tokens=max_context_tokens,
         over_budget=over_budget,
         payload=redacted_payload,
+        pii_keys=pii_keys,
+    )
+
+
+async def record_budget_refused(
+    definition: Any,
+    *,
+    runtime_id: str,
+    cap: str,
+    limit: float,
+    used: float,
+) -> BudgetRefused:
+    """Build a BudgetRefused event (ADR-011 part 5, #252). Counts only, no text."""
+    from agents_system.audit.events import BudgetRefused
+
+    role, deployment, actor, audit_policy = _extract_role_deployment(definition)
+    payload, pii_keys = _build_and_redact(
+        {"runtime_id": runtime_id, "cap": cap, "limit": limit, "used": used},
+        audit_policy,
+    )
+    return BudgetRefused(
+        event_id=uuid.uuid4(),
+        occurred_at=_now_utc(),
+        correlation_id=_correlation_id_from_context(),
+        sequence=PLACEHOLDER_SEQUENCE,
+        role=role,
+        deployment=deployment,
+        actor=actor,
+        subject=_current_subject_key(),
+        payload=payload,
         pii_keys=pii_keys,
     )
 

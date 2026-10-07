@@ -29,7 +29,7 @@ import dataclasses
 import itertools
 import json
 import time
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import aclosing, nullcontext
 from functools import partial
 from typing import Any
@@ -74,6 +74,13 @@ from agents_system.subject import (
     current_actor,
     current_subject,
     turn_scope,
+)
+from agents_system.usage import (
+    BudgetCaps,
+    UsageLedger,
+    UsageRecord,
+    UsageTotals,
+    reached_cap,
 )
 
 logger = structlog.get_logger()
@@ -159,6 +166,10 @@ class TurnResult:
     timed_out: bool = False
     #: The turn budget (seconds) that expired; ``None`` unless `timed_out`.
     timeout_s: float | None = None
+    #: ADR-011 part 5 -- a per-user cap refused this turn (before the graph
+    #: ran) or stopped it at a later model call. `messages` then ends with the
+    #: configured user-facing message; `usage` holds what was spent before.
+    budget_refused: bool = False
 
 
 @dataclasses.dataclass
@@ -333,6 +344,15 @@ def _subject_key() -> str | None:
     return subject.key if subject is not None else None
 
 
+def _actor_kind() -> str:
+    actor = current_actor()
+    return actor.kind if actor is not None else "none"
+
+
+def _count_tool_messages(messages: Sequence[AnyMessage]) -> int:
+    return sum(1 for m in messages if isinstance(m, ToolMessage))
+
+
 def _actor_label() -> str | None:
     actor = current_actor()
     return actor.label if actor is not None else None
@@ -361,6 +381,11 @@ def _effective_limits(execution_limits: Mapping[str, Any] | None) -> dict[str, A
 # ---------------------------------------------------------------------------
 
 
+#: Returns the user-facing refusal when the running turn's subject has reached
+#: a cap, else ``None``. Built per turn by `AgentRuntime`.
+BudgetGate = Callable[[AgentState | None], Awaitable[str | None]]
+
+
 async def _call_model(
     state: AgentState,
     bound_model: Any,
@@ -369,6 +394,7 @@ async def _call_model(
     tool_schemas: Sequence[dict[str, Any]] = (),
     definition: Any = None,
     metrics: Metrics | None = None,
+    budget_gate: BudgetGate | None = None,
 ) -> dict[str, Any]:
     """Invoke the bound model with the current message history.
 
@@ -387,6 +413,17 @@ async def _call_model(
     # store: this is the one place every channel and every checkpointer
     # backend goes through, and it needs no backend-specific call. State is
     # untouched.
+    # ADR-011 part 5 -- before every later model call of the turn (the first
+    # was checked before the graph ran), so a tool loop overshoots a cap by at
+    # most the one call already in flight.
+    if budget_gate is not None and state.get("turn_usage"):
+        refusal = await budget_gate(state)
+        if refusal is not None:
+            return {
+                "messages": [AIMessage(content=refusal)],
+                "turn_usage": state["turn_usage"],
+                "budget_refused": True,
+            }
     history = _close_unanswered_tool_calls(
         state["messages"],
         reason="the tool did not return a result in an earlier turn",
@@ -698,6 +735,7 @@ def _build_graph(
     max_context_tokens: int | None = None,
     scope_provider: ScopeProvider | None = None,
     runtime_id: str | None = None,
+    budget_gate: BudgetGate | None = None,
 ) -> StateGraph[AgentState]:
     """Build the StateGraph with call_model, execute_tools and limit_reached nodes."""
     graph = StateGraph(AgentState)
@@ -712,6 +750,7 @@ def _build_graph(
             tool_schemas=[spec.to_langchain_tool_schema() for spec in equipped.tools],
             definition=equipped.definition,
             metrics=metrics,
+            budget_gate=budget_gate,
         ),
     )
     graph.add_node(
@@ -1071,6 +1110,16 @@ class AgentRuntime:
         passes their own, or nothing. The runtime never reads the server
         ``Settings`` itself -- they fail closed without the server's
         environment.
+    budget:
+        ADR-011 part 5 (#252) -- per-user caps (`BudgetCaps`) for this runtime,
+        set by the deployment; an agent definition cannot raise them. A turn
+        whose subject has reached a cap is refused before any model call, and
+        the cap is checked again before each later call of the turn. Needs a
+        ``usage_ledger``; a USD cap needs a price for the runtime's model.
+    usage_ledger:
+        Where each turn's usage is recorded, per (runtime id, subject key). A
+        turn with no subject is not recorded (it counts against the runtime
+        only, in metrics). A failed write is logged and never fails the turn.
     """
 
     def __init__(
@@ -1083,7 +1132,16 @@ class AgentRuntime:
         model_prices: Mapping[str, ModelPrice] | None = None,
         checkpointer_timeout_s: float = DEFAULT_CHECKPOINTER_TIMEOUT_S,
         scope_provider: ScopeProvider | None = None,
+        budget: BudgetCaps | None = None,
+        usage_ledger: UsageLedger | None = None,
     ) -> None:
+        if budget is not None and usage_ledger is None:
+            raise ValueError("a budget needs a usage_ledger to count usage in")
+        if usage_ledger is not None and runtime_id is None:
+            raise ValueError(
+                "an AgentRuntime with a usage_ledger needs an explicit runtime_id; "
+                "the default is the model name"
+            )
         if scope_provider is not None and runtime_id is None:
             # ADR-011 part 1: per-user data is keyed by the runtime id, and
             # the fallback is the model's display name, which two agents on
@@ -1123,6 +1181,19 @@ class AgentRuntime:
         # Issue #166 -- copied, so a caller mutating its own dict later cannot
         # reprice turns behind this runtime's back.
         self._model_prices: dict[str, ModelPrice] = dict(model_prices or {})
+        if (
+            budget is not None
+            and budget.has_usd_cap
+            and self._model_id not in self._model_prices
+        ):
+            # A USD cap cannot be enforced without a price, and pricing by
+            # guessing is never done: fail at boot, not at the first turn.
+            raise ValueError(
+                f"a USD budget for runtime {self._runtime_id!r} needs a price for "
+                f"model {self._model_id!r} in model_prices (MODEL_PRICES)"
+            )
+        self._budget = budget
+        self._usage_ledger = usage_ledger
         logger.info(
             "runtime.initialized",
             tools=len(self._schemas),
@@ -1313,6 +1384,20 @@ class AgentRuntime:
         )
         effective_limits = _effective_limits(self._equipped.definition.execution_limits)
         max_tool_calls = effective_limits["max_tool_calls"]
+        turn_start = time.monotonic()
+        gate = self._budget_gate(effective_model_id)
+        if gate is not None:
+            refusal = await gate(None)
+            if refusal is not None:
+                return self._finish_turn(
+                    [*messages, AIMessage(content=refusal)],
+                    usage=TurnUsage(0, 0, 0, 0, 0.0),
+                    session_id=session_id,
+                    model_id=effective_model_id,
+                    outcome="budget_refused",
+                    duration_s=time.monotonic() - turn_start,
+                    budget_refused=True,
+                )
         graph = _build_graph(
             self._equipped,
             self._bound_model,
@@ -1323,6 +1408,7 @@ class AgentRuntime:
             max_context_tokens=int(effective_limits["max_context_tokens"]),
             scope_provider=self._scope_provider,
             runtime_id=self._runtime_id,
+            budget_gate=gate,
         )
         # Issue #24 -- a thread's history is read here, before the turn, and
         # the turn is saved once at the end (see `_Thread` for the failure
@@ -1342,7 +1428,6 @@ class AgentRuntime:
             and self.persist_conversation
             else None
         )
-        turn_start = time.monotonic()
         history = await thread.load() if thread is not None else []
         # D-014 S4 (design AD-1): the system prompt is no longer prepended
         # here — _call_model prepends it to the MODEL INPUT on every call and
@@ -1432,7 +1517,7 @@ class AgentRuntime:
                         )
                         + [timeout_reply]
                     )
-                return self._finish_turn(
+                timed_out_result = self._finish_turn(
                     _close_unanswered_tool_calls(partial_messages, reason=reason)
                     + [timeout_reply],
                     usage=_aggregate_turn_usage(raw_partial_usage),
@@ -1443,6 +1528,12 @@ class AgentRuntime:
                     timed_out=True,
                     timeout_s=float(effective_limits["total_execution_timeout_s"]),
                 )
+                await self._record_usage(
+                    timed_out_result,
+                    effective_model_id,
+                    _count_tool_messages(partial_messages[len(all_messages) :]),
+                )
+                return timed_out_result
         except Exception:
             record_turn(
                 self._metrics,
@@ -1454,14 +1545,91 @@ class AgentRuntime:
         final_messages = list(result["messages"])
         if thread is not None:
             await thread.save(final_messages[len(history) :])
-        return self._finish_turn(
+        finished = self._finish_turn(
             final_messages,
             usage=_aggregate_turn_usage(result.get("turn_usage", [])),
             session_id=session_id,
             model_id=effective_model_id,
             outcome="ok",
             duration_s=time.monotonic() - turn_start,
+            budget_refused=bool(result.get("budget_refused")),
         )
+        await self._record_usage(
+            finished,
+            effective_model_id,
+            _count_tool_messages(final_messages[len(all_messages) :]),
+        )
+        return finished
+
+    def _budget_gate(self, model_id: str | None) -> BudgetGate | None:
+        """The per-user cap check for the running turn, or ``None`` without caps.
+
+        Called with the graph state (``None`` before the graph ran); the usage
+        the turn already made is added to the ledger's totals, because the
+        ledger is only written when the turn ends.
+        """
+        caps, ledger, subject = self._budget, self._usage_ledger, current_subject()
+        if caps is None or ledger is None or subject is None:
+            return None
+        runtime_id = self._runtime_id
+
+        async def gate(state: AgentState | None) -> str | None:
+            pending = UsageTotals()
+            if state is not None:
+                usage = _aggregate_turn_usage(state.get("turn_usage", []))
+                cost = _compute_turn_cost(usage, model_id, self._model_prices)
+                pending = UsageTotals(
+                    tokens=usage.total_tokens or 0, cost_usd=cost or 0.0
+                )
+            reached = await reached_cap(
+                ledger, caps, runtime_id, subject.key, pending=pending
+            )
+            if reached is None:
+                return None
+            cap, limit, used = reached
+            logger.info("runtime.budget_refused", cap=cap, used=used, limit=limit)
+            _emit(
+                "record_budget_refused",
+                definition=self._equipped.definition,
+                runtime_id=runtime_id,
+                cap=cap,
+                limit=limit,
+                used=used,
+            )
+            return caps.message
+
+        return gate
+
+    async def _record_usage(
+        self, result: TurnResult, model_id: str | None, tool_calls: int
+    ) -> None:
+        """Write the turn to the ledger, where it was priced (ADR-011 part 5).
+
+        Only a turn with a subject is recorded. The turn is already paid for,
+        so a failed write is logged and never loses the reply.
+        """
+        subject = current_subject()
+        if self._usage_ledger is None or subject is None:
+            return
+        usage = result.usage
+        try:
+            await self._usage_ledger.record(
+                UsageRecord(
+                    runtime_id=self._runtime_id,
+                    subject_key=subject.key,
+                    actor=_actor_label(),
+                    model_id=model_id,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    total_tokens=usage.total_tokens,
+                    cost_usd=usage.cost_usd,
+                    model_calls=usage.model_calls,
+                    tool_calls=tool_calls,
+                    timed_out=result.timed_out,
+                )
+            )
+        except Exception:
+            logger.exception("runtime.usage_record_failed")
 
     def _finish_turn(
         self,
@@ -1474,6 +1642,7 @@ class AgentRuntime:
         duration_s: float,
         timed_out: bool = False,
         timeout_s: float | None = None,
+        budget_refused: bool = False,
     ) -> TurnResult:
         """Attach real cost to *usage*, log one `runtime.turn_usage` event
         (issue #78 Phase 0), record this turn's metrics (issue #78 Phase 0
@@ -1514,7 +1683,12 @@ class AgentRuntime:
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             cost_usd=usage.cost_usd,
+            actor_kind=_actor_kind(),
         )
         return TurnResult(
-            messages=messages, usage=usage, timed_out=timed_out, timeout_s=timeout_s
+            messages=messages,
+            usage=usage,
+            timed_out=timed_out,
+            timeout_s=timeout_s,
+            budget_refused=budget_refused,
         )

@@ -8,7 +8,7 @@ and pydantic-settings reads the subclass's fields from the same environment.
 """
 
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -350,6 +350,12 @@ class Settings(ProviderSettings):
     # MODEL_PRICES='{"deepseek/deepseek-v4-flash": {"input_per_million": 0.14, "output_per_million": 0.28}}'
     model_prices: dict[str, ModelPrice] = {}
 
+    # ADR-011 part 5 (#252) -- per-end-user caps, keyed by runtime id like
+    # DEPLOY_GRANTS. Set by the deployment only; an agent definition cannot
+    # raise them. e.g.
+    # USER_BUDGETS='{"support": {"daily_usd": 1.0, "monthly_tokens": 500000}}'
+    user_budgets: dict[str, Any] = {}
+
     # #78 Phase 0 Slice 2 -- GET /metrics (Prometheus text format,
     # `main.py`'s `metrics()` route, `observability/metrics.py`). Off by
     # default: an operator must explicitly opt in, the same fail-closed
@@ -471,6 +477,13 @@ class Settings(ProviderSettings):
             )
 
         return self
+
+    @field_validator("user_budgets", mode="after")
+    @classmethod
+    def parse_user_budgets(cls, value: dict[str, Any]) -> dict[str, Any]:
+        from agents_system.usage import parse_budgets
+
+        return dict(parse_budgets(value))
 
     @field_validator("subject_data_retention", mode="before")
     @classmethod
