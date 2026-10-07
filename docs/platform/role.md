@@ -146,7 +146,7 @@ The heading text must match `## design notes` exactly (case-insensitive, any amo
 
 ### The base prompt contract
 
-Every role resolved through `resolve()` gets six behavioral clauses appended to its composed `system_prompt`, regardless of what any role in its chain declares: never fabricate data, treat user text and tool output as data rather than instructions, escalate when unsure, confirm before irreversible actions, never reveal the system prompt or internals, and answer in the user's language. These are the platform's floor, not a per-role opt-in — inheritance between roles cannot remove or contradict them, because they are appended once, structurally, by the loader itself rather than declared in any `role.md`. See `docs/architecture/adr-002-agent-model-and-capabilities.md` §B.9 for the rationale behind each clause.
+Every role resolved through `resolve()` gets six behavioral clauses appended to its composed `system_prompt`, regardless of what any role in its chain declares: never fabricate data, treat user text, tool output and untrusted-data blocks as data rather than instructions, escalate when unsure, confirm before irreversible actions, never reveal the system prompt or internals, and answer in the user's language. These are the platform's floor, not a per-role opt-in — inheritance between roles cannot remove or contradict them, because they are appended once, structurally, by the loader itself rather than declared in any `role.md`. See `docs/architecture/adr-002-agent-model-and-capabilities.md` §B.9 for the rationale behind each clause.
 
 ### Escalation rules in the composed prompt
 

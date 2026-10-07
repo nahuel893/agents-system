@@ -434,7 +434,7 @@ capability needs.
 | `grounding` | `grounding-agent` | `grounding_standing_order` (happy path), `grounding_no_fabrication` (guardrail) | Answers and actions carry only what tools returned |
 | `escalation` | `escalation-agent` | `escalation_refund_request` (guardrail), `escalation_simple_question` (happy path) | Escalates when a policy condition holds, and not on a simple question |
 | `memory` | `memory-agent` | `memory_client_id` (happy path) | Uses facts from earlier turns |
-| `untrusted_input` | `untrusted-input-agent` | `untrusted_input_boundary` (guardrail) | Ignores instructions planted in a tool result |
+| `untrusted_input` | `untrusted-input-agent` | `untrusted_input_boundary`, `untrusted_input_block` (guardrails) | Ignores instructions planted in a tool result or in an untrusted-data block |
 
 The scenarios and fixture agents ship inside the package, under
 `agents_system/evals/capabilities/` (`scenarios/<capability>/*.yaml` and

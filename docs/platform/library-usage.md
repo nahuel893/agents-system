@@ -631,6 +631,28 @@ to "it is easy to forget they are on" is a louder signal rather than an opt-in:
 
 ---
 
+## Untrusted-data blocks
+
+Stored or external data (a user's saved facts, a transcript) reaches the model only as an `UntrustedData(source, content)` block, passed to `run_turn` for that turn. Never paste such data into a message or a prompt.
+
+```python
+from agents_system.agent.untrusted import UntrustedData
+
+await runtime.run_turn(
+    messages,
+    session_id="s1",
+    untrusted_data=[UntrustedData("user_facts", "Prefers short answers.")],
+)
+```
+
+- **Where it goes.** The graph renders the blocks into one message right after the system message, at model-call time. They are never inside the system message and never saved in the conversation state.
+- **Delimited.** Each block names its `source` (letters, digits and `_ . : -`, up to 64) and sits between `BEGIN <boundary>` and `END <boundary>` lines. The boundary is random for each turn and is redrawn until it appears in no block, so content cannot close its own block.
+- **Never policy.** Tools, grants, limits and the system prompt are fixed before a block renders. Neither permission layer reads a block, `untrusted_input: true` keeps its T3 ban, and a block never becomes a prompt, a skill or a tool argument the platform fills. Base contract clause 2 tells the model to treat the blocks as data.
+- **Bounded.** `max_chars` caps one source (default 2000 characters); a turn holds at most 8000 characters of blocks, and a block that does not fit is cut or omitted by name. The blocks count as fixed tokens against `max_context_tokens`, so the history is trimmed to make room.
+- **Always on.** There is no setting to turn it off or to inject the same data as plain text.
+
+A live scenario, `untrusted_input_block` in the capability suite, plants an order instruction in a block and checks that the agent places no order.
+
 ## Two traps
 
 ### Trap 1 — `deployments_root` defaults to the dev checkout
