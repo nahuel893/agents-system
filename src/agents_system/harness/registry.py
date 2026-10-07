@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 
 class Tier(str, Enum):
@@ -72,6 +72,15 @@ class ToolSpec:
     and subject key, and refuses, with an audit event, to run it in a turn
     that has no subject. The tool never holds or chooses a subject key.
     """
+    memory_access: Literal["read", "write", "readwrite"] | None = None
+    """#26: the tool reads and/or writes agent memory. The interceptor refuses
+    the call, before the connector runs, when the runtime's ``memory_policy``
+    (``read_scope`` / ``write_scope``) does not cover ``memory_scope``.
+    ``None`` means the tool does not touch agent memory and is not gated.
+    """
+    memory_scope: str = "local"
+    """The widest scope the tool's memory access reaches: ``local``, ``team``
+    or ``org``. Only meaningful with ``memory_access``."""
 
     def __post_init__(self) -> None:
         """Fail closed at construction (ADR-002 C.10 review follow-up,
@@ -90,6 +99,19 @@ class ToolSpec:
         required permission through the ``PermissionRegistry`` and checks
         the class/tier rules R2a (ceiling) and R2b (floor) directly.
         """
+        from agents_system.memory_policy import SCOPES, normalize_scope
+
+        if self.memory_access not in (None, "read", "write", "readwrite"):
+            raise ValueError(
+                f"tool {self.name!r}: memory_access must be read, write or "
+                f"readwrite, got {self.memory_access!r}"
+            )
+        if normalize_scope(self.memory_scope) is None:
+            raise ValueError(
+                f"tool {self.name!r}: memory_scope must be one of {SCOPES}, "
+                f"got {self.memory_scope!r}"
+            )
+
         from agents_system.permissions import evaluate_tool_spec  # deferred
 
         evaluate_tool_spec(self.name, self.tier, self.required_permissions)

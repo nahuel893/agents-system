@@ -57,6 +57,7 @@ from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.interceptor import CallResult, PolicyViolation, intercept
 from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS
+from agents_system.memory_policy import persists_conversation
 from agents_system.observability.metrics import (
     DEFAULT_METRICS,
     Metrics,
@@ -1148,6 +1149,13 @@ class AgentRuntime:
         return self._equipped.definition.permissions
 
     @property
+    def persist_conversation(self) -> bool:
+        """Whether the definition's ``memory_policy`` lets a conversation be
+        durably persisted (#26). False also when the policy does not parse.
+        A live projection of the definition, like ``permissions``."""
+        return persists_conversation(self._equipped.definition.memory_policy)
+
+    @property
     def untrusted_input(self) -> bool:
         """Whether the resolved definition treats this runtime's input as
         untrusted (ADR-002 C.11). Sourced from the same `AgentDefinition`
@@ -1329,7 +1337,9 @@ class AgentRuntime:
                 timeout_s=self._checkpointer_timeout_s,
                 metrics=self._metrics,
             )
-            if thread_id is not None and self._checkpointer is not None
+            if thread_id is not None
+            and self._checkpointer is not None
+            and self.persist_conversation
             else None
         )
         turn_start = time.monotonic()

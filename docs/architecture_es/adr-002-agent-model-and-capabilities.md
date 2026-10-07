@@ -10,7 +10,7 @@
 | 2 | Identidad por principal en `granted_permissions` | A. Modelo de agentes | ⏳ pendiente | #15 |
 | 3 | Tres tipos de memoria, aislamiento por `agent_id` impuesto por la plataforma | A. Modelo de agentes | ⏳ pendiente | #25 (bloqueado por #15 y #29) |
 | 4 | Memoria de trabajo durable (persistencia del checkpointer) | A. Modelo de agentes | ✅ hecho | #24 |
-| 5 | `memory_policy` mezclada pero sin aplicarse | A. Modelo de agentes | ⏳ pendiente | #26 (bloqueado por #25 y #29) |
+| 5 | `memory_policy` mezclada pero sin aplicarse | A. Modelo de agentes | ✅ hecho (aplicada en la capa de plataforma; ver la nota de implementación bajo A.5) | #26 |
 | 6 | Delegación declarada, no ejecutable | A. Modelo de agentes | ⏳ pendiente | #15 (identidad por principal); #170 (ADR-006, delegación agente a agente) |
 | 7 | `agent.md` como definición de referencia | A. Modelo de agentes | ✅ hecho | `bcca9a0` |
 | 8 | BUG: el prosa de role.md se filtra como prompt de sistema / notas de diseño se filtran a usuarios | B. Prompts | ✅ hecho | `307cc8a` (con 9) |
@@ -391,6 +391,8 @@ un guardado fallido devuelve la respuesta y no vuelve a ejecutar nada. Ver
 ---
 
 #### A.5 — `memory_policy` declarada, mezclada, y sin aplicarse
+
+> **Implementado en #26.** `read_scope`/`write_scope` controlan toda herramienta que declare `ToolSpec.memory_access`, en el interceptor y antes de que corra su conector, y `persist_conversation` controla el hilo del checkpointer y la escritura del `ConversationRecorder`. `agents_system.memory_policy` se encarga del parseo y de la decisión. La sección siguiente es el análisis original.
 
 **Estado actual.** `memory_policy` (campos `read_scope`, `write_scope`,
 `persist_conversation`) está declarada en el `policy.md` de todo rol

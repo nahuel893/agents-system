@@ -40,6 +40,7 @@ from agents_system.harness.defaults import is_builtin_default
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.registry import Tier, ToolSpec
+from agents_system.memory_policy import MemoryPolicy, MemoryPolicyError
 from agents_system.permissions import UnknownPermissionNameError, covers, resolve
 from agents_system.scope import ScopeProvider
 from agents_system.subject import current_subject
@@ -75,6 +76,23 @@ class CallResult:
     tool_name: str
     output: Any
     revalidated: bool
+
+
+def _memory_denial(spec: ToolSpec, raw_policy: Any) -> str:
+    """The block reason when ``memory_policy`` forbids the tool, else ``""``."""
+    try:
+        policy = MemoryPolicy.from_mapping(raw_policy)
+    except MemoryPolicyError:
+        return "memory_policy_invalid"
+    if spec.memory_access in ("read", "readwrite") and not policy.allows_read(
+        spec.memory_scope
+    ):
+        return "memory_read_denied"
+    if spec.memory_access in ("write", "readwrite") and not policy.allows_write(
+        spec.memory_scope
+    ):
+        return "memory_write_denied"
+    return ""
 
 
 async def intercept(
@@ -190,6 +208,22 @@ async def intercept(
             raise PolicyViolation(tool_name, "permission_revoked")
 
         revalidated = True
+
+    if spec.memory_access is not None:
+        # #26: the declared memory_policy gates agent-memory access here, in
+        # the platform, before any connector runs.
+        memory_reason = _memory_denial(spec, runtime.definition.memory_policy)
+        if memory_reason:
+            logger.warning(
+                "interceptor.call_blocked", tool=tool_name, reason=memory_reason
+            )
+            _emit(
+                "record_tool_call_blocked",
+                definition=runtime.definition,
+                tool_name=tool_name,
+                reason=memory_reason,
+            )
+            raise PolicyViolation(tool_name, memory_reason)
 
     scope: Any = None
     if spec.subject_scoped:
