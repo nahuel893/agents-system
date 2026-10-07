@@ -805,3 +805,31 @@ class TestAuditSequenceAllocationIsProcessSafe:
             assert in_queue_order == list(
                 range(in_queue_order[0], in_queue_order[0] + len(in_queue_order))
             ), f"{key}: one batch's range is not contiguous: {in_queue_order}"
+
+
+# ---------------------------------------------------------------------------
+# 008 -- audit_event.subject (ADR-011, #255)
+# ---------------------------------------------------------------------------
+
+
+async def _subject_column_exists(engine: AsyncEngine) -> bool:
+    async with engine.connect() as conn:
+        found = await conn.scalar(
+            text(
+                "SELECT count(*) FROM information_schema.columns "
+                "WHERE table_name = 'audit_event' AND column_name = 'subject' "
+                "AND is_nullable = 'YES'"
+            )
+        )
+    return bool(found)
+
+
+async def test_008_adds_a_nullable_subject_column_and_downgrades_cleanly(
+    migrated_engine: AsyncEngine,
+) -> None:
+    url = _require_test_database_url()
+    assert await _subject_column_exists(migrated_engine)
+    await asyncio.to_thread(_run_alembic, "downgrade 007", url)
+    assert not await _subject_column_exists(migrated_engine)
+    await asyncio.to_thread(_run_alembic, "upgrade head", url)
+    assert await _subject_column_exists(migrated_engine)

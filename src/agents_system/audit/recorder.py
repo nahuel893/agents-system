@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import structlog.contextvars
 
 from agents_system.audit.redactor import Redactor
+from agents_system.subject import current_actor, current_subject
 
 if TYPE_CHECKING:
     from agents_system.audit.events import (
@@ -58,6 +59,12 @@ if TYPE_CHECKING:
 PLACEHOLDER_SEQUENCE = 0
 
 
+def _current_subject_key() -> str | None:
+    """The bound turn subject's key. Never its address (ADR-011 part 2)."""
+    subject = current_subject()
+    return subject.key if subject is not None else None
+
+
 def _now_utc() -> datetime:
     return datetime.now(tz=UTC)
 
@@ -77,7 +84,8 @@ def _extract_role_deployment(
     # default and the audit trail could not tell deployments apart. Pinned by
     # TestRecorderAgentDefinitionContract::test_deployment_from_real_definition.
     deployment = getattr(definition, "deployment", None)
-    actor = None
+    bound_actor = current_actor()
+    actor = bound_actor.label if bound_actor is not None else None
     audit_policy = getattr(definition, "audit_policy", {}) or {}
     return role, deployment, actor, audit_policy
 
@@ -144,6 +152,7 @@ async def record_tool_call_attempted(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         tool_name=tool_name,
         sensitive=sensitive,
         executed=executed,
@@ -179,6 +188,7 @@ async def record_tool_call_blocked(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         tool_name=tool_name,
         reason=reason,  # type: ignore[arg-type]
         payload=redacted_payload,
@@ -210,6 +220,7 @@ async def record_tool_granted(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         tool_name=tool_name,
         builtin_default=builtin_default,
         payload=redacted_payload,
@@ -240,6 +251,7 @@ async def record_tool_denied(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         tool_name=tool_name,
         reason=reason,
         payload=redacted_payload,
@@ -269,6 +281,7 @@ async def record_unknown_tool(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         tool_name=tool_name,
         payload=redacted_payload,
         pii_keys=pii_keys,
@@ -297,6 +310,7 @@ async def record_skill_loaded(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         skill=skill,
         payload=redacted_payload,
         pii_keys=pii_keys,
@@ -326,6 +340,7 @@ async def record_skill_missing(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         skill=skill,
         path=path,
         payload=redacted_payload,
@@ -363,6 +378,7 @@ async def record_runtime_built(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         tools=tools_count,
         denied=denied_count,
         skills=skills_count,
@@ -395,6 +411,7 @@ async def record_runtime_initialized(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         tools=tools_count,
         model_type=model_type,
         payload=redacted_payload,
@@ -424,6 +441,7 @@ async def record_runtime_timeout(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         total_execution_timeout_s=total_execution_timeout_s,
         payload=redacted_payload,
         pii_keys=pii_keys,
@@ -464,6 +482,7 @@ async def record_context_trimmed(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         dropped_messages=dropped_messages,
         kept_messages=kept_messages,
         tokens_before=tokens_before,
@@ -521,6 +540,7 @@ async def record_escalation_not_delivered(
         role=role,
         deployment=deployment,
         actor=actor,
+        subject=_current_subject_key(),
         tool_name=tool_name,
         reason=redacted_payload["reason"],
         payload=redacted_payload,

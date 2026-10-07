@@ -66,6 +66,13 @@ from agents_system.observability.metrics import (
     record_turn,
 )
 from agents_system.permissions.permission_registry import permission_registry
+from agents_system.subject import (
+    TurnActor,
+    TurnSubject,
+    current_actor,
+    current_subject,
+    turn_scope,
+)
 
 logger = structlog.get_logger()
 
@@ -317,6 +324,16 @@ def _compute_turn_cost(
         usage.input_tokens / 1_000_000 * price.input_per_million
         + usage.output_tokens / 1_000_000 * price.output_per_million
     )
+
+
+def _subject_key() -> str | None:
+    subject = current_subject()
+    return subject.key if subject is not None else None
+
+
+def _actor_label() -> str | None:
+    actor = current_actor()
+    return actor.label if actor is not None else None
 
 
 def _effective_limits(execution_limits: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -1129,6 +1146,9 @@ class AgentRuntime:
         permissions: tuple[str, ...] | None = None,
         thread_id: str | None = None,
         model_id: str | None = None,
+        *,
+        subject: TurnSubject | None = None,
+        actor: TurnActor | None = None,
     ) -> list[AnyMessage]:
         """Execute one conversational turn; return only the message list.
 
@@ -1146,6 +1166,8 @@ class AgentRuntime:
             permissions=permissions,
             thread_id=thread_id,
             model_id=model_id,
+            subject=subject,
+            actor=actor,
         )
         return result.messages
 
@@ -1156,8 +1178,17 @@ class AgentRuntime:
         permissions: tuple[str, ...] | None = None,
         thread_id: str | None = None,
         model_id: str | None = None,
+        *,
+        subject: TurnSubject | None = None,
+        actor: TurnActor | None = None,
     ) -> TurnResult:
         """Execute one conversational turn.
+
+        ``subject`` / ``actor`` (ADR-011) name the end user the turn is for
+        and who started it. The entry point binds them, never the model; both
+        default to ``None`` and a turn without them behaves as before. They
+        are visible for the duration of the turn to audit events and turn
+        logs (subject key only, never the address).
 
         By default the runtime is stateless: it does NOT persist messages
         between calls, and the caller supplies the full message history each
@@ -1217,6 +1248,25 @@ class AgentRuntime:
             owns cross-turn accumulation and ``messages`` already reflects
             it.
         """
+        with turn_scope(subject, actor):
+            return await self._run_turn_scoped(
+                messages,
+                session_id,
+                permissions=permissions,
+                thread_id=thread_id,
+                model_id=model_id,
+            )
+
+    async def _run_turn_scoped(
+        self,
+        messages: list[AnyMessage],
+        session_id: str,
+        *,
+        permissions: tuple[str, ...] | None,
+        thread_id: str | None,
+        model_id: str | None,
+    ) -> TurnResult:
+        """The turn itself, run inside `turn_scope`."""
         # #78 Phase 0 (review finding 4) -- an explicit override always wins;
         # otherwise fall back to this runtime's own derived provider model id.
         effective_model_id = model_id if model_id is not None else self._model_id
@@ -1416,6 +1466,8 @@ class AgentRuntime:
         logger.info(
             "runtime.turn_usage",
             session_id=session_id,
+            subject=_subject_key(),
+            actor=_actor_label(),
             model_id=model_id,
             model_calls=usage.model_calls,
             input_tokens=usage.input_tokens,

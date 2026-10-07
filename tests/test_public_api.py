@@ -48,6 +48,8 @@ _EXPECTED_EXPORTS: dict[str, str] = {
     "build_agent_model": "agents_system.agent.models",
     "ModelPrice": "agents_system.config",
     "AuditSink": "agents_system.audit.sink",
+    "TurnSubject": "agents_system.subject",
+    "TurnActor": "agents_system.subject",
 }
 
 

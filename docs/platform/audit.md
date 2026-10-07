@@ -56,7 +56,8 @@ Eleven event types, modelled as a Pydantic v2 discriminated union over
 | `sequence` | `int` | Monotonic within a `correlation_id` |
 | `role` | `str` | The agent definition that was active |
 | `deployment` | `str \| None` | Which deployment narrowed that role |
-| `actor` | `str \| None` | Trigger identity |
+| `actor` | `str \| None` | Who started the turn, as `<kind>:<id>` (`channel:whatsapp`, `api:<runtime id>`). `NULL` when the caller bound none |
+| `subject` | `str \| None` | The end user the turn was for, as a key (`participant:<id>`), never an address. `NULL` when the turn had no subject. Migration `008` |
 | `payload` | `dict` | Event-specific data, stored as JSONB |
 | `pii_keys` | `list[str]` | Top-level payload keys whose values were redacted |
 

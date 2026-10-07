@@ -34,6 +34,7 @@ from typing import Annotated, Any
 import structlog
 
 from agents_system.extras import raise_missing_extra
+from agents_system.subject import TurnActor, TurnSubject
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request
@@ -179,6 +180,26 @@ def _extract_assistant_text(messages: list[AnyMessage]) -> str:
 # ---------------------------------------------------------------------------
 
 
+async def _resolve_subject(request: Request) -> TurnSubject | None:
+    """The turn subject for this request, or None when there is none."""
+    resolver = getattr(request.app.state, "subject_resolver", None)
+    if resolver is None:
+        return None
+    try:
+        participant = await resolver.resolve(request)
+    except Exception:
+        structlog.get_logger(__name__).exception("adapter.subject_resolver_failed")
+        raise HTTPException(
+            status_code=500,
+            detail="The request's end user could not be resolved. The failure has been logged.",
+        ) from None
+    if participant is None:
+        return None
+    if not participant.active:
+        raise HTTPException(status_code=403, detail="This user is not active.")
+    return TurnSubject.for_participant(participant.id, channel="api")
+
+
 @openai_router.post("/chat/completions", dependencies=[Depends(verify_bearer)])
 async def chat_completions(request: Request) -> dict[str, Any]:
     """Forward a chat-completion request to the resolved AgentRuntime.
@@ -223,6 +244,12 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     # Map messages (client system dropped — AD#6)
     openai_messages: list[dict[str, Any]] = body.get("messages", [])
     lc_messages = map_messages(openai_messages)
+
+    # ADR-011: who this turn is for. Only a deployment-supplied resolver over
+    # the authenticated request can name an end user; the body's `user` field
+    # and message text are client-chosen and never a subject.
+    subject = await _resolve_subject(request)
+    actor = TurnActor(kind="api", id=model_id)
 
     # Call AgentRuntime.run_turn
     session_id = str(uuid.uuid4())
@@ -280,6 +307,8 @@ async def chat_completions(request: Request) -> dict[str, Any]:
             turn_result = await runtime.run_turn_with_usage(
                 messages=lc_messages,
                 session_id=session_id,
+                subject=subject,
+                actor=actor,
             )
         except Exception:
             # Anything escaping run_turn used to leave here as a raw 500 with

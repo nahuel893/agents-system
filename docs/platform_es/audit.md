@@ -58,7 +58,8 @@ Once tipos de evento, modelados como unión discriminada de Pydantic v2 sobre
 | `sequence` | `int` | Monótono dentro de un `correlation_id` |
 | `role` | `str` | La definición de agente que estaba activa |
 | `deployment` | `str \| None` | Qué deployment restringió ese rol |
-| `actor` | `str \| None` | Identidad del disparador |
+| `actor` | `str \| None` | Quién inició el turno, como `<tipo>:<id>` (`channel:whatsapp`, `api:<id de runtime>`). `NULL` cuando quien llama no vinculó ninguno |
+| `subject` | `str \| None` | El usuario final para quien era el turno, como clave (`participant:<id>`), nunca una dirección. `NULL` cuando el turno no tuvo sujeto. Migración `008` |
 | `payload` | `dict` | Datos específicos del evento, almacenados como JSONB |
 | `pii_keys` | `list[str]` | Claves de primer nivel del payload cuyos valores se redactaron |
 

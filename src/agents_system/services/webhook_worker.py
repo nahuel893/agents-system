@@ -44,6 +44,7 @@ from agents_system.services.participants import (
     Participant,
     ParticipantDirectory,
 )
+from agents_system.subject import TurnActor, TurnSubject
 
 logger = structlog.get_logger()
 
@@ -55,6 +56,9 @@ class _Runtime(Protocol):
         session_id: str,
         permissions: tuple[str, ...] | None = None,
         thread_id: str | None = None,
+        *,
+        subject: TurnSubject | None = None,
+        actor: TurnActor | None = None,
     ) -> list[AnyMessage]: ...
 
 
@@ -426,6 +430,12 @@ class DeferredWebhookWorker:
                     messages=[HumanMessage(content=turn.text)],
                     session_id=inbound.meta_message_id,
                     thread_id=conversation if binding.checkpointer_enabled else None,
+                    # ADR-011: the verified sender is who the turn is for; the
+                    # channel that authenticated it is who started it.
+                    subject=TurnSubject.for_participant(
+                        participant.id, channel=channel, address=address
+                    ),
+                    actor=TurnActor(kind="channel", id=channel),
                 )
                 assistant_text = _extract_assistant_text(result_messages)
             except Exception as exc:

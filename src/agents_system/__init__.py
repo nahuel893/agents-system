@@ -113,6 +113,9 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     # recorded.
     "ModelPrice": ("agents_system.config", "ModelPrice"),
     "AuditSink": ("agents_system.audit.sink", "AuditSink"),
+    # ADR-011 -- who a turn is for and who started it, for `run_turn`.
+    "TurnSubject": ("agents_system.subject", "TurnSubject"),
+    "TurnActor": ("agents_system.subject", "TurnActor"),
 }
 
 # PLE0605/PLE0604 false positive: ruff's static check cannot see that

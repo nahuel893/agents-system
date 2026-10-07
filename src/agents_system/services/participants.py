@@ -100,6 +100,12 @@ class ChannelParticipantDirectory(Protocol):
     The deferred worker requires this protocol as soon as any channel other
     than the built-in WhatsApp one is bound. A plain `ParticipantDirectory`
     stays valid for a WhatsApp-only deployment.
+
+    ``Participant.id`` must be unique across every channel the directory
+    serves (ADR-011): per-user data is keyed by ``participant:<id>``, so two
+    channels share a subject only when the directory returns the same id for
+    them. A directory that reuses ids across channels must namespace them
+    before the deployment enables any per-user feature.
     """
 
     def normalize_channel_address(self, raw: str, *, channel: str) -> str:
@@ -110,6 +116,24 @@ class ChannelParticipantDirectory(Protocol):
         self, session: Any, address: str, *, channel: str
     ) -> Participant | None:
         """Return the participant *address* is on *channel*, or None."""
+        ...
+
+
+class SubjectResolver(Protocol):
+    """Maps an authenticated API request to the participant it is for (ADR-011).
+
+    The OpenAI-compatible adapter authenticates one shared key and so knows
+    no end user by itself. A deployment that does (a signed header, a session
+    behind its own gateway) supplies this port through
+    ``create_app(subject_resolver=...)``. The request's ``user`` field and
+    message text are client-chosen and are never a subject.
+
+    Return ``None`` when the request has no end user: the turn then runs with
+    no subject. An inactive participant is refused with 403 and no turn runs.
+    """
+
+    async def resolve(self, request: Any) -> Participant | None:
+        """Return the participant *request* is for, or None."""
         ...
 
 

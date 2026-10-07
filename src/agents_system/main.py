@@ -81,6 +81,7 @@ from agents_system.services.participants import (
     ChannelParticipantDirectory,
     ConversationRecorder,
     ParticipantDirectory,
+    SubjectResolver,
 )
 from agents_system.services.redis import close_redis_pool, get_redis_client
 
@@ -1417,6 +1418,7 @@ def create_app(
         ParticipantDirectory | ChannelParticipantDirectory | None
     ) = None,
     conversation_recorder: ConversationRecorder | None = None,
+    subject_resolver: SubjectResolver | None = None,
     roots: RootConfig | None = None,
     title: str = "agents_system",
     chat_model: BaseChatModel | None = None,
@@ -1524,6 +1526,7 @@ def create_app(
     application.state.clients = clients
     application.state.participant_directory = participant_directory
     application.state.conversation_recorder = conversation_recorder
+    application.state.subject_resolver = subject_resolver
     application.state.roots = roots
     application.state.chat_model_override = chat_model
     application.state.provider_probe = ProviderHealthProbe()

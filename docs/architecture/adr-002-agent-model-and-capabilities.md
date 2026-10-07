@@ -151,6 +151,8 @@ changes in this item; A.2 is where identity actually gets threaded through.
 
 #### A.2 — Per-principal identity
 
+> **Extended by ADR-011:** the turn subject and actor that thread an end-user identity into `run_turn` are decided in [ADR-011 — End-user scope](adr-011-end-user-scope.md); a principal from #15 later supplies the same fields.
+
 > **Superseded by ADR-003:** AD-5's auto-grant behavior in this section is historical only. [ADR-003 — Permission hierarchy](adr-003-permission-hierarchy.md) records the shipped explicit `DEPLOY_GRANTS` model.
 
 **Current state.** At application startup, `create_app`'s lifespan builds
@@ -247,6 +249,8 @@ and, eventually, across a delegation.
 ---
 
 #### A.3 — Three memory types with platform-enforced isolation
+
+> **Amended by ADR-011:** per-user data is keyed by (runtime id, subject key) and fenced by row-level security, not by a per-query filter. See [ADR-011 — End-user scope](adr-011-end-user-scope.md).
 
 **Current state.** No `agent_id`-scoped isolation exists anywhere in the
 codebase today, because no durable `agent_id` exists yet (A.2). The
