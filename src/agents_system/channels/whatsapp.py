@@ -20,6 +20,8 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, Final
 
 import httpx
@@ -227,11 +229,22 @@ _MAX_RETRY_AFTER_S = 86400.0
 
 
 def _retry_after(value: str | None) -> float:
-    """Seconds from a ``Retry-After`` header; a default when absent or not seconds."""
-    try:
-        seconds = float(value) if value is not None else 0.0
-    except ValueError:
+    """Seconds from a ``Retry-After`` header (delay-seconds or HTTP-date).
+
+    A default when absent, unparseable or not in the future; bounded above.
+    """
+    if value is None:
         return _DEFAULT_RETRY_AFTER_S
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return _DEFAULT_RETRY_AFTER_S
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        seconds = (when - datetime.now(UTC)).total_seconds()
     if not math.isfinite(seconds) or seconds <= 0:
         return _DEFAULT_RETRY_AFTER_S
     return min(seconds, _MAX_RETRY_AFTER_S)

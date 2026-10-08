@@ -32,7 +32,7 @@ types, the permission registry and the audit recorder.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time, timedelta, tzinfo
 from typing import Literal, Protocol, runtime_checkable
@@ -45,6 +45,8 @@ from agents_system.subject import TurnActor, TurnSubject
 logger = structlog.get_logger(__name__)
 
 SEND_PROACTIVE = "send:proactive"
+#: ``(runtime_id, actor label)`` to the caller's current permission names.
+PermissionLookup = Callable[[str, str], Awaitable[Collection[str]]]
 DEFAULT_LEASE_S = 120
 DEFAULT_RECHECK_S = 60
 
@@ -153,6 +155,14 @@ class ProactiveQueue(Protocol):
         """
         ...
 
+    async def expire_leases(self, now: datetime) -> list[ProactiveMessage]:
+        """Mark every ``sending`` message past its lease ``ambiguous``.
+
+        Returns the messages that made that transition in this call, each
+        exactly once, so the caller can audit them.
+        """
+        ...
+
     async def attempts_since(
         self,
         runtime_id: str,
@@ -206,16 +216,24 @@ class InMemoryProactiveQueue:
         self.messages.append(message)
         return message.id
 
+    async def expire_leases(self, now: datetime) -> list[ProactiveMessage]:
+        expired = [
+            m
+            for m in self.messages
+            if m.status == "sending"
+            and m.lease_expires_at is not None
+            and m.lease_expires_at <= now
+        ]
+        for m in expired:
+            self._replace(m.id, status="ambiguous", last_error="lease_expired")
+        return [
+            replace(m, status="ambiguous", last_error="lease_expired") for m in expired
+        ]
+
     async def claim(
         self, worker_id: str, *, now: datetime, lease_s: float
     ) -> ProactiveMessage | None:
-        for m in self.messages:
-            if (
-                m.status == "sending"
-                and m.lease_expires_at is not None
-                and m.lease_expires_at <= now
-            ):
-                self._replace(m.id, status="ambiguous", last_error="lease_expired")
+        await self.expire_leases(now)
         due = [
             m
             for m in self.messages
@@ -353,12 +371,12 @@ class ProactiveSender:
         queue: ProactiveQueue,
         directory: RecipientDirectory,
         *,
-        deploy_grants: Collection[str],
+        deploy_grants: Mapping[str, Collection[str]],
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._queue = queue
         self._directory = directory
-        self._ceiling = _classes(deploy_grants)
+        self._ceiling = _ceiling(deploy_grants)
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def submit(
@@ -374,13 +392,12 @@ class ProactiveSender:
         """Queue ``text`` for ``subject``; returns the message id.
 
         Raises `ProactivePermissionError` unless ``permissions`` (the caller's
-        current grants) are covered by the deploy ceiling for ``send:proactive``,
+        current grants) are covered by ``runtime_id``'s deploy ceiling for
+        ``send:proactive`` (a runtime with no ceiling entry is refused),
         and `RecipientNotAuthorizedError` when the directory refuses the
         subject. Neither reaches the queue or a provider.
         """
-        required = resolve(SEND_PROACTIVE)
-        effective = self._ceiling & _classes(permissions)
-        if not any(covers(g, required) for g in effective):
+        if not _permitted(self._ceiling, runtime_id, permissions):
             raise ProactivePermissionError(
                 f"{SEND_PROACTIVE} is not granted to {actor.label}"
             )
@@ -405,6 +422,22 @@ class ProactiveSender:
         return message_id
 
 
+def _ceiling(deploy_grants: Mapping[str, Collection[str]]) -> dict[str, set[type]]:
+    return {rt: _classes(names) for rt, names in deploy_grants.items()}
+
+
+def _permitted(
+    ceiling: Mapping[str, set[type]], runtime_id: str, held: Collection[str]
+) -> bool:
+    """Whether ``held`` covers ``send:proactive`` inside ``runtime_id``'s ceiling.
+
+    A runtime absent from the ceiling has no grant: fail closed.
+    """
+    required = resolve(SEND_PROACTIVE)
+    effective = ceiling.get(runtime_id, set()) & _classes(held)
+    return any(covers(g, required) for g in effective)
+
+
 def _classes(names: Collection[str]) -> set[type]:
     found: set[type] = set()
     for name in names:
@@ -424,6 +457,8 @@ class ProactiveDispatcher:
         directory: RecipientDirectory,
         channels: Mapping[str, ProactiveChannel],
         *,
+        deploy_grants: Mapping[str, Collection[str]],
+        current_permissions: PermissionLookup | None = None,
         policy: ProactivePolicy | None = None,
         lease_s: float = DEFAULT_LEASE_S,
         clock: Callable[[], datetime] | None = None,
@@ -431,12 +466,23 @@ class ProactiveDispatcher:
         self._queue = queue
         self._directory = directory
         self._channels = dict(channels)
+        self._ceiling = _ceiling(deploy_grants)
+        self._current_permissions = current_permissions
         self._policy = policy or ProactivePolicy()
         self._lease_s = lease_s
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def run_once(self, worker_id: str) -> DispatchOutcome:
         now = self._clock()
+        for lapsed in await self._queue.expire_leases(now):
+            await _audit(
+                "ambiguous",
+                runtime_id=lapsed.runtime_id,
+                subject_key=lapsed.subject_key,
+                actor=lapsed.actor,
+                message_id=lapsed.id,
+                reason="lease_expired",
+            )
         message = await self._queue.claim(worker_id, now=now, lease_s=self._lease_s)
         if message is None:
             return DispatchOutcome("idle")
@@ -454,6 +500,10 @@ class ProactiveDispatcher:
             "actor": message.actor,
             "message_id": message.id,
         }
+        if not await self._still_permitted(message):
+            return await self._finish(
+                worker_id, message, "failed", "permission_revoked", ident
+            )
         recipient = await self._directory.authorize(
             message.runtime_id, TurnSubject(message.subject_key)
         )
@@ -495,6 +545,24 @@ class ProactiveDispatcher:
         return await self._finish(
             worker_id, message, "sent", None, ident, recipient.channel
         )
+
+    async def _still_permitted(self, message: ProactiveMessage) -> bool:
+        """Revalidate ``send:proactive`` for the message's runtime and caller.
+
+        The deploy ceiling is always rechecked. The caller's own grant is
+        rechecked when the deployment supplied ``current_permissions``;
+        without it the queue holds no record of the caller's grants.
+        """
+        held: Collection[str] = {SEND_PROACTIVE}
+        if self._current_permissions is not None:
+            try:
+                held = await self._current_permissions(
+                    message.runtime_id, message.actor
+                )
+            except Exception:
+                logger.warning("proactive.permission_lookup_failed", exc_info=True)
+                return False
+        return _permitted(self._ceiling, message.runtime_id, held)
 
     async def _guard(
         self,

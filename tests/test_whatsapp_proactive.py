@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from email.utils import formatdate
+
 import httpx
 import pytest
 
@@ -77,3 +80,33 @@ async def test_a_5xx_is_left_ambiguous() -> None:
     transport = httpx.MockTransport(lambda r: httpx.Response(503))
     with pytest.raises(httpx.HTTPStatusError):
         await _channel(transport).send_proactive("549111", "hello")
+
+
+async def test_an_http_date_retry_after_is_honored() -> None:
+    when = formatdate(time.time() + 7200, usegmt=True)
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(429, headers={"Retry-After": when})
+    )
+    with pytest.raises(ProviderRateLimited) as caught:
+        await _channel(transport).send_proactive("549111", "hello")
+    assert 7100 < caught.value.retry_after_s <= 7200
+
+
+async def test_an_http_date_in_the_past_falls_back_to_the_default() -> None:
+    when = formatdate(time.time() - 7200, usegmt=True)
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(429, headers={"Retry-After": when})
+    )
+    with pytest.raises(ProviderRateLimited) as caught:
+        await _channel(transport).send_proactive("549111", "hello")
+    assert caught.value.retry_after_s == 60
+
+
+async def test_a_far_future_http_date_is_bounded() -> None:
+    when = formatdate(time.time() + 10 * 86400, usegmt=True)
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(429, headers={"Retry-After": when})
+    )
+    with pytest.raises(ProviderRateLimited) as caught:
+        await _channel(transport).send_proactive("549111", "hello")
+    assert caught.value.retry_after_s == 86400

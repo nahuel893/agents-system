@@ -12,10 +12,12 @@ hands a message to one worker, and a message whose lease lapsed mid-send is
 marked ``ambiguous``, never requeued (delivery is at most once). The table
 holds no address: the directory resolves it at send time.
 
-``PROACTIVE_STORE`` is the unbound `SubjectDataStore` registered in the
-default registry at import, so the guard that every ``subject_key`` table has
-a store passes; a deployment binds it with ``PROACTIVE_STORE.bind(provider)``.
-Unbound, it holds nothing, so export and delete are no-ops.
+``PROACTIVE_STORE`` is the `SubjectDataStore` registered in the default
+registry at import, so the guard that every ``subject_key`` table has a store
+passes. It is bound to a database by constructing ``PostgresProactiveQueue``
+over a provider (default table), and by the served app at boot when
+``create_app(scope_provider_factory=...)`` is configured. Unbound, it holds
+nothing, so export and delete are no-ops.
 """
 
 from __future__ import annotations
@@ -94,6 +96,11 @@ class PostgresProactiveQueue:
         self._provider = provider
         self._table = table
         self.tables = frozenset({table})
+        # The queue a deployment builds to deliver is the one operator export,
+        # delete and retention must reach: bind the registered store to the
+        # same database so the two cannot drift apart (#251).
+        if provider is not None and table == TABLE:
+            PROACTIVE_STORE.bind(provider)
 
     def bind(self, provider: PostgresScopeProvider) -> None:
         self._provider = provider
@@ -136,19 +143,40 @@ class PostgresProactiveQueue:
             )
         return str(message_id)
 
+    async def expire_leases(self, now: datetime) -> list[ProactiveMessage]:
+        async with self._worker_tx() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        f"UPDATE {self._table} SET status = 'ambiguous', "
+                        "last_error = 'lease_expired', lease_owner = NULL, "
+                        "lease_expires_at = NULL, finished_at = :now "
+                        "WHERE status = 'sending' AND lease_expires_at <= :now "
+                        "RETURNING id, runtime_id, subject_key, body, actor, "
+                        "available_at"
+                    ),
+                    {"now": now},
+                )
+            ).all()
+        return [
+            ProactiveMessage(
+                id=str(r.id),
+                runtime_id=r.runtime_id,
+                subject_key=r.subject_key,
+                text=r.body,
+                actor=r.actor,
+                status="ambiguous",
+                available_at=r.available_at,
+                last_error="lease_expired",
+            )
+            for r in rows
+        ]
+
     async def claim(
         self, worker_id: str, *, now: datetime, lease_s: float
     ) -> ProactiveMessage | None:
+        await self.expire_leases(now)
         async with self._worker_tx() as conn:
-            await conn.execute(
-                text(
-                    f"UPDATE {self._table} SET status = 'ambiguous', "
-                    "last_error = 'lease_expired', lease_owner = NULL, "
-                    "lease_expires_at = NULL, finished_at = :now "
-                    "WHERE status = 'sending' AND lease_expires_at <= :now"
-                ),
-                {"now": now},
-            )
             row = (
                 await conn.execute(
                     text(

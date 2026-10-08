@@ -36,6 +36,7 @@ pytestmark = pytest.mark.integration
 RT = "rt"
 ALICE, BOB = TurnSubject.for_participant(1), TurnSubject.for_participant(2)
 NOW = datetime.now(UTC)
+GRANTS = {RT: {"send:proactive"}}
 
 
 class Channel:
@@ -87,11 +88,13 @@ def _stack(
             for i, s in enumerate((ALICE, BOB))
         }
     )
-    sender = ProactiveSender(
-        queue, directory, deploy_grants={"send:proactive"}, clock=lambda: now
-    )
+    sender = ProactiveSender(queue, directory, deploy_grants=GRANTS, clock=lambda: now)
     dispatcher = ProactiveDispatcher(
-        queue, directory, {"whatsapp": channel}, clock=lambda: now
+        queue,
+        directory,
+        {"whatsapp": channel},
+        deploy_grants=GRANTS,
+        clock=lambda: now,
     )
     return sender, dispatcher
 
@@ -195,3 +198,25 @@ async def test_export_delete_and_purge(
             text(f"UPDATE {table} SET finished_at = now() - interval '2 days'")
         )
     assert await queue.purge(retention_s=3600) == 1
+
+
+async def test_expire_leases_returns_each_lapsed_message_once(
+    env: tuple[AsyncEngine, AsyncEngine, str],
+) -> None:
+    _, app, table = env
+    sender, _ = _stack(app, table, Channel())
+    queue = PostgresProactiveQueue(PostgresScopeProvider(app), table=table)
+    await sender.submit(
+        RT,
+        ALICE,
+        "hello",
+        actor=TurnActor("operator", "o"),
+        permissions={"send:proactive"},
+    )
+    assert await queue.claim("dead", now=NOW, lease_s=30) is not None
+    later = NOW + timedelta(minutes=5)
+    expired = await queue.expire_leases(later)
+    assert [(m.runtime_id, m.subject_key, m.actor, m.status) for m in expired] == [
+        (RT, ALICE.key, "operator:o", "ambiguous")
+    ]
+    assert await queue.expire_leases(later) == []

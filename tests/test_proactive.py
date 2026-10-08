@@ -30,6 +30,7 @@ RT = "rt"
 ALICE = TurnSubject.for_participant(1)
 ACTOR = TurnActor(kind="scheduler", id="nightly")
 NOW = datetime(2026, 10, 7, 12, 0, tzinfo=UTC)
+GRANTS = {RT: {"send:proactive"}}
 
 
 class FakeChannel:
@@ -77,13 +78,12 @@ def _stack(
 ) -> tuple[ProactiveSender, ProactiveDispatcher, InMemoryProactiveQueue]:
     queue = queue or InMemoryProactiveQueue()
     directory = directory or _directory()
-    sender = ProactiveSender(
-        queue, directory, deploy_grants={"send:proactive"}, clock=lambda: now
-    )
+    sender = ProactiveSender(queue, directory, deploy_grants=GRANTS, clock=lambda: now)
     dispatcher = ProactiveDispatcher(
         queue,
         directory,
         {"whatsapp": channel},
+        deploy_grants=GRANTS,
         policy=policy or ProactivePolicy(),
         clock=lambda: now,
     )
@@ -147,7 +147,7 @@ async def test_submit_needs_the_send_proactive_permission_at_call_time() -> None
 
 async def test_a_grant_outside_the_deploy_ceiling_does_not_count() -> None:
     queue = InMemoryProactiveQueue()
-    sender = ProactiveSender(queue, _directory(), deploy_grants=set())
+    sender = ProactiveSender(queue, _directory(), deploy_grants={})
     with pytest.raises(ProactivePermissionError):
         await sender.submit(RT, ALICE, "x", actor=ACTOR, permissions={"send:proactive"})
 
@@ -157,7 +157,11 @@ async def test_two_workers_deliver_a_message_once() -> None:
     sender, dispatcher, queue = _stack(channel)
     await _submit(sender)
     other = ProactiveDispatcher(
-        queue, _directory(), {"whatsapp": channel}, clock=lambda: NOW
+        queue,
+        _directory(),
+        {"whatsapp": channel},
+        deploy_grants=GRANTS,
+        clock=lambda: NOW,
     )
     results = await asyncio.gather(dispatcher.run_once("w1"), other.run_once("w2"))
     assert sorted(r.status for r in results) == ["idle", "sent"]
@@ -177,6 +181,7 @@ async def test_a_429_is_surfaced_with_its_delay_and_not_retried_in_a_loop() -> N
         queue,
         _directory(),
         {"whatsapp": channel},
+        deploy_grants=GRANTS,
         clock=lambda: NOW + timedelta(seconds=31),
     )
     assert (await later.run_once("w1")).status == "sent"
@@ -192,6 +197,7 @@ async def test_an_ambiguous_failure_is_never_retried() -> None:
         queue,
         _directory(),
         {"whatsapp": channel},
+        deploy_grants=GRANTS,
         clock=lambda: NOW + timedelta(days=1),
     )
     assert (await later.run_once("w2")).status == "idle"
@@ -217,6 +223,7 @@ async def test_a_worker_that_died_mid_send_leaves_an_ambiguous_message() -> None
         queue,
         _directory(),
         {"whatsapp": channel},
+        deploy_grants=GRANTS,
         clock=lambda: NOW + timedelta(minutes=5),
     )
     assert (await later.run_once("w2")).status == "idle"
@@ -270,3 +277,94 @@ async def test_audit_records_actor_and_subject_never_address_or_text(
     for e in events:
         assert e.actor == ACTOR.label and e.subject == ALICE.key
         assert "549111" not in str(e.payload) and "secret body" not in str(e.payload)
+
+
+async def test_the_deploy_ceiling_is_per_runtime() -> None:
+    directory = StaticRecipientDirectory(
+        {
+            (rt, ALICE.key): TurnSubject(ALICE.key, channel="whatsapp", address="1")
+            for rt in ("a", "b")
+        }
+    )
+    queue = InMemoryProactiveQueue()
+    sender = ProactiveSender(queue, directory, deploy_grants={"a": {"send:proactive"}})
+    held = {"send:proactive"}
+    assert await sender.submit("a", ALICE, "x", actor=ACTOR, permissions=held)
+    for runtime_id in ("b", "unlisted"):
+        with pytest.raises(ProactivePermissionError):
+            await sender.submit(runtime_id, ALICE, "x", actor=ACTOR, permissions=held)
+    assert [m.runtime_id for m in queue.messages] == ["a"]
+
+
+async def test_a_narrowed_deploy_ceiling_stops_a_queued_message_at_dispatch() -> None:
+    channel = FakeChannel()
+    sender, _, queue = _stack(channel)
+    await _submit(sender)
+    narrowed = ProactiveDispatcher(
+        queue, _directory(), {"whatsapp": channel}, deploy_grants={}, clock=lambda: NOW
+    )
+    outcome = await narrowed.run_once("w1")
+    assert outcome.status == "failed" and outcome.reason == "permission_revoked"
+    assert channel.calls == []
+
+
+async def test_a_revoked_caller_grant_stops_a_queued_message_at_dispatch() -> None:
+    channel = FakeChannel()
+    sender, _, queue = _stack(channel)
+    await _submit(sender)
+    held: dict[tuple[str, str], set[str]] = {(RT, ACTOR.label): set()}
+
+    async def current(runtime_id: str, actor: str) -> set[str]:
+        return held[(runtime_id, actor)]
+
+    dispatcher = ProactiveDispatcher(
+        queue,
+        _directory(),
+        {"whatsapp": channel},
+        deploy_grants=GRANTS,
+        current_permissions=current,
+        clock=lambda: NOW,
+    )
+    outcome = await dispatcher.run_once("w1")
+    assert outcome.status == "failed" and outcome.reason == "permission_revoked"
+    assert channel.calls == []
+
+
+async def test_a_still_granted_caller_is_delivered_at_dispatch() -> None:
+    channel = FakeChannel()
+    sender, _, queue = _stack(channel)
+    await _submit(sender)
+
+    async def current(runtime_id: str, actor: str) -> set[str]:
+        return {"send:proactive"}
+
+    dispatcher = ProactiveDispatcher(
+        queue,
+        _directory(),
+        {"whatsapp": channel},
+        deploy_grants=GRANTS,
+        current_permissions=current,
+        clock=lambda: NOW,
+    )
+    assert (await dispatcher.run_once("w1")).status == "sent"
+
+
+async def test_a_lease_expiry_is_audited_once_per_message(sink: Sink) -> None:
+    channel = FakeChannel()
+    sender, _, queue = _stack(channel)
+    await _submit(sender)
+    assert await queue.claim("dead-worker", now=NOW, lease_s=60) is not None
+    later = ProactiveDispatcher(
+        queue,
+        _directory(),
+        {"whatsapp": channel},
+        deploy_grants=GRANTS,
+        clock=lambda: NOW + timedelta(minutes=5),
+    )
+    for _ in range(2):
+        assert (await later.run_once("w2")).status == "idle"
+    events = [e for e in sink.events if e.event_type == "proactive_delivery"]
+    assert [e.payload["outcome"] for e in events] == ["queued", "ambiguous"]
+    expired = events[-1]
+    assert expired.actor == ACTOR.label and expired.subject == ALICE.key
+    assert expired.payload["reason"] == "lease_expired"
