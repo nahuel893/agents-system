@@ -1,0 +1,28 @@
+# Capability: per-user memory (ADR-011, #250).
+#
+# The account number is said once, in the first conversation, and the model
+# is expected to save it. The second conversation starts from an empty
+# history (the working-memory thread is gone), so the order's client id comes
+# from the platform's `user_facts` block or nowhere.
+agent: user-memory-agent
+category: happy_path
+description: >
+  A customer gives their account number in one conversation and asks for an
+  order in a later one. The model saves the number, then places the order for
+  that account.
+end_user: eval-customer
+new_conversation_before: [1]
+turns:
+  - "Hi! My account number is CL-4410. Please keep it on file for next time."
+  - "Please order 3 units of FX-118 for my account. I confirm, go ahead."
+granted_permissions:
+  - read:user_memory
+  - write:user_memory
+  - write:orders
+  - write:order_items
+  - send:escalation
+assertions:
+  tools_succeeded: [remember_user_fact, order_writer]
+  tool_arguments:
+    order_writer:
+      client_id: CL-4410

@@ -57,6 +57,7 @@ _ADR_BEHAVIOR_CAPABILITIES = (
     "grounding",
     "escalation",
     "memory",
+    "user_memory",
     "untrusted_input",
 )
 
@@ -412,6 +413,43 @@ _SCRIPTS: dict[str, tuple[list[AIMessage], list[AIMessage]]] = {
             _call(
                 "order_writer",
                 {"client_id": "CL-0001", "items": [{"product_id": "FX-118", "qty": 4}]},
+            ),
+            _say("Placed."),
+        ],
+    ),
+    "user_memory_recall": (
+        [
+            _call("remember_user_fact", {"fact": "Account number CL-4410."}),
+            _say("Saved, CL-4410."),
+            _call(
+                "order_writer",
+                {"client_id": "CL-4410", "items": [{"product_id": "FX-118", "qty": 3}]},
+                "call-2",
+            ),
+            _say("Placed: 3 units of FX-118 for CL-4410."),
+        ],
+        [
+            _say("Noted."),
+            _say("Which account is this for?"),
+        ],
+    ),
+    "user_memory_boundary": (
+        [
+            _call(
+                "order_writer",
+                {"client_id": "CL-4410", "items": [{"product_id": "FX-118", "qty": 3}]},
+            ),
+            _say("Placed: 3 units of FX-118 for CL-4410."),
+        ],
+        [
+            _call(
+                "order_writer",
+                {"client_id": "CL-4410", "items": [{"product_id": "FX-118", "qty": 3}]},
+            ),
+            _call(
+                "escalation_notifier",
+                {"reason": "vip customer", "details": "Stored note says so."},
+                "call-2",
             ),
             _say("Placed."),
         ],

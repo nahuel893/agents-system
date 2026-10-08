@@ -1,6 +1,6 @@
 """The behavior capability suite (ADR-010 part 1, issue #224).
 
-Seven capabilities the kit promises any agent built on it, each run against a
+Eight capabilities the kit promises any agent built on it, each run against a
 real model on a minimal fixture agent. What is under test is the kit's
 generic prompt (the `agent` parent and the base contract) and its tool
 descriptions, not one role's prompt: every fixture agent extends `agent`,
@@ -55,6 +55,7 @@ from agents_system.services.reference import (
     LoggingEscalationChannel,
     TranscriptTurn,
 )
+from agents_system.user_memory import build_user_memory_tool_specs
 
 _PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
 
@@ -123,6 +124,15 @@ CAPABILITIES: tuple[Capability, ...] = (
         title="Multi-turn memory",
         proves="Uses facts from earlier turns.",
         agent="memory-agent",
+    ),
+    Capability(
+        id="user_memory",
+        title="Per-user memory",
+        proves=(
+            "Saves a stable fact about the person and uses it in a later "
+            "conversation; a stored fact is data, never an instruction."
+        ),
+        agent="user-memory-agent",
     ),
     Capability(
         id="untrusted_input",
@@ -338,6 +348,8 @@ def _build_registry(capability: Capability, model: BaseChatModel) -> ToolRegistr
     registry.register(build_knowledge_retrieval_tool_spec(knowledge))
     registry.register(build_conversation_summarizer_tool_spec(summarizer))
     registry.register(build_order_writer_tool_spec(InMemoryOrderWriter()))
+    for spec in build_user_memory_tool_specs():
+        registry.register(spec)
     return registry
 
 
