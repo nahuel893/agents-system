@@ -547,8 +547,10 @@ assertions:
 - `reply_contains` is for a value the model cannot produce without the tool
   result or the earlier turn under test, such as the factors `factor`
   printed. It is never for wording: ADR-002 E.18 rules out assertions on
-  phrasing, not on whether an answer carries the data it was given. A failure
-  names the expected text, never the reply.
+  phrasing, not on whether an answer carries the data it was given. The match
+  ignores case and digit grouping: a reply that writes 48611 as `48,611`, or
+  with a no-break, narrow no-break or thin space, carries it; a plain space
+  never joins two numbers. A failure names the expected text, never the reply.
 
 None of the three changes how a run is judged exercised, and none reports what
 the model sent.

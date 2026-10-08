@@ -980,6 +980,40 @@ def test_evaluate_assertions_reply_contains_passes_case_insensitively() -> None:
     assert outcome.exercised is True
 
 
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "3,432,276,877 = **48,611** × **70,607**.",
+        "Its prime factors are 48 611 and 70 607.",
+        "Factors: 48 611 and 70 607.",
+    ],
+)
+def test_evaluate_assertions_reply_contains_ignores_digit_group_separators(
+    reply: str,
+) -> None:
+    """A model that formats 48611 as 48,611 (or with a non-breaking or thin
+    space) still carries the figure it was given."""
+    outcome = evaluate_assertions(
+        ScenarioAssertions(reply_contains=("48611", "70607")),
+        [AIMessage(content=reply)],
+    )
+
+    assert outcome.passed, outcome.failures
+
+
+def test_evaluate_assertions_reply_contains_does_not_join_numbers_split_by_a_space() -> (
+    None
+):
+    """A plain space separates two numbers; it is never read as a digit-group
+    separator, so "48 611" does not carry 48611."""
+    outcome = evaluate_assertions(
+        ScenarioAssertions(reply_contains=("48611",)),
+        [AIMessage(content="The counts are 48 611 and 5.")],
+    )
+
+    assert not outcome.passed
+
+
 def test_evaluate_assertions_reply_contains_fails_when_there_is_no_reply() -> None:
     outcome = evaluate_assertions(ScenarioAssertions(reply_contains=("48611",)), [])
 

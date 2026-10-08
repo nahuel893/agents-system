@@ -19,6 +19,7 @@ import asyncio
 import dataclasses
 import json
 import pathlib
+import re
 import time
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from typing import Any
@@ -663,6 +664,22 @@ def _final_reply(messages: Sequence[AnyMessage]) -> str | None:
     return None
 
 
+#: A digit-group separator between two digits: a comma, a no-break space, a
+#: narrow no-break space or a thin space, followed by exactly three digits.
+#: A plain space is not one, so two numbers split by a space stay apart.
+_GROUP_SEPARATORS = ",\N{NO-BREAK SPACE}\N{NARROW NO-BREAK SPACE}\N{THIN SPACE}"
+_DIGIT_GROUP_SEPARATOR = re.compile(rf"(?<=\d)[{_GROUP_SEPARATORS}](?=\d{{3}}(?!\d))")
+
+
+def _reply_carries(reply: str, text: str) -> bool:
+    """Whether *reply* carries *text*, ignoring case and digit grouping: a
+    model that writes 48611 as "48,611" still carries the figure it was
+    given."""
+    if text.casefold() in reply.casefold():
+        return True
+    return text.casefold() in _DIGIT_GROUP_SEPARATOR.sub("", reply).casefold()
+
+
 def _captured_event_types(audit_events: Sequence[Any]) -> frozenset[str]:
     """#76 -- the `event_type` of every captured audit event (see
     `_CapturingAuditSink`). Tolerant of anything without one (never expected
@@ -903,7 +920,7 @@ def evaluate_assertions(
     if assertions.reply_contains:
         reply = _final_reply(messages)
         for text in assertions.reply_contains:
-            if reply is None or text.casefold() not in reply.casefold():
+            if reply is None or not _reply_carries(reply, text):
                 # The reply is never reported, like tool argument values:
                 # eval results are written to disk and printed.
                 missing = (
