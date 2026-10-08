@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.7.0](https://github.com/nahuel893/agents-system/compare/v0.6.0...v0.7.0) (2026-10-08)
+
+
+### Features
+
+* **agent:** untrusted-data blocks for stored or external data ([#258](https://github.com/nahuel893/agents-system/issues/258)) ([#262](https://github.com/nahuel893/agents-system/issues/262)) ([25b9050](https://github.com/nahuel893/agents-system/commit/25b90508bf681e60aa619bd4477235b496225e5e))
+* **channels:** proactive outbound delivery to an authorized end user ([#251](https://github.com/nahuel893/agents-system/issues/251)) ([#266](https://github.com/nahuel893/agents-system/issues/266)) ([5cd6cd1](https://github.com/nahuel893/agents-system/commit/5cd6cd1651df6b6f360df0429a99c6010d3b35eb))
+* **runtime:** bind a turn subject and actor per turn and record them in audit ([#255](https://github.com/nahuel893/agents-system/issues/255)) ([#260](https://github.com/nahuel893/agents-system/issues/260)) ([5f3e9b1](https://github.com/nahuel893/agents-system/commit/5f3e9b1d21674c743a872e51f34ac04cc6eb1b33))
+* **runtime:** deployment-raised execution limits within the outbox lease, and a configurable timeout reply ([#278](https://github.com/nahuel893/agents-system/issues/278)) ([#280](https://github.com/nahuel893/agents-system/issues/280)) ([a59a1e9](https://github.com/nahuel893/agents-system/commit/a59a1e9172013a9cab1e21587c537720839ee6f0))
+* **runtime:** enforce memory_policy read_scope, write_scope and persist_conversation ([#26](https://github.com/nahuel893/agents-system/issues/26)) ([#263](https://github.com/nahuel893/agents-system/issues/263)) ([20912f7](https://github.com/nahuel893/agents-system/commit/20912f708137229645ed3fd0f30cc21a797f8714))
+* **runtime:** per-user data registry, operator export and delete, retention purge ([#257](https://github.com/nahuel893/agents-system/issues/257)) ([#264](https://github.com/nahuel893/agents-system/issues/264)) ([e0190b6](https://github.com/nahuel893/agents-system/commit/e0190b637dc3aa1105f1b939f2fadc709d37f8ce))
+* **runtime:** per-user memory facts about each end user ([#250](https://github.com/nahuel893/agents-system/issues/250)) ([#270](https://github.com/nahuel893/agents-system/issues/270)) ([4d59112](https://github.com/nahuel893/agents-system/commit/4d59112bcc40b125bf127c545dfaa922624c529d))
+* **runtime:** per-user usage ledger and budget caps ([#252](https://github.com/nahuel893/agents-system/issues/252)) ([#265](https://github.com/nahuel893/agents-system/issues/265)) ([77129ed](https://github.com/nahuel893/agents-system/commit/77129edbdd6131f5401879f19d65ac81714603f5))
+* **runtime:** subject-scoped tools and a scope handle fenced by row-level security ([#256](https://github.com/nahuel893/agents-system/issues/256)) ([#261](https://github.com/nahuel893/agents-system/issues/261)) ([7866c36](https://github.com/nahuel893/agents-system/commit/7866c36efcb1cc102751cc4f08d7ea1c7c684553))
+* **runtime:** user-requested schedules and scheduled turns for their owner ([#175](https://github.com/nahuel893/agents-system/issues/175)) ([#274](https://github.com/nahuel893/agents-system/issues/274)) ([a0938c3](https://github.com/nahuel893/agents-system/commit/a0938c32c2571fdb9657972ed3c30593e2c399d0))
+
+
+### Bug Fixes
+
+* **agent:** leave untrusted blocks out when they would break the context budget ([#272](https://github.com/nahuel893/agents-system/issues/272)) ([8cfbeed](https://github.com/nahuel893/agents-system/commit/8cfbeed7360e5702751d1801d232baff6713840d))
+* **evals:** metric_value sums every series that matches the given labels ([#271](https://github.com/nahuel893/agents-system/issues/271)) ([b57dc86](https://github.com/nahuel893/agents-system/commit/b57dc86aba28f5983b7f993101049ff9225031d0))
+* **evals:** reply_contains ignores digit-group separators ([#268](https://github.com/nahuel893/agents-system/issues/268)) ([9e19a70](https://github.com/nahuel893/agents-system/commit/9e19a704349661a26b20db8547b9095838555fa4))
+* **runtime:** fail closed on a malformed memory_policy ([#267](https://github.com/nahuel893/agents-system/issues/267)) ([f39ec07](https://github.com/nahuel893/agents-system/commit/f39ec0753e348ea90fbaaa6f62078c2fe8d7f2c6))
+* **runtime:** per-user memory review findings ([#273](https://github.com/nahuel893/agents-system/issues/273)) ([7572f8b](https://github.com/nahuel893/agents-system/commit/7572f8b02edd9123658065a4508ee4818d300861))
+
+
+### Documentation
+
+* **adr:** add ADR-011 end-user scope ([#253](https://github.com/nahuel893/agents-system/issues/253)) ([#254](https://github.com/nahuel893/agents-system/issues/254)) ([e32e8ab](https://github.com/nahuel893/agents-system/commit/e32e8ab4bea9e5a4add6a9960661f0670d974c85))
+* **features:** mark the 0.7.0 features as released, and fix stale 0.6.0 labels ([#281](https://github.com/nahuel893/agents-system/issues/281)) ([f1b0f30](https://github.com/nahuel893/agents-system/commit/f1b0f3008894306b845720ea2835a0677604fcda))
+
 ## [0.6.0](https://github.com/nahuel893/agents-system/compare/v0.5.1...v0.6.0) (2026-10-04)
 
 
