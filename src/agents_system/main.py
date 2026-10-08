@@ -80,12 +80,18 @@ from agents_system.subject_data import (
 from agents_system.subject_data import (
     SubjectDataPurger,
     SubjectDataRegistry,
+    SubjectDataStore,
 )
 from agents_system.usage import (
     BudgetCaps,
     InMemoryUsageLedger,
     UsageLedger,
     parse_budgets,
+)
+from agents_system.user_memory import (
+    USER_FACTS_STORE,
+    InMemoryUserFactStore,
+    limits_from_settings,
 )
 
 if TYPE_CHECKING:
@@ -245,6 +251,22 @@ def _build_usage_ledger(
     return ledger
 
 
+def _bind_user_fact_store(
+    scope_provider: ScopeProvider | None, registry: SubjectDataRegistry
+) -> None:
+    """Register the per-user facts store so export and delete reach it (#250)."""
+    if scope_provider is None:
+        return
+    store: SubjectDataStore
+    if isinstance(scope_provider, InMemoryScopeProvider):
+        store = InMemoryUserFactStore(scope_provider)
+    else:
+        from agents_system.services.user_facts_postgres import PostgresUserFactStore
+
+        store = PostgresUserFactStore(scope_provider)  # type: ignore[arg-type]
+    registry.bind(store)
+
+
 async def _start_scope_provider(
     factory: Callable[[AsyncEngine], ScopeProvider] | None, engine: AsyncEngine
 ) -> ScopeProvider | None:
@@ -318,6 +340,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             scope_provider, app.state.subject_data_registry, budgets
         )
         app.state.usage_ledger = usage_ledger
+        _bind_user_fact_store(scope_provider, app.state.subject_data_registry)
+        user_memory = (
+            limits_from_settings(settings) if scope_provider is not None else None
+        )
 
         # #46 (ADR-001 D-033) — one process-wide bound on concurrent turns,
         # shared by every entry point that runs one: the webhook worker
@@ -530,10 +556,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             # One purger enforces every per-user store's retention. A name in
             # SUBJECT_DATA_RETENTION that no store registered fails the boot.
-            if settings.subject_data_retention:
+            # The facts' retention is enforced per subject when its facts are
+            # read or written (row-level security leaves a purge no scope to
+            # run in), so it is not handed to the purger.
+            purged_retention = {
+                name: seconds
+                for name, seconds in settings.subject_data_retention.items()
+                if name != USER_FACTS_STORE
+            }
+            if purged_retention:
                 subject_purger = SubjectDataPurger(
                     app.state.subject_data_registry,
-                    retention=settings.subject_data_retention,
+                    retention=purged_retention,
                     interval_s=settings.subject_data_purge_interval_s,
                 )
                 await subject_purger.start()
@@ -708,6 +742,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     # from the deployment only; never from the definition.
                     budget=budgets.get(runtime_id),
                     usage_ledger=usage_ledger,
+                    # #250: facts about each end user, for a definition whose
+                    # memory_policy opts in; the limits are the deployment's.
+                    user_memory=user_memory,
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
 

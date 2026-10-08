@@ -59,6 +59,18 @@ def default_registry_factory(
     registry.register(build_conversation_summarizer_tool_spec(None))
     registry.register(build_escalation_notifier_tool_spec(None))
     registry.register(build_order_writer_tool_spec(None))
+    # #250: inert unless a role names them, its memory_policy opts in and the
+    # deployment grants read:user_memory / write:user_memory.
+    from agents_system.user_memory import (
+        UserMemoryLimits,
+        build_user_memory_tool_specs,
+        limits_from_settings,
+    )
+
+    for spec in build_user_memory_tool_specs(
+        limits_from_settings(settings) if settings is not None else UserMemoryLimits()
+    ):
+        registry.register(spec)
     registry.register(build_report_tool_spec(bi_engine, CATALOG))
 
     if settings is not None:

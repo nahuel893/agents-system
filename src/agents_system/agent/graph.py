@@ -63,7 +63,7 @@ from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.interceptor import CallResult, PolicyViolation, intercept
 from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS
-from agents_system.memory_policy import persists_conversation
+from agents_system.memory_policy import allows_user_memory, persists_conversation
 from agents_system.observability.metrics import (
     DEFAULT_METRICS,
     Metrics,
@@ -88,6 +88,7 @@ from agents_system.usage import (
     UsageTotals,
     reached_cap,
 )
+from agents_system.user_memory import UserFacts, UserMemoryLimits, backend_for
 
 logger = structlog.get_logger()
 
@@ -1150,6 +1151,13 @@ class AgentRuntime:
         Where each turn's usage is recorded, per (runtime id, subject key). A
         turn with no subject is not recorded (it counts against the runtime
         only, in metrics). A failed write is logged and never fails the turn.
+    user_memory:
+        #250 -- the limits of per-user memory. With them, a turn that has a
+        subject, on a definition whose ``memory_policy`` says
+        ``user_memory: true``, gets the user's stored facts as an
+        untrusted-data block (never as plain text). Needs ``scope_provider``
+        and ``runtime_id``. A store that fails is logged and the turn goes on
+        without the facts.
     """
 
     def __init__(
@@ -1164,7 +1172,13 @@ class AgentRuntime:
         scope_provider: ScopeProvider | None = None,
         budget: BudgetCaps | None = None,
         usage_ledger: UsageLedger | None = None,
+        user_memory: UserMemoryLimits | None = None,
     ) -> None:
+        if user_memory is not None and (scope_provider is None or runtime_id is None):
+            raise ValueError(
+                "an AgentRuntime with user_memory needs a scope_provider to keep "
+                "the facts in and an explicit runtime_id to key them by"
+            )
         if budget is not None and usage_ledger is None:
             raise ValueError("a budget needs a usage_ledger to count usage in")
         if usage_ledger is not None and runtime_id is None:
@@ -1226,6 +1240,7 @@ class AgentRuntime:
             )
         self._budget = budget
         self._usage_ledger = usage_ledger
+        self._user_memory = user_memory
         logger.info(
             "runtime.initialized",
             tools=len(self._schemas),
@@ -1397,6 +1412,32 @@ class AgentRuntime:
                 untrusted_data=untrusted_data,
             )
 
+    async def _user_memory_blocks(self) -> list[UntrustedData]:
+        """The turn's user-facts block, or none (#250).
+
+        Only for a turn with a subject, on a definition that opted in. Never
+        fails the turn: a store that cannot be read means a turn without the
+        facts, logged.
+        """
+        subject = current_subject()
+        if (
+            self._user_memory is None
+            or self._scope_provider is None
+            or subject is None
+            or not allows_user_memory(self._equipped.definition.memory_policy)
+        ):
+            return []
+        try:
+            facts = UserFacts(
+                backend_for(self._scope_provider.scope(self._runtime_id, subject.key)),
+                self._user_memory,
+            )
+            block = await facts.injection_block(mark_used=True)
+        except Exception:
+            logger.warning("user_memory.inject_failed", exc_info=True)
+            return []
+        return [block] if block is not None else []
+
     async def _run_turn_scoped(
         self,
         messages: list[AnyMessage],
@@ -1428,6 +1469,7 @@ class AgentRuntime:
         effective_limits = _effective_limits(self._equipped.definition.execution_limits)
         max_tool_calls = effective_limits["max_tool_calls"]
         turn_start = time.monotonic()
+        untrusted_data = [*untrusted_data, *await self._user_memory_blocks()]
         if (
             self._budget is not None
             and self._budget.has_usd_cap

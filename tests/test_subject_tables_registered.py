@@ -10,10 +10,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+# Importing a store module registers it; add each per-user store here.
+import agents_system.services.usage_postgres
 from agents_system.subject_data import DEFAULT_REGISTRY
 
-# Importing a store module registers it; add each per-user store here.
-import agents_system.services.usage_postgres  # noqa: F401  isort:skip
+import agents_system.services.user_facts_postgres  # noqa: F401  isort:skip
 
 _VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
 _TABLE_CALL = re.compile(

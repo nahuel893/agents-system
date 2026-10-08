@@ -84,6 +84,8 @@ def _memory_denial(spec: ToolSpec, raw_policy: Any) -> str:
         policy = MemoryPolicy.from_mapping(raw_policy)
     except MemoryPolicyError:
         return "memory_policy_invalid"
+    if spec.needs_user_memory and not policy.user_memory:
+        return "user_memory_disabled"
     if spec.memory_access in ("read", "readwrite") and not policy.allows_read(
         spec.memory_scope
     ):
@@ -209,7 +211,7 @@ async def intercept(
 
         revalidated = True
 
-    if spec.memory_access is not None:
+    if spec.memory_access is not None or spec.needs_user_memory:
         # #26: the declared memory_policy gates agent-memory access here, in
         # the platform, before any connector runs.
         memory_reason = _memory_denial(spec, runtime.definition.memory_policy)

@@ -72,6 +72,11 @@ class ToolSpec:
     and subject key, and refuses, with an audit event, to run it in a turn
     that has no subject. The tool never holds or chooses a subject key.
     """
+    needs_user_memory: bool = False
+    """#250: the tool reads or writes per-user memory (facts about the end
+    user). The interceptor refuses the call, before the connector runs, unless
+    the runtime's ``memory_policy`` opts in with ``user_memory: true``. Usually
+    paired with ``subject_scoped``."""
     memory_access: Literal["read", "write", "readwrite"] | None = None
     """#26: the tool reads and/or writes agent memory. The interceptor refuses
     the call, before the connector runs, when the runtime's ``memory_policy``
