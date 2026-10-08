@@ -1402,6 +1402,18 @@ class AgentRuntime:
         effective_limits = _effective_limits(self._equipped.definition.execution_limits)
         max_tool_calls = effective_limits["max_tool_calls"]
         turn_start = time.monotonic()
+        if (
+            self._budget is not None
+            and self._budget.has_usd_cap
+            and effective_model_id not in self._model_prices
+        ):
+            # The boot guard only covers the runtime's own model; a per-turn
+            # override without a price would make every cost null and the USD
+            # cap unreachable. Refuse before any model call.
+            raise ValueError(
+                f"a USD budget for runtime {self._runtime_id!r} needs a price for "
+                f"model {effective_model_id!r} in model_prices (MODEL_PRICES)"
+            )
         gate = self._budget_gate(effective_model_id)
         if gate is not None:
             refusal = await gate(None)

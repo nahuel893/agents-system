@@ -275,6 +275,24 @@ def test_usd_cap_on_an_unpriced_model_fails_at_construction() -> None:
         _runtime([AIMessage(content="a")], caps=BudgetCaps(daily_usd=1.0), prices={})
 
 
+@pytest.mark.asyncio
+async def test_usd_cap_rejects_an_unpriced_model_id_override() -> None:
+    runtime, model, ledger = _runtime(
+        [AIMessage(content="paid", usage_metadata=_usage(10))] * 3,
+        caps=BudgetCaps(daily_usd=0.05),
+    )
+    with pytest.raises(ValueError, match="price"):
+        await runtime.run_turn_with_usage(
+            [HumanMessage(content="hi")],
+            "s1",
+            subject=ALICE,
+            model_id="unpriced-override",
+        )
+    assert model.calls == 0
+    totals = await ledger.totals(RT, ALICE.key, since=datetime(2000, 1, 1, tzinfo=UTC))
+    assert totals.unpriced_turns == 0
+
+
 def test_caps_without_a_ledger_fail_at_construction() -> None:
     runtime_args = _runtime([AIMessage(content="a")], caps=None)[0]
     assert runtime_args is not None
