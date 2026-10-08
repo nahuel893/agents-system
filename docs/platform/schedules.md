@@ -1,6 +1,6 @@
 # Scheduled turns
 
-*Coming in the next release.* An end user asks the agent over a channel: "send me the weekly sales every Monday at 8". The agent creates a schedule for that user; later the platform runs it as a turn **for that user** and delivers the answer to them. Design: [ADR-011](../architecture/adr-011-end-user-scope.md) (turn subject and actor, scope handle, proactive delivery); issue #175.
+*Since `v0.7.0`.* An end user asks the agent over a channel: "send me the weekly sales every Monday at 8". The agent creates a schedule for that user; later the platform runs it as a turn **for that user** and delivers the answer to them. Design: [ADR-011](../architecture/adr-011-end-user-scope.md) (turn subject and actor, scope handle, proactive delivery); issue #175.
 
 The model never chooses who the schedule is for or who receives it. Both come from the platform: the owner is the turn's subject, and delivery goes only to that owner through [proactive delivery](proactive.md).
 

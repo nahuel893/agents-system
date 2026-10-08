@@ -1,6 +1,6 @@
 # End-user scope: turn subject and actor
 
-*Coming in the next release.* Decided in [ADR-011](../architecture/adr-011-end-user-scope.md); this page covers part 1 (identity bound per turn) and part 2 (audit and logs).
+*Since `v0.7.0`.* Decided in [ADR-011](../architecture/adr-011-end-user-scope.md); this page covers part 1 (identity bound per turn) and part 2 (audit and logs).
 
 A deployed agent serves many end users through one cached runtime. Each turn carries two values the entry point binds and the model never sees:
 
@@ -115,7 +115,7 @@ DEFAULT_REGISTRY.register(NotesStore())  # or create_app(subject_data=registry)
 
 ## Usage and budgets per end user
 
-*Coming in the next release.* Decided in [ADR-011](../architecture/adr-011-end-user-scope.md) part 5. The runtime records each turn's usage against the turn's subject and can refuse a subject that reached a cap.
+*Since `v0.7.0`.* Decided in [ADR-011](../architecture/adr-011-end-user-scope.md) part 5. The runtime records each turn's usage against the turn's subject and can refuse a subject that reached a cap.
 
 - **The ledger.** One row per turn in `subject_usage` (migration `009`), keyed by (`runtime_id`, `subject_key`, id): tokens in, out and total, `cost_usd`, model id, model calls, tool calls, `timed_out`, the actor label and the time. It is written through the scope handle, so Postgres fences it with row-level security, and it is a registered `SubjectDataStore` (`usage`): the operator export and delete reach it. A scope provider turns it on (`create_app(scope_provider_factory=...)`; `InMemoryUsageLedger(InMemoryScopeProvider())` for a library caller, passed as `AgentRuntime(usage_ledger=...)` with an explicit `runtime_id`).
 - **Who pays.** Usage counts against the turn's subject, whatever the actor: a scheduled turn against its owner, an operator turn on behalf of a user against that user. A turn with no subject is not in the ledger; it counts against the runtime only, in the metrics.
@@ -134,7 +134,7 @@ DEFAULT_REGISTRY.register(NotesStore())  # or create_app(subject_data=registry)
 
 ## Per-user memory
 
-*Coming in the next release.* Decided in [ADR-011](../architecture/adr-011-end-user-scope.md) and issue #250. Working memory is the checkpointer thread, and it expires with `CHECKPOINTER_RETENTION_S`. Per-user memory is what an agent keeps **about each end user** across conversations: a preferred unit, an entity they usually ask about, a recurring request. It is not agent-own memory, which is keyed by agent.
+*Since `v0.7.0`.* Decided in [ADR-011](../architecture/adr-011-end-user-scope.md) and issue #250. Working memory is the checkpointer thread, and it expires with `CHECKPOINTER_RETENTION_S`. Per-user memory is what an agent keeps **about each end user** across conversations: a preferred unit, an entity they usually ask about, a recurring request. It is not agent-own memory, which is keyed by agent.
 
 - **Opt in.** It is off by default. A role turns it on in `policy.md` with `memory_policy: {user_memory: true}` (a boolean; anything else fails closed like the rest of `memory_policy`). Without it the three tools are refused with `user_memory_disabled` and nothing is injected.
 - **Keyed by the turn subject.** A fact belongs to (`runtime_id`, `subject_key`), the same pair as every per-user table, in `subject_facts` (migration `010`) with row-level security. The tools are `subject_scoped`: they receive the `scope` handle and no tool argument names a user, so the model cannot read or write another user's facts, and a query that forgets its filter still returns one user's rows. A turn with no subject is refused with `subject_required`.
@@ -157,4 +157,4 @@ memory_policy:
 
 ## Scheduled turns
 
-*Coming in the next release.* Decided in [ADR-011](../architecture/adr-011-end-user-scope.md) and issue #175; the full page is [Scheduled turns](schedules.md). An end user can ask the agent for a recurring request ("send me the weekly sales every Monday at 8"). Three subject-scoped tools (`create_schedule`, `list_schedules`, `delete_schedule`, all under the new T2 permission `write:schedule`) keep that user's own schedules, so the model never names an owner or a recipient. A `ScheduledTurnRunner` later runs each due schedule as a turn with the schedule's **owner as subject** and `scheduler:<schedule id>` as **actor**, under the runtime's grants and against the owner's budget, and delivers the reply as text, only to the owner, through [proactive delivery](proactive.md). The table (`subject_schedules`, migration `013`) is a per-user table fenced by row-level security and registered in the data registry, so a schedule ends when it is deleted or when its owner is deleted. Limits (per user, minimum interval, quiet hours) are the deployment's; a missed window is skipped and the schedule runs at its next one.
+*Since `v0.7.0`.* Decided in [ADR-011](../architecture/adr-011-end-user-scope.md) and issue #175; the full page is [Scheduled turns](schedules.md). An end user can ask the agent for a recurring request ("send me the weekly sales every Monday at 8"). Three subject-scoped tools (`create_schedule`, `list_schedules`, `delete_schedule`, all under the new T2 permission `write:schedule`) keep that user's own schedules, so the model never names an owner or a recipient. A `ScheduledTurnRunner` later runs each due schedule as a turn with the schedule's **owner as subject** and `scheduler:<schedule id>` as **actor**, under the runtime's grants and against the owner's budget, and delivers the reply as text, only to the owner, through [proactive delivery](proactive.md). The table (`subject_schedules`, migration `013`) is a per-user table fenced by row-level security and registered in the data registry, so a schedule ends when it is deleted or when its owner is deleted. Limits (per user, minimum interval, quiet hours) are the deployment's; a missed window is skipped and the schedule runs at its next one.

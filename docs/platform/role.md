@@ -279,7 +279,7 @@ This agent definition folder defines the Preventa Agent's behavioral boundary. A
 
 ## Reference agents
 
-> **Coming in the next release.** See [ADR-010](../architecture/adr-010-capability-evals-and-reference-agents.md).
+> **Since `v0.6.0`.** See [ADR-010](../architecture/adr-010-capability-evals-and-reference-agents.md).
 
 The eight concrete predefined roles, `accountant-agent`, `data-agent`, `developer-agent`, `operator-agent`, `orchestrator`, `sales-agent`, `summary-agent` and `support-agent`, have copies in the repository under `examples/agents/<name>/`. These **reference agents are examples to copy, not supported API**: they carry no compatibility promise, they are not in the wheel, and changing one is not a breaking change. The core keeps only the generic parents, `base` and `agent`.
 

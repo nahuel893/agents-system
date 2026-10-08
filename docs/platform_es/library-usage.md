@@ -89,7 +89,7 @@ viene de `langchain-anthropic` (el extra `anthropic`; ver "Extras" más abajo).
 | Viene de `agents_system` | Lo traés vos |
 |---|---|
 | El harness: `ToolRegistry`, `RootConfig`, `resolve`, `build_runtime`, `AgentRuntime` | Tus propios `ToolSpec`s — los connectors que llaman a *tus* servicios |
-| Los roles predefinidos de la plataforma (`platform/roles/*/{role,manifest,policy}.md`) — lo que un `sales-agent`, `orchestrator`, `data-agent` o `summary-agent` *tiene permitido hacer*. Los ocho concretos quedan obsoletos en el próximo release en favor de los agentes de referencia de `examples/agents/`, ejemplos para copiar (ver "Nombre de importación y roles de la plataforma") | Tus propios overrides de deployment (`deployments/{tu-cliente}/`), si querés prompts, skills o una política más estricta por cliente |
+| Los roles predefinidos de la plataforma (`platform/roles/*/{role,manifest,policy}.md`) — lo que un `sales-agent`, `orchestrator`, `data-agent` o `summary-agent` *tiene permitido hacer*. Los ocho concretos están obsoletos desde `v0.6.0` en favor de los agentes de referencia de `examples/agents/`, ejemplos para copiar (ver "Nombre de importación y roles de la plataforma") | Tus propios overrides de deployment (`deployments/{tu-cliente}/`), si querés prompts, skills o una política más estricta por cliente |
 | El enforcement de RBAC (`InjectionError`, `FactoryError`, `DefinitionError`) | Los permisos concedidos a tu caller/identidad, y los `granted_permissions` que le pasás a `build_runtime` |
 | Un `AgentRuntime` sobre LangGraph que convierte un runtime equipado en algo sobre lo que podés llamar `run_turn` | Cualquier `BaseChatModel` de LangChain al que enlazarlo, salvo que el agente declare su propio `model:` |
 
@@ -237,7 +237,7 @@ en `pyproject.toml`). Tus propios overrides de deployment nunca forman parte
 de la instalación; los mantenés en el repositorio de tu aplicación y apuntás
 `RootConfig` hacia ellos.
 
-**Los roles concretos están obsoletos (llega en el próximo release).** Solo
+**Los roles concretos están obsoletos (desde `v0.6.0`).** Solo
 los padres genéricos, `base` y `agent`, siguen siendo API soportada
 (ADR-010). Los ocho roles concretos (`sales-agent`, `support-agent`,
 `data-agent`, `summary-agent`, `accountant-agent`, `orchestrator`,
@@ -402,7 +402,7 @@ Cuatro cosas que el ejemplo muestra a propósito:
   `read:catalog`, así que `catalog_search` es la única tool equipada.
 - **Un nombre obsoleto, por ahora.** `"sales-agent"` es un rol predefinido
   concreto, así que este ejemplo emite un `PredefinedRoleDeprecationWarning`
-  en el próximo release (ver "Nombre de importación y roles de la
+  desde `v0.6.0` (ver "Nombre de importación y roles de la
   plataforma"). Con una copia de `examples/agents/sales-agent/`, pasá
   `agents_system.Agent.from_folder(path)` en su lugar; el registro y las
   concesiones quedan iguales.

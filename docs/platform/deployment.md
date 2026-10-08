@@ -217,7 +217,7 @@ DEPLOY_GRANTS='{"acme-sales": ["read:catalog", "write:orders"], "support": ["rea
 - **Predefined roles, or a folder.** An environment variable cannot carry an `Agent` object; a value is a predefined-role name, or `"folder:<name>"` (below). Anything else is registered with `agents=`.
 - **`agents=` wins.** When `create_app` gets `agents=`, `AGENT_REGISTRATIONS` is ignored, never merged.
 
-### Serving an agent folder: `AGENTS_ROOT` (coming in the next release)
+### Serving an agent folder: `AGENTS_ROOT`
 
 A value of the form `"folder:<name>"` registers the agent folder `<name>` under the directory `AGENTS_ROOT` names, for example a copy of a [reference agent](../../examples/agents/README.md):
 
@@ -237,7 +237,7 @@ DEPLOY_GRANTS='{"support": ["read:catalog"]}'
 
 The folder is held to the importer ceiling like any `Agent.from_folder`. A predefined-role name keeps working, with its deprecation warning.
 
-### Execution limits and the timeout reply (coming in the next release)
+### Execution limits and the timeout reply
 
 The deployment sets each runtime's limits and the text a timed-out turn answers, keyed by the same ids as `grants`:
 
