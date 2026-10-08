@@ -251,3 +251,29 @@ async def test_each_due_schedule_runs_once_under_concurrent_workers(
         delivered.append(msg.subject_key)
         await queue.finish(msg.id, "w", "sent", None)
     assert sorted(delivered) == sorted(s.key for s in subjects)
+
+
+async def test_a_delayed_interval_claim_keeps_its_grid(
+    env: tuple[PostgresScopeProvider, str],
+) -> None:
+    provider, table = env
+    store = PostgresScheduleStore(provider, table=table)
+    due = datetime(2026, 10, 5, 8, 0, tzinfo=UTC)
+    hourly = Schedule(
+        id="h1",
+        runtime_id=RT,
+        subject_key=ALICE,
+        prompt="hourly",
+        recurrence=Recurrence("interval", interval_s=3600, tz="UTC"),
+        next_run_at=due,
+        created_at=due - timedelta(days=1),
+    )
+    backend = PostgresScheduleBackend(provider.scope(RT, ALICE), table=table)
+    assert await backend.add(hourly, max_per_user=3)
+    claim = await store.claim_due(
+        due + timedelta(minutes=29),
+        lambda s, at: s.recurrence.following(s.next_run_at, at),
+    )
+    assert claim is not None
+    assert claim.schedule.next_run_at == datetime(2026, 10, 5, 9, 0, tzinfo=UTC)
+    assert (await backend.list())[0].next_run_at == claim.schedule.next_run_at

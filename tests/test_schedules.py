@@ -154,9 +154,9 @@ async def test_one_user_cannot_see_or_delete_anothers_schedule() -> None:
     )
     bob = provider.scope(RT, BOB.key)
     assert (await _call(tools, "list_schedules", {}, bob))["schedules"] == []
-    assert await _call(tools, "delete_schedule", {"id": created["id"]}, bob) == {
-        "deleted": False
-    }
+    refused = await _call(tools, "delete_schedule", {"id": created["id"]}, bob)
+    assert refused["deleted"] is False
+    assert refused["error_kind"] == "not_found"
     alice_list = await _call(tools, "list_schedules", {}, provider.scope(RT, ALICE.key))
     assert len(alice_list["schedules"]) == 1
 
@@ -447,3 +447,109 @@ async def test_export_and_delete_cover_only_the_subjects_schedules() -> None:
     assert await env.store.delete(SubjectRef(RT, BOB.key)) == 1
     now = UTC_MONDAY_7 + timedelta(minutes=1)
     assert (await env.runner.run_once(now=now)).status == "idle"
+
+
+# --- review fixes: cadence, infrastructure failures, unknown ids ---------------
+
+
+def test_an_interval_advances_from_its_due_window_not_from_the_claim_time() -> None:
+    rec = Recurrence("interval", interval_s=3600, tz="UTC")
+    due = datetime(2026, 10, 5, 8, 0, tzinfo=UTC)
+    late = due + timedelta(minutes=29)
+    assert rec.following(due, late) == datetime(2026, 10, 5, 9, 0, tzinfo=UTC)
+    # Several whole windows missed: the first future window on the same grid.
+    much_later = due + timedelta(hours=3, minutes=10)
+    assert rec.following(due, much_later) == datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
+    # Claimed exactly on a boundary: strictly after.
+    assert rec.following(due, due + timedelta(hours=2)) == due + timedelta(hours=3)
+    # Daily and weekly are wall-clock anchored already.
+    daily = Recurrence("daily", time_of_day=time(8, 0), tz="UTC")
+    assert daily.following(due, due + timedelta(minutes=5)) == datetime(
+        2026, 10, 6, 8, 0, tzinfo=UTC
+    )
+
+
+async def test_a_delayed_hourly_claim_keeps_its_cadence() -> None:
+    env = Env()
+    due = datetime(2026, 10, 5, 8, 0, tzinfo=UTC)
+    sched = Schedule(
+        id="h1",
+        runtime_id=RT,
+        subject_key=ALICE.key,
+        prompt="Hourly",
+        recurrence=Recurrence("interval", interval_s=3600, tz="UTC"),
+        next_run_at=due,
+        created_at=due - timedelta(days=1),
+    )
+    backend = schedule_backend_for(env.provider.scope(RT, ALICE.key))
+    assert await backend.add(sched, max_per_user=9)
+    out = await env.runner.run_once(now=due + timedelta(minutes=29))
+    assert out.status == "delivered"
+    (listed,) = await backend.list()
+    assert listed.next_run_at == datetime(2026, 10, 5, 9, 0, tzinfo=UTC)
+
+
+async def test_a_missed_hourly_window_resumes_on_the_original_grid() -> None:
+    env = Env(limits=ScheduleLimits(missed_grace_s=600))
+    due = datetime(2026, 10, 5, 8, 0, tzinfo=UTC)
+    sched = Schedule(
+        id="h1",
+        runtime_id=RT,
+        subject_key=ALICE.key,
+        prompt="Hourly",
+        recurrence=Recurrence("interval", interval_s=3600, tz="UTC"),
+        next_run_at=due,
+        created_at=due - timedelta(days=1),
+    )
+    backend = schedule_backend_for(env.provider.scope(RT, ALICE.key))
+    assert await backend.add(sched, max_per_user=9)
+    out = await env.runner.run_once(now=due + timedelta(hours=2, minutes=20))
+    assert (out.status, out.reason) == ("skipped", "missed_window")
+    (listed,) = await backend.list()
+    assert listed.next_run_at == datetime(2026, 10, 5, 11, 0, tzinfo=UTC)
+
+
+async def test_a_failing_recipient_directory_is_recorded_and_the_loop_survives() -> (
+    None
+):
+    env = Env()
+    await env.add()
+
+    async def broken(*a: Any, **k: Any) -> Any:
+        raise OSError("directory down")
+
+    env.directory.authorize = broken  # type: ignore[method-assign]
+    now = UTC_MONDAY_7 + timedelta(minutes=1)
+    out = await env.runner.run_once(now=now)
+    assert (out.status, out.reason) == ("failed", "recipient_lookup_failed")
+    assert env.runtime.calls == []
+    (listed,) = await schedule_backend_for(env.provider.scope(RT, ALICE.key)).list()
+    assert listed.last_status == "failed:recipient_lookup_failed"
+    assert listed.next_run_at > now
+    # At most once: the claimed window is not retried.
+    assert (await env.runner.run_once(now=now)).status == "idle"
+
+
+async def test_a_failing_sender_is_recorded_and_the_loop_survives() -> None:
+    env = Env()
+    await env.add()
+
+    async def broken(*a: Any, **k: Any) -> Any:
+        raise OSError("queue down")
+
+    env.sender.submit = broken  # type: ignore[method-assign]
+    now = UTC_MONDAY_7 + timedelta(minutes=1)
+    out = await env.runner.run_once(now=now)
+    assert (out.status, out.reason) == ("failed", "delivery_failed")
+    (listed,) = await schedule_backend_for(env.provider.scope(RT, ALICE.key)).list()
+    assert listed.last_status == "failed:delivery_failed"
+    assert (await env.runner.run_once(now=now)).status == "idle"
+
+
+async def test_deleting_an_unknown_id_reports_not_found() -> None:
+    provider = InMemoryScopeProvider()
+    out = await _call(
+        _tools(), "delete_schedule", {"id": "nope"}, provider.scope(RT, ALICE.key)
+    )
+    assert out["deleted"] is False
+    assert out["error_kind"] == "not_found"

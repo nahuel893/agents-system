@@ -1,6 +1,8 @@
 # Capability: user-requested schedules (ADR-011, #175).
 #
-# Stopping a schedule needs its id, which only list_schedules returns.
+# Stopping a schedule needs its id, which only list_schedules returns. An id
+# that is not the user's reports error_kind not_found, so delete_schedule only
+# counts as succeeded when it actually deleted something.
 agent: schedules-agent
 category: happy_path
 description: >

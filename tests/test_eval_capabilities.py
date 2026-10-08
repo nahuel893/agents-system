@@ -22,7 +22,9 @@ import ast
 import importlib
 import pathlib
 import shutil
+import uuid
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -310,6 +312,9 @@ def _say(text: str) -> AIMessage:
     return AIMessage(content=text)
 
 
+#: The id the scripted schedule scenarios see: `_run_script` pins the generator.
+_PINNED_SCHEDULE_ID = "5c4edb1e5c4e"
+
 _LUCERO_LOOKUP = _call("knowledge_retrieval", {"q": "Bar Lucero standing order"})
 _LUCERO_ORDER = _call(
     "order_writer",
@@ -484,7 +489,7 @@ _SCRIPTS: dict[str, tuple[list[AIMessage], list[AIMessage]]] = {
             ),
             _say("Scheduled daily at 09:00."),
             _call("list_schedules", {}),
-            _call("delete_schedule", {"id": "unknown"}, "call-2"),
+            _call("delete_schedule", {"id": _PINNED_SCHEDULE_ID}, "call-2"),
             _say("Stopped."),
         ],
         [
@@ -567,7 +572,16 @@ def test_every_shipped_scenario_has_a_script() -> None:
     assert {case.scenario.name for case in _CASES} == set(_SCRIPTS)
 
 
-async def _run_script(case: CapabilityScenario, script: list[AIMessage]) -> Any:
+async def _run_script(
+    case: CapabilityScenario,
+    script: list[AIMessage],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Any:
+    # The scripted model cannot know a generated schedule id: pin it.
+    monkeypatch.setattr(
+        "agents_system.schedules.uuid",
+        SimpleNamespace(uuid4=lambda: uuid.UUID(_PINNED_SCHEDULE_ID + "0" * 20)),
+    )
     return await run_capability_scenario(
         case,
         model=_ScriptedModel(responses=list(script)),
@@ -579,12 +593,12 @@ async def _run_script(case: CapabilityScenario, script: list[AIMessage]) -> Any:
 
 @pytest.mark.parametrize("case", _CASES, ids=_case_id)
 async def test_every_scenario_passes_on_the_behavior_it_asks_for(
-    case: CapabilityScenario,
+    case: CapabilityScenario, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _skip_without_requirements(case.capability)
     expected, _ = _SCRIPTS[case.scenario.name]
 
-    result = await _run_script(case, expected)
+    result = await _run_script(case, expected, monkeypatch)
 
     run = result.runs[0]
     assert run.error is None, run.error
@@ -596,14 +610,43 @@ async def test_every_scenario_passes_on_the_behavior_it_asks_for(
 
 @pytest.mark.parametrize("case", _CASES, ids=_case_id)
 async def test_every_scenario_fails_on_the_failure_it_guards_against(
-    case: CapabilityScenario,
+    case: CapabilityScenario, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _skip_without_requirements(case.capability)
     _, violating = _SCRIPTS[case.scenario.name]
 
-    result = await _run_script(case, violating)
+    result = await _run_script(case, violating, monkeypatch)
 
     assert not result.runs[0].passed
+    assert not result.gate.passed
+
+
+async def test_cancelling_an_invented_schedule_id_fails_the_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Looking up and calling delete_schedule is not cancelling: the connector
+    reports not_found for an id that is not the user's, which is no success."""
+    case = next(c for c in _CASES if c.scenario.name == "schedule_cancel")
+    invented = [
+        _call(
+            "create_schedule",
+            {
+                "prompt": "Send me the stock report",
+                "frequency": "daily",
+                "time": "09:00",
+                "timezone": "UTC",
+            },
+        ),
+        _say("Scheduled daily at 09:00."),
+        _call("list_schedules", {}),
+        _call("delete_schedule", {"id": "unknown"}, "call-2"),
+        _say("Stopped."),
+    ]
+
+    result = await _run_script(case, invented, monkeypatch)
+
+    assert not result.runs[0].passed
+    assert any("delete_schedule" in f.detail for f in result.runs[0].failures)
     assert not result.gate.passed
 
 

@@ -212,6 +212,22 @@ class Recurrence:
                 return candidate
         raise AssertionError("unreachable: a weekday recurs within 8 days")
 
+    def following(self, due: datetime, now: datetime) -> datetime:
+        """The next window after a claim of ``due`` made at ``now``.
+
+        An interval keeps its grid: it advances from ``due`` by whole
+        intervals to the first window strictly after ``now``, so a late claim
+        never shifts the cadence. Daily and weekly are anchored to the wall
+        clock already, so the first window after ``now`` is it.
+        """
+        if self.frequency != "interval":
+            return self.next_after(now)
+        assert self.interval_s is not None
+        step = timedelta(seconds=self.interval_s)
+        due_utc = due.astimezone(UTC)
+        elapsed = max(now.astimezone(UTC) - due_utc, timedelta(0))
+        return due_utc + step * (elapsed // step + 1)
+
     def describe(self) -> str:
         if self.frequency == "interval":
             assert self.interval_s is not None
@@ -525,9 +541,15 @@ def build_schedule_tool_specs(
         inputs: dict[str, Any], *, session: Any = None, scope: Any
     ) -> dict[str, Any]:
         schedule_id = inputs.get("id")
-        if not isinstance(schedule_id, str):
-            return {"deleted": False}
-        return {"deleted": await schedule_backend_for(scope).remove(schedule_id)}
+        if isinstance(schedule_id, str) and await schedule_backend_for(scope).remove(
+            schedule_id
+        ):
+            return {"deleted": True}
+        return {
+            "deleted": False,
+            "error": "no schedule of yours has that id; list your schedules first",
+            "error_kind": "not_found",
+        }
 
     def spec(**kwargs: Any) -> ToolSpec:
         return ToolSpec(
@@ -682,7 +704,10 @@ class ScheduledTurnRunner:
     async def run_once(self, *, now: datetime | None = None) -> RunOutcome:
         moment = now or datetime.now(UTC)
         claimed = await self._store.claim_due(
-            moment, lambda schedule, at: schedule.recurrence.next_after(at)
+            moment,
+            lambda schedule, at: schedule.recurrence.following(
+                schedule.next_run_at, at
+            ),
         )
         if claimed is None:
             return RunOutcome("idle")
@@ -727,7 +752,13 @@ class ScheduledTurnRunner:
         if self._limits.quiet_until(now) is not None:
             return out("skipped", "quiet_hours")
         subject = TurnSubject(key=schedule.subject_key)
-        recipient = await self._directory.authorize(schedule.runtime_id, subject)
+        try:
+            recipient = await self._directory.authorize(schedule.runtime_id, subject)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("schedule.directory_failed", schedule=sid, exc_info=True)
+            return out("failed", "recipient_lookup_failed")
         if recipient is None:
             return out("failed", "recipient_not_authorized")
         actor = TurnActor(kind="scheduler", id=sid)
@@ -762,4 +793,9 @@ class ScheduledTurnRunner:
             return out("failed", "recipient_not_authorized")
         except ProactivePermissionError:
             return out("failed", "delivery_not_permitted")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("schedule.delivery_failed", schedule=sid, exc_info=True)
+            return out("failed", "delivery_failed")
         return out("delivered")
