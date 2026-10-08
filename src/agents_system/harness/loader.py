@@ -1994,7 +1994,7 @@ def _load_role_files(
         autonomy=str(policy_fm.get("autonomy", "")),
         escalation_rules=escalation_rules,
         delegation_policy=dict(policy_fm.get("delegation_policy") or {}),
-        memory_policy=dict(policy_fm.get("memory_policy") or {}),
+        memory_policy=_declared_memory_policy(policy_fm),
         audit_policy=dict(policy_fm.get("audit_policy") or {}),
         execution_limits=policy_fm.get("execution_limits"),
         # D-037 (issue #13, ADR-004). Absent means NOT DECLARED (`None`): the
@@ -2457,6 +2457,20 @@ def _resolve_role_chain(
     return resolved, leaf_is_abstract
 
 
+def _declared_memory_policy(policy_fm: Mapping[str, Any]) -> dict[str, Any]:
+    """The `memory_policy` a `policy.md` declares: absent or null is ``{}``
+    (the schema defaults), but an explicit non-mapping (``[]``, ``false``) is
+    an error, not silently the permissive default (#26)."""
+    value = policy_fm.get("memory_policy")
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise DefinitionError(
+            f"memory_policy in policy.md must be a mapping, got {type(value).__name__}"
+        )
+    return dict(value)
+
+
 def load_generic(
     locator: RoleLocator, *, roots: RootConfig | None = None
 ) -> RawDefinition:
@@ -2606,7 +2620,7 @@ def load_override(
         autonomy=str(policy_fm.get("autonomy", "")),
         escalation_rules=dict(policy_fm.get("escalation_rules") or {}),
         delegation_policy=dict(policy_fm.get("delegation_policy") or {}),
-        memory_policy=dict(policy_fm.get("memory_policy") or {}),
+        memory_policy=_declared_memory_policy(policy_fm),
         audit_policy=dict(policy_fm.get("audit_policy") or {}),
         execution_limits=policy_fm.get("execution_limits"),
         # D-037 (issue #13). `None` means the deployment says nothing and

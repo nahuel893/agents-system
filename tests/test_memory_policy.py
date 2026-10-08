@@ -8,6 +8,7 @@ read from or written to the checkpointer. Nothing here relies on the model.
 
 from __future__ import annotations
 
+import pathlib
 from types import SimpleNamespace
 from typing import Any
 
@@ -174,12 +175,9 @@ async def _call(policy: dict[str, Any], access: str, scope: str) -> list[str]:
     return ran
 
 
-async def test_a_permissive_policy_allows_the_memory_write() -> None:
-    assert await _call({"write_scope": "local"}, "write", "local") == ["x"]
-
-
-async def test_a_restrictive_policy_blocks_the_same_write() -> None:
-    # Same tool, same call; only the declared policy differs.
+async def test_the_write_scope_alone_decides_the_same_team_write() -> None:
+    # Same tool, same call, same team-scoped write; only the policy differs.
+    assert await _call({"write_scope": "team"}, "write", "team") == ["x"]
     with pytest.raises(PolicyViolation) as exc:
         await _call({"write_scope": "local"}, "write", "team")
     assert exc.value.reason == "memory_write_denied"
@@ -375,3 +373,67 @@ async def test_support_agent_remembers_the_first_turn_on_the_second() -> None:
         )
     assert saver.reads > 0
     assert saver.puts > 0
+
+
+# --- review fixes: a malformed policy never becomes the permissive default ---
+
+
+@pytest.mark.parametrize("raw", [[], False, 0, "", "local", ["read_scope"]])
+def test_a_non_mapping_policy_fails_closed(raw: Any) -> None:
+    with pytest.raises(MemoryPolicyError):
+        MemoryPolicy.from_mapping(raw)
+    assert persists_conversation_of(raw) is False
+
+
+def persists_conversation_of(raw: Any) -> bool:
+    from agents_system.memory_policy import persists_conversation
+
+    return persists_conversation(raw)
+
+
+def test_an_absent_policy_is_still_the_default() -> None:
+    assert MemoryPolicy.from_mapping(None).persist_conversation is True
+    assert MemoryPolicy.from_mapping({}).persist_conversation is True
+
+
+def test_mixed_type_unknown_keys_raise_memory_policy_error() -> None:
+    with pytest.raises(MemoryPolicyError):
+        MemoryPolicy.from_mapping({"bad": 1, 2: "bad"})  # type: ignore[dict-item]
+
+
+async def test_a_malformed_policy_denies_and_audits_the_memory_tool() -> None:
+    for raw in ([], False, {"bad": 1, 2: "bad"}):
+        with pytest.raises(PolicyViolation) as exc:
+            await _call(raw, "write", "local")  # type: ignore[arg-type]
+        assert exc.value.reason == "memory_policy_invalid"
+
+
+@pytest.mark.parametrize("raw", [[], False, {"x": 1, 2: 3}])
+async def test_a_malformed_policy_does_not_persist(raw: Any) -> None:
+    saver = await _turn(raw)
+    assert saver.puts == 0
+
+
+@pytest.mark.parametrize("value", ["[]", "false", "local"])
+def test_the_loader_rejects_an_explicit_non_mapping_policy(
+    tmp_path: pathlib.Path, value: str
+) -> None:
+    from agents_system.harness.loader import (
+        DefinitionError,
+        FolderLocator,
+        load_generic,
+    )
+
+    root = tmp_path / "agents"
+    folder = root / "a"
+    folder.mkdir(parents=True)
+    (folder / "role.md").write_text('---\nname: a\nversion: "1.0"\n---\n\np\n')
+    (folder / "manifest.md").write_text(
+        "---\nrole: a\ntools: []\nskills: []\ncontext: {}\npermissions: []\n---\n"
+    )
+    (folder / "policy.md").write_text(
+        f"---\nrole: a\nautonomy: supervised\nexecution_limits: null\n"
+        f"memory_policy: {value}\n---\n"
+    )
+    with pytest.raises(DefinitionError, match="memory_policy"):
+        load_generic(FolderLocator(path=folder, root=root))
