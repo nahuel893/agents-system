@@ -1,7 +1,7 @@
 """Add the per-user proactive outbound queue.
 
-Revision ID: 010
-Revises: 009
+Revision ID: 012
+Revises: 011
 Create Date: 2026-10-07
 
 ADR-011 part 5 (#251): a durable queue for messages sent with no inbound
@@ -19,8 +19,8 @@ from agents_system.services.proactive_postgres import (
 )
 
 # revision identifiers, used by Alembic.
-revision = "010"
-down_revision = "009"
+revision = "012"
+down_revision = "011"
 branch_labels = None
 depends_on = None
 

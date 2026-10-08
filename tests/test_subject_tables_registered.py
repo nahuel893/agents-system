@@ -52,4 +52,4 @@ def test_the_proactive_queue_table_is_registered_and_migrated() -> None:
     from agents_system.services.proactive_postgres import TABLE
 
     assert TABLE in DEFAULT_REGISTRY.tables
-    assert "010" in {p.name[:3] for p in _VERSIONS.glob("*.py")}
+    assert "012" in {p.name[:3] for p in _VERSIONS.glob("*.py")}
