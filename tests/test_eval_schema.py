@@ -733,3 +733,35 @@ def test_execution_limits_override_docstring_discloses_it_bypasses_the_ceiling_i
     source = pathlib.Path(inspect.getfile(schema)).read_text(encoding="utf-8")
     assert "_validate_execution_limits" in source
     assert "eval-only escape hatch" in source.lower()
+
+
+# ---------------------------------------------------------------------------
+# #258 -- untrusted_data blocks a scenario hands to every turn
+# ---------------------------------------------------------------------------
+
+
+def test_load_scenario_parses_untrusted_data(tmp_path: pathlib.Path) -> None:
+    text = (
+        _MINIMAL + "\nuntrusted_data:\n  - source: customer_note\n    content: hello\n"
+    )
+
+    scenario = load_scenario(_write(tmp_path, "blocks.yaml", text))
+
+    assert [(b.source, b.content) for b in scenario.untrusted_data] == [
+        ("customer_note", "hello")
+    ]
+
+
+def test_load_scenario_untrusted_data_defaults_to_empty(
+    tmp_path: pathlib.Path,
+) -> None:
+    assert load_scenario(_write(tmp_path, "plain.yaml", _MINIMAL)).untrusted_data == ()
+
+
+def test_load_scenario_rejects_a_malformed_untrusted_block(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = _MINIMAL + "\nuntrusted_data:\n  - source: bad source\n    content: x\n"
+
+    with pytest.raises(ScenarioError, match="untrusted_data"):
+        load_scenario(_write(tmp_path, "bad.yaml", text))

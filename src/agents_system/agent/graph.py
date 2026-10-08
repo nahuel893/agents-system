@@ -40,6 +40,7 @@ from langchain_core.messages import (
     AIMessage,
     AnyMessage,
     BaseMessage,
+    HumanMessage,
     SystemMessage,
     ToolMessage,
 )
@@ -52,6 +53,11 @@ from langgraph.graph import END, StateGraph
 from agents_system.agent.context import ContextTrim, trim_history
 from agents_system.agent.models import build_agent_model, declared_model
 from agents_system.agent.state import AgentState
+from agents_system.agent.untrusted import (
+    DEFAULT_TURN_MAX_CHARS,
+    UntrustedData,
+    render_untrusted_blocks,
+)
 from agents_system.config import ModelPrice
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
@@ -395,6 +401,7 @@ async def _call_model(
     definition: Any = None,
     metrics: Metrics | None = None,
     budget_gate: BudgetGate | None = None,
+    untrusted_text: str = "",
 ) -> dict[str, Any]:
     """Invoke the bound model with the current message history.
 
@@ -429,12 +436,18 @@ async def _call_model(
         reason="the tool did not return a result in an earlier turn",
     )
     system_message = SystemMessage(content=system_prompt)
+    # Issue #258 -- the turn's untrusted-data blocks sit right after the system
+    # message, as their own message: never inside it, never in state. They are
+    # data the model reads, fixed for the turn before any model call.
+    leading: list[AnyMessage] = [system_message]
+    if untrusted_text:
+        leading.append(HumanMessage(content=untrusted_text))
     if max_context_tokens is not None:
         # Issue #28 -- bound the request. Like the repair above, this shapes
         # what the model SEES; `state["messages"]` is never rewritten, so a
         # checkpointed thread keeps its full history.
         fixed_tokens = count_tokens_approximately(
-            [system_message], tools=list(tool_schemas) or None
+            leading, tools=list(tool_schemas) or None
         )
         trim = trim_history(
             history, max_tokens=max_context_tokens, fixed_tokens=fixed_tokens
@@ -442,7 +455,7 @@ async def _call_model(
         if trim.trimmed or trim.over_budget:
             _report_context_trim(trim, max_context_tokens, definition, metrics)
         history = trim.messages
-    model_input = [system_message, *history]
+    model_input = [*leading, *history]
     retried_after_tool_format_error = False
     try:
         response: AIMessage = await bound_model.ainvoke(model_input)
@@ -751,6 +764,7 @@ def _build_graph(
     scope_provider: ScopeProvider | None = None,
     runtime_id: str | None = None,
     budget_gate: BudgetGate | None = None,
+    untrusted_text: str = "",
 ) -> StateGraph[AgentState]:
     """Build the StateGraph with call_model, execute_tools and limit_reached nodes."""
     graph = StateGraph(AgentState)
@@ -766,6 +780,7 @@ def _build_graph(
             definition=equipped.definition,
             metrics=metrics,
             budget_gate=budget_gate,
+            untrusted_text=untrusted_text,
         ),
     )
     graph.add_node(
@@ -1264,6 +1279,7 @@ class AgentRuntime:
         *,
         subject: TurnSubject | None = None,
         actor: TurnActor | None = None,
+        untrusted_data: Sequence[UntrustedData] = (),
     ) -> list[AnyMessage]:
         """Execute one conversational turn; return only the message list.
 
@@ -1283,6 +1299,7 @@ class AgentRuntime:
             model_id=model_id,
             subject=subject,
             actor=actor,
+            untrusted_data=untrusted_data,
         )
         return result.messages
 
@@ -1296,6 +1313,7 @@ class AgentRuntime:
         *,
         subject: TurnSubject | None = None,
         actor: TurnActor | None = None,
+        untrusted_data: Sequence[UntrustedData] = (),
     ) -> TurnResult:
         """Execute one conversational turn.
 
@@ -1350,6 +1368,12 @@ class AgentRuntime:
             an explicit value only to price under a different id than this
             runtime's own model (e.g. a live-eval comparing several runtime
             configurations under one label).
+        untrusted_data:
+            Issue #258 (ADR-011 part 4) -- stored or external data for this
+            turn, the only way such data reaches the model. Rendered once per
+            turn next to the system prompt, delimited by a random boundary,
+            capped, counted against ``max_context_tokens`` and never
+            persisted. Never policy: it changes no tool, grant or limit.
 
         Returns
         -------
@@ -1370,6 +1394,7 @@ class AgentRuntime:
                 permissions=permissions,
                 thread_id=thread_id,
                 model_id=model_id,
+                untrusted_data=untrusted_data,
             )
 
     async def _run_turn_scoped(
@@ -1380,6 +1405,7 @@ class AgentRuntime:
         permissions: tuple[str, ...] | None,
         thread_id: str | None,
         model_id: str | None,
+        untrusted_data: Sequence[UntrustedData],
     ) -> TurnResult:
         """The turn itself, run inside `turn_scope`."""
         # #78 Phase 0 (review finding 4) -- an explicit override always wins;
@@ -1438,6 +1464,15 @@ class AgentRuntime:
             scope_provider=self._scope_provider,
             runtime_id=self._runtime_id,
             budget_gate=gate,
+            # Never more than the context budget itself (about 4 characters a
+            # token): an over-budget request is never built from the blocks.
+            untrusted_text=render_untrusted_blocks(
+                untrusted_data,
+                total_max_chars=min(
+                    DEFAULT_TURN_MAX_CHARS,
+                    max(1, int(effective_limits["max_context_tokens"]) * 4),
+                ),
+            ),
         )
         # Issue #24 -- a thread's history is read here, before the turn, and
         # the turn is saved once at the end (see `_Thread` for the failure

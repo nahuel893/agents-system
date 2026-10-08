@@ -17,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from agents_system.agent.untrusted import UntrustedData
 from agents_system.permissions import UnknownPermissionNameError
 from agents_system.permissions.permission_registry import permission_registry
 
@@ -193,6 +194,11 @@ class Scenario:
     #: that, since it also controls the deploy-time Layer-1 surface
     #: `build_runtime` equips.
     turn_permissions: tuple[str, ...] | None = None
+    #: #258 -- untrusted-data blocks handed to every turn of this scenario
+    #: through ``run_turn(untrusted_data=...)``, exactly as an entry point
+    #: hands a user's stored data. Lets a scenario plant an instruction in a
+    #: block and check it stays data. Empty (default) changes nothing.
+    untrusted_data: tuple[UntrustedData, ...] = ()
     #: #76 -- per-scenario override of a subset of the resolved role's
     #: `execution_limits` (`max_tool_calls`, `total_execution_timeout_s`,
     #: `tool_call_timeout_s`), merged over whatever the role's own manifest
@@ -323,6 +329,31 @@ def _validated_permission_tuple(
                 f"{source}: '{field}' names an unknown permission {name!r}"
             ) from None
     return names
+
+
+def _untrusted_blocks(value: Any, *, source: pathlib.Path) -> tuple[UntrustedData, ...]:
+    """#258 -- parse a scenario's ``untrusted_data`` list of
+    ``{source, content}`` mappings into blocks."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ScenarioError(f"{source}: 'untrusted_data' must be a list")
+    blocks: list[UntrustedData] = []
+    for entry in value:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("source"), str)
+            or not isinstance(entry.get("content"), str)
+        ):
+            raise ScenarioError(
+                f"{source}: each 'untrusted_data' entry needs a string "
+                "'source' and 'content'"
+            )
+        try:
+            blocks.append(UntrustedData(entry["source"], entry["content"]))
+        except ValueError as exc:
+            raise ScenarioError(f"{source}: 'untrusted_data': {exc}") from None
+    return tuple(blocks)
 
 
 def _optional_execution_limits(
@@ -571,6 +602,7 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         threshold_reason=threshold_reason,
         turn_permissions=turn_permissions,
         execution_limits_override=execution_limits_override,
+        untrusted_data=_untrusted_blocks(raw.get("untrusted_data"), source=path),
     )
 
 

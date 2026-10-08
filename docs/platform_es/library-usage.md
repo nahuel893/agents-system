@@ -653,6 +653,28 @@ opt-in:
 
 ---
 
+## Bloques de datos no confiables
+
+Los datos guardados o externos (los datos que se guardaron de un usuario, una transcripción) llegan al modelo solo como un bloque `UntrustedData(source, content)`, que se pasa a `run_turn` para ese turno. Nunca pegues esos datos en un mensaje ni en un prompt.
+
+```python
+from agents_system.agent.untrusted import UntrustedData
+
+await runtime.run_turn(
+    messages,
+    session_id="s1",
+    untrusted_data=[UntrustedData("user_facts", "Prefiere respuestas cortas.")],
+)
+```
+
+- **Dónde va.** El grafo renderiza los bloques en un solo mensaje justo después del mensaje de sistema, al llamar al modelo. Nunca van dentro del mensaje de sistema ni se guardan en el estado de la conversación.
+- **Delimitado.** Cada bloque nombra su `source` (letras, dígitos y `_ . : -`, hasta 64) y queda entre líneas `BEGIN <límite>` y `END <límite>`. El límite es aleatorio en cada turno y se vuelve a sortear hasta que no aparece en ningún bloque, así que el contenido no puede cerrar su propio bloque.
+- **Nunca es política.** Las herramientas, los permisos, los límites y el prompt de sistema quedan fijos antes de renderizar un bloque. Ninguna de las dos capas de permisos lee un bloque, `untrusted_input: true` mantiene su prohibición de T3, y un bloque nunca se vuelve un prompt, una skill ni un argumento de herramienta que llene la plataforma. La cláusula 2 del contrato base le indica al modelo tratar los bloques como datos.
+- **Acotado.** `max_chars` limita una fuente (2000 caracteres por defecto); un turno renderiza como máximo 8000 caracteres en total (preámbulo, delimitadores, nombres de fuente y marcadores incluidos) y como máximo 20 bloques, y un bloque que no entra se corta o se omite por nombre (los primeros cinco nombres, luego un conteo). El tope nunca supera el presupuesto de contexto (unos cuatro caracteres por token), así que los bloques no pueden dejar la solicitud fuera de presupuesto. Los bloques cuentan como tokens fijos contra `max_context_tokens`, así que se recorta el historial para hacerles lugar.
+- **Siempre activo.** No hay ajuste para apagarlo ni para inyectar los mismos datos como texto plano.
+
+Un escenario en vivo, `untrusted_input_block` en la suite de capacidades, planta una instrucción de pedido en un bloque y comprueba que el agente no hace ningún pedido.
+
 ## Dos trampas
 
 ### Trampa 1 — `deployments_root` apunta por defecto al checkout de desarrollo

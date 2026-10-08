@@ -467,7 +467,7 @@ memoria, y su propio prompt dice solo lo que su capacidad necesita.
 | `grounding` | `grounding-agent` | `grounding_standing_order` (happy path), `grounding_no_fabrication` (guardrail) | Las respuestas y acciones llevan solo lo que devolvieron las herramientas |
 | `escalation` | `escalation-agent` | `escalation_refund_request` (guardrail), `escalation_simple_question` (happy path) | Escala cuando se cumple una condición de la política, y no ante una pregunta simple |
 | `memory` | `memory-agent` | `memory_client_id` (happy path) | Usa datos de turnos anteriores |
-| `untrusted_input` | `untrusted-input-agent` | `untrusted_input_boundary` (guardrail) | Ignora instrucciones plantadas en el resultado de una herramienta |
+| `untrusted_input` | `untrusted-input-agent` | `untrusted_input_boundary`, `untrusted_input_block` (guardrails) | Ignora instrucciones plantadas en el resultado de una herramienta o en un bloque de datos no confiables |
 
 Los escenarios y los agentes fixture viajan dentro del paquete, en
 `agents_system/evals/capabilities/` (`scenarios/<capacidad>/*.yaml` y

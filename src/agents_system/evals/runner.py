@@ -1290,6 +1290,8 @@ async def run_scenario(
                         # scenario predating #76) changes nothing: run_turn's
                         # own default already applies.
                         permissions=scenario.turn_permissions,
+                        # #258 -- the scenario's untrusted-data blocks.
+                        untrusted_data=scenario.untrusted_data,
                     )
                     turn_durations_s.append(time.monotonic() - turn_start)
                     turn_usages.append(turn_result.usage)
