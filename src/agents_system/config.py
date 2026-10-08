@@ -299,6 +299,12 @@ class Settings(ProviderSettings):
     # is not listed keeps its rows. One purger enforces them all.
     subject_data_retention: dict[str, int | None] = Field(default_factory=dict)
     subject_data_purge_interval_s: float = Field(default=3_600.0, gt=0)
+    # Per-user memory (#250): the platform's bounds on one end user's stored
+    # facts. How long a fact lives is SUBJECT_DATA_RETENTION["user_facts"]
+    # (seconds or "never"; unset keeps facts until forgotten or deleted).
+    user_memory_max_facts: int = Field(default=50, gt=0)
+    user_memory_max_fact_bytes: int = Field(default=500, gt=0)
+    user_memory_max_injected_chars: int = Field(default=1_500, gt=0)
     adapter_provider: Literal["ollama", "groq", "anthropic", "openai_compatible"] = (
         "ollama"
     )

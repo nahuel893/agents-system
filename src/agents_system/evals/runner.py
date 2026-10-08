@@ -49,6 +49,9 @@ from agents_system.evals.schema import (
 from agents_system.harness.factory import EquippedRuntime, build_runtime
 from agents_system.harness.loader import FolderLocator, RootConfig, resolve
 from agents_system.harness.registry import ToolRegistry
+from agents_system.scope import InMemoryScopeProvider
+from agents_system.subject import TurnActor, TurnSubject
+from agents_system.user_memory import UserFacts, UserMemoryLimits, backend_for
 
 #: The exact prefix `agent/graph.py::_execute_tools` writes into a
 #: `ToolMessage.content` when the Layer-2 interceptor raises `PolicyViolation`
@@ -56,6 +59,9 @@ from agents_system.harness.registry import ToolRegistry
 #: A timeout also sets `status="error"` but with different content, so
 #: matching this prefix -- not just the status -- is what tells a genuine
 #: permission denial apart from any other tool-call failure.
+#: Who starts the turns of a scenario that names an ``end_user`` (#250).
+_EVAL_ACTOR = TurnActor(kind="library", id="eval")
+
 _BLOCKED_PREFIX = "Tool call blocked:"
 
 #: `connectors/platform_connectors.py::build_escalation_notifier_tool_spec`
@@ -1251,8 +1257,33 @@ async def run_scenario(
             if registry_factory is not None:
                 equipped = _build_equipped(registry_factory())
             assert equipped is not None  # exactly one branch above set it
-            agent_runtime = AgentRuntime(equipped, model, model_prices=model_prices)
+            # #250 -- a scenario for an end user gets its own in-memory
+            # per-user store, so no run sees another run's facts, and the
+            # turn subject a channel would bind.
+            user_kwargs: dict[str, Any] = {}
+            subject: TurnSubject | None = None
+            if scenario.end_user is not None:
+                subject = TurnSubject.for_participant(scenario.end_user, channel="eval")
+                provider = InMemoryScopeProvider()
+                limits = UserMemoryLimits()
+                user_kwargs = {
+                    "runtime_id": f"eval-{agent_id}",
+                    "scope_provider": provider,
+                    "user_memory": limits,
+                }
+                stored = UserFacts(
+                    backend_for(provider.scope(user_kwargs["runtime_id"], subject.key)),
+                    limits,
+                )
+                for fact in scenario.user_facts:
+                    await stored.remember(fact)
+            agent_runtime = AgentRuntime(
+                equipped, model, model_prices=model_prices, **user_kwargs
+            )
             history: list[AnyMessage] = []
+            # #250 -- messages of earlier conversations of this run, kept for
+            # the assertions only (a fresh conversation starts from nothing).
+            earlier: list[AnyMessage] = []
             # #78 Phase 0 (review finding 5) -- one TurnUsage per turn this
             # run makes; summed into the RunOutcome below.
             # `run_turn_with_usage` (not `run_turn`) is the explicit,
@@ -1276,7 +1307,11 @@ async def run_scenario(
             events_before_run = len(sink.captured)
             timeout_error: str | None = None
             try:
-                for turn in scenario.turns:
+                for turn_index, turn in enumerate(scenario.turns):
+                    if turn_index in scenario.new_conversation_before:
+                        # A fresh conversation: the working-memory thread is
+                        # gone, only the per-user store remains.
+                        earlier, history = [*earlier, *history], []
                     history = [*history, HumanMessage(content=turn)]
                     turn_start = time.monotonic()
                     turn_result = await agent_runtime.run_turn_with_usage(
@@ -1292,6 +1327,8 @@ async def run_scenario(
                         permissions=scenario.turn_permissions,
                         # #258 -- the scenario's untrusted-data blocks.
                         untrusted_data=scenario.untrusted_data,
+                        subject=subject,
+                        actor=_EVAL_ACTOR if subject is not None else None,
                     )
                     turn_durations_s.append(time.monotonic() - turn_start)
                     turn_usages.append(turn_result.usage)
@@ -1309,11 +1346,14 @@ async def run_scenario(
                         )
                         break
                 await _settle_audit_sink_since(sink, events_before_run)
+                transcript = [*earlier, *history]
                 if timeout_error is not None:
                     # Issue #182 -- a truncated transcript cannot prove a
                     # missing call, but a forbidden call already made is a
                     # fact the timeout must not hide.
-                    violations = _forbidden_call_failures(scenario.assertions, history)
+                    violations = _forbidden_call_failures(
+                        scenario.assertions, transcript
+                    )
                     outcomes.append(
                         RunOutcome(
                             passed=False,
@@ -1322,13 +1362,13 @@ async def run_scenario(
                             exercised=bool(violations),
                             usage=_sum_turn_usage(turn_usages),
                             duration_s=sum(turn_durations_s),
-                            tools_called=_tools_called(history),
+                            tools_called=_tools_called(transcript),
                         )
                     )
                     continue
                 run_audit_events = tuple(sink.captured[events_before_run:])
                 outcome = evaluate_assertions(
-                    scenario.assertions, history, run_audit_events
+                    scenario.assertions, transcript, run_audit_events
                 )
                 outcomes.append(
                     RunOutcome(
@@ -1339,7 +1379,7 @@ async def run_scenario(
                         duration_s=(
                             sum(turn_durations_s) if turn_durations_s else None
                         ),
-                        tools_called=_tools_called(history),
+                        tools_called=_tools_called(transcript),
                     )
                 )
             except Exception as exc:
@@ -1358,7 +1398,7 @@ async def run_scenario(
                         duration_s=(
                             sum(turn_durations_s) if turn_durations_s else None
                         ),
-                        tools_called=_tools_called(history),
+                        tools_called=_tools_called([*earlier, *history]),
                     )
                 )
     finally:

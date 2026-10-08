@@ -33,7 +33,9 @@ SCOPES: tuple[str, ...] = ("local", "team", "org")
 #: accepted as spellings of `local` and `org`.
 _ALIASES: Mapping[str, str] = {"session": "local", "deployment": "org"}
 
-_FIELDS = frozenset({"read_scope", "write_scope", "persist_conversation"})
+_FIELDS = frozenset(
+    {"read_scope", "write_scope", "persist_conversation", "user_memory"}
+)
 
 
 class MemoryPolicyError(ValueError):
@@ -70,6 +72,8 @@ class MemoryPolicy:
     read_scope: str = "local"
     write_scope: str = "local"
     persist_conversation: bool = True
+    #: #250: keep durable facts about each end user. Off unless declared.
+    user_memory: bool = False
 
     @classmethod
     def from_mapping(cls, raw: object) -> MemoryPolicy:
@@ -88,10 +92,14 @@ class MemoryPolicy:
         persist = raw.get("persist_conversation", True)
         if not isinstance(persist, bool):
             raise MemoryPolicyError("memory_policy.persist_conversation must be a bool")
+        user_memory = raw.get("user_memory", False)
+        if not isinstance(user_memory, bool):
+            raise MemoryPolicyError("memory_policy.user_memory must be a bool")
         return cls(
             read_scope=_scope(raw, "read_scope"),
             write_scope=_scope(raw, "write_scope"),
             persist_conversation=persist,
+            user_memory=user_memory,
         )
 
     def allows_read(self, scope: str) -> bool:
@@ -99,6 +107,14 @@ class MemoryPolicy:
 
     def allows_write(self, scope: str) -> bool:
         return SCOPES.index(_canonical(scope)) <= SCOPES.index(self.write_scope)
+
+
+def allows_user_memory(raw: object) -> bool:
+    """Whether the policy opts into per-user memory; invalid means no."""
+    try:
+        return MemoryPolicy.from_mapping(raw).user_memory
+    except MemoryPolicyError:
+        return False
 
 
 def persists_conversation(raw: object) -> bool:

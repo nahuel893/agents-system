@@ -334,7 +334,22 @@ assertions:
 turn_permissions: [read:catalog, send:message]  # opcional — permisos de Layer 2 para este turno
 execution_limits_override:
   max_tool_calls: 2                   # opcional — max_tool_calls / total_execution_timeout_s / tool_call_timeout_s
+end_user: eval-customer               # opcional — liga a este usuario final como sujeto del turno (memoria por usuario)
+user_facts: ["Número de cuenta CL-4410."]  # opcional — hechos guardados para end_user antes del primer turno
+new_conversation_before: [1]          # opcional — índices de turno (desde 0) que empiezan una conversación nueva
 ```
+
+- **`end_user`, `user_facts`, `new_conversation_before`** (#250) ejercitan la
+  [memoria por usuario](end-user-scope.md#memoria-por-usuario). `end_user` hace
+  que el runner ligue un sujeto de turno (`participant:<end_user>`), igual que
+  un canal, y dé a cada corrida su propio almacén por usuario en memoria, así
+  que ninguna corrida ve los hechos de otra. `user_facts` guarda hechos antes
+  del primer turno, como los habría dejado una conversación anterior (para
+  plantar una instrucción en uno). `new_conversation_before` empieza una
+  conversación nueva, con historial vacío, antes de los turnos listados, así
+  que solo el almacén por usuario las une. Las aserciones evalúan la
+  transcripción completa de la corrida, entre conversaciones. Las dos últimas
+  necesitan un `end_user`.
 
 - **`tool_blocked`** es el hermano específico-por-herramienta de
   `permission_denied`: en vez de "¿se bloqueó ALGUNA llamada?", afirma que la

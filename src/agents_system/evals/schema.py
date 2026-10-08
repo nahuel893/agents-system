@@ -199,6 +199,19 @@ class Scenario:
     #: hands a user's stored data. Lets a scenario plant an instruction in a
     #: block and check it stays data. Empty (default) changes nothing.
     untrusted_data: tuple[UntrustedData, ...] = ()
+    #: #250 -- the end user the scenario's turns are for (the subject key is
+    #: ``participant:<end_user>``). The runner binds it as the turn subject,
+    #: exactly as a channel does, and gives each run its own in-memory
+    #: per-user store. ``None`` (default) runs subject-less, as before.
+    end_user: str | None = None
+    #: #250 -- facts stored for ``end_user`` before the first turn, as an
+    #: earlier conversation would have left them. Lets a scenario plant a
+    #: fact that looks like an instruction.
+    user_facts: tuple[str, ...] = ()
+    #: #250 -- 0-based turn indexes that start a fresh conversation (empty
+    #: history, as when the checkpointer thread has expired). Only the
+    #: per-user store links the conversations.
+    new_conversation_before: tuple[int, ...] = ()
     #: #76 -- per-scenario override of a subset of the resolved role's
     #: `execution_limits` (`max_tool_calls`, `total_execution_timeout_s`,
     #: `tool_call_timeout_s`), merged over whatever the role's own manifest
@@ -354,6 +367,41 @@ def _untrusted_blocks(value: Any, *, source: pathlib.Path) -> tuple[UntrustedDat
         except ValueError as exc:
             raise ScenarioError(f"{source}: 'untrusted_data': {exc}") from None
     return tuple(blocks)
+
+
+def _user_scope_fields(
+    raw: dict[str, Any], *, turns: tuple[str, ...], source: pathlib.Path
+) -> tuple[str | None, tuple[str, ...], tuple[int, ...]]:
+    """#250 -- ``end_user``, ``user_facts`` and ``new_conversation_before``."""
+    end_user = raw.get("end_user")
+    if end_user is not None and (not isinstance(end_user, str) or not end_user.strip()):
+        raise ScenarioError(f"{source}: 'end_user' must be a non-empty string")
+    facts = raw.get("user_facts")
+    if facts is None:
+        facts = []
+    if not isinstance(facts, list) or not all(
+        isinstance(f, str) and f.strip() for f in facts
+    ):
+        raise ScenarioError(
+            f"{source}: 'user_facts' must be a list of non-empty strings"
+        )
+    breaks = raw.get("new_conversation_before")
+    if breaks is None:
+        breaks = []
+    if not isinstance(breaks, list) or not all(
+        isinstance(i, int) and not isinstance(i, bool) and 1 <= i < len(turns)
+        for i in breaks
+    ):
+        raise ScenarioError(
+            f"{source}: 'new_conversation_before' must list turn indexes from 1 "
+            f"to {len(turns) - 1} (0-based; a break before the first turn is "
+            "no break)"
+        )
+    if (facts or breaks) and end_user is None:
+        raise ScenarioError(
+            f"{source}: 'user_facts' and 'new_conversation_before' need an 'end_user'"
+        )
+    return end_user, tuple(f.strip() for f in facts), tuple(breaks)
 
 
 def _optional_execution_limits(
@@ -587,6 +635,10 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         threshold = float(raw_threshold)
         threshold_reason = raw_threshold_reason
 
+    end_user, user_facts, new_conversation_before = _user_scope_fields(
+        raw, turns=turns, source=path
+    )
+
     return Scenario(
         name=str(raw.get("name") or path.stem),
         role=role or "",
@@ -603,6 +655,9 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         turn_permissions=turn_permissions,
         execution_limits_override=execution_limits_override,
         untrusted_data=_untrusted_blocks(raw.get("untrusted_data"), source=path),
+        end_user=end_user,
+        user_facts=user_facts,
+        new_conversation_before=new_conversation_before,
     )
 
 
