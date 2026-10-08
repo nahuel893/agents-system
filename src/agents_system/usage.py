@@ -16,6 +16,7 @@ This module depends only on `agents_system.scope` and `agents_system.subject_dat
 from __future__ import annotations
 
 import dataclasses
+import math
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -47,6 +48,30 @@ class BudgetCaps:
     def has_usd_cap(self) -> bool:
         return self.daily_usd is not None or self.monthly_usd is not None
 
+    def validate(self, label: str = "budget") -> None:
+        """Raise ``ValueError`` unless there is a cap and every cap is a finite positive number.
+
+        A NaN or infinite cap would compare as "never reached" and silently
+        turn enforcement off, so it is rejected here, before boot.
+        """
+        any_cap = False
+        for name in _CAP_FIELDS:
+            cap = getattr(self, name)
+            if cap is None:
+                continue
+            any_cap = True
+            integral = name in _TOKEN_CAPS
+            if isinstance(cap, bool) or not isinstance(
+                cap, int if integral else (int, float)
+            ):
+                raise ValueError(f"{label}.{name} must be a number")  # noqa: TRY004 - settings validators raise ValueError
+            if not math.isfinite(cap):
+                raise ValueError(f"{label}.{name} must be finite")
+            if cap <= 0:
+                raise ValueError(f"{label}.{name} must be positive")
+        if not any_cap:
+            raise ValueError(f"{label} sets no cap")
+
 
 def parse_budgets(raw: Mapping[str, Any]) -> dict[str, BudgetCaps]:
     """``{runtime_id: {daily_usd, monthly_usd, daily_tokens, monthly_tokens, message}}``.
@@ -58,6 +83,7 @@ def parse_budgets(raw: Mapping[str, Any]) -> dict[str, BudgetCaps]:
     parsed: dict[str, BudgetCaps] = {}
     for runtime_id, value in raw.items():
         if isinstance(value, BudgetCaps):
+            value.validate(f"budget {runtime_id!r}")
             parsed[runtime_id] = value
             continue
         unknown = set(value) - {*_CAP_FIELDS, "message"}
@@ -65,24 +91,14 @@ def parse_budgets(raw: Mapping[str, Any]) -> dict[str, BudgetCaps]:
             raise ValueError(
                 f"budget for {runtime_id!r} has unknown key(s): {sorted(unknown)}"
             )
-        caps: dict[str, Any] = {}
-        for name in _CAP_FIELDS:
-            if value.get(name) is None:
-                continue
-            cap = value[name]
-            integral = name in _TOKEN_CAPS
-            if isinstance(cap, bool) or not isinstance(
-                cap, int if integral else (int, float)
-            ):
-                raise ValueError(f"budget {runtime_id!r}.{name} must be a number")  # noqa: TRY004 - settings validators raise ValueError
-            if cap <= 0:
-                raise ValueError(f"budget {runtime_id!r}.{name} must be positive")
-            caps[name] = cap if integral else float(cap)
-        if not caps:
-            raise ValueError(f"budget for {runtime_id!r} sets no cap")
+        caps: dict[str, Any] = {
+            name: value[name] for name in _CAP_FIELDS if value.get(name) is not None
+        }
         if "message" in value:
             caps["message"] = str(value["message"])
-        parsed[runtime_id] = BudgetCaps(**caps)
+        built = BudgetCaps(**caps)
+        built.validate(f"budget {runtime_id!r}")
+        parsed[runtime_id] = built
     return parsed
 
 

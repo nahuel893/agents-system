@@ -413,3 +413,183 @@ async def test_operator_usage_route_reports_daily_and_monthly_totals(
         assert none.status_code == 409
     finally:
         get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Review fixes on PR #265
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("name", ["daily_usd", "monthly_usd"])
+def test_parse_budgets_rejects_a_non_finite_usd_cap(name: str, bad: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        parse_budgets({RT: {name: bad}})
+
+
+def test_budget_caps_objects_are_validated_too() -> None:
+    for caps in (
+        BudgetCaps(daily_usd=float("nan")),
+        BudgetCaps(monthly_usd=float("inf")),
+        BudgetCaps(daily_tokens=0),
+        BudgetCaps(),
+    ):
+        with pytest.raises(ValueError):
+            parse_budgets({RT: caps})
+    good = BudgetCaps(daily_usd=1.0)
+    assert parse_budgets({RT: good})[RT] == good
+
+
+def test_the_runtime_refuses_a_non_finite_cap_at_construction() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        _runtime([AIMessage(content="a")], caps=BudgetCaps(daily_usd=float("nan")))
+
+
+@pytest.mark.asyncio
+async def test_a_mid_turn_refusal_is_a_budget_refused_outcome_and_is_saved() -> None:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    async def ping(inputs: dict, *, session: Any = None) -> dict:
+        return {"ok": True}
+
+    spec = ToolSpec(name="ping", required_permissions=(), connector=ping, tier=Tier.T1)
+    call = {"name": "ping", "args": {}, "id": "c1"}
+    metrics = build_metrics(CollectorRegistry())
+    runtime, model, _ = _runtime(
+        [
+            AIMessage(content="", tool_calls=[call], usage_metadata=_usage(100)),
+            AIMessage(content="never", usage_metadata=_usage(100)),
+        ],
+        caps=BudgetCaps(daily_tokens=100),
+        tools=(spec,),
+        metrics=metrics,
+    )
+    saver = InMemorySaver()
+    runtime._checkpointer = saver  # type: ignore[attr-defined]
+    result = await runtime.run_turn_with_usage(
+        [HumanMessage(content="hi")],
+        "s1",
+        thread_id="t1",
+        subject=ALICE,
+        actor=ACTOR,
+    )
+    assert result.budget_refused is True and model.calls == 1
+    outcomes = [
+        s.labels["outcome"]
+        for family in metrics.registry.collect()
+        for s in family.samples
+        if s.name == "agent_turns_total"
+    ]
+    assert outcomes == ["budget_refused"]
+    assert saver.get_tuple({"configurable": {"thread_id": "t1"}}) is not None
+
+
+class _FormatErrorThenSpendModel(_Model):
+    """First call spends against the ledger then fails with a tool-format error."""
+
+    spend: Any = None
+
+    @property
+    def bound(self) -> Any:
+        return self
+
+    async def ainvoke(self, *a: Any, **kw: Any) -> AIMessage:  # type: ignore[override]
+        if not getattr(self, "_failed", False):
+            object.__setattr__(self, "_failed", True)
+            await self.spend()
+            raise ValueError("tool_use_failed: malformed tool call")
+        self.calls += 1
+        return AIMessage(content="fallback")
+
+
+@pytest.mark.asyncio
+async def test_the_tool_format_fallback_rechecks_the_cap() -> None:
+    from agents_system.agent.graph import AgentRuntime as _AR
+
+    runtime, _, ledger = _runtime(
+        [AIMessage(content="x")], caps=BudgetCaps(daily_tokens=100)
+    )
+    model = _FormatErrorThenSpendModel(responses=[])
+
+    async def spend() -> None:
+        await ledger.record(
+            UsageRecord(runtime_id=RT, subject_key=ALICE.key, total_tokens=500)
+        )
+
+    model.spend = spend
+    runtime = _AR(
+        runtime._equipped,
+        model,
+        runtime_id=RT,
+        model_prices=PRICES,
+        budget=BudgetCaps(daily_tokens=100),
+        usage_ledger=ledger,
+    )
+    result = await _turn(runtime, ALICE)
+    assert result.budget_refused is True
+    assert model.calls == 0  # the fallback request was never issued
+    assert result.usage.model_calls == 1
+
+
+def test_a_second_app_does_not_reuse_the_first_apps_ledger_or_registry() -> None:
+    from agents_system.main import _build_usage_ledger
+    from agents_system.subject_data import DEFAULT_REGISTRY
+
+    pytest.importorskip("sqlalchemy")
+    from agents_system.services import usage_postgres  # noqa: F401
+
+    registry = DEFAULT_REGISTRY.copy()
+    ledger = _build_usage_ledger(InMemoryScopeProvider(), registry, {})
+    # The probe: the placeholder in the default registry must not win.
+    assert registry.stores["usage"] is ledger
+    assert isinstance(ledger, InMemoryUsageLedger)
+
+
+def test_a_conflicting_usage_registration_is_rejected() -> None:
+    from agents_system.main import _build_usage_ledger
+    from agents_system.subject_data import SubjectDataRegistry
+
+    class Custom:
+        name = "usage"
+        tables = frozenset({"subject_usage"})
+
+    registry = SubjectDataRegistry()
+    registry.register(Custom())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="usage"):
+        _build_usage_ledger(InMemoryScopeProvider(), registry, {})
+
+
+def test_binding_a_ledger_leaves_the_registry_it_was_copied_from_alone() -> None:
+    from agents_system.main import _build_usage_ledger
+    from agents_system.subject_data import DEFAULT_REGISTRY
+
+    pytest.importorskip("sqlalchemy")
+    from agents_system.services import usage_postgres
+
+    before = dict(DEFAULT_REGISTRY.stores)
+    assert before["usage"] is usage_postgres.USAGE_LEDGER
+    _build_usage_ledger(InMemoryScopeProvider(), DEFAULT_REGISTRY.copy(), {})
+    assert dict(DEFAULT_REGISTRY.stores) == before
+
+
+def test_a_postgres_provider_gets_its_own_ledger_registered_in_the_app_registry() -> (
+    None
+):
+    from agents_system.main import _build_usage_ledger
+    from agents_system.subject_data import DEFAULT_REGISTRY
+
+    pytest.importorskip("sqlalchemy")
+    from agents_system.services import usage_postgres
+
+    class _Provider:  # stands in for a PostgresScopeProvider
+        pass
+
+    registry = DEFAULT_REGISTRY.copy()
+    first = _build_usage_ledger(_Provider(), registry, {})  # type: ignore[arg-type]
+    assert first is not usage_postgres.USAGE_LEDGER
+    assert registry.stores["usage"] is first
+    assert usage_postgres.USAGE_LEDGER.unbound
+    # A second app's own copy is independent of the first.
+    other = DEFAULT_REGISTRY.copy()
+    second = _build_usage_ledger(_Provider(), other, {})  # type: ignore[arg-type]
+    assert other.stores["usage"] is second and second is not first

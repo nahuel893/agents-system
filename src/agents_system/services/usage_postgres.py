@@ -4,10 +4,12 @@ Every statement runs in a ``PostgresScope`` transaction, so the row-level
 security policy of migration ``009`` fences it to one (runtime id, subject
 key): an unfiltered query here still sees only that subject's rows.
 
-The ledger registers itself in the default `SubjectDataRegistry` at import,
-unbound; the served app binds it to its scope provider at boot
-(`PostgresUsageLedger.bind`). Unbound, it holds nothing and exports and
-deletes nothing. It declares no ``purge``: a purge across subjects has no
+An unbound placeholder registers itself in the default `SubjectDataRegistry`
+at import so the migration guard sees the table has a store. Each served app
+builds its own `PostgresUsageLedger(provider)` and swaps it in for the
+placeholder in its own copy of the registry (`SubjectDataRegistry.bind`);
+nothing process-wide is ever bound. Unbound, a ledger holds nothing and exports
+and deletes nothing. It declares no ``purge``: a purge across subjects has no
 scope to run in under row-level security, so rows are kept until the operator
 deletes the subject (the monthly cap needs at least a month of history).
 """
@@ -40,8 +42,10 @@ class PostgresUsageLedger:
     def __init__(self, provider: PostgresScopeProvider | None = None) -> None:
         self._provider = provider
 
-    def bind(self, provider: PostgresScopeProvider) -> None:
-        self._provider = provider
+    @property
+    def unbound(self) -> bool:
+        """True for the import-time placeholder that holds no provider."""
+        return self._provider is None
 
     def _tx(self, runtime_id: str, subject_key: str) -> Any:
         assert self._provider is not None
@@ -139,7 +143,7 @@ class PostgresUsageLedger:
             return int(result.rowcount)
 
 
-#: The process-wide instance, registered so the migration's table has a store.
+#: The unbound placeholder, registered so the migration's table has a store.
 USAGE_LEDGER = PostgresUsageLedger()
 if "usage" not in DEFAULT_REGISTRY.stores:
     DEFAULT_REGISTRY.register(USAGE_LEDGER)

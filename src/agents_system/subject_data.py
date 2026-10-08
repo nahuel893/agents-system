@@ -88,6 +88,30 @@ class SubjectDataRegistry:
             raise ValueError(f"subject data store {store.name!r} is already registered")
         self._stores[store.name] = store
 
+    def bind(self, store: SubjectDataStore) -> None:
+        """Register *store*, replacing an unbound placeholder of the same name.
+
+        A store that exposes ``unbound`` as true (a migration-guard placeholder
+        waiting for its app to supply a provider) yields to the live store.
+        Any other existing store of that name is a conflict and raises, rather
+        than leave the operator export and delete pointed at another store.
+        """
+        existing = self._stores.get(store.name)
+        if existing is store:
+            return
+        if existing is not None and not getattr(existing, "unbound", False):
+            raise ValueError(
+                f"subject data store {store.name!r} is already registered "
+                "with a different store"
+            )
+        self._stores[store.name] = store
+
+    def copy(self) -> SubjectDataRegistry:
+        """An independent registry holding the same stores (one per app)."""
+        clone = SubjectDataRegistry()
+        clone._stores = dict(self._stores)
+        return clone
+
     @property
     def stores(self) -> Mapping[str, SubjectDataStore]:
         return dict(self._stores)

@@ -452,6 +452,21 @@ async def _call_model(
         # model falls back to a plain text response instead of crashing.
         if "tool_use_failed" in str(exc) or "tool call validation failed" in str(exc):
             logger.warning("runtime.tool_format_error_retry", error=str(exc)[:120])
+            # ADR-011 part 5: the failed attempt may have been billed (its
+            # usage is unrecoverable, hence the `None` entry), and the fallback
+            # is a second provider request -- check the cap again before it.
+            if budget_gate is not None:
+                failed_turn_usage: list[UsageMetadata | None] = [
+                    *state.get("turn_usage", []),
+                    None,
+                ]
+                refusal = await budget_gate({**state, "turn_usage": failed_turn_usage})
+                if refusal is not None:
+                    return {
+                        "messages": [AIMessage(content=refusal)],
+                        "turn_usage": failed_turn_usage,
+                        "budget_refused": True,
+                    }
             base_model = bound_model.bound
             response = await base_model.ainvoke(model_input)
             retried_after_tool_format_error = True
@@ -1181,6 +1196,8 @@ class AgentRuntime:
         # Issue #166 -- copied, so a caller mutating its own dict later cannot
         # reprice turns behind this runtime's back.
         self._model_prices: dict[str, ModelPrice] = dict(model_prices or {})
+        if budget is not None:
+            budget.validate(f"budget for runtime {self._runtime_id!r}")
         if (
             budget is not None
             and budget.has_usd_cap
@@ -1550,7 +1567,7 @@ class AgentRuntime:
             usage=_aggregate_turn_usage(result.get("turn_usage", [])),
             session_id=session_id,
             model_id=effective_model_id,
-            outcome="ok",
+            outcome="budget_refused" if result.get("budget_refused") else "ok",
             duration_s=time.monotonic() - turn_start,
             budget_refused=bool(result.get("budget_refused")),
         )

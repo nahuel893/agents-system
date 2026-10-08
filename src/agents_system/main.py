@@ -236,12 +236,12 @@ def _build_usage_ledger(
     if isinstance(scope_provider, InMemoryScopeProvider):
         ledger = InMemoryUsageLedger(scope_provider)
     else:
-        from agents_system.services.usage_postgres import USAGE_LEDGER
+        from agents_system.services.usage_postgres import PostgresUsageLedger
 
-        USAGE_LEDGER.bind(scope_provider)  # type: ignore[arg-type]
-        ledger = USAGE_LEDGER
-    if "usage" not in registry.stores:
-        registry.register(ledger)
+        # One ledger per app, never the import-time placeholder: the runtime
+        # and the operator registry must hold the very same object.
+        ledger = PostgresUsageLedger(scope_provider)  # type: ignore[arg-type]
+    registry.bind(ledger)
     return ledger
 
 
@@ -310,6 +310,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             if getattr(app.state, "budgets", None) is not None
             else settings.user_budgets
         )
+        if app.state.subject_data_registry is DEFAULT_SUBJECT_DATA:
+            # The process-wide registry is shared by every app; this app's
+            # ledger goes into its own copy, so no other app (or test) sees it.
+            app.state.subject_data_registry = DEFAULT_SUBJECT_DATA.copy()
         usage_ledger = _build_usage_ledger(
             scope_provider, app.state.subject_data_registry, budgets
         )
