@@ -375,6 +375,17 @@ class Settings(ProviderSettings):
     # USER_BUDGETS='{"support": {"daily_usd": 1.0, "monthly_tokens": 500000}}'
     user_budgets: dict[str, Any] = {}
 
+    # #278 -- per-runtime execution limits, keyed by runtime id like
+    # DEPLOY_GRANTS. Set by the deployment only: each value replaces the
+    # platform default as that runtime's ceiling, within the outbox lease.
+    # e.g. EXECUTION_LIMITS='{"reports": {"total_execution_timeout_s": 240,
+    # "tool_call_timeout_s": 60}}'
+    execution_limits: dict[str, Any] = {}
+
+    # #278 -- the text a timed-out turn answers, per runtime id. Plain text,
+    # sent as given. e.g. TURN_TIMEOUT_REPLY='{"support": "Un momento..."}'
+    turn_timeout_reply: dict[str, str] = {}
+
     # #78 Phase 0 Slice 2 -- GET /metrics (Prometheus text format,
     # `main.py`'s `metrics()` route, `observability/metrics.py`). Off by
     # default: an operator must explicitly opt in, the same fail-closed
@@ -511,6 +522,20 @@ class Settings(ProviderSettings):
         from agents_system.usage import parse_budgets
 
         return dict(parse_budgets(value))
+
+    @field_validator("execution_limits", mode="after")
+    @classmethod
+    def parse_execution_limits(cls, value: dict[str, Any]) -> dict[str, Any]:
+        from agents_system.execution_limits import parse_execution_limits
+
+        return dict(parse_execution_limits(value))
+
+    @field_validator("turn_timeout_reply", mode="after")
+    @classmethod
+    def parse_turn_timeout_reply(cls, value: dict[str, str]) -> dict[str, str]:
+        from agents_system.execution_limits import parse_timeout_replies
+
+        return parse_timeout_replies(value)
 
     @field_validator("subject_data_retention", mode="before")
     @classmethod

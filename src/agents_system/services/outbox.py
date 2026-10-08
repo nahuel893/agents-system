@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from agents_system.execution_limits import OUTBOX_LEASE_S
 from agents_system.extras import raise_missing_extra
 
 try:
@@ -24,9 +25,11 @@ from agents_system.models.outbox import LEGACY_CHANNEL, InboundMessage, OutboxWo
 
 _INBOX_META_MESSAGE_CONSTRAINT = "uq_webhook_inbox_meta_message_id"
 MAX_OUTBOX_ATTEMPTS = 5
-# The runtime permits turns below 300 seconds; keep a bounded lease longer than
-# one worst-case turn plus provider send, rather than recovering live work early.
-DEFAULT_LEASE_DURATION = timedelta(minutes=10)
+# A turn plus its reply send must finish inside the lease, or another worker
+# may reclaim the row and answer twice. Every runtime bound to a channel, and
+# every deployment-set limit (#278), is checked against it with
+# `execution_limits.LEASE_MARGIN_S` to spare.
+DEFAULT_LEASE_DURATION = timedelta(seconds=OUTBOX_LEASE_S)
 _RETRY_BASE_SECONDS = 1
 _RETRY_MAX_SECONDS = 300
 

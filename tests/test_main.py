@@ -2112,6 +2112,8 @@ async def test_generic_runtime_boots_without_explicit_roots() -> None:
     application = create_app(registry_factory=lambda *a, **k: ToolRegistry())
 
     fake_equipped = MagicMock()
+    # #278 -- a real EquippedRuntime carries the deployment's limits.
+    fake_equipped.deployment_limits = {}
     with (
         patch("agents_system.main.get_settings", return_value=test_settings),
         patch("agents_system.main.get_engine", return_value=_awaitable_engine()),

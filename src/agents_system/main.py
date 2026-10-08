@@ -54,6 +54,13 @@ from agents_system.channels.whatsapp import (
     WhatsAppChannelSettings,
 )
 from agents_system.config import Settings, get_settings
+from agents_system.execution_limits import (
+    check_effective_limits,
+    check_margin_covers_checkpointer,
+    check_turn_fits_lease,
+    parse_execution_limits,
+    parse_timeout_replies,
+)
 from agents_system.harness.loader import (
     _SAFE_SEGMENT,
     DefinitionError,
@@ -441,7 +448,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
 
         if plan.registrations:
-            from agents_system.agent.graph import AgentRuntime
+            from agents_system.agent.graph import AgentRuntime, _effective_limits
             from agents_system.harness.factory import build_runtime
             from agents_system.harness.loader import resolve
             from agents_system.services.embeddings import (
@@ -625,6 +632,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     channel_name
                 )
 
+            # #278 -- the lease margin must hold a channel turn's thread read
+            # and save, and its reply send.
+            if channels_by_runtime and checkpointer is not None:
+                check_margin_covers_checkpointer(settings.checkpointer_timeout_s)
+
             runtimes: dict[str, AgentRuntime] = {}
             for runtime_id, registration in plan.registrations.items():
                 client = registration.client
@@ -643,10 +655,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # AD-5's auto-grant-of-the-role's-full-permission-set, so
                 # `definition.permissions` (what the role DECLARES it may
                 # need) is no longer treated as what a deployment GRANTS it.
+                # #278 -- the deployment's ceiling, already checked by
+                # `_boot_plan`; the definition may declare up to it.
+                deployment_limits = plan.execution_limits.get(runtime_id)
                 definition = resolve(
                     registration.locator,
                     client=client,
                     roots=roots,
+                    execution_limits=deployment_limits,
                 )
 
                 # issue #128 item 1 -- a client named explicitly, whose
@@ -675,8 +691,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         "or add the deployment folder."
                     )
 
+                if deployment_limits:
+                    # #278 -- every runtime the deployment set limits for,
+                    # channel-bound or not: the combination is what runs.
+                    check_effective_limits(
+                        _effective_limits(
+                            getattr(definition, "execution_limits", None),
+                            deployment_limits,
+                        ),
+                        who=f"runtime {runtime_id!r}",
+                        lease_s=DEFAULT_LEASE_DURATION.total_seconds(),
+                    )
                 _warn_if_turn_budget_below_request_timeout(
-                    runtime_id, definition, settings
+                    runtime_id, definition, settings, deployment_limits
                 )
 
                 # ADR-002 C.13 — a channel must only ever be bound to a role
@@ -698,7 +725,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 # remain unconstrained by it.
                 for channel_name in channels_by_runtime.get(runtime_id, ()):
                     _check_channel_runtime(
-                        channel_name, runtime_id, registration.subject, definition
+                        channel_name,
+                        runtime_id,
+                        registration.subject,
+                        definition,
+                        deployment_limits,
                     )
 
                 # permission-model PR3 (issue #38, design.md Resolved
@@ -745,6 +776,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     # no human. A served role without its own
                     # escalation_notifier fails boot, as it always has.
                     builtin_defaults=False,
+                    execution_limits=deployment_limits,
                 )
                 # D-037 (issue #13, ADR-004) -- this runtime's own model:
                 # `default_model` unless `definition.model` names its own
@@ -783,6 +815,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     # #250: facts about each end user, for a definition whose
                     # memory_policy opts in; the limits are the deployment's.
                     user_memory=user_memory,
+                    # #278: the deployment's text for a timed-out turn.
+                    timeout_reply=plan.timeout_replies.get(runtime_id),
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
 
@@ -1195,6 +1229,10 @@ class _BootPlan:
     grants: Mapping[str, Any]
     grant_source: str
     """``create_app(grants=...)``, or ``DEPLOY_GRANTS`` when it got none."""
+    execution_limits: dict[str, dict[str, int | float]]
+    """#278 -- each runtime's deployment-set limits, checked against the lease."""
+    timeout_replies: dict[str, str]
+    """#278 -- each runtime's timeout reply; absent means the default text."""
 
 
 def _refuse_builtin_default_tools(registry: ToolRegistry) -> None:
@@ -1413,14 +1451,19 @@ def _registered_channels(app: FastAPI) -> Mapping[str, Channel]:
 
 
 def _check_channel_runtime(
-    channel_name: str, runtime_id: str, subject: str, definition: Any
+    channel_name: str,
+    runtime_id: str,
+    subject: str,
+    definition: Any,
+    deployment_limits: Mapping[str, Any] | None = None,
 ) -> None:
     """The boot-time checks every channel-bound runtime gets.
 
     ADR-002 C.13: a webhook channel delivers untrusted external input, so the
     runtime answering it must resolve ``untrusted_input=True``. And its turn
-    must finish, with 60 seconds of non-turn headroom, before the deferred
-    worker's outbox lease expires. Applied to the built-in WhatsApp channel
+    must finish, with ``LEASE_MARGIN_S`` (60 seconds) of non-turn headroom,
+    before the deferred worker's outbox lease expires, counting the
+    deployment's limits (#278). Applied to the built-in WhatsApp channel
     (``WHATSAPP_RUNTIME_ID``) exactly as before #22, and to every registered
     channel's runtime.
     """
@@ -1439,21 +1482,19 @@ def _check_channel_runtime(
             "to be bound to it. Refusing to boot."
         )
 
-    effective_limits = _effective_limits(definition.execution_limits)
-    total_timeout_s = effective_limits["total_execution_timeout_s"]
-    non_turn_headroom_s = 60
-    lease_seconds = DEFAULT_LEASE_DURATION.total_seconds()
-    if total_timeout_s + non_turn_headroom_s >= lease_seconds:
-        raise ValueError(
-            f"{label} runtime {runtime_id!r} has "
-            f"total_execution_timeout_s={total_timeout_s}; with "
-            f"non_turn_headroom_s={non_turn_headroom_s}, it must be "
-            f"less than outbox lease_seconds={lease_seconds}"
-        )
+    effective_limits = _effective_limits(definition.execution_limits, deployment_limits)
+    check_turn_fits_lease(
+        effective_limits["total_execution_timeout_s"],
+        who=f"{label} runtime {runtime_id!r}",
+        lease_s=DEFAULT_LEASE_DURATION.total_seconds(),
+    )
 
 
 def _warn_if_turn_budget_below_request_timeout(
-    runtime_id: str, definition: Any, settings: Settings
+    runtime_id: str,
+    definition: Any,
+    settings: Settings,
+    deployment_limits: Mapping[str, Any] | None = None,
 ) -> None:
     """Warn at boot when a runtime's turn budget cannot hold one provider call.
 
@@ -1479,9 +1520,9 @@ def _warn_if_turn_budget_below_request_timeout(
     )
     if provider != "openai_compatible":
         return
-    total_timeout_s = _effective_limits(getattr(definition, "execution_limits", None))[
-        "total_execution_timeout_s"
-    ]
+    total_timeout_s = _effective_limits(
+        getattr(definition, "execution_limits", None), deployment_limits
+    )["total_execution_timeout_s"]
     request_timeout_s = settings.openai_compatible_request_timeout_s
     if total_timeout_s < request_timeout_s:
         structlog.get_logger().warning(
@@ -1591,12 +1632,37 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
                 f"{sorted(registrations)}).{hint} Refusing to boot."
             )
 
+    # #278 -- set by the deployment only, checked here so a turn that cannot
+    # fit the outbox lease, or a limit for a runtime this boot does not
+    # build, fails before any resource exists.
+    raw_limits = getattr(app.state, "execution_limits", None)
+    raw_replies = getattr(app.state, "timeout_reply", None)
+    execution_limits = parse_execution_limits(
+        raw_limits if raw_limits is not None else settings.execution_limits,
+        lease_s=DEFAULT_LEASE_DURATION.total_seconds(),
+    )
+    timeout_replies = parse_timeout_replies(
+        raw_replies if raw_replies is not None else settings.turn_timeout_reply
+    )
+    for source, configured in (
+        ("execution limits (EXECUTION_LIMITS)", execution_limits),
+        ("timeout replies (TURN_TIMEOUT_REPLY)", timeout_replies),
+    ):
+        unknown = sorted(set(configured) - set(registrations))
+        if unknown:
+            raise ValueError(
+                f"{source} name runtime id(s) this boot does not build: "
+                f"{', '.join(unknown)}. Refusing to boot."
+            )
+
     return _BootPlan(
         registrations=registrations,
         grants=grants if grants is not None else settings.deploy_grants,
         grant_source="create_app(grants=...)"
         if grants is not None
         else "DEPLOY_GRANTS",
+        execution_limits=execution_limits,
+        timeout_replies=timeout_replies,
     )
 
 
@@ -1614,6 +1680,8 @@ def create_app(
     subject_data: SubjectDataRegistry | None = None,
     subject_threads: SubjectThreads | None = None,
     budgets: Mapping[str, BudgetCaps | Mapping[str, Any]] | None = None,
+    execution_limits: Mapping[str, Mapping[str, Any]] | None = None,
+    timeout_reply: Mapping[str, str] | None = None,
     scope_provider_factory: Callable[[AsyncEngine], ScopeProvider] | None = None,
     roots: RootConfig | None = None,
     title: str = "agents_system",
@@ -1682,6 +1750,19 @@ def create_app(
         deployment only. Needs ``scope_provider_factory`` (the usage ledger
         lives behind the scope handle) and, for a USD cap, a ``MODEL_PRICES``
         entry for the runtime's model; boot fails otherwise.
+    execution_limits:
+        #278: per-runtime limits by runtime id, e.g. ``{"reports":
+        {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60,
+        "max_tool_calls": 30}}``; falls back to ``EXECUTION_LIMITS``. Set by
+        the deployment only. Each value replaces the platform default as the
+        runtime's ceiling; the agent may tighten it, never exceed it. Boot
+        fails, naming the runtime, when a turn plus ``LEASE_MARGIN_S`` does
+        not fit the outbox lease (under 540 s for the 600 s lease), when a
+        tool call is longer than its turn, or for a runtime it does not build.
+    timeout_reply:
+        #278: the text a timed-out turn answers, by runtime id; falls back to
+        ``TURN_TIMEOUT_REPLY``, then to the default English text. Plain text,
+        sent as given.
     roots:
         Consumer-owned path configuration for platform and deployment roles.
         A client override (``clients[id]``, or an ``AGENT_REGISTRATIONS``
@@ -1735,6 +1816,8 @@ def create_app(
     )
     application.state.subject_threads = subject_threads
     application.state.budgets = budgets
+    application.state.execution_limits = execution_limits
+    application.state.timeout_reply = timeout_reply
     application.state.usage_ledger = None
     application.state.checkpoint_threads = None
     application.state.scope_provider_factory = scope_provider_factory

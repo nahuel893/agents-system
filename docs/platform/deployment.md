@@ -237,6 +237,35 @@ DEPLOY_GRANTS='{"support": ["read:catalog"]}'
 
 The folder is held to the importer ceiling like any `Agent.from_folder`. A predefined-role name keeps working, with its deprecation warning.
 
+### Execution limits and the timeout reply (coming in the next release)
+
+The deployment sets each runtime's limits and the text a timed-out turn answers, keyed by the same ids as `grants`:
+
+```python
+app = create_app(
+    registry_factory=build_registry,
+    agents={"reports": Agent.from_folder("agents/reports")},
+    grants={"reports": ["read:catalog"]},
+    execution_limits={
+        "reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}
+    },
+    timeout_reply={"reports": "Esto está tardando más de lo esperado. Probá de nuevo."},
+)
+```
+
+Without those arguments, `EXECUTION_LIMITS` and `TURN_TIMEOUT_REPLY` are the source, with the same shape:
+
+```bash
+EXECUTION_LIMITS='{"reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}}'
+TURN_TIMEOUT_REPLY='{"reports": "Esto está tardando más de lo esperado. Probá de nuevo."}'
+```
+
+- **Only the deployment raises.** A value replaces the platform default (60 s per turn, 10 s per tool call, 20 tool calls) as that runtime's ceiling; the agent may tighten it, never exceed it.
+- **The lease bounds it.** A turn must be shorter than 540 s: the 600 s outbox lease minus the 60 s `LEASE_MARGIN_S` for the reply send and the checkpointer. A turn that does not fit, a tool call longer than its turn (checked again once combined with the agent's own limits), an unknown key, or an id the boot does not build fails boot, naming the runtime. The margin also holds the checkpointer's read and save, so with a channel and a checkpointer `CHECKPOINTER_TIMEOUT_S` may be at most 20 s.
+- **The reply is plain text**, at most 1000 characters, sent as given. A runtime without one answers the default English text.
+
+See [Policy: execution limits](policy.md#execution-limits).
+
 ### Migrating from the old runtime ids
 
 Before ADR-004, the Settings-driven boot read the role and the deployment out of the runtime id itself: `acme__sales-agent`, or `_generic__sales-agent` for no deployment. That scheme is gone. A runtime id is only a key, and a deployment still configured the old way fails boot, naming the unregistered id and pointing at `AGENT_REGISTRATIONS`. To migrate:

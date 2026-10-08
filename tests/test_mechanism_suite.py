@@ -192,8 +192,8 @@ async def _run(
 def _disable_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     original = graph_module._effective_limits
 
-    def _unbounded(limits: Any) -> dict[str, Any]:
-        merged = original(limits)
+    def _unbounded(limits: Any, deployment_limits: Any = None) -> dict[str, Any]:
+        merged = original(limits, deployment_limits)
         merged.update(
             max_tool_calls=10**6,
             tool_call_timeout_s=10**6,

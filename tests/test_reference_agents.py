@@ -132,9 +132,9 @@ def test_reference_agent_resolves_through_the_importer_ceiling(
     checked: list[tuple[str | None, str]] = []
     real = loader._apply_importer_ceiling
 
-    def spy(parent: Any, child: Any) -> Any:
+    def spy(parent: Any, child: Any, **kwargs: Any) -> Any:
         checked.append((None if parent is None else parent.role_name, child.role_name))
-        return real(parent, child)
+        return real(parent, child, **kwargs)
 
     monkeypatch.setattr(loader, "_apply_importer_ceiling", spy)
 
