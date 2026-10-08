@@ -47,9 +47,9 @@ def test_the_revisions_directory_is_found() -> None:
 
 
 def test_the_proactive_queue_table_is_registered_and_migrated() -> None:
-    # Migration 009 creates the table through generated DDL, which the
+    # Migration 010 creates the table through generated DDL, which the
     # regex scanner above cannot see, so this pins it by name.
     from agents_system.services.proactive_postgres import TABLE
 
     assert TABLE in DEFAULT_REGISTRY.tables
-    assert "009" in {p.name[:3] for p in _VERSIONS.glob("*.py")}
+    assert "010" in {p.name[:3] for p in _VERSIONS.glob("*.py")}
