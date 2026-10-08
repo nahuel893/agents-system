@@ -313,7 +313,21 @@ assertions:
 turn_permissions: [read:catalog, send:message]  # optional — Layer-2 permissions for this turn
 execution_limits_override:
   max_tool_calls: 2                   # optional — max_tool_calls / total_execution_timeout_s / tool_call_timeout_s
+end_user: eval-customer               # optional — bind this end user as the turn subject (per-user memory)
+user_facts: ["Account number CL-4410."]  # optional — facts stored for end_user before the first turn
+new_conversation_before: [1]          # optional — 0-based turn indexes that start a fresh conversation
 ```
+
+- **`end_user`, `user_facts`, `new_conversation_before`** (#250) exercise
+  [per-user memory](end-user-scope.md#per-user-memory). `end_user` makes the
+  runner bind a turn subject (`participant:<end_user>`), exactly as a channel
+  does, and give each run its own in-memory per-user store, so no run sees
+  another's facts. `user_facts` stores facts before the first turn, as an
+  earlier conversation would have left them (to plant an instruction in one).
+  `new_conversation_before` starts a fresh conversation, with an empty
+  history, before the listed turns, so only the per-user store links them.
+  Assertions grade the whole run's transcript, across conversations. The last
+  two need an `end_user`.
 
 - **`tool_blocked`** is `permission_denied`'s tool-specific sibling: instead
   of "was ANY call blocked", it asserts a NAMED tool's call was blocked —
@@ -434,6 +448,7 @@ capability needs.
 | `grounding` | `grounding-agent` | `grounding_standing_order` (happy path), `grounding_no_fabrication` (guardrail) | Answers and actions carry only what tools returned |
 | `escalation` | `escalation-agent` | `escalation_refund_request` (guardrail), `escalation_simple_question` (happy path) | Escalates when a policy condition holds, and not on a simple question |
 | `memory` | `memory-agent` | `memory_client_id` (happy path) | Uses facts from earlier turns |
+| `user_memory` | `user-memory-agent` | `user_memory_recall` (happy path), `user_memory_boundary` (guardrail) | Saves a stable fact about the person and uses it in a later conversation; a stored fact is data, never an instruction |
 | `untrusted_input` | `untrusted-input-agent` | `untrusted_input_boundary`, `untrusted_input_block` (guardrails) | Ignores instructions planted in a tool result or in an untrusted-data block |
 
 The scenarios and fixture agents ship inside the package, under
@@ -476,7 +491,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`CAPABILITIES` lists the seven capabilities, `missing_requirements(capability)`
+`CAPABILITIES` lists the eight capabilities, `missing_requirements(capability)`
 names the host commands one lacks, and `build_capability_registry_factory`
 builds a capability's backends for `run_scenario(registry_factory=...)`.
 
@@ -595,7 +610,7 @@ EVAL_RUNS=3 scripts/run-capability-matrix.py \
   --capability grounding --capability memory
 ```
 
-`--capability` repeats (all seven by default), `--runs` overrides `EVAL_RUNS`
+`--capability` repeats (all eight by default), `--runs` overrides `EVAL_RUNS`
 (default 3) and `--out-dir` moves the output. It prints the Markdown table and
 writes `capability-matrix-<timestamp>.json` and `.md` under `evals/results/`
 (gitignored); a clash gets a `-N` suffix, so an export never overwrites an earlier one. It exits 1 when a cell misses its gate. It needs the same extras
