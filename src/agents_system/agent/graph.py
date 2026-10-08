@@ -53,7 +53,11 @@ from langgraph.graph import END, StateGraph
 from agents_system.agent.context import ContextTrim, trim_history
 from agents_system.agent.models import build_agent_model, declared_model
 from agents_system.agent.state import AgentState
-from agents_system.agent.untrusted import UntrustedData, render_untrusted_blocks
+from agents_system.agent.untrusted import (
+    DEFAULT_TURN_MAX_CHARS,
+    UntrustedData,
+    render_untrusted_blocks,
+)
 from agents_system.config import ModelPrice
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
@@ -1460,7 +1464,15 @@ class AgentRuntime:
             scope_provider=self._scope_provider,
             runtime_id=self._runtime_id,
             budget_gate=gate,
-            untrusted_text=render_untrusted_blocks(untrusted_data),
+            # Never more than the context budget itself (about 4 characters a
+            # token): an over-budget request is never built from the blocks.
+            untrusted_text=render_untrusted_blocks(
+                untrusted_data,
+                total_max_chars=min(
+                    DEFAULT_TURN_MAX_CHARS,
+                    max(1, int(effective_limits["max_context_tokens"]) * 4),
+                ),
+            ),
         )
         # Issue #24 -- a thread's history is read here, before the turn, and
         # the turn is saved once at the end (see `_Thread` for the failure

@@ -106,7 +106,44 @@ def test_the_turn_cap_bounds_the_total_and_names_omitted_sources() -> None:
     assert "omitted" in text and "s4" in text
 
 
+def test_the_turn_cap_bounds_the_whole_rendered_text() -> None:
+    many = [UntrustedData("s", "x") for _ in range(5_000)]
+    empty = [UntrustedData(f"s{i}", "") for i in range(4_000)]
+
+    for blocks in (many, empty):
+        text = render_untrusted_blocks(blocks, total_max_chars=8_000)
+        assert 0 < len(text) <= 8_000
+        assert "omitted" in text
+
+
+def test_omitted_sources_are_summarised_not_listed() -> None:
+    blocks = [UntrustedData(f"source-{i:04d}", "y" * 50) for i in range(500)]
+
+    text = render_untrusted_blocks(blocks, total_max_chars=1_500)
+
+    assert len(text) <= 1_500
+    assert "more" in text
+
+
+def test_the_block_count_is_capped() -> None:
+    blocks = [UntrustedData(f"s{i}", "x") for i in range(10)]
+
+    text = render_untrusted_blocks(blocks, max_blocks=3)
+
+    assert text.count(" source=s") == 3
+    assert "omitted" in text
+
+
+def test_a_cap_too_small_for_the_framing_renders_nothing() -> None:
+    assert render_untrusted_blocks([UntrustedData("s", "x")], total_max_chars=50) == ""
+
+
 def test_the_caps_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="max_blocks"):
+        render_untrusted_blocks([], max_blocks=0)
+
+
+def test_the_caps_must_be_positive_legacy() -> None:
     with pytest.raises(ValueError, match="max_chars"):
         UntrustedData("facts", "x", max_chars=0)
     with pytest.raises(ValueError, match="total_max_chars"):
@@ -259,3 +296,21 @@ def test_the_base_contract_names_the_blocks() -> None:
     from agents_system.harness.loader import _BASE_PROMPT_CONTRACT
 
     assert "untrusted-data block" in _BASE_PROMPT_CONTRACT
+
+
+@pytest.mark.asyncio
+async def test_a_small_context_budget_never_receives_an_over_budget_block() -> None:
+    budget = 300
+    model = _model()
+    agent = AgentRuntime(_equipped({"max_context_tokens": budget}), model)
+    blocks = [UntrustedData(f"s{i}", "") for i in range(4_000)]
+
+    await agent.run_turn(
+        [HumanMessage(content="latest")],
+        session_id="s",
+        permissions=(),
+        untrusted_data=blocks,
+    )
+
+    [model_input] = model.captured_inputs
+    assert count_tokens_approximately(model_input) <= budget
