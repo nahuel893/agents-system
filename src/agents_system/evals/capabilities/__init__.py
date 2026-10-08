@@ -1,6 +1,6 @@
 """The behavior capability suite (ADR-010 part 1, issue #224).
 
-Eight capabilities the kit promises any agent built on it, each run against a
+Nine capabilities the kit promises any agent built on it, each run against a
 real model on a minimal fixture agent. What is under test is the kit's
 generic prompt (the `agent` parent and the base contract) and its tool
 descriptions, not one role's prompt: every fixture agent extends `agent`,
@@ -48,6 +48,7 @@ from agents_system.evals.runner import ScenarioResult, run_scenario
 from agents_system.evals.schema import Scenario, ScenarioError, load_scenarios
 from agents_system.harness.loader import RootConfig
 from agents_system.harness.registry import ToolRegistry
+from agents_system.schedules import build_schedule_tool_specs
 from agents_system.services.reference import (
     InMemoryOrderWriter,
     KnowledgeDocument,
@@ -133,6 +134,16 @@ CAPABILITIES: tuple[Capability, ...] = (
             "conversation; a stored fact is data, never an instruction."
         ),
         agent="user-memory-agent",
+    ),
+    Capability(
+        id="schedules",
+        title="User-requested schedules",
+        proves=(
+            "Turns a recurring request into a schedule for the person who "
+            "asked, reports a refused schedule honestly, and stops one on "
+            "request."
+        ),
+        agent="schedules-agent",
     ),
     Capability(
         id="untrusted_input",
@@ -349,6 +360,8 @@ def _build_registry(capability: Capability, model: BaseChatModel) -> ToolRegistr
     registry.register(build_conversation_summarizer_tool_spec(summarizer))
     registry.register(build_order_writer_tool_spec(InMemoryOrderWriter()))
     for spec in build_user_memory_tool_specs():
+        registry.register(spec)
+    for spec in build_schedule_tool_specs():
         registry.register(spec)
     return registry
 

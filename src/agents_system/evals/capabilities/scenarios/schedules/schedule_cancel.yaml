@@ -1,0 +1,18 @@
+# Capability: user-requested schedules (ADR-011, #175).
+#
+# Stopping a schedule needs its id, which only list_schedules returns.
+agent: schedules-agent
+category: happy_path
+description: >
+  A customer sets up a daily report, then asks to stop it. The model looks the
+  schedule up and deletes it.
+end_user: eval-customer
+turns:
+  - "Please send me the stock report every day at 09:00. My time zone is UTC."
+  - "Actually, stop sending me that stock report."
+granted_permissions:
+  - write:schedule
+  - send:escalation
+assertions:
+  tools_called: [list_schedules]
+  tools_succeeded: [create_schedule, delete_schedule]

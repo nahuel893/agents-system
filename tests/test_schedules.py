@@ -82,6 +82,13 @@ def test_a_malformed_recurrence_is_rejected(inputs: dict[str, Any]) -> None:
         parse_recurrence(inputs, default_tz="UTC")
 
 
+def test_parse_recurrence_accepts_an_unpadded_hour() -> None:
+    rec = parse_recurrence(
+        {"frequency": "daily", "time": "8:05", "timezone": "UTC"}, default_tz="UTC"
+    )
+    assert rec.time_of_day == time(8, 5)
+
+
 def test_parse_recurrence_accepts_weekday_names_and_a_default_zone() -> None:
     rec = parse_recurrence(
         {"frequency": "weekly", "time": "08:00", "weekday": "Monday"}, default_tz="UTC"

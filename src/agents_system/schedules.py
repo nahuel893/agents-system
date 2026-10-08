@@ -35,6 +35,7 @@ a `SubjectDataStore`, so the operator export and delete (#257) reach it.
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -76,6 +77,7 @@ _WEEKDAYS = (
     "saturday",
     "sunday",
 )
+_CLOCK = re.compile(r"(?P<h>\d{1,2}):(?P<m>\d{2})")
 DAY_S = 86_400
 WEEK_S = 7 * DAY_S
 
@@ -236,13 +238,10 @@ def parse_recurrence(inputs: Mapping[str, Any], *, default_tz: str) -> Recurrenc
             raise ScheduleRejected("every_hours must be a number above 0")
         return Recurrence("interval", interval_s=round(hours * 3600), tz=tz)
     raw_time = inputs.get("time")
-    try:
-        at = time.fromisoformat(raw_time) if isinstance(raw_time, str) else None
-    except ValueError:
-        at = None
-    if at is None or at.tzinfo is not None:
+    match = _CLOCK.fullmatch(raw_time.strip()) if isinstance(raw_time, str) else None
+    if match is None or int(match["h"]) > 23 or int(match["m"]) > 59:
         raise ScheduleRejected("time must be a 24-hour 'HH:MM' wall-clock time")
-    at = at.replace(second=0, microsecond=0)
+    at = time(int(match["h"]), int(match["m"]))
     if frequency == "daily":
         return Recurrence("daily", time_of_day=at, tz=tz)
     name = str(inputs.get("weekday", "")).strip().lower()
@@ -552,11 +551,15 @@ def build_schedule_tool_specs(
                     "frequency": {"type": "string", "enum": list(FREQUENCIES)},
                     "time": {
                         "type": "string",
-                        "description": "24-hour HH:MM, for daily and weekly",
+                        "description": (
+                            "24-hour HH:MM, zero-padded like 08:00, for daily "
+                            "and weekly"
+                        ),
                     },
                     "weekday": {
                         "type": "string",
-                        "description": "monday to sunday, for weekly",
+                        "enum": list(_WEEKDAYS),
+                        "description": "For weekly",
                     },
                     "every_hours": {
                         "type": "number",

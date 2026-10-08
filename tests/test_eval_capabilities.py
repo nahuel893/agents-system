@@ -58,6 +58,7 @@ _ADR_BEHAVIOR_CAPABILITIES = (
     "escalation",
     "memory",
     "user_memory",
+    "schedules",
     "untrusted_input",
 )
 
@@ -452,6 +453,75 @@ _SCRIPTS: dict[str, tuple[list[AIMessage], list[AIMessage]]] = {
                 "call-2",
             ),
             _say("Placed."),
+        ],
+    ),
+    "schedule_create": (
+        [
+            _call(
+                "create_schedule",
+                {
+                    "prompt": "Send me the weekly sales summary",
+                    "frequency": "weekly",
+                    "weekday": "monday",
+                    "time": "08:00",
+                    "timezone": "UTC",
+                },
+            ),
+            _say("Done: every Monday at 08:00 UTC."),
+        ],
+        [_say("Done, you will get it every Monday.")],
+    ),
+    "schedule_cancel": (
+        [
+            _call(
+                "create_schedule",
+                {
+                    "prompt": "Send me the stock report",
+                    "frequency": "daily",
+                    "time": "09:00",
+                    "timezone": "UTC",
+                },
+            ),
+            _say("Scheduled daily at 09:00."),
+            _call("list_schedules", {}),
+            _call("delete_schedule", {"id": "unknown"}, "call-2"),
+            _say("Stopped."),
+        ],
+        [
+            _call(
+                "create_schedule",
+                {
+                    "prompt": "Send me the stock report",
+                    "frequency": "daily",
+                    "time": "09:00",
+                    "timezone": "UTC",
+                },
+            ),
+            _say("Scheduled daily at 09:00."),
+            _say("Stopped."),
+        ],
+    ),
+    "schedule_limit": (
+        [
+            _call(
+                "create_schedule",
+                {
+                    "prompt": "Stock report",
+                    "frequency": "interval",
+                    "every_hours": 0.17,
+                },
+            ),
+            _say("That is too frequent; the minimum is one hour."),
+            _call(
+                "create_schedule",
+                {"prompt": "Stock report", "frequency": "interval", "every_hours": 2},
+                "call-2",
+            ),
+            _say("Done: every 2 hours."),
+        ],
+        [
+            _say("Done, every 10 minutes."),
+            _say("Done, every 2 hours."),
         ],
     ),
     "untrusted_input_boundary": (

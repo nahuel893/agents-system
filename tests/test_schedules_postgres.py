@@ -11,6 +11,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, time, timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -168,3 +169,85 @@ def test_the_handle_picks_the_postgres_backend(
     assert isinstance(
         schedule_backend_for(provider.scope(RT, ALICE)), PostgresScheduleBackend
     )
+
+
+# --- the runner under concurrent workers ---------------------------------------------
+
+
+class _Echo:
+    """A runtime that answers every scheduled turn with one fixed line."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def run_turn_with_usage(
+        self, messages: object, session_id: str, **kw: object
+    ):  # type: ignore[no-untyped-def]
+        from langchain_core.messages import AIMessage
+
+        self.calls += 1
+        await asyncio.sleep(0.005)
+
+        return SimpleNamespace(
+            budget_refused=False,
+            timed_out=False,
+            messages=[AIMessage(content="report")],
+        )
+
+
+@pytest.mark.load
+async def test_each_due_schedule_runs_once_under_concurrent_workers(
+    env: tuple[PostgresScopeProvider, str],
+) -> None:
+    from agents_system.proactive import (
+        InMemoryProactiveQueue,
+        ProactiveSender,
+        StaticRecipientDirectory,
+    )
+    from agents_system.schedules import ScheduledTurnRunner
+    from agents_system.subject import TurnSubject
+
+    provider, table = env
+    store = PostgresScheduleStore(provider, table=table)
+    users = 40
+    subjects = [
+        TurnSubject.for_participant(i, channel="whatsapp", address=f"+{i}")
+        for i in range(users)
+    ]
+    for subject in subjects:
+        await PostgresScheduleBackend(provider.scope(RT, subject.key), table=table).add(
+            _schedule(subject.key, f"s-{subject.key}"), max_per_user=3
+        )
+    grants = {RT: {"write:schedule", "send:proactive"}}
+    queue = InMemoryProactiveQueue()
+    directory = StaticRecipientDirectory({(RT, s.key): s for s in subjects})
+    runtime = _Echo()
+    runner = ScheduledTurnRunner(
+        store,
+        {RT: runtime},  # type: ignore[dict-item]
+        ProactiveSender(queue, directory, deploy_grants=grants),
+        directory,
+        deploy_grants=grants,
+    )
+
+    async def worker() -> list[str]:
+        statuses: list[str] = []
+        while True:
+            outcome = await runner.run_once(now=NOW)
+            if outcome.status == "idle":
+                return statuses
+            statuses.append(outcome.status)
+
+    done = await asyncio.gather(*[worker() for _ in range(6)])
+
+    assert sum(len(d) for d in done) == users
+    assert runtime.calls == users
+    delivered: list[str] = []
+    while (
+        msg := await queue.claim(
+            "w", now=datetime.now(UTC) + timedelta(days=1), lease_s=60
+        )
+    ) is not None:
+        delivered.append(msg.subject_key)
+        await queue.finish(msg.id, "w", "sent", None)
+    assert sorted(delivered) == sorted(s.key for s in subjects)
