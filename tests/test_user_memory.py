@@ -8,6 +8,7 @@ untrusted-data block. The Postgres backend is proven in
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -30,6 +31,7 @@ from agents_system.user_memory import (
     USER_FACTS_SOURCE,
     FactRejected,
     InMemoryUserFactStore,
+    UserFact,
     UserFacts,
     UserMemoryLimits,
     backend_for,
@@ -273,10 +275,16 @@ def _definition(memory_policy: dict[str, Any]) -> AgentDefinition:
 
 
 def _equipped(
-    policy: dict[str, Any], specs: Sequence[ToolSpec] | None = None
+    policy: dict[str, Any],
+    specs: Sequence[ToolSpec] | None = None,
+    grants: Sequence[str] | None = None,
 ) -> EquippedRuntime:
     tools = tuple(specs if specs is not None else build_user_memory_tool_specs())
-    names = {n for t in tools for n in t.required_permissions}
+    names = (
+        set(grants)
+        if grants is not None
+        else {n for t in tools for n in t.required_permissions}
+    )
     return EquippedRuntime(
         definition=_definition(policy),
         system_prompt="You are a helpful assistant.",
@@ -416,10 +424,11 @@ def _runtime(
     model: _RecordingModel,
     provider: InMemoryScopeProvider,
     policy: dict[str, Any],
+    grants: Sequence[str] = _PERMS,
     **kwargs: Any,
 ) -> AgentRuntime:
     return AgentRuntime(
-        _equipped(policy, ()),
+        _equipped(policy, (), grants),
         model,
         runtime_id="rt",
         scope_provider=provider,
@@ -438,11 +447,15 @@ async def _seed(provider: InMemoryScopeProvider, key: str, *contents: str) -> No
         await facts.remember(content)
 
 
-async def _turn(agent: AgentRuntime, subject: TurnSubject | None) -> Any:
+async def _turn(
+    agent: AgentRuntime,
+    subject: TurnSubject | None,
+    permissions: tuple[str, ...] = _PERMS,
+) -> Any:
     return await agent.run_turn_with_usage(
         [HumanMessage(content="hi")],
         session_id="s",
-        permissions=(),
+        permissions=permissions,
         subject=subject,
         actor=TurnActor(kind="library", id="t"),
     )
@@ -622,3 +635,104 @@ def test_the_store_declares_its_table_and_registers_by_default() -> None:
 
     assert InMemoryUserFactStore.tables == frozenset({"subject_facts"})
     assert "subject_facts" in DEFAULT_REGISTRY.tables
+
+
+# --- the read grant gates the injection (review fix) -------------------------------
+
+
+async def test_nothing_is_injected_without_the_read_grant() -> None:
+    provider = InMemoryScopeProvider()
+    await _seed(provider, "participant:a", "prefers metric units")
+    model = _model()
+    agent = _runtime(model, provider, _OPT_IN, grants=("write:user_memory",))
+
+    await _turn(agent, _subject())
+
+    assert "prefers metric units" not in str(model.captured_inputs)
+    [fact] = await _facts(provider).list()
+    assert fact.uses == 0  # no grant, no read, and no touch write either
+
+
+async def test_nothing_is_injected_when_the_turn_narrows_the_grant_away() -> None:
+    provider = InMemoryScopeProvider()
+    await _seed(provider, "participant:a", "prefers metric units")
+    model = _model()
+
+    await _turn(
+        _runtime(model, provider, _OPT_IN),
+        _subject(),
+        permissions=("write:user_memory",),
+    )
+
+    assert "prefers metric units" not in str(model.captured_inputs)
+    [fact] = await _facts(provider).list()
+    assert fact.uses == 0
+
+
+# --- concurrent writers (review fix) ----------------------------------------------
+
+
+async def test_concurrent_remembers_keep_the_configured_maximum() -> None:
+    provider = InMemoryScopeProvider()
+    limits = UserMemoryLimits(max_facts=1)
+
+    class _Slow(backend_for(provider.scope("rt", "u")).__class__):  # type: ignore[misc]
+        async def all(self) -> list[Any]:
+            rows = await super().all()
+            await asyncio.sleep(0.01)
+            return rows
+
+        async def put(self, fact: Any) -> None:
+            await super().put(fact)
+            await asyncio.sleep(0.01)
+
+    def facts() -> UserFacts:
+        return UserFacts(_Slow(provider.scope("rt", "u")), limits)
+
+    await asyncio.gather(facts().remember("first"), facts().remember("second"))
+
+    assert len(provider.scope("rt", "u").rows("subject_facts")) == 1
+
+
+# --- retention (review fix) ---------------------------------------------------------
+
+
+async def test_export_leaves_out_an_expired_fact() -> None:
+    provider = InMemoryScopeProvider()
+    await _facts(provider).remember("current detail")
+    provider.scope("rt", "participant:a").put(
+        "subject_facts",
+        "old",
+        UserFact(
+            id="old",
+            content="expired detail",
+            created_at=NOW - timedelta(days=2),
+            last_used_at=NOW - timedelta(days=2),
+            uses=0,
+            expires_at=NOW - timedelta(days=1),
+        ),
+    )
+
+    exported = await InMemoryUserFactStore(provider).export(
+        SubjectRef("rt", "participant:a")
+    )
+
+    assert [row["content"] for row in exported] == ["current detail"]
+
+
+async def test_the_purge_removes_expired_facts_of_inactive_subjects() -> None:
+    provider = InMemoryScopeProvider()
+    for subject in ("participant:a", "participant:b"):
+        await _facts(provider, subject, UserMemoryLimits(ttl_s=60)).remember(
+            f"{subject} fact", now=datetime.now(UTC) - timedelta(days=1)
+        )
+    await _facts(provider, "participant:c", UserMemoryLimits(ttl_s=None)).remember(
+        "kept forever"
+    )
+    store = InMemoryUserFactStore(provider)
+
+    assert await store.purge(retention_s=60) == 2
+
+    for subject in ("participant:a", "participant:b"):
+        assert provider.scope("rt", subject).rows("subject_facts") == {}
+    assert len(provider.scope("rt", "participant:c").rows("subject_facts")) == 1

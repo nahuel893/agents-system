@@ -72,6 +72,7 @@ from agents_system.observability.metrics import (
     record_tool_call,
     record_turn,
 )
+from agents_system.permissions import UnknownPermissionNameError, covers
 from agents_system.permissions.permission_registry import permission_registry
 from agents_system.scope import ScopeProvider
 from agents_system.subject import (
@@ -1412,12 +1413,33 @@ class AgentRuntime:
                 untrusted_data=untrusted_data,
             )
 
-    async def _user_memory_blocks(self) -> list[UntrustedData]:
+    def _may_read_user_memory(self, permissions: Sequence[str] | None) -> bool:
+        """Whether the deploy grant ceiling, narrowed by the turn, covers the read.
+
+        The same coverage rule the interceptor applies to ``list_user_facts``:
+        injecting the facts is a read of them, so a deployment that did not
+        grant ``read:user_memory`` (or revoked it) gets no injection either.
+        """
+        granted = self._equipped.deploy_grant_ceiling
+        if permissions is not None:
+            current: set[type] = set()
+            for name in permissions:
+                try:
+                    current.add(permission_registry.resolve(name))
+                except UnknownPermissionNameError:
+                    continue
+            granted = granted & current
+        needed = permission_registry.resolve("read:user_memory")
+        return any(covers(cls, needed) for cls in granted)
+
+    async def _user_memory_blocks(
+        self, permissions: Sequence[str] | None = None
+    ) -> list[UntrustedData]:
         """The turn's user-facts block, or none (#250).
 
-        Only for a turn with a subject, on a definition that opted in. Never
-        fails the turn: a store that cannot be read means a turn without the
-        facts, logged.
+        Only for a turn with a subject, on a definition that opted in, whose
+        grants cover ``read:user_memory``. Never fails the turn: a store that
+        cannot be read means a turn without the facts, logged.
         """
         subject = current_subject()
         if (
@@ -1425,6 +1447,7 @@ class AgentRuntime:
             or self._scope_provider is None
             or subject is None
             or not allows_user_memory(self._equipped.definition.memory_policy)
+            or not self._may_read_user_memory(permissions)
         ):
             return []
         try:
@@ -1469,7 +1492,10 @@ class AgentRuntime:
         effective_limits = _effective_limits(self._equipped.definition.execution_limits)
         max_tool_calls = effective_limits["max_tool_calls"]
         turn_start = time.monotonic()
-        untrusted_data = [*untrusted_data, *await self._user_memory_blocks()]
+        untrusted_data = [
+            *untrusted_data,
+            *await self._user_memory_blocks(effective_permissions),
+        ]
         if (
             self._budget is not None
             and self._budget.has_usd_cap

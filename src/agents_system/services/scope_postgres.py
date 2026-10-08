@@ -31,6 +31,8 @@ except ImportError as exc:
 
 RUNTIME_SETTING = "app.runtime_id"
 SUBJECT_SETTING = "app.subject_key"
+MAINTENANCE_SETTING = "app.maintenance"
+PURGE_EXPIRED = "purge_expired"
 POLICY_NAME = "subject_scope"
 RESTRICTIVE_POLICY_NAME = "subject_scope_restrictive"
 
@@ -62,6 +64,39 @@ def subject_policy_statements(table: str) -> list[str]:
             f"CREATE POLICY {RESTRICTIVE_POLICY_NAME} ON {table} AS RESTRICTIVE "
             f"USING ({match}) WITH CHECK ({match})"
         ),
+    ]
+
+
+def expired_purge_policy_statements(table: str) -> list[str]:
+    """DDL that lets a retention purge reach the expired rows of every subject.
+
+    ``table`` already has the subject policy and an ``expires_at`` column. A
+    purge has no single subject's scope to run in, so it opens a transaction
+    with ``app.maintenance = 'purge_expired'`` (`PostgresScopeProvider.maintenance`).
+    Under that setting only, rows past ``expires_at`` become visible and
+    deletable: never writable, never a live row, and a transaction without the
+    setting is as fenced as before.
+    """
+    if not _IDENTIFIER.match(table):
+        raise ValueError(f"not a plain table identifier: {table!r}")
+    match = (
+        f"runtime_id = nullif(current_setting('{RUNTIME_SETTING}', true), '') "
+        f"AND subject_key = nullif(current_setting('{SUBJECT_SETTING}', true), '')"
+    )
+    purge = (
+        f"current_setting('{MAINTENANCE_SETTING}', true) = '{PURGE_EXPIRED}' "
+        "AND expires_at IS NOT NULL AND expires_at <= now()"
+    )
+    return [
+        f"DROP POLICY IF EXISTS {RESTRICTIVE_POLICY_NAME} ON {table}",
+        (
+            f"CREATE POLICY {RESTRICTIVE_POLICY_NAME} ON {table} AS RESTRICTIVE "
+            f"USING ({match} OR ({purge})) WITH CHECK ({match})"
+        ),
+        f"DROP POLICY IF EXISTS {POLICY_NAME}_purge_select ON {table}",
+        f"DROP POLICY IF EXISTS {POLICY_NAME}_purge_delete ON {table}",
+        f"CREATE POLICY {POLICY_NAME}_purge_select ON {table} FOR SELECT USING ({purge})",
+        f"CREATE POLICY {POLICY_NAME}_purge_delete ON {table} FOR DELETE USING ({purge})",
     ]
 
 
@@ -109,6 +144,21 @@ class PostgresScopeProvider:
 
     def scope(self, runtime_id: str, subject_key: str) -> PostgresScope:
         return PostgresScope(self._engine, runtime_id, subject_key)
+
+    @asynccontextmanager
+    async def maintenance(self, purpose: str) -> AsyncIterator[AsyncConnection]:
+        """One transaction under a maintenance purpose, with no subject scope.
+
+        Only a table that carries a policy for *purpose* (see
+        `expired_purge_policy_statements`) opens anything to it, and then only
+        the rows that policy names.
+        """
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                text("SELECT set_config(:k, :v, true)"),
+                {"k": MAINTENANCE_SETTING, "v": purpose},
+            )
+            yield conn
 
     async def verify(self) -> None:
         """Refuse a superuser or BYPASSRLS role: it would see every row."""

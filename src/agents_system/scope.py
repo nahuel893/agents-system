@@ -13,6 +13,7 @@ This module has no dependency on the rest of the package.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
 
@@ -43,10 +44,22 @@ class InMemoryScope:
         runtime_id: str,
         subject_key: str,
         store: dict[tuple[str, str], dict[str, dict[str, Any]]],
+        locks: dict[tuple[str, str], asyncio.Lock] | None = None,
     ) -> None:
         self._runtime_id = runtime_id
         self._subject_key = subject_key
         self._store = store
+        self._locks = locks if locks is not None else {}
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        """One lock per (runtime id, subject key), shared by every handle of it.
+
+        A read-modify-write over this scope (remember then evict) holds it so
+        a concurrent writer of the same subject cannot interleave.
+        """
+        key = (self._runtime_id, self._subject_key)
+        return self._locks.setdefault(key, asyncio.Lock())
 
     @property
     def runtime_id(self) -> str:
@@ -78,9 +91,24 @@ class InMemoryScopeProvider:
 
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     def scope(self, runtime_id: str, subject_key: str) -> InMemoryScope:
-        return InMemoryScope(runtime_id, subject_key, self._store)
+        return InMemoryScope(runtime_id, subject_key, self._store, self._locks)
+
+    def sweep(self, table: str, expired: Callable[[Any], bool]) -> int:
+        """Delete, across every subject, the rows of ``table`` that ``expired``.
+
+        The maintenance path of the reference backend, for a retention purge
+        that has no single subject's scope to run in.
+        """
+        removed = 0
+        for tables in self._store.values():
+            rows = tables.get(table, {})
+            for key in [k for k, v in rows.items() if expired(v)]:
+                del rows[key]
+                removed += 1
+        return removed
 
 
 async def assert_subject_isolation(

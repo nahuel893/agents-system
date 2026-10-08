@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -119,12 +120,26 @@ class UserFactBackend(Protocol):
 
     async def touch(self, ids: Sequence[str], now: datetime) -> None: ...
 
+    def serialized(self) -> AbstractAsyncContextManager[None]:
+        """Hold this subject exclusively: no other writer interleaves inside.
+
+        A read-modify-write over the subject's facts (remember, then evict to
+        the maximum) runs inside it, so concurrent writers cannot both see the
+        old state and erase each other's facts.
+        """
+        ...
+
 
 class InMemoryFactBackend:
     """Reference backend over `InMemoryScope`: library mode, no Postgres."""
 
     def __init__(self, scope: InMemoryScope) -> None:
         self._scope = scope
+
+    @asynccontextmanager
+    async def serialized(self) -> AsyncIterator[None]:
+        async with self._scope.lock:
+            yield
 
     async def all(self) -> list[UserFact]:
         return list(self._scope.rows(USER_FACTS_TABLE).values())
@@ -197,7 +212,10 @@ class UserFacts:
                 f"the fact is {size} bytes; the limit is "
                 f"{self._limits.max_fact_bytes} bytes. Store a shorter fact"
             )
-        now = now or datetime.now(UTC)
+        async with self._backend.serialized():
+            return await self._remember(text, now or datetime.now(UTC))
+
+    async def _remember(self, text: str, now: datetime) -> UserFact:
         key = fact_id(text)
         existing = next((f for f in await self.list(now=now) if f.id == key), None)
         fact = UserFact(
@@ -280,7 +298,22 @@ class InMemoryUserFactStore:
 
     async def export(self, subject: SubjectRef) -> list[dict[str, Any]]:
         scope = self._provider.scope(subject.runtime_id, subject.subject_key)
-        return [export_row(f) for f in await InMemoryFactBackend(scope).all()]
+        now = datetime.now(UTC)
+        return [
+            export_row(f)
+            for f in await InMemoryFactBackend(scope).all()
+            if not f.expired(now)
+        ]
+
+    async def purge(self, *, retention_s: int) -> int:
+        """Delete every expired fact of every subject (``retention_s`` is unused).
+
+        A fact's lifetime is its own ``expires_at``, set from the configured
+        retention when it was written; the purger calls this so the facts of a
+        subject who never returns do not stay stored.
+        """
+        now = datetime.now(UTC)
+        return self._provider.sweep(USER_FACTS_TABLE, lambda f: f.expired(now))
 
     async def delete(self, subject: SubjectRef) -> int:
         scope = self._provider.scope(subject.runtime_id, subject.subject_key)

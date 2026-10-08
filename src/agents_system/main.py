@@ -89,7 +89,6 @@ from agents_system.usage import (
     parse_budgets,
 )
 from agents_system.user_memory import (
-    USER_FACTS_STORE,
     InMemoryUserFactStore,
     limits_from_settings,
 )
@@ -556,13 +555,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             # One purger enforces every per-user store's retention. A name in
             # SUBJECT_DATA_RETENTION that no store registered fails the boot.
-            # The facts' retention is enforced per subject when its facts are
-            # read or written (row-level security leaves a purge no scope to
-            # run in), so it is not handed to the purger.
+            # The facts' retention also reaches subjects who never return: the
+            # facts store purges every subject's expired facts.
             purged_retention = {
                 name: seconds
                 for name, seconds in settings.subject_data_retention.items()
-                if name != USER_FACTS_STORE
+                if name != "user_facts"
+                or "user_facts" in app.state.subject_data_registry.stores
             }
             if purged_retention:
                 subject_purger = SubjectDataPurger(

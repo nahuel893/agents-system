@@ -6,6 +6,7 @@ schema and a non-superuser role) and skips without it.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 import uuid
@@ -29,17 +30,15 @@ from agents_system.user_memory import UserFacts, UserMemoryLimits, backend_for
 
 pytestmark = pytest.mark.integration
 
-_MIGRATION = (
-    Path(__file__).resolve().parents[1]
-    / "alembic"
-    / "versions"
-    / "010_subject_facts.py"
-)
+_VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+_MIGRATIONS = ("010_subject_facts.py", "011_subject_facts_purge.py")
 NOW = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 
 
-def _migration() -> object:
-    spec = importlib.util.spec_from_file_location("migration_010", _MIGRATION)
+def _migration(filename: str) -> object:
+    spec = importlib.util.spec_from_file_location(
+        f"migration_{filename[:3]}", _VERSIONS / filename
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -67,10 +66,13 @@ async def provider() -> AsyncIterator[PostgresScopeProvider]:
         await conn.execute(text(f"CREATE SCHEMA {schema}"))
         await conn.execute(text(f"GRANT USAGE ON SCHEMA {schema} TO {role}"))
         await conn.execute(text(f"SET search_path TO {schema}"))
-        migration = _migration()
-        await conn.run_sync(
-            lambda sync: _run_upgrade(MigrationContext.configure(sync), migration)
-        )
+        for filename in _MIGRATIONS:
+            migration = _migration(filename)
+            await conn.run_sync(
+                lambda sync, m=migration: _run_upgrade(
+                    MigrationContext.configure(sync), m
+                )
+            )
         await conn.execute(
             text(
                 f"GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.subject_facts "
@@ -184,3 +186,79 @@ async def test_the_unbound_placeholder_holds_nothing() -> None:
     assert store.unbound
     assert await store.export(SubjectRef("rt", "participant:a")) == []
     assert await store.delete(SubjectRef("rt", "participant:a")) == 0
+
+
+async def test_concurrent_remembers_keep_the_configured_maximum(
+    provider: PostgresScopeProvider,
+) -> None:
+    limits = UserMemoryLimits(max_facts=1)
+    await asyncio.gather(
+        *(_facts(provider, limits=limits).remember(f"fact {i}") for i in range(6))
+    )
+
+    assert len(await _facts(provider, limits=limits).list()) == 1
+
+
+async def test_export_leaves_out_an_expired_fact(
+    provider: PostgresScopeProvider,
+) -> None:
+    facts = _facts(provider, limits=UserMemoryLimits(ttl_s=1))
+    await facts.remember("expired", now=datetime.now(UTC) - timedelta(days=1))
+    await _facts(provider).remember("current")
+
+    rows = await PostgresUserFactStore(provider).export(
+        SubjectRef("rt", "participant:a")
+    )
+
+    assert [r["content"] for r in rows] == ["current"]
+
+
+async def _count(provider: PostgresScopeProvider, subject: str) -> int:
+    async with provider.scope("rt", subject).transaction() as conn:
+        return int(
+            (
+                await conn.execute(text("SELECT count(*) FROM subject_facts"))
+            ).scalar_one()
+        )
+
+
+async def test_the_purge_removes_expired_facts_of_inactive_subjects(
+    provider: PostgresScopeProvider,
+) -> None:
+    old = datetime.now(UTC) - timedelta(days=1)
+    short = UserMemoryLimits(ttl_s=60)
+    await _facts(provider, "participant:a", short).remember("a old", now=old)
+    await _facts(provider, "participant:b", short).remember("b new")
+    await _facts(provider, "participant:b", short).remember("b old", now=old)
+    await _facts(provider, "participant:c").remember("c forever")
+
+    assert await PostgresUserFactStore(provider).purge(retention_s=60) == 2
+
+    assert await _count(provider, "participant:a") == 0
+    assert await _count(provider, "participant:b") == 1
+    assert await _count(provider, "participant:c") == 1
+
+
+async def test_without_the_maintenance_setting_expired_rows_stay_fenced(
+    provider: PostgresScopeProvider,
+) -> None:
+    short = UserMemoryLimits(ttl_s=60)
+    await _facts(provider, "participant:b", short).remember(
+        "b old", now=datetime.now(UTC) - timedelta(days=1)
+    )
+
+    # Another subject's scope, and a scope-less transaction, still see and
+    # delete nothing: the purge path is open only under its own setting.
+    async with provider.scope("rt", "participant:a").transaction() as conn:
+        assert (
+            await conn.execute(
+                text("DELETE FROM subject_facts WHERE expires_at < now()")
+            )
+        ).rowcount == 0
+    async with provider._engine.begin() as conn:
+        assert (
+            await conn.execute(
+                text("DELETE FROM subject_facts WHERE expires_at < now()")
+            )
+        ).rowcount == 0
+    assert await _count(provider, "participant:b") == 1

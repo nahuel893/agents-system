@@ -11,21 +11,29 @@ builds its own `PostgresUserFactStore(provider)` and swaps it in for the
 placeholder in its own copy of the registry (`SubjectDataRegistry.bind`).
 Unbound, the store holds nothing and exports and deletes nothing.
 
-It declares no ``purge``: a purge across subjects has no scope to run in
-under row-level security. Retention is enforced per subject instead: an
-expired fact is never listed or injected, and is deleted the next time its
-subject's facts are read or written; the operator API deletes a subject
-outright.
+Retention has two parts. An expired fact is never listed, injected or
+exported, and its subject's next read or write deletes it. ``purge`` deletes
+the expired facts of every subject, including those who never return, through
+the maintenance path of migration 011 (a transaction that sets
+``app.maintenance``, which opens only rows past ``expires_at``); the
+``SubjectDataPurger`` runs it on its interval. Each remember-and-evict runs
+in one transaction holding a per-subject advisory lock, so concurrent writers
+of one subject cannot erase each other's facts.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from agents_system.extras import raise_missing_extra
-from agents_system.services.scope_postgres import PostgresScope, PostgresScopeProvider
+from agents_system.services.scope_postgres import (
+    PURGE_EXPIRED,
+    PostgresScope,
+    PostgresScopeProvider,
+)
 from agents_system.subject_data import DEFAULT_REGISTRY, SubjectRef
 from agents_system.user_memory import (
     USER_FACTS_STORE,
@@ -58,17 +66,40 @@ class PostgresFactBackend:
 
     def __init__(self, scope: PostgresScope) -> None:
         self._scope = scope
+        self._held: Any = None
+
+    @asynccontextmanager
+    async def _transaction(self) -> AsyncIterator[Any]:
+        # Inside `serialized` every statement joins the one held transaction.
+        if self._held is not None:
+            yield self._held
+            return
+        async with self._scope.transaction() as conn:
+            yield conn
+
+    @asynccontextmanager
+    async def serialized(self) -> AsyncIterator[None]:
+        async with self._scope.transaction() as conn:
+            await conn.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+                {"k": f"{self._scope.runtime_id}\x1f{self._scope.subject_key}"},
+            )
+            self._held = conn
+            try:
+                yield
+            finally:
+                self._held = None
 
     async def all(self) -> list[UserFact]:
         # No subject predicate on purpose: the policy is what fences the read.
-        async with self._scope.transaction() as conn:
+        async with self._transaction() as conn:
             rows = await conn.execute(
                 text(f"SELECT {_COLUMNS} FROM {USER_FACTS_TABLE}")
             )
             return [_fact(r) for r in rows]
 
     async def put(self, fact: UserFact) -> None:
-        async with self._scope.transaction() as conn:
+        async with self._transaction() as conn:
             await conn.execute(
                 text(
                     f"INSERT INTO {USER_FACTS_TABLE} (runtime_id, subject_key, "
@@ -94,7 +125,7 @@ class PostgresFactBackend:
     async def remove(self, ids: Sequence[str]) -> int:
         if not ids:
             return 0
-        async with self._scope.transaction() as conn:
+        async with self._transaction() as conn:
             result = await conn.execute(
                 text(f"DELETE FROM {USER_FACTS_TABLE} WHERE id = ANY(:ids)"),
                 {"ids": list(ids)},
@@ -104,7 +135,7 @@ class PostgresFactBackend:
     async def touch(self, ids: Sequence[str], now: datetime) -> None:
         if not ids:
             return
-        async with self._scope.transaction() as conn:
+        async with self._transaction() as conn:
             await conn.execute(
                 text(
                     f"UPDATE {USER_FACTS_TABLE} SET uses = uses + 1, "
@@ -135,7 +166,26 @@ class PostgresUserFactStore:
     async def export(self, subject: SubjectRef) -> list[dict[str, Any]]:
         if self._provider is None:
             return []
-        return [export_row(f) for f in await self._backend(subject).all()]
+        now = datetime.now(UTC)
+        return [
+            export_row(f)
+            for f in await self._backend(subject).all()
+            if not f.expired(now)
+        ]
+
+    async def purge(self, *, retention_s: int) -> int:
+        """Delete every expired fact of every subject (``retention_s`` is unused).
+
+        A fact's lifetime is its own ``expires_at``, set from the configured
+        retention when it was written.
+        """
+        if self._provider is None:
+            return 0
+        async with self._provider.maintenance(PURGE_EXPIRED) as conn:
+            result = await conn.execute(
+                text(f"DELETE FROM {USER_FACTS_TABLE} WHERE expires_at <= now()")
+            )
+            return int(result.rowcount)
 
     async def delete(self, subject: SubjectRef) -> int:
         if self._provider is None:
