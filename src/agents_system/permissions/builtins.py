@@ -147,6 +147,7 @@ _RESOURCE_REGISTRATIONS: tuple[tuple[type[Permission], str], ...] = (
     (Write, "write:session"),
     (Write, "write:summary_output"),
     (Write, "write:user_memory"),
+    (Write, "write:schedule"),
     (Exec, "exec:command"),
     (Spawn, "spawn:sales-agent"),
     (Spawn, "spawn:data-agent"),

@@ -305,6 +305,19 @@ class Settings(ProviderSettings):
     user_memory_max_facts: int = Field(default=50, gt=0)
     user_memory_max_fact_bytes: int = Field(default=500, gt=0)
     user_memory_max_injected_chars: int = Field(default=1_500, gt=0)
+    # Schedules (#175): the platform's bounds on one end user's recurring
+    # requests. The quiet hours need both bounds (HH:MM) and apply in
+    # SCHEDULE_TIMEZONE, which is also the zone a schedule uses when the user
+    # names none. A run claimed later than SCHEDULE_MISSED_GRACE_S after its
+    # window is skipped, not run late.
+    schedule_max_per_user: int = Field(default=5, gt=0)
+    schedule_min_interval_s: int = Field(default=3_600, gt=0)
+    schedule_quiet_start: str | None = None
+    schedule_quiet_end: str | None = None
+    schedule_timezone: str = "UTC"
+    schedule_max_prompt_chars: int = Field(default=500, gt=0)
+    schedule_missed_grace_s: int = Field(default=1_800, ge=0)
+
     adapter_provider: Literal["ollama", "groq", "anthropic", "openai_compatible"] = (
         "ollama"
     )
@@ -403,6 +416,14 @@ class Settings(ProviderSettings):
     # deliberately run the open/forgeable-signature modes. Do NOT reuse
     # ``debug``/``environment`` for this — the insecure switch must be explicit.
     allow_insecure: bool = False
+
+    @model_validator(mode="after")
+    def _schedule_quiet_hours_are_a_pair(self) -> "Settings":
+        if (self.schedule_quiet_start is None) != (self.schedule_quiet_end is None):
+            raise ValueError(
+                "SCHEDULE_QUIET_START and SCHEDULE_QUIET_END must be set together"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_security_fail_closed(self) -> "Settings":

@@ -1,0 +1,23 @@
+# Capability: user-requested schedules (ADR-011, #175).
+#
+# The customer asks for a recurring report in plain words. The model turns it
+# into a schedule for the customer and for nobody else: the tool has no
+# recipient to fill in.
+agent: schedules-agent
+category: happy_path
+description: >
+  A customer asks for the weekly sales summary every Monday at 08:00 UTC. The
+  model creates the schedule with the right recurrence.
+end_user: eval-customer
+turns:
+  - "Please send me the weekly sales summary every Monday at 08:00. My time zone is UTC."
+granted_permissions:
+  - write:schedule
+  - send:escalation
+assertions:
+  tools_succeeded: [create_schedule]
+  tool_arguments:
+    create_schedule:
+      frequency: weekly
+      weekday: monday
+      time: "08:00"

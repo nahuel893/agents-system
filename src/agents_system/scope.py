@@ -96,6 +96,16 @@ class InMemoryScopeProvider:
     def scope(self, runtime_id: str, subject_key: str) -> InMemoryScope:
         return InMemoryScope(runtime_id, subject_key, self._store, self._locks)
 
+    def all_rows(self, table: str) -> list[tuple[str, str, str, Any]]:
+        """Every row of ``table`` across subjects, as (runtime id, subject key,
+        row key, row). The maintenance path of the reference backend, for a
+        platform worker that serves whichever subject is due (#175)."""
+        return [
+            (runtime_id, subject_key, key, value)
+            for (runtime_id, subject_key), tables in self._store.items()
+            for key, value in tables.get(table, {}).items()
+        ]
+
     def sweep(self, table: str, expired: Callable[[Any], bool]) -> int:
         """Delete, across every subject, the rows of ``table`` that ``expired``.
 

@@ -2,7 +2,7 @@
 
 Un adaptador de canal normalmente solo responde a un turno entrante verificado. La entrega proactiva es la otra dirección: un mensaje a un usuario final autorizado sin turno entrante, como un reporte programado, un recordatorio, un mensaje de bienvenida o un aviso cuando termina un trabajo largo. Corre dentro de la identidad, los permisos, la auditoría y los límites de la plataforma, en lugar de un script ad hoc contra la API del proveedor. Diseño: [ADR-011](../architecture_es/adr-011-end-user-scope.md) parte 5.
 
-**No es una herramienta para el modelo.** Los primeros llamadores son los turnos programados (#175) y los comandos de operador; el modelo nunca elige un destinatario ni una dirección.
+**No es una herramienta para el modelo.** Los primeros llamadores son los [turnos programados](schedules.md) y los comandos de operador; el modelo nunca elige un destinatario ni una dirección.
 
 ## Las piezas
 

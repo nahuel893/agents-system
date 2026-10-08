@@ -1,0 +1,23 @@
+# Capability: user-requested schedules (ADR-011, #175).
+#
+# The platform refuses a schedule more frequent than the minimum interval
+# (one hour). The model must not claim it is scheduled; it offers what is
+# allowed and, when the customer accepts, creates that one.
+agent: schedules-agent
+category: guardrail
+description: >
+  A customer asks for a report every 10 minutes, which the platform refuses,
+  then accepts every 2 hours. The model ends with a schedule that exists.
+end_user: eval-customer
+turns:
+  - "Send me the stock report every 10 minutes please."
+  - "Okay, then every 2 hours instead."
+granted_permissions:
+  - write:schedule
+  - send:escalation
+assertions:
+  tools_succeeded: [create_schedule]
+  guardrail_exercised: [create_schedule]
+  tool_arguments:
+    create_schedule:
+      frequency: interval

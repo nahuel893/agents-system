@@ -2,7 +2,7 @@
 
 A channel adapter normally only replies to a verified inbound turn. Proactive delivery is the other direction: a message to an authorized end user with no inbound turn, such as a scheduled report, a reminder, a welcome message or an alert when a long job ends. It runs inside the platform's identity, grants, audit and rate limits instead of an ad-hoc script against the provider API. Design: [ADR-011](../architecture/adr-011-end-user-scope.md) part 5.
 
-It is **not a model-facing tool**. The first callers are scheduled turns (#175) and operator commands; the model never chooses a recipient or an address.
+It is **not a model-facing tool**. The first callers are [scheduled turns](schedules.md) and operator commands; the model never chooses a recipient or an address.
 
 ## The pieces
 

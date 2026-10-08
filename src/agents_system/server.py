@@ -71,6 +71,18 @@ def default_registry_factory(
         limits_from_settings(settings) if settings is not None else UserMemoryLimits()
     ):
         registry.register(spec)
+    # #175: inert unless a role names them and the deployment grants
+    # write:schedule (T2, needs a DEPLOY_GRANTS entry).
+    from agents_system.schedules import (
+        ScheduleLimits,
+        build_schedule_tool_specs,
+    )
+    from agents_system.schedules import limits_from_settings as schedule_limits
+
+    for spec in build_schedule_tool_specs(
+        schedule_limits(settings) if settings is not None else ScheduleLimits()
+    ):
+        registry.register(spec)
     registry.register(build_report_tool_spec(bi_engine, CATALOG))
 
     if settings is not None:

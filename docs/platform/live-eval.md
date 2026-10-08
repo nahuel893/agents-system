@@ -449,6 +449,7 @@ capability needs.
 | `escalation` | `escalation-agent` | `escalation_refund_request` (guardrail), `escalation_simple_question` (happy path) | Escalates when a policy condition holds, and not on a simple question |
 | `memory` | `memory-agent` | `memory_client_id` (happy path) | Uses facts from earlier turns |
 | `user_memory` | `user-memory-agent` | `user_memory_recall` (happy path), `user_memory_boundary` (guardrail) | Saves a stable fact about the person and uses it in a later conversation; a stored fact is data, never an instruction |
+| `schedules` | `schedules-agent` | `schedule_create`, `schedule_cancel` (happy path), `schedule_limit` (guardrail) | Turns a recurring request into a schedule for the person who asked, reports a refused schedule honestly, and stops one on request |
 | `untrusted_input` | `untrusted-input-agent` | `untrusted_input_boundary`, `untrusted_input_block` (guardrails) | Ignores instructions planted in a tool result or in an untrusted-data block |
 
 The scenarios and fixture agents ship inside the package, under
@@ -491,7 +492,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`CAPABILITIES` lists the eight capabilities, `missing_requirements(capability)`
+`CAPABILITIES` lists the nine capabilities, `missing_requirements(capability)`
 names the host commands one lacks, and `build_capability_registry_factory`
 builds a capability's backends for `run_scenario(registry_factory=...)`.
 
@@ -610,7 +611,7 @@ EVAL_RUNS=3 scripts/run-capability-matrix.py \
   --capability grounding --capability memory
 ```
 
-`--capability` repeats (all eight by default), `--runs` overrides `EVAL_RUNS`
+`--capability` repeats (all nine by default), `--runs` overrides `EVAL_RUNS`
 (default 3) and `--out-dir` moves the output. It prints the Markdown table and
 writes `capability-matrix-<timestamp>.json` and `.md` under `evals/results/`
 (gitignored); a clash gets a `-N` suffix, so an export never overwrites an earlier one. It exits 1 when a cell misses its gate. It needs the same extras
