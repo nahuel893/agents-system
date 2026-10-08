@@ -141,6 +141,7 @@ _RESOURCE_REGISTRATIONS: tuple[tuple[type[Permission], str], ...] = (
     (Read, "read:user_memory"),
     (Send, "send:message"),
     (Send, "send:escalation"),
+    (Send, "send:proactive"),
     (Write, "write:orders"),
     (Write, "write:order_items"),
     (Write, "write:session"),

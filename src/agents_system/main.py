@@ -285,6 +285,26 @@ async def _start_scope_provider(
     return provider
 
 
+def _bind_proactive_store(registry: SubjectDataRegistry, provider: Any) -> None:
+    """Serve proactive messages through the operator export, delete and purge.
+
+    The queue table holds message bodies per subject, so the app's registry
+    must carry the store bound to the app's database, not only whichever
+    module happened to be imported. A no-op without the ``postgres`` extra or
+    a Postgres scope provider (nothing could have been queued).
+    """
+    try:
+        from agents_system.services.proactive_postgres import PROACTIVE_STORE
+        from agents_system.services.scope_postgres import PostgresScopeProvider
+    except ImportError:
+        return
+    if not isinstance(provider, PostgresScopeProvider):
+        return
+    if PROACTIVE_STORE.name not in registry.stores:
+        registry.register(PROACTIVE_STORE)
+    PROACTIVE_STORE.bind(provider)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage startup / shutdown resources.
@@ -325,6 +345,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scope_provider = await _start_scope_provider(
             getattr(app.state, "scope_provider_factory", None), app.state.engine
         )
+        _bind_proactive_store(app.state.subject_data_registry, scope_provider)
 
         budgets: dict[str, BudgetCaps] = parse_budgets(
             app.state.budgets

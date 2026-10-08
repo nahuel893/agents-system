@@ -44,3 +44,12 @@ def test_every_migrated_subject_table_has_a_registered_store() -> None:
 
 def test_the_revisions_directory_is_found() -> None:
     assert any(_VERSIONS.glob("*.py"))
+
+
+def test_the_proactive_queue_table_is_registered_and_migrated() -> None:
+    # Migration 010 creates the table through generated DDL, which the
+    # regex scanner above cannot see, so this pins it by name.
+    from agents_system.services.proactive_postgres import TABLE
+
+    assert TABLE in DEFAULT_REGISTRY.tables
+    assert "012" in {p.name[:3] for p in _VERSIONS.glob("*.py")}

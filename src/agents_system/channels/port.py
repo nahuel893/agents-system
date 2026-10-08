@@ -28,6 +28,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from agents_system.extras import raise_missing_extra
+from agents_system.proactive import (  # noqa: F401 - the proactive half of the channel contract
+    ProactiveChannel,
+    ProviderRateLimited,
+    ProviderRejected,
+)
 
 try:
     from starlette.datastructures import Headers

@@ -42,6 +42,7 @@ from agents_system.main import _build_chat_model, lifespan
 from agents_system.observability.metrics import DEFAULT_METRICS, build_metrics
 from agents_system.observability.provider_http import MetricsHTTPTransport
 from agents_system.permissions import UntrustedInputGrantError
+from agents_system.services.scope_postgres import PostgresScopeProvider
 
 #: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
 #: is deprecated. They move to `agent` or the reference agents in
@@ -3596,3 +3597,51 @@ def test_demo_build_app_registers_the_reference_sales_agent() -> None:
     assert agent.name == "sales-agent"
     assert agent._folder is not None
     assert agent._folder.parts[-3:] == ("examples", "agents", "sales-agent")
+
+
+class _RecordingScopeProvider(PostgresScopeProvider):
+    """A `PostgresScopeProvider` that records the subjects it is asked for."""
+
+    def __init__(self, engine: Any) -> None:
+        super().__init__(engine)
+        self.scopes: list[tuple[str, str]] = []
+
+    async def verify(self) -> None:
+        return None
+
+    def scope(self, runtime_id: str, subject_key: str) -> Any:
+        self.scopes.append((runtime_id, subject_key))
+
+        class _Scope:
+            @asynccontextmanager
+            async def transaction(self) -> AsyncIterator[Any]:
+                conn = MagicMock()
+                conn.execute = AsyncMock(return_value=[])
+                yield conn
+
+        return _Scope()
+
+
+@pytest.mark.asyncio
+async def test_the_served_app_registers_and_binds_the_proactive_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#251: operator export and delete must reach queued proactive messages in a
+    normal served deployment, with no test-module import side effect."""
+    from agents_system.services.proactive_postgres import PROACTIVE_STORE
+    from agents_system.subject_data import SubjectDataRegistry, SubjectRef
+
+    monkeypatch.setattr(PROACTIVE_STORE, "_provider", None)
+    registry = SubjectDataRegistry()
+    providers: list[_RecordingScopeProvider] = []
+
+    def factory(engine: Any) -> _RecordingScopeProvider:
+        providers.append(_RecordingScopeProvider(engine))
+        return providers[-1]
+
+    app = create_test_app(subject_data=registry, scope_provider_factory=factory)
+    await _boot(app, _make_settings(whatsapp_checkpointer_enabled=False))
+
+    store = registry.stores["proactive"]
+    await store.export(SubjectRef("rt", "participant:1"))
+    assert providers[0].scopes == [("rt", "participant:1")]
