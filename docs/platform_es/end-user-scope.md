@@ -154,3 +154,8 @@ DEFAULT_REGISTRY.register(NotesStore())  # o create_app(subject_data=registry)
 memory_policy:
   user_memory: true
 ```
+
+
+## Turnos programados
+
+*Llega en el próximo release.* Decidido en [ADR-011](../architecture_es/adr-011-end-user-scope.md) y el issue #175; la página completa es [Turnos programados](schedules.md). Un usuario final puede pedirle al agente algo recurrente ("mandame las ventas semanales todos los lunes a las 8"). Tres herramientas con alcance de sujeto (`create_schedule`, `list_schedules`, `delete_schedule`, todas bajo el nuevo permiso T2 `write:schedule`) guardan las programaciones propias de ese usuario, así que el modelo nunca nombra un dueño ni un destinatario. Un `ScheduledTurnRunner` ejecuta después cada programación vencida como un turno con el **dueño como sujeto** y `scheduler:<id de la programación>` como **actor**, bajo los grants del runtime y contra el presupuesto del dueño, y entrega la respuesta como texto, solo al dueño, por la [entrega proactiva](proactive.md). La tabla (`subject_schedules`, migración `013`) es una tabla por usuario cercada por seguridad a nivel de fila y registrada en el registro de datos, así que una programación termina cuando se la borra o cuando se borra a su dueño. Los límites (por usuario, intervalo mínimo, horas de silencio) son del despliegue; una ventana perdida se omite y la programación corre en la siguiente.

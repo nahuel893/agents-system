@@ -153,3 +153,8 @@ DEFAULT_REGISTRY.register(NotesStore())  # or create_app(subject_data=registry)
 memory_policy:
   user_memory: true
 ```
+
+
+## Scheduled turns
+
+*Coming in the next release.* Decided in [ADR-011](../architecture/adr-011-end-user-scope.md) and issue #175; the full page is [Scheduled turns](schedules.md). An end user can ask the agent for a recurring request ("send me the weekly sales every Monday at 8"). Three subject-scoped tools (`create_schedule`, `list_schedules`, `delete_schedule`, all under the new T2 permission `write:schedule`) keep that user's own schedules, so the model never names an owner or a recipient. A `ScheduledTurnRunner` later runs each due schedule as a turn with the schedule's **owner as subject** and `scheduler:<schedule id>` as **actor**, under the runtime's grants and against the owner's budget, and delivers the reply as text, only to the owner, through [proactive delivery](proactive.md). The table (`subject_schedules`, migration `013`) is a per-user table fenced by row-level security and registered in the data registry, so a schedule ends when it is deleted or when its owner is deleted. Limits (per user, minimum interval, quiet hours) are the deployment's; a missed window is skipped and the schedule runs at its next one.

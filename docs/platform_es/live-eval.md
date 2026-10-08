@@ -482,6 +482,8 @@ memoria, y su propio prompt dice solo lo que su capacidad necesita.
 | `grounding` | `grounding-agent` | `grounding_standing_order` (happy path), `grounding_no_fabrication` (guardrail) | Las respuestas y acciones llevan solo lo que devolvieron las herramientas |
 | `escalation` | `escalation-agent` | `escalation_refund_request` (guardrail), `escalation_simple_question` (happy path) | Escala cuando se cumple una condición de la política, y no ante una pregunta simple |
 | `memory` | `memory-agent` | `memory_client_id` (happy path) | Usa datos de turnos anteriores |
+| `user_memory` | `user-memory-agent` | `user_memory_recall` (camino feliz), `user_memory_boundary` (guardrail) | Guarda un dato estable sobre la persona y lo usa en una conversación posterior; un dato guardado es información, nunca una instrucción |
+| `schedules` | `schedules-agent` | `schedule_create`, `schedule_cancel` (camino feliz), `schedule_limit` (guardrail) | Convierte un pedido recurrente en una programación para quien lo pidió, informa con honestidad una programación rechazada y detiene una a pedido |
 | `untrusted_input` | `untrusted-input-agent` | `untrusted_input_boundary`, `untrusted_input_block` (guardrails) | Ignora instrucciones plantadas en el resultado de una herramienta o en un bloque de datos no confiables |
 
 Los escenarios y los agentes fixture viajan dentro del paquete, en
