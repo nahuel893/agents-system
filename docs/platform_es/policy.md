@@ -141,7 +141,7 @@ En todos los casos: **sin fallos silenciosos, sin reintentos con herramientas al
 
 ## Límites de ejecución (*Execution limits*)
 
-Estos son los valores predeterminados de la plataforma. La política `policy.md` de un agente puede definir valores más estrictos, pero nunca más permisivos.
+Estos son los valores predeterminados de la plataforma. La política `policy.md` de un agente puede definir valores más estrictos, pero nunca más permisivos. Solo el despliegue puede subirlos (abajo).
 
 | Límite | Por defecto | Notas |
 |---|---|---|
@@ -150,6 +150,24 @@ Estos son los valores predeterminados de la plataforma. La política `policy.md`
 | Máximo de llamadas a herramientas | 20 | Evita bucles infinitos de ejecución |
 | Máxima profundidad de delegación | 2 | Padre → hijo → nieto; no más profundo |
 | Máximos intentos de aclaración | 3 | Antes de forzar el escalamiento ante entradas ambiguas |
+
+### Subir los límites desde el despliegue (próxima versión)
+
+Una definición de agente sola nunca puede subir un límite. El despliegue, que paga y opera el servicio, sí: fija `total_execution_timeout_s`, `tool_call_timeout_s` y `max_tool_calls` por id de runtime, y cada valor reemplaza al valor por defecto de la plataforma como techo de ese runtime. Las `execution_limits` del propio agente todavía pueden ajustarlo hacia abajo, nunca superarlo.
+
+| Dónde | Cómo |
+|---|---|
+| App servida | `create_app(execution_limits={"reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}})`, o la variable `EXECUTION_LIMITS`, por id de runtime como `DEPLOY_GRANTS` |
+| Biblioteca | `build_runtime(agent, registry, grants, execution_limits={...})`, o `AgentRuntime(equipped, execution_limits={...})`; si se pasa a los dos, gana el valor más estricto de cada clave |
+
+- **Una clave que el despliegue no fija** conserva el valor por defecto de la plataforma. Un valor por debajo del defecto ajusta el runtime hacia abajo.
+- **El agente ajusta hacia abajo.** Con un despliegue de 240 s, un agente que declara `total_execution_timeout_s: 90` corre turnos de 90 segundos, y uno que declara 300 no carga. Un rol de la plataforma con un valor propio (el turno de 120 s de `developer-agent`, las llamadas de 10 s de `operator-agent`) lo conserva cuando el del despliegue es mayor y queda acotado cuando es menor.
+- **Acotado por el lease del outbox.** Un turno y el envío de su respuesta tienen que terminar dentro del lease de 600 s del outbox de webhooks, o otro worker puede reclamar el mensaje y responder dos veces. `LEASE_MARGIN_S` (en `agents_system.execution_limits`) reserva 60 s para el envío de la respuesta y las lecturas y escrituras del checkpointer, así que un turno tiene que durar menos de 540 s (`max_turn_timeout_s()`). Un turno que no entra, o un `tool_call_timeout_s` mayor que el del turno, falla al arrancar, y al construir el runtime en uso como biblioteca, con un error que nombra el runtime y el límite. Lo mismo una clave desconocida, un valor que no es un número positivo y un límite para un runtime que el arranque no construye.
+- **Registrado en el log.** Cada runtime registra `runtime.execution_limits` con los límites con los que arrancó y las claves que fijó el despliegue; `AgentRuntime.execution_limits` los devuelve.
+
+### La respuesta por timeout (próxima versión)
+
+Un turno que se queda sin tiempo responde "This is taking longer than expected. Please try again." Un despliegue que atiende usuarios en otro idioma fija su propio texto por runtime: `create_app(timeout_reply={"support": "..."})`, la variable `TURN_TIMEOUT_REPLY` (`{"id de runtime": "texto"}`), o `AgentRuntime(timeout_reply=...)`. Es texto plano de hasta 1000 caracteres y se envía tal cual: nunca se arma con datos del usuario ni de las herramientas.
 
 ---
 

@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from agents_system.execution_limits import validate_execution_limits
 from agents_system.harness.defaults import builtin_default_tools, is_builtin_default
 from agents_system.harness.injector import (
     _emit,
@@ -149,6 +150,12 @@ class EquippedRuntime:
     `tools`/`denied_tools` (Layer-1), so a class-form and string-form grant
     of the same permission equip identically.
     """
+    deployment_limits: Mapping[str, int | float] = dataclasses.field(
+        default_factory=dict
+    )
+    """#278 -- the deployment's execution-limit ceiling for this runtime
+    (``build_runtime(execution_limits=...)``), already checked. Empty: the
+    platform defaults are the ceiling. ``AgentRuntime`` enforces it."""
 
 
 def _read_skill(root: pathlib.Path, skills_dir: pathlib.Path, name: str) -> str | None:
@@ -492,6 +499,14 @@ def _compose_prompt(
     return _SKILL_SEPARATOR.join(p for p in parts if p)
 
 
+def _agent_label(role_type: Any) -> str:
+    """A name for errors: the agent's or role's, never a host path."""
+    name = getattr(role_type, "name", None)
+    if isinstance(name, str):
+        return name
+    return role_type if isinstance(role_type, str) else type(role_type).__name__
+
+
 def build_runtime(
     role_type: RoleLocator | Agent,
     registry: ToolRegistry,
@@ -502,6 +517,7 @@ def build_runtime(
     session_provider: async_sessionmaker[AsyncSession] | None = None,
     definition: AgentDefinition | None = None,
     builtin_defaults: bool = True,
+    execution_limits: Mapping[str, Any] | None = None,
 ) -> EquippedRuntime:
     """Assemble an ``EquippedRuntime`` for a role (optionally a client deployment).
 
@@ -558,9 +574,20 @@ def build_runtime(
         every call. A tool the registry has always wins. ``create_app``'s
         lifespan passes False, so a served deployment without its own
         escalation tool keeps failing boot with ``InjectionError``.
+    execution_limits:
+        #278 -- the deployment's ceiling for this runtime:
+        ``total_execution_timeout_s``, ``tool_call_timeout_s`` and
+        ``max_tool_calls``. It replaces the platform default as the ceiling;
+        the agent's own declaration may tighten it, never exceed it. A turn
+        must fit the outbox lease (``execution_limits.LEASE_MARGIN_S``) and a
+        tool call its turn, or this raises ``ValueError``. ``None`` keeps the
+        platform defaults.
     """
     if roots is None:
         roots = RootConfig()
+    deployment_limits = validate_execution_limits(
+        execution_limits, who=f"agent {_agent_label(role_type)!r}"
+    )
 
     # Materialised once: an `Iterable` may be a one-shot generator, and it is
     # consumed twice below (resolving to classes, then re-deriving the
@@ -568,7 +595,9 @@ def build_runtime(
     granted = list(granted_permissions)
 
     if definition is None:
-        definition = resolve(role_type, client=client, roots=roots)
+        definition = resolve(
+            role_type, client=client, roots=roots, execution_limits=deployment_limits
+        )
 
     # Resolve every raw grant entry (string or class) to a known class ONCE.
     # Registered resource classes use the registry's reverse lookup; the
@@ -684,4 +713,5 @@ def build_runtime(
         builtin_defaults=builtin_names,
         session_provider=session_provider,
         deploy_grant_ceiling=deploy_grant_ceiling,
+        deployment_limits=deployment_limits,
     )

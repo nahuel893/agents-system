@@ -141,7 +141,7 @@ In all cases: **no silent failures, no retries with different tools, no workarou
 
 ## Execution limits
 
-These are platform-level defaults. An agent's `policy.md` may define stricter values but not looser ones.
+These are platform-level defaults. An agent's `policy.md` may define stricter values but not looser ones. Only the deployment can raise them (below).
 
 | Limit | Default | Notes |
 |---|---|---|
@@ -150,6 +150,24 @@ These are platform-level defaults. An agent's `policy.md` may define stricter va
 | Max tool calls per execution | 20 | Prevents runaway loops |
 | Max delegation depth | 2 | Parent → child → grandchild; no deeper |
 | Max clarification attempts | 3 | Before forcing escalation on ambiguous input |
+
+### Raising limits for a deployment (coming in the next release)
+
+An agent definition alone can never raise a limit. The deployment, which pays for and operates the service, can: it sets `total_execution_timeout_s`, `tool_call_timeout_s` and `max_tool_calls` per runtime id, and each value replaces the platform default as that runtime's ceiling. The agent's own `execution_limits` may still tighten it, never exceed it.
+
+| Where | How |
+|---|---|
+| Served app | `create_app(execution_limits={"reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}})`, or the `EXECUTION_LIMITS` variable, keyed by runtime id like `DEPLOY_GRANTS` |
+| Library | `build_runtime(agent, registry, grants, execution_limits={...})`, or `AgentRuntime(equipped, execution_limits={...})`; given to both, the tighter value of each key wins |
+
+- **A key the deployment leaves out** keeps the platform default. A value below the default tightens the runtime instead.
+- **The agent tightens.** Under a 240 s deployment, an agent declaring `total_execution_timeout_s: 90` runs 90-second turns, and one declaring 300 fails to load. A platform role with a value of its own (`developer-agent`'s 120 s turn, `operator-agent`'s 10 s tool calls) keeps it when the deployment's is higher and is capped when it is lower.
+- **Bounded by the outbox lease.** A turn and its reply send must finish inside the 600 s webhook outbox lease, or another worker can reclaim the message and answer twice. `LEASE_MARGIN_S` (in `agents_system.execution_limits`) reserves 60 s of it for the reply send and the checkpointer reads and writes, so a turn must be shorter than 540 s (`max_turn_timeout_s()`). A turn that does not fit, or a `tool_call_timeout_s` above the turn's, fails at boot, and at construction in library use, with an error naming the runtime and the bound. So do an unknown key, a value that is not a positive number, and a limit for a runtime the boot does not build.
+- **Logged.** Each runtime logs `runtime.execution_limits` with the limits it booted with and the keys the deployment set; `AgentRuntime.execution_limits` returns them.
+
+### The timeout reply (coming in the next release)
+
+A turn that runs out of time answers "This is taking longer than expected. Please try again." A deployment serving users in another language sets its own text per runtime: `create_app(timeout_reply={"support": "..."})`, the `TURN_TIMEOUT_REPLY` variable (`{"runtime id": "text"}`), or `AgentRuntime(timeout_reply=...)`. It is plain text of at most 1000 characters, sent exactly as given: never templated with user or tool data.
 
 ---
 

@@ -327,6 +327,35 @@ DEPLOY_GRANTS='{"support": ["read:catalog"]}'
 
 La carpeta queda sujeta al techo del importador como cualquier `Agent.from_folder`. El nombre de un rol predefinido sigue funcionando, con su aviso de obsolescencia.
 
+### Límites de ejecución y respuesta por timeout (próxima versión)
+
+El despliegue fija los límites de cada runtime y el texto con el que responde un turno que se queda sin tiempo, con los mismos ids que `grants`:
+
+```python
+app = create_app(
+    registry_factory=build_registry,
+    agents={"reports": Agent.from_folder("agents/reports")},
+    grants={"reports": ["read:catalog"]},
+    execution_limits={
+        "reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}
+    },
+    timeout_reply={"reports": "Esto está tardando más de lo esperado. Probá de nuevo."},
+)
+```
+
+Sin esos argumentos, la fuente son `EXECUTION_LIMITS` y `TURN_TIMEOUT_REPLY`, con la misma forma:
+
+```bash
+EXECUTION_LIMITS='{"reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}}'
+TURN_TIMEOUT_REPLY='{"reports": "Esto está tardando más de lo esperado. Probá de nuevo."}'
+```
+
+- **Solo el despliegue sube.** Un valor reemplaza al defecto de la plataforma (60 s por turno, 10 s por llamada a herramienta, 20 llamadas) como techo de ese runtime; el agente puede ajustarlo hacia abajo, nunca superarlo.
+- **El lease lo acota.** Un turno tiene que durar menos de 540 s: el lease de 600 s del outbox menos los 60 s de `LEASE_MARGIN_S` para el envío de la respuesta y el checkpointer. Un turno que no entra, una llamada a herramienta más larga que su turno, una clave desconocida o un id que el arranque no construye hacen fallar el arranque, nombrando el runtime.
+- **La respuesta es texto plano**, de hasta 1000 caracteres, y se envía tal cual. Un runtime sin respuesta propia responde el texto por defecto en inglés.
+
+Ver [Política: límites de ejecución](policy.md#límites-de-ejecución-execution-limits).
+
 ### Migrar desde los ids de runtime viejos
 
 Antes de ADR-004, el arranque desde Settings leía el rol y el despliegue del propio id de runtime: `acme__sales-agent`, o `_generic__sales-agent` sin despliegue. Ese esquema ya no existe. Un id de runtime es solo una clave, y un despliegue que sigue configurado a la vieja usanza falla al arrancar, nombrando el id no registrado y señalando `AGENT_REGISTRATIONS`. Para migrar:

@@ -61,6 +61,7 @@ import structlog
 import yaml
 
 from agents_system.agent.context import DEFAULT_MAX_CONTEXT_TOKENS
+from agents_system.execution_limits import validate_execution_limits
 from agents_system.harness.registry import Tier
 
 if TYPE_CHECKING:
@@ -2367,7 +2368,10 @@ def _locator_label(locator: RoleLocator) -> str:
 
 
 def _resolve_role_chain(
-    locator: RoleLocator, roots: RootConfig
+    locator: RoleLocator,
+    roots: RootConfig,
+    *,
+    limit_defaults: Mapping[str, Any] = _PLATFORM_DEFAULT_LIMITS,
 ) -> tuple[RawDefinition, bool]:
     """Walk ``extends:`` to the root and fold the chain back down.
 
@@ -2448,10 +2452,14 @@ def _resolve_role_chain(
     resolved, root_is_importer_authored = chain[-1]
     resolved = _resolve_chain_root(resolved)
     if root_is_importer_authored:
-        resolved = _apply_importer_ceiling(None, resolved)
+        resolved = _apply_importer_ceiling(
+            None, resolved, limit_defaults=limit_defaults
+        )
     for child, child_is_importer_authored in reversed(chain[:-1]):
         if child_is_importer_authored:
-            child = _apply_importer_ceiling(resolved, child)
+            child = _apply_importer_ceiling(
+                resolved, child, limit_defaults=limit_defaults
+            )
         resolved = _fold_parent_into_child(resolved, child)
 
     return resolved, leaf_is_abstract
@@ -2472,7 +2480,10 @@ def _declared_memory_policy(policy_fm: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def load_generic(
-    locator: RoleLocator, *, roots: RootConfig | None = None
+    locator: RoleLocator,
+    *,
+    roots: RootConfig | None = None,
+    limit_defaults: Mapping[str, Any] = _PLATFORM_DEFAULT_LIMITS,
 ) -> RawDefinition:
     """Resolve a role locator (design.md D1) and everything it extends.
 
@@ -2491,11 +2502,16 @@ def load_generic(
         definition (``InlineLocator``).
     roots:
         Injectable path config.  Defaults to the real repo roots.
+    limit_defaults:
+        What an undeclared execution limit resolves to when an
+        importer-authored definition is checked (#278, ``_limit_defaults``).
     """
     if roots is None:
         roots = RootConfig()
 
-    resolved, is_abstract = _resolve_role_chain(locator, roots)
+    resolved, is_abstract = _resolve_role_chain(
+        locator, roots, limit_defaults=limit_defaults
+    )
 
     if not resolved.autonomy:
         # Nothing in the chain declared one. `supervised` is the platform
@@ -3093,6 +3109,7 @@ def _validate_execution_limits(
     who: str = "override",
     against: str = "parent/platform default",
     rule: str = _DEPLOYMENT_RULE,
+    defaults: Mapping[str, Any] = _PLATFORM_DEFAULT_LIMITS,
 ) -> None:
     """Validate that override limits are stricter or equal to baseline.
 
@@ -3104,6 +3121,9 @@ def _validate_execution_limits(
     Shared by the deployment boundary (``_merge_validated``) and the importer
     boundary (``_apply_importer_ceiling``); ``who``/``against``/``rule``
     only phrase the error, defaulting to the deployment wording.
+
+    ``defaults`` stands in for a key neither side sets: the platform
+    defaults, or, under a deployment ceiling (#278), ``_limit_defaults``.
     """
     for key, override_value in override_limits.items():
         # A role's `execution_limits` may name only some keys. Falling back to
@@ -3119,7 +3139,7 @@ def _validate_execution_limits(
         # author and silently REMOVED the ceiling instead of applying it.
         baseline_value = baseline.get(key)
         if baseline_value is None:
-            baseline_value = _PLATFORM_DEFAULT_LIMITS.get(key)
+            baseline_value = defaults.get(key)
         if baseline_value is None:
             # Genuinely unknown to both — a new limit nobody has a ceiling for.
             continue
@@ -3129,7 +3149,7 @@ def _validate_execution_limits(
         # up to the default while comparing as "no value".
         value = override_value
         if value is None:
-            value = _PLATFORM_DEFAULT_LIMITS.get(key)
+            value = defaults.get(key)
         # `bool` is an `int` subclass, so without the explicit check `True`
         # passed as a limit of 1.
         if isinstance(value, bool) or not isinstance(value, int | float):
@@ -3478,7 +3498,10 @@ def _validate_escalation_wording(
 
 
 def _apply_importer_ceiling(
-    parent: RawDefinition | None, child: RawDefinition
+    parent: RawDefinition | None,
+    child: RawDefinition,
+    *,
+    limit_defaults: Mapping[str, Any] = _PLATFORM_DEFAULT_LIMITS,
 ) -> RawDefinition:
     """Hold an importer-authored ``child`` to ``parent``'s effective safety
     settings: additive for capability, subtractive for safety
@@ -3508,11 +3531,18 @@ def _apply_importer_ceiling(
     such a definition would otherwise run with, so they are its ceiling.
     Otherwise leaving out ``extends`` would be the way around this check.
 
+    ``limit_defaults`` is what an undeclared limit resolves to: the platform
+    defaults, or, under a deployment ceiling (#278), ``_limit_defaults``.
+
     Errors name agents by ``role_name`` -- never a locator or its host path.
     """
     who = f"agent '{child.role_name}'"
     if parent is None:
-        source = "platform default"
+        source = (
+            "platform default"
+            if limit_defaults is _PLATFORM_DEFAULT_LIMITS
+            else "deployment ceiling"
+        )
         ceiling_autonomy = _DEFAULT_AUTONOMY
         ceiling_limits: Mapping[str, Any] = {}
         ceiling_audit: Mapping[str, Any] = {}
@@ -3549,6 +3579,7 @@ def _apply_importer_ceiling(
             who=who,
             against=source,
             rule=_IMPORTER_RULE,
+            defaults=limit_defaults,
         )
 
     rules = child.escalation_rules
@@ -3581,7 +3612,12 @@ def _apply_importer_ceiling(
 # ---------------------------------------------------------------------------
 
 
-def merge(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
+def merge(
+    generic: RawDefinition,
+    override: RawDefinition,
+    *,
+    limit_defaults: Mapping[str, Any] = _PLATFORM_DEFAULT_LIMITS,
+) -> AgentDefinition:
     """Validate and merge a generic definition with an override.
 
     Logs the outcome (invariant violation or successful merge) and delegates
@@ -3593,7 +3629,7 @@ def merge(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
     from agents_system.permissions import UntrustedInputGrantError
 
     try:
-        result = _merge_validated(generic, override)
+        result = _merge_validated(generic, override, limit_defaults=limit_defaults)
     except (DefinitionError, UntrustedInputGrantError) as exc:
         # UntrustedInputGrantError is NOT a DefinitionError subclass (its
         # root is AgentPermissionError, per spec's own hierarchy; making it
@@ -3618,7 +3654,10 @@ def merge(generic: RawDefinition, override: RawDefinition) -> AgentDefinition:
 
 
 def _merge_validated(
-    generic: RawDefinition, override: RawDefinition
+    generic: RawDefinition,
+    override: RawDefinition,
+    *,
+    limit_defaults: Mapping[str, Any] = _PLATFORM_DEFAULT_LIMITS,
 ) -> AgentDefinition:
     """Apply override merge directives to the generic definition.
 
@@ -3735,9 +3774,9 @@ def _merge_validated(
         baseline = (
             dict(generic.execution_limits)
             if isinstance(generic.execution_limits, dict)
-            else _PLATFORM_DEFAULT_LIMITS
+            else limit_defaults
         )
-        _validate_execution_limits(baseline, ov_limits)
+        _validate_execution_limits(baseline, ov_limits, defaults=limit_defaults)
         # MERGED over the baseline, never substituted for it. Replacing the
         # dict dropped every key the deployment did not name, and
         # `_effective_limits` then backfilled those from the PLATFORM
@@ -3833,11 +3872,29 @@ def _merge_validated(
 # ---------------------------------------------------------------------------
 
 
+def _limit_defaults(deployment_limits: Mapping[str, Any]) -> Mapping[str, Any]:
+    """#278 -- what an undeclared limit is held to under a deployment ceiling.
+
+    A deployment value above the platform default replaces it, so the agent
+    may declare anything up to it. One below leaves the platform default as
+    the load-time ceiling: the runtime applies the deployment's value
+    (``graph._effective_limits``), so a declaration above it is capped, not
+    refused.
+    """
+    if not deployment_limits:
+        return _PLATFORM_DEFAULT_LIMITS
+    merged = dict(_PLATFORM_DEFAULT_LIMITS)
+    for key, value in deployment_limits.items():
+        merged[key] = max(merged[key], value)
+    return merged
+
+
 def resolve(
     locator: RoleLocator | Agent,
     *,
     client: str | None = None,
     roots: RootConfig | None = None,
+    execution_limits: Mapping[str, Any] | None = None,
 ) -> AgentDefinition:
     """Load, merge, validate, and return a fully resolved ``AgentDefinition``.
 
@@ -3861,7 +3918,17 @@ def resolve(
         returned.
     roots:
         Injectable path config.  Defaults to the real repo roots.
+    execution_limits:
+        #278 -- the deployment's ceiling for this runtime
+        (``total_execution_timeout_s``, ``tool_call_timeout_s``,
+        ``max_tool_calls``). It replaces the platform default as the ceiling
+        an importer-authored definition is held to, so the agent may declare
+        up to it; the definition alone still cannot raise anything. Checked
+        by ``validate_execution_limits`` first.
     """
+    limit_defaults = _limit_defaults(
+        validate_execution_limits(execution_limits, who="the deployment")
+    )
     if not isinstance(locator, str | FolderLocator | InlineLocator):
         # Deferred: `agent.spec` imports this module.
         from agents_system.agent.spec import Agent
@@ -3880,7 +3947,7 @@ def resolve(
     if roots is None:
         roots = RootConfig()
 
-    generic = load_generic(locator, roots=roots)
+    generic = load_generic(locator, roots=roots, limit_defaults=limit_defaults)
     # Issue #75: every locator kind, not only a parsed manifest.
     _revalidate_command_tools(generic)
 
@@ -3899,7 +3966,7 @@ def resolve(
             )
         override = load_override(client, locator, roots=roots)
         if override is not None:
-            merged = merge(generic, override)
+            merged = merge(generic, override, limit_defaults=limit_defaults)
             return dataclasses.replace(
                 merged,
                 system_prompt=_append_base_contract(merged.system_prompt),

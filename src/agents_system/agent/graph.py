@@ -59,6 +59,12 @@ from agents_system.agent.untrusted import (
     render_untrusted_blocks,
 )
 from agents_system.config import ModelPrice
+from agents_system.execution_limits import (
+    DEFAULT_TIMEOUT_REPLY,
+    DEPLOYMENT_LIMIT_KEYS,
+    validate_execution_limits,
+    validate_timeout_reply,
+)
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
 from agents_system.harness.interceptor import CallResult, PolicyViolation, intercept
@@ -366,21 +372,39 @@ def _actor_label() -> str | None:
     return actor.label if actor is not None else None
 
 
-def _effective_limits(execution_limits: Mapping[str, Any] | None) -> dict[str, Any]:
+def _effective_limits(
+    execution_limits: Mapping[str, Any] | None,
+    deployment_limits: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Merge a runtime's execution_limits over the platform defaults, per-key.
 
     Design AD-3: a partially-specified execution_limits dict (e.g. only
     ``max_tool_calls`` overridden) falls back to the platform default for
     every key it does not itself set.
+
+    #278: a key the deployment sets replaces the platform default and caps
+    the definition's own value, so the definition may tighten it, never
+    exceed it -- including a platform role that declares above the default.
     """
+    ceiling = deployment_limits or {}
     merged: dict[str, Any] = {
-        key: PLATFORM_DEFAULT_LIMITS[key] for key in _ENFORCED_LIMIT_KEYS
+        key: ceiling.get(key, PLATFORM_DEFAULT_LIMITS[key])
+        for key in _ENFORCED_LIMIT_KEYS
     }
     if execution_limits:
         for key in _ENFORCED_LIMIT_KEYS:
             value = execution_limits.get(key)
             if value is not None:
-                merged[key] = value
+                merged[key] = min(value, ceiling[key]) if key in ceiling else value
+    return merged
+
+
+def _tighter(*ceilings: Mapping[str, Any]) -> dict[str, Any]:
+    """Per key, the lowest value any of the *ceilings* sets."""
+    merged: dict[str, Any] = {}
+    for ceiling in ceilings:
+        for key, value in ceiling.items():
+            merged[key] = min(value, merged[key]) if key in merged else value
     return merged
 
 
@@ -1175,6 +1199,19 @@ class AgentRuntime:
         untrusted-data block (never as plain text). Needs ``scope_provider``
         and ``runtime_id``. A store that fails is logged and the turn goes on
         without the facts.
+    execution_limits:
+        #278 -- the deployment's ceiling for this runtime
+        (``total_execution_timeout_s``, ``tool_call_timeout_s``,
+        ``max_tool_calls``), like ``build_runtime(execution_limits=...)``;
+        given to both, the tighter value of each key wins. It replaces the
+        platform default as the ceiling: the definition's own value may
+        tighten it, never exceed it. A turn must fit the outbox lease with
+        ``LEASE_MARGIN_S`` to spare and a tool call must fit its turn, or
+        construction raises ``ValueError`` naming the runtime. The effective
+        limits are logged (``runtime.execution_limits``).
+    timeout_reply:
+        #278 -- the text a timed-out turn answers, sent as given (never
+        templated with user or tool data). ``None``: ``DEFAULT_TIMEOUT_REPLY``.
     """
 
     def __init__(
@@ -1190,6 +1227,8 @@ class AgentRuntime:
         budget: BudgetCaps | None = None,
         usage_ledger: UsageLedger | None = None,
         user_memory: UserMemoryLimits | None = None,
+        execution_limits: Mapping[str, Any] | None = None,
+        timeout_reply: str | None = None,
     ) -> None:
         if user_memory is not None and (scope_provider is None or runtime_id is None):
             raise ValueError(
@@ -1237,6 +1276,24 @@ class AgentRuntime:
         # #78 Phase 0 Slice 2 -- see the `runtime_id`/`metrics` parameter
         # docs above.
         self._runtime_id = runtime_id if runtime_id is not None else self._model_id
+        # #278 -- the deployment's ceiling, from build_runtime and from here.
+        who = f"runtime {self._runtime_id!r}"
+        self._deployment_limits = _tighter(
+            validate_execution_limits(runtime.deployment_limits, who=who),
+            validate_execution_limits(execution_limits, who=who),
+        )
+        self._timeout_reply = (
+            DEFAULT_TIMEOUT_REPLY
+            if timeout_reply is None
+            else validate_timeout_reply(timeout_reply, who=who)
+        )
+        effective = self.execution_limits
+        logger.info(
+            "runtime.execution_limits",
+            runtime_id=self._runtime_id,
+            **{key: effective[key] for key in DEPLOYMENT_LIMIT_KEYS},
+            deployment_set=sorted(self._deployment_limits),
+        )
         self._scope_provider = scope_provider
         self._metrics = metrics if metrics is not None else DEFAULT_METRICS
         # Issue #166 -- copied, so a caller mutating its own dict later cannot
@@ -1269,6 +1326,15 @@ class AgentRuntime:
             definition=self._equipped.definition,
             tools_count=len(self._schemas),
             model_type=type(model).__name__,
+        )
+
+    @property
+    def execution_limits(self) -> dict[str, Any]:
+        """The limits this runtime's turns run with: the definition's, over
+        the deployment's ceiling (#278), over the platform defaults."""
+        return _effective_limits(
+            getattr(self._equipped.definition, "execution_limits", None),
+            self._deployment_limits,
         )
 
     @property
@@ -1505,7 +1571,7 @@ class AgentRuntime:
                 )
             )
         )
-        effective_limits = _effective_limits(self._equipped.definition.execution_limits)
+        effective_limits = self.execution_limits
         max_tool_calls = effective_limits["max_tool_calls"]
         turn_start = time.monotonic()
         untrusted_data = [
@@ -1653,9 +1719,9 @@ class AgentRuntime:
                     "the turn timed out after "
                     f"{float(effective_limits['total_execution_timeout_s'])}s"
                 )
-                timeout_reply = AIMessage(
-                    content="This is taking longer than expected. Please try again."
-                )
+                # #278 -- the deployment's text, as configured: never
+                # formatted with anything from the turn.
+                timeout_reply = AIMessage(content=self._timeout_reply)
                 if thread is not None:
                     # Issue #24 -- the thread keeps the turn as the user got
                     # it: its interrupted tool calls answered, then the reply.
