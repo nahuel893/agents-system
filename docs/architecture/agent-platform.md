@@ -440,3 +440,5 @@ The following decisions are still intentionally open:
    - capability-based evals in two layers, and the predefined roles as reference agents instead of supported API
 6. `docs/architecture/adr-011-end-user-scope.md` (Accepted)
    - the end user of each turn as a platform-bound subject, with per-user data isolation, untrusted-data blocks, per-user budgets, authorized proactive recipients and per-user retention
+7. `docs/architecture/adr-012-confined-code-execution.md` (Proposed)
+   - confined code execution: a T2 `run_code` tool that runs Python or a shell in a box with no network and no secrets, over the workspace of the turn's subject, and how it relates to the untrusted-input rule
