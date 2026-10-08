@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import agents_system.services.schedules_postgres
+
 # Importing a store module registers it; add each per-user store here.
 import agents_system.services.usage_postgres
 from agents_system.subject_data import DEFAULT_REGISTRY
@@ -53,3 +55,12 @@ def test_the_proactive_queue_table_is_registered_and_migrated() -> None:
 
     assert TABLE in DEFAULT_REGISTRY.tables
     assert "012" in {p.name[:3] for p in _VERSIONS.glob("*.py")}
+
+
+def test_the_schedules_table_is_registered_and_migrated() -> None:
+    # Migration 013 creates the table through generated DDL, which the regex
+    # scanner above cannot see, so this pins it by name.
+    from agents_system.schedules import SCHEDULES_TABLE
+
+    assert SCHEDULES_TABLE in DEFAULT_REGISTRY.tables
+    assert "013" in {p.name[:3] for p in _VERSIONS.glob("*.py")}

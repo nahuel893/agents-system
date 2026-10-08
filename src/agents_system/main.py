@@ -72,6 +72,7 @@ from agents_system.observability.metrics import (
     DEFAULT_REGISTRY,
     Metrics,
 )
+from agents_system.schedules import InMemoryScheduleStore
 from agents_system.scope import InMemoryScopeProvider, ScopeProvider
 from agents_system.services.checkpointer import CheckpointThreads
 from agents_system.subject_data import (
@@ -266,6 +267,22 @@ def _bind_user_fact_store(
     registry.bind(store)
 
 
+def _bind_schedule_store(
+    scope_provider: ScopeProvider | None, registry: SubjectDataRegistry
+) -> None:
+    """Register the schedules store so export and delete reach it (#175)."""
+    if scope_provider is None:
+        return
+    store: SubjectDataStore
+    if isinstance(scope_provider, InMemoryScopeProvider):
+        store = InMemoryScheduleStore(scope_provider)
+    else:
+        from agents_system.services.schedules_postgres import PostgresScheduleStore
+
+        store = PostgresScheduleStore(scope_provider)  # type: ignore[arg-type]
+    registry.bind(store)
+
+
 async def _start_scope_provider(
     factory: Callable[[AsyncEngine], ScopeProvider] | None, engine: AsyncEngine
 ) -> ScopeProvider | None:
@@ -361,6 +378,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.usage_ledger = usage_ledger
         _bind_user_fact_store(scope_provider, app.state.subject_data_registry)
+        _bind_schedule_store(scope_provider, app.state.subject_data_registry)
         user_memory = (
             limits_from_settings(settings) if scope_provider is not None else None
         )
