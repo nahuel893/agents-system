@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, NotRequired
 
 from langchain_core.messages import AnyMessage
 from langchain_core.messages.ai import UsageMetadata
@@ -20,3 +20,6 @@ class AgentState(TypedDict):
     # `[]` in `initial_state`, so a resumed checkpointed thread never
     # inherits a prior turn's usage (design AD-1 gotcha).
     turn_usage: list[UsageMetadata | None]
+    # ADR-011 part 5 -- set when a per-user cap stopped the turn at a model
+    # call. Absent otherwise; never inherited (the turn builds a fresh state).
+    budget_refused: NotRequired[bool]

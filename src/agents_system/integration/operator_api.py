@@ -8,6 +8,9 @@ the ids the deployment's ``subject_threads`` hook returns for the subject.
 Ids the operator names must be among them (403 otherwise); without the hook,
 routes fail closed (409) while a checkpointer exists.
 
+``POST /operator/subjects/usage`` answers one subject's usage totals for the
+UTC day and month (ADR-011 part 5).
+
 They authenticate with ``operator_api_key``, compared with the adapter's
 constant-time check, and ``create_app`` mounts them only when that key is
 set: without it the routes do not exist.
@@ -15,8 +18,10 @@ set: without it the routes do not exist.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import structlog
@@ -33,6 +38,7 @@ from agents_system.subject_data import (
     delete_subject,
     export_subject,
 )
+from agents_system.usage import UsageLedger, window_starts
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -118,6 +124,23 @@ async def export_route(body: SubjectRequest, request: Request) -> dict[str, Any]
         threads=getattr(state, "checkpoint_threads", None),
         thread_ids=await _thread_ids(request, ref, body.thread_ids),
     )
+
+
+@router.post("/usage")
+async def usage_route(body: SubjectRequest, request: Request) -> dict[str, Any]:
+    """One subject's usage: today's and this month's totals (UTC), unpriced turns flagged."""
+    ledger: UsageLedger | None = getattr(request.app.state, "usage_ledger", None)
+    if ledger is None:
+        raise HTTPException(status_code=409, detail="No usage ledger is configured.")
+    day, month = window_starts(datetime.now(UTC))
+    daily = await ledger.totals(body.runtime_id, body.subject_key, since=day)
+    monthly = await ledger.totals(body.runtime_id, body.subject_key, since=month)
+    return {
+        "runtime_id": body.runtime_id,
+        "subject_key": body.subject_key,
+        "daily": {"since": day.isoformat(), **dataclasses.asdict(daily)},
+        "monthly": {"since": month.isoformat(), **dataclasses.asdict(monthly)},
+    }
 
 
 @router.post("/delete")

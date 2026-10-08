@@ -129,8 +129,8 @@ def build_metrics(registry: CollectorRegistry) -> Metrics:
         registry=registry,
         turns_total=Counter(
             "agent_turns",
-            "Turns completed, by runtime id and outcome.",
-            ["runtime_id", "outcome"],
+            "Turns completed, by runtime id, outcome and actor kind.",
+            ["runtime_id", "outcome", "actor_kind"],
             registry=registry,
         ),
         turn_duration_seconds=Histogram(
@@ -161,14 +161,14 @@ def build_metrics(registry: CollectorRegistry) -> Metrics:
         ),
         tokens_total=Counter(
             "agent_tokens",
-            "Tokens accounted, by runtime id and direction (input/output).",
-            ["runtime_id", "direction"],
+            "Tokens accounted, by runtime id, direction (input/output) and actor kind.",
+            ["runtime_id", "direction", "actor_kind"],
             registry=registry,
         ),
         cost_usd_total=Counter(
             "agent_cost_usd",
-            "Estimated USD cost of tokens billed, by runtime id.",
-            ["runtime_id"],
+            "Estimated USD cost of tokens billed, by runtime id and actor kind.",
+            ["runtime_id", "actor_kind"],
             registry=registry,
         ),
         audit_events_dropped=Gauge(
@@ -235,6 +235,7 @@ def record_turn(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
     cost_usd: float | None = None,
+    actor_kind: str = "none",
 ) -> None:
     """Record one completed turn (`AgentRuntime.run_turn_with_usage`).
 
@@ -242,20 +243,24 @@ def record_turn(
     `output_tokens`/`cost_usd` of `None` (genuinely unknown -- e.g. a timed
     out turn) are simply not counted, never recorded as a guessed `0`.
     """
-    metrics.turns_total.labels(runtime_id=runtime_id, outcome=outcome).inc()
+    metrics.turns_total.labels(
+        runtime_id=runtime_id, outcome=outcome, actor_kind=actor_kind
+    ).inc()
     metrics.turn_duration_seconds.labels(
         runtime_id=runtime_id, outcome=outcome
     ).observe(duration_s)
     if input_tokens is not None:
-        metrics.tokens_total.labels(runtime_id=runtime_id, direction="input").inc(
-            input_tokens
-        )
+        metrics.tokens_total.labels(
+            runtime_id=runtime_id, direction="input", actor_kind=actor_kind
+        ).inc(input_tokens)
     if output_tokens is not None:
-        metrics.tokens_total.labels(runtime_id=runtime_id, direction="output").inc(
-            output_tokens
-        )
+        metrics.tokens_total.labels(
+            runtime_id=runtime_id, direction="output", actor_kind=actor_kind
+        ).inc(output_tokens)
     if cost_usd is not None:
-        metrics.cost_usd_total.labels(runtime_id=runtime_id).inc(cost_usd)
+        metrics.cost_usd_total.labels(runtime_id=runtime_id, actor_kind=actor_kind).inc(
+            cost_usd
+        )
 
 
 def record_tool_call(

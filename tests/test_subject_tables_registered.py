@@ -12,6 +12,9 @@ from pathlib import Path
 
 from agents_system.subject_data import DEFAULT_REGISTRY
 
+# Importing a store module registers it; add each per-user store here.
+import agents_system.services.usage_postgres  # noqa: F401  isort:skip
+
 _VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
 _TABLE_CALL = re.compile(
     r"""(?:create_table|add_column)\(\s*["'](\w+)["'](.*?)(?:\n\s*\)|\Z)""", re.DOTALL

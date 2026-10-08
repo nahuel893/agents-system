@@ -79,10 +79,10 @@ metric objects live in `src/agents_system/observability/metrics.py`.
 
 | Metric | Type | Labels | Recorded when |
 |---|---|---|---|
-| `agent_turns_total` | Counter | `runtime_id`, `outcome` | Every turn completes: `outcome` is `ok`, `timeout`, or `error`. |
+| `agent_turns_total` | Counter | `runtime_id`, `outcome`, `actor_kind` | Every turn completes: `outcome` is `ok`, `timeout`, `budget_refused` (a per-user cap, [End-user scope](end-user-scope.md)), or `error`. |
 | `agent_turn_duration_seconds` | Histogram | `runtime_id`, `outcome` | Same as above — wall-clock duration of the whole `run_turn_with_usage` call. |
-| `agent_tokens_total` | Counter | `runtime_id`, `direction` (`input`/`output`) | A turn's usage is known (see the honesty rule below). |
-| `agent_cost_usd_total` | Counter | `runtime_id` | A turn's `cost_usd` is known (same `Settings.model_prices` lookup as slice 1). |
+| `agent_tokens_total` | Counter | `runtime_id`, `direction` (`input`/`output`), `actor_kind` | A turn's usage is known (see the honesty rule below). |
+| `agent_cost_usd_total` | Counter | `runtime_id`, `actor_kind` | A turn's `cost_usd` is known (same `Settings.model_prices` lookup as slice 1). |
 | `agent_tool_calls_total` | Counter | `tool`, `outcome` | Every tool call attempt: `outcome` is `ok`, `denied`, `blocked`, `timeout`, or `error`. |
 | `agent_tool_call_duration_seconds` | Histogram | `tool`, `outcome` | Same as above. |
 | `agent_limit_trips_total` | Counter | `limit` | An execution limit fires — `"max_tool_calls"` (the `_limit_reached` terminal node) and `"max_context_tokens"` (the model input was trimmed or sent above the budget, `docs/platform/context-size.md`); ADR-005 section 6's "limit trips". |

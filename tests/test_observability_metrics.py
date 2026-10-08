@@ -73,13 +73,17 @@ def test_turn_metrics_label_schema_is_bounded() -> None:
     registry = CollectorRegistry()
     metrics = build_metrics(registry)
 
-    assert metrics.turns_total._labelnames == ("runtime_id", "outcome")
+    assert metrics.turns_total._labelnames == ("runtime_id", "outcome", "actor_kind")
     assert metrics.turn_duration_seconds._labelnames == ("runtime_id", "outcome")
     assert metrics.tool_calls_total._labelnames == ("tool", "outcome")
     assert metrics.tool_call_duration_seconds._labelnames == ("tool", "outcome")
     assert metrics.limit_trips_total._labelnames == ("limit",)
-    assert metrics.tokens_total._labelnames == ("runtime_id", "direction")
-    assert metrics.cost_usd_total._labelnames == ("runtime_id",)
+    assert metrics.tokens_total._labelnames == (
+        "runtime_id",
+        "direction",
+        "actor_kind",
+    )
+    assert metrics.cost_usd_total._labelnames == ("runtime_id", "actor_kind")
     assert metrics.audit_events_dropped._labelnames == ()
     # issue #145 -- provider-side 429/retry observability.
     assert metrics.provider_requests_total._labelnames == ("provider", "status")
@@ -141,7 +145,7 @@ def test_record_turn_increments_counter_and_histogram() -> None:
 
     assert (
         metrics.turns_total.labels(
-            runtime_id="acme__sales-agent", outcome="ok"
+            runtime_id="acme__sales-agent", outcome="ok", actor_kind="none"
         )._value.get()
         == 1
     )
@@ -151,18 +155,20 @@ def test_record_turn_increments_counter_and_histogram() -> None:
     assert histogram._sum.get() == 2.5
     assert (
         metrics.tokens_total.labels(
-            runtime_id="acme__sales-agent", direction="input"
+            runtime_id="acme__sales-agent", direction="input", actor_kind="none"
         )._value.get()
         == 100
     )
     assert (
         metrics.tokens_total.labels(
-            runtime_id="acme__sales-agent", direction="output"
+            runtime_id="acme__sales-agent", direction="output", actor_kind="none"
         )._value.get()
         == 40
     )
     assert (
-        metrics.cost_usd_total.labels(runtime_id="acme__sales-agent")._value.get()
+        metrics.cost_usd_total.labels(
+            runtime_id="acme__sales-agent", actor_kind="none"
+        )._value.get()
         == 0.0056
     )
 
@@ -185,7 +191,7 @@ def test_record_turn_with_unknown_usage_skips_token_and_cost_counters() -> None:
 
     assert (
         metrics.turns_total.labels(
-            runtime_id="acme__sales-agent", outcome="timeout"
+            runtime_id="acme__sales-agent", outcome="timeout", actor_kind="none"
         )._value.get()
         == 1
     )

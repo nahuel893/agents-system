@@ -1695,7 +1695,7 @@ async def test_ok_turn_records_turn_metrics_and_token_cost() -> None:
 
     assert (
         metrics.turns_total.labels(
-            runtime_id="acme__sales-agent", outcome="ok"
+            runtime_id="acme__sales-agent", outcome="ok", actor_kind="none"
         )._value.get()
         == 1
     )
@@ -1705,13 +1705,13 @@ async def test_ok_turn_records_turn_metrics_and_token_cost() -> None:
     assert histogram._sum.get() >= 0
     assert (
         metrics.tokens_total.labels(
-            runtime_id="acme__sales-agent", direction="input"
+            runtime_id="acme__sales-agent", direction="input", actor_kind="none"
         )._value.get()
         == 10
     )
     assert (
         metrics.tokens_total.labels(
-            runtime_id="acme__sales-agent", direction="output"
+            runtime_id="acme__sales-agent", direction="output", actor_kind="none"
         )._value.get()
         == 4
     )
@@ -1734,7 +1734,7 @@ async def test_runtime_id_defaults_to_derived_model_id_when_not_given() -> None:
     expected_runtime_id = model_display_name(model)
     assert (
         metrics.turns_total.labels(
-            runtime_id=expected_runtime_id, outcome="ok"
+            runtime_id=expected_runtime_id, outcome="ok", actor_kind="none"
         )._value.get()
         == 1
     )
@@ -1768,7 +1768,7 @@ async def test_timeout_turn_records_timeout_outcome_with_no_token_counters() -> 
 
     assert (
         metrics.turns_total.labels(
-            runtime_id="acme__sales-agent", outcome="timeout"
+            runtime_id="acme__sales-agent", outcome="timeout", actor_kind="none"
         )._value.get()
         == 1
     )
@@ -2326,19 +2326,19 @@ async def test_timed_out_turn_still_exports_the_usage_it_accumulated(
     assert "input_tokens=None" not in usage_lines[0]
     assert (
         metrics.turns_total.labels(
-            runtime_id="acme__sales-agent", outcome="timeout"
+            runtime_id="acme__sales-agent", outcome="timeout", actor_kind="none"
         )._value.get()
         == 1
     )
     assert (
         metrics.tokens_total.labels(
-            runtime_id="acme__sales-agent", direction="input"
+            runtime_id="acme__sales-agent", direction="input", actor_kind="none"
         )._value.get()
         == 100
     )
     assert (
         metrics.tokens_total.labels(
-            runtime_id="acme__sales-agent", direction="output"
+            runtime_id="acme__sales-agent", direction="output", actor_kind="none"
         )._value.get()
         == 20
     )
