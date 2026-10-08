@@ -184,6 +184,23 @@ def test_metric_value_distinguishes_label_values() -> None:
     assert value == 1.0
 
 
+def test_metric_value_sums_the_series_a_label_it_does_not_name_splits() -> None:
+    """`agent_turns_total` carries `actor_kind` since #252: an API turn and a
+    channel turn of one runtime land in two series. A caller that names only
+    `runtime_id` and `outcome` asks for the total over both."""
+    text = """\
+# HELP agent_turns_total Total agent turns.
+# TYPE agent_turns_total counter
+agent_turns_total{runtime_id="live-harness",outcome="ok",actor_kind="api"} 1.0
+agent_turns_total{runtime_id="live-harness",outcome="ok",actor_kind="channel"} 1.0
+agent_turns_total{runtime_id="live-harness",outcome="error",actor_kind="api"} 4.0
+"""
+    value = metric_value(
+        text, "agent_turns_total", runtime_id="live-harness", outcome="ok"
+    )
+    assert value == 2.0
+
+
 def test_metric_value_returns_none_for_missing_sample() -> None:
     value = metric_value(
         _SAMPLE_METRICS_TEXT,

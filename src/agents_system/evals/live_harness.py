@@ -505,18 +505,23 @@ def metric_value(metrics_text: str, metric_name: str, **labels: str) -> float | 
     Matches on the exact exposed sample name (e.g. `"agent_turns_total"`,
     including a counter's `_total` suffix) and an exact match on every given
     label -- extra labels the sample carries but *labels* does not name are
-    ignored, so a caller only names the labels it cares about. `None` when no
-    sample matches, which a caller should treat as honestly unknown rather
-    than `0` (the harness's own honesty-rule convention, per issue #78
-    Slice 1's `TurnUsage`).
+    ignored, so a caller only names the labels it cares about. Every sample
+    that matches is summed: a label the caller does not name can split one
+    count into several series (`agent_turns_total` gained `actor_kind` in
+    #252, so an API turn and a channel turn of one runtime are two series),
+    and the caller asked for the total over them. `None` when no sample
+    matches, which a caller should treat as honestly unknown rather than `0`
+    (the harness's own honesty-rule convention, per issue #78 Slice 1's
+    `TurnUsage`).
     """
-    for family in text_string_to_metric_families(metrics_text):
-        for sample in family.samples:
-            if sample.name != metric_name:
-                continue
-            if all(sample.labels.get(key) == value for key, value in labels.items()):
-                return sample.value
-    return None
+    matched = [
+        sample.value
+        for family in text_string_to_metric_families(metrics_text)
+        for sample in family.samples
+        if sample.name == metric_name
+        and all(sample.labels.get(key) == value for key, value in labels.items())
+    ]
+    return sum(matched) if matched else None
 
 
 def _with_database(url: str, database: str) -> str:
