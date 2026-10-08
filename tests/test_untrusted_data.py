@@ -174,13 +174,16 @@ def _model() -> _RecordingModel:
     return model
 
 
-def _equipped(limits: dict[str, Any] | None = None) -> EquippedRuntime:
+def _equipped(
+    limits: dict[str, Any] | None = None,
+    system_prompt: str = "You are a helpful assistant.",
+) -> EquippedRuntime:
     return EquippedRuntime(
         definition=AgentDefinition(
             role_name="sales-agent",
             version="1.0",
             deployment=None,
-            system_prompt="You are a helpful assistant.",
+            system_prompt=system_prompt,
             tools=(),
             skills=(),
             context={},
@@ -193,7 +196,7 @@ def _equipped(limits: dict[str, Any] | None = None) -> EquippedRuntime:
             execution_limits=limits,
             untrusted_input=False,
         ),
-        system_prompt="You are a helpful assistant.",
+        system_prompt=system_prompt,
         tools=(),
         denied_tools=(),
         skills=(),
@@ -314,3 +317,24 @@ async def test_a_small_context_budget_never_receives_an_over_budget_block() -> N
 
     [model_input] = model.captured_inputs
     assert count_tokens_approximately(model_input) <= budget
+
+
+@pytest.mark.asyncio
+async def test_a_block_is_left_out_when_it_would_push_the_request_over_budget() -> None:
+    # Issue #258 review: the system prompt takes most of the budget. The request
+    # fits without the block, so the block must not be what breaks the cap.
+    budget = 300
+    prompt = "Policy " * 100
+    model = _model()
+    agent = AgentRuntime(_equipped({"max_context_tokens": budget}, prompt), model)
+
+    await agent.run_turn(
+        [HumanMessage(content="latest")],
+        session_id="s",
+        permissions=(),
+        untrusted_data=[UntrustedData("facts", "x" * 2_000)],
+    )
+
+    [model_input] = model.captured_inputs
+    assert count_tokens_approximately(model_input) <= budget
+    assert "x" * 100 not in str(model_input)

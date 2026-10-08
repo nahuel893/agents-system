@@ -454,6 +454,22 @@ async def _call_model(
         trim = trim_history(
             history, max_tokens=max_context_tokens, fixed_tokens=fixed_tokens
         )
+        if untrusted_text and trim.over_budget:
+            # The blocks are the one optional part of the request: when the
+            # system prompt, tool schemas and the current turn already leave
+            # no room for them, leave them out rather than break the cap.
+            bare: list[AnyMessage] = [system_message]
+            bare_trim = trim_history(
+                history,
+                max_tokens=max_context_tokens,
+                fixed_tokens=count_tokens_approximately(
+                    bare, tools=list(tool_schemas) or None
+                ),
+            )
+            if not bare_trim.over_budget:
+                logger.warning("runtime.untrusted_blocks_omitted", reason="over_budget")
+                leading = bare
+                trim = bare_trim
         if trim.trimmed or trim.over_budget:
             _report_context_trim(trim, max_context_tokens, definition, metrics)
         history = trim.messages
