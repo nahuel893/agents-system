@@ -272,7 +272,7 @@ This agent definition folder defines the Preventa Agent's behavioral boundary. A
 - **`persist_conversation`.** When `false`, `AgentRuntime` ignores `thread_id` (the checkpointer is neither read nor written) and the channel worker skips the `ConversationRecorder` write.
 - **Spellings.** The shipped `base` role and the reference agents write `session` and `deployment`; they are accepted as `local` and `org`.
 - **Inherited from `base`.** `base` declares `persist_conversation: false`, so a role that does not override it persists no conversation: set `persist_conversation: true` in the role's `policy.md` to keep a thread or record turns. The predefined `agent` role overrides it to `true`, so every conversational descendant (support, sales, accountant, operator, developer) keeps its history; the summary, data and orchestrator roles opt out with `false`.
-- **Defaults and failure.** An undeclared policy means `local`/`local` and `persist_conversation: true`. A policy that does not match the schema (an unknown scope, a non-boolean, an unknown field) fails closed: memory tools are refused with `memory_policy_invalid` and nothing is persisted.
+- **Defaults and failure.** An undeclared policy means `local`/`local` and `persist_conversation: true`. A policy that does not match the schema (an unknown scope, a non-boolean, an unknown field, or a `memory_policy` that is not a mapping such as `[]` or `false`) fails closed: memory tools are refused with `memory_policy_invalid` and nothing is persisted.
 
 ---
 

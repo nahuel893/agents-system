@@ -272,7 +272,7 @@ Esta carpeta de definición del agente establece la frontera de comportamiento d
 - **`persist_conversation`.** En `false`, `AgentRuntime` ignora `thread_id` (el checkpointer no se lee ni se escribe) y el worker del canal omite la escritura del `ConversationRecorder`.
 - **Grafías.** El rol `base` y los agentes de referencia escriben `session` y `deployment`; se aceptan como `local` y `org`.
 - **Heredado de `base`.** `base` declara `persist_conversation: false`, así que un rol que no lo sobrescribe no persiste ninguna conversación: declara `persist_conversation: true` en el `policy.md` del rol para conservar un hilo o registrar turnos. El rol predefinido `agent` lo sobrescribe a `true`, así que todo descendiente conversacional (soporte, ventas, contabilidad, operador, desarrollador) conserva su historial; los roles de resumen, datos y orquestador lo desactivan con `false`.
-- **Valores por defecto y fallos.** Una política no declarada equivale a `local`/`local` y `persist_conversation: true`. Una política que no cumple el esquema (un alcance desconocido, un valor no booleano, un campo desconocido) falla cerrada: las herramientas de memoria se rechazan con `memory_policy_invalid` y no se persiste nada.
+- **Valores por defecto y fallos.** Una política no declarada equivale a `local`/`local` y `persist_conversation: true`. Una política que no cumple el esquema (un alcance desconocido, un valor no booleano, un campo desconocido, o un `memory_policy` que no es un mapeo, como `[]` o `false`) falla cerrada: las herramientas de memoria se rechazan con `memory_policy_invalid` y no se persiste nada.
 
 ---
 

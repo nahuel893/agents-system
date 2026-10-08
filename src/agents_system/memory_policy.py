@@ -72,9 +72,17 @@ class MemoryPolicy:
     persist_conversation: bool = True
 
     @classmethod
-    def from_mapping(cls, raw: Mapping[str, Any] | None) -> MemoryPolicy:
-        raw = raw or {}
-        unknown = sorted(set(raw) - _FIELDS)
+    def from_mapping(cls, raw: object) -> MemoryPolicy:
+        """Parse a declared policy. ``None`` (nothing declared) is the
+        default; anything else that is not a mapping, falsey values
+        included, is malformed and fails closed."""
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, Mapping):
+            raise MemoryPolicyError(
+                f"memory_policy must be a mapping, got {type(raw).__name__}"
+            )
+        unknown = sorted(map(repr, set(raw) - _FIELDS))
         if unknown:
             raise MemoryPolicyError(f"unknown memory_policy fields: {unknown}")
         persist = raw.get("persist_conversation", True)
@@ -93,7 +101,7 @@ class MemoryPolicy:
         return SCOPES.index(_canonical(scope)) <= SCOPES.index(self.write_scope)
 
 
-def persists_conversation(raw: Mapping[str, Any] | None) -> bool:
+def persists_conversation(raw: object) -> bool:
     """Whether a conversation may be durably persisted; invalid means no."""
     try:
         return MemoryPolicy.from_mapping(raw).persist_conversation
