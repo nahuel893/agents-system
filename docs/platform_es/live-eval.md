@@ -587,7 +587,10 @@ assertions:
   resultado de la herramienta o el turno anterior bajo prueba, como los
   factores que imprimió `factor`. Nunca es para la redacción: ADR-002 E.18
   descarta aserciones sobre la forma de decir algo, no sobre si una respuesta
-  lleva los datos que recibió. Una falla nombra el texto esperado, nunca la
+  lleva los datos que recibió. La comparación ignora mayúsculas y la
+  agrupación de dígitos: una respuesta que escribe 48611 como `48,611`, o con
+  un espacio de no separación, angosto o fino, lo contiene; un espacio común
+  nunca une dos números. Una falla nombra el texto esperado, nunca la
   respuesta.
 
 Ninguna de las tres cambia cómo se decide si una corrida fue ejercitada, y
