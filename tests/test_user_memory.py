@@ -30,6 +30,7 @@ from agents_system.subject_data import SubjectRef
 from agents_system.user_memory import (
     USER_FACTS_SOURCE,
     FactRejected,
+    InMemoryFactBackend,
     InMemoryUserFactStore,
     UserFact,
     UserFacts,
@@ -736,3 +737,59 @@ async def test_the_purge_removes_expired_facts_of_inactive_subjects() -> None:
     for subject in ("participant:a", "participant:b"):
         assert provider.scope("rt", subject).rows("subject_facts") == {}
     assert len(provider.scope("rt", "participant:c").rows("subject_facts")) == 1
+
+
+async def test_list_user_facts_is_refused_once_the_turn_lost_the_read_grant() -> None:
+    provider = InMemoryScopeProvider()
+    await _facts(provider, "participant:a").remember("private detail")
+
+    with (
+        turn_scope(TurnSubject("participant:a"), TurnActor("library", "probe")),
+        pytest.raises(PolicyViolation),
+    ):
+        await intercept(
+            "list_user_facts",
+            {},
+            _equipped(_OPT_IN),
+            current_permissions=(),
+            scope_provider=provider,
+            runtime_id="rt",
+        )
+
+
+class _PausedDelete(InMemoryFactBackend):
+    def __init__(self, scope: Any, seen: asyncio.Event, resume: asyncio.Event) -> None:
+        super().__init__(scope)
+        self.seen, self.resume = seen, resume
+
+    async def remove(self, ids: Sequence[str]) -> int:
+        self.seen.set()
+        await self.resume.wait()
+        return await super().remove(ids)
+
+
+async def test_expiry_cleanup_does_not_delete_a_fact_refreshed_meanwhile() -> None:
+    provider = InMemoryScopeProvider()
+    scope = provider.scope("rt", "participant:a")
+    limits = UserMemoryLimits(ttl_s=60)
+    writer = UserFacts(InMemoryFactBackend(scope), limits)
+    await writer.remember("likes tea", now=datetime.now(UTC) - timedelta(seconds=61))
+    seen, resume = asyncio.Event(), asyncio.Event()
+    reader = UserFacts(_PausedDelete(scope, seen, resume), limits)
+
+    read = asyncio.create_task(reader.list())
+    refresh = None
+    try:
+        await asyncio.wait_for(seen.wait(), 1)
+        refresh = asyncio.create_task(writer.remember("likes tea"))
+        await asyncio.sleep(0)
+    except TimeoutError:
+        pass
+    resume.set()
+    await read
+    if refresh is not None:
+        await refresh
+    else:
+        await writer.remember("likes tea")
+
+    assert len(await writer.list()) == 1

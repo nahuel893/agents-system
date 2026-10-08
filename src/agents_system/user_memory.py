@@ -191,12 +191,22 @@ class UserFacts:
     async def list(self, *, now: datetime | None = None) -> list[UserFact]:
         """Unexpired facts, newest first. Expired rows are dropped on the way."""
         now = now or datetime.now(UTC)
+        rows: Sequence[UserFact] = await self._backend.all()
+        if any(f.expired(now) for f in rows):
+            # Delete under the subject's lock, from a fresh read: a fact a
+            # concurrent remember refreshed meanwhile is live again and stays.
+            async with self._backend.serialized():
+                rows = await self._purge_expired(now)
+        live = [f for f in rows if not f.expired(now)]
+        return sorted(live, key=lambda f: f.created_at, reverse=True)
+
+    async def _purge_expired(self, now: datetime) -> Sequence[UserFact]:
+        """Delete the expired rows and return the rest; the caller holds the lock."""
         rows = await self._backend.all()
         expired = [f.id for f in rows if f.expired(now)]
         if expired:
             await self._backend.remove(expired)
-        live = [f for f in rows if not f.expired(now)]
-        return sorted(live, key=lambda f: f.created_at, reverse=True)
+        return rows
 
     async def remember(
         self, content: object, *, now: datetime | None = None
@@ -217,7 +227,8 @@ class UserFacts:
 
     async def _remember(self, text: str, now: datetime) -> UserFact:
         key = fact_id(text)
-        existing = next((f for f in await self.list(now=now) if f.id == key), None)
+        rows = await self._purge_expired(now)
+        existing = next((f for f in rows if f.id == key and not f.expired(now)), None)
         fact = UserFact(
             id=key,
             content=text,
@@ -235,7 +246,7 @@ class UserFacts:
         return fact
 
     async def _evict(self, *, keep: str, now: datetime) -> int:
-        rows = await self.list(now=now)
+        rows = [f for f in await self._purge_expired(now) if not f.expired(now)]
         excess = len(rows) - self._limits.max_facts
         if excess <= 0:
             return 0
@@ -437,5 +448,7 @@ def build_user_memory_tool_specs(
             input_schema={"type": "object", "properties": {}},
             connector=list_facts,
             tier=Tier.T0,
+            # Reads stored personal data: recheck the read grant on every call.
+            always_revalidate=True,
         ),
     )
