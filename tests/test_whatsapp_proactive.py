@@ -57,6 +57,16 @@ async def test_a_429_without_a_usable_delay_still_names_one() -> None:
     assert caught.value.retry_after_s > 0
 
 
+@pytest.mark.parametrize("raw", ["inf", "nan", "1e12", "-5"])
+async def test_a_hostile_retry_after_is_bounded(raw: str) -> None:
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(429, headers={"Retry-After": raw})
+    )
+    with pytest.raises(ProviderRateLimited) as caught:
+        await _channel(transport).send_proactive("549111", "hello")
+    assert 0 < caught.value.retry_after_s <= 86400
+
+
 async def test_a_4xx_is_a_definitive_rejection() -> None:
     transport = httpx.MockTransport(lambda r: httpx.Response(400, json={}))
     with pytest.raises(ProviderRejected):

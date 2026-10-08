@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
@@ -222,6 +223,7 @@ class WhatsAppChannel:
 
 
 _DEFAULT_RETRY_AFTER_S = 60.0
+_MAX_RETRY_AFTER_S = 86400.0
 
 
 def _retry_after(value: str | None) -> float:
@@ -230,7 +232,9 @@ def _retry_after(value: str | None) -> float:
         seconds = float(value) if value is not None else 0.0
     except ValueError:
         return _DEFAULT_RETRY_AFTER_S
-    return seconds if seconds > 0 else _DEFAULT_RETRY_AFTER_S
+    if not math.isfinite(seconds) or seconds <= 0:
+        return _DEFAULT_RETRY_AFTER_S
+    return min(seconds, _MAX_RETRY_AFTER_S)
 
 
 def _walk_messages(entries: list[Any]) -> list[dict[str, Any]]:
