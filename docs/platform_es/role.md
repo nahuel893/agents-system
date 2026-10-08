@@ -279,7 +279,7 @@ Esta carpeta de definición del agente establece la frontera de comportamiento d
 
 ## Agentes de referencia
 
-> **Llega en el próximo release.** Ver [ADR-010](../architecture_es/adr-010-capability-evals-and-reference-agents.md).
+> **Desde `v0.6.0`.** Ver [ADR-010](../architecture_es/adr-010-capability-evals-and-reference-agents.md).
 
 Los ocho roles predefinidos concretos, `accountant-agent`, `data-agent`, `developer-agent`, `operator-agent`, `orchestrator`, `sales-agent`, `summary-agent` y `support-agent`, tienen copias en el repositorio bajo `examples/agents/<nombre>/`. Estos **agentes de referencia son ejemplos para copiar, no API soportada**: no traen promesa de compatibilidad, no están en el wheel, y cambiar uno no es un cambio incompatible. El núcleo conserva solo los padres genéricos, `base` y `agent`.
 

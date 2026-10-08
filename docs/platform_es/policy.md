@@ -151,7 +151,7 @@ Estos son los valores predeterminados de la plataforma. La política `policy.md`
 | Máxima profundidad de delegación | 2 | Padre → hijo → nieto; no más profundo |
 | Máximos intentos de aclaración | 3 | Antes de forzar el escalamiento ante entradas ambiguas |
 
-### Subir los límites desde el despliegue (próxima versión)
+### Subir los límites desde el despliegue
 
 Una definición de agente sola nunca puede subir un límite. El despliegue, que paga y opera el servicio, sí: fija `total_execution_timeout_s`, `tool_call_timeout_s` y `max_tool_calls` por id de runtime, y cada valor reemplaza al valor por defecto de la plataforma como techo de ese runtime. Las `execution_limits` del propio agente todavía pueden ajustarlo hacia abajo, nunca superarlo.
 
@@ -168,7 +168,7 @@ Una definición de agente sola nunca puede subir un límite. El despliegue, que 
 - **El margen cubre el checkpointer.** De los 60 s, `REPLY_SEND_ALLOWANCE_S` reserva 20 s para enviar la respuesta, y el resto cubre la lectura y el guardado del hilo, cada uno acotado por `CHECKPOINTER_TIMEOUT_S`. Así que `CHECKPOINTER_TIMEOUT_S` puede ser de hasta 20 s (`max_checkpointer_timeout_s()`); por encima, un arranque que asocia un runtime a un canal con checkpointer falla. Pasado el margen, un turno cerca del límite superaría el lease y correría otra vez en otro worker, herramientas incluidas.
 - **Registrado en el log.** Cada runtime registra `runtime.execution_limits` con los límites con los que arrancó y las claves que fijó el despliegue; `AgentRuntime.execution_limits` los devuelve.
 
-### La respuesta por timeout (próxima versión)
+### La respuesta por timeout
 
 Un turno que se queda sin tiempo responde "This is taking longer than expected. Please try again." Un despliegue que atiende usuarios en otro idioma fija su propio texto por runtime: `create_app(timeout_reply={"support": "..."})`, la variable `TURN_TIMEOUT_REPLY` (`{"id de runtime": "texto"}`), o `AgentRuntime(timeout_reply=...)`. Es texto plano de hasta 1000 caracteres y se envía tal cual: nunca se arma con datos del usuario ni de las herramientas.
 

@@ -87,7 +87,7 @@ model works in place of `ChatAnthropic`, which comes from
 | Comes from `agents_system` | You bring it |
 |---|---|
 | The harness: `ToolRegistry`, `RootConfig`, `resolve`, `build_runtime`, `AgentRuntime` | Your own `ToolSpec`s — the connectors that call *your* services |
-| The predefined platform roles (`platform/roles/*/{role,manifest,policy}.md`) — what a `sales-agent`, `orchestrator`, `data-agent`, or `summary-agent` *is allowed to do*. The eight concrete ones are deprecated in the next release in favor of the reference agents in `examples/agents/`, examples to copy (see "Import name and platform roles") | Your own deployment overrides (`deployments/{your-client}/`), if you want client-specific prompts, skills, or tighter policy |
+| The predefined platform roles (`platform/roles/*/{role,manifest,policy}.md`) — what a `sales-agent`, `orchestrator`, `data-agent`, or `summary-agent` *is allowed to do*. The eight concrete ones are deprecated since `v0.6.0` in favor of the reference agents in `examples/agents/`, examples to copy (see "Import name and platform roles") | Your own deployment overrides (`deployments/{your-client}/`), if you want client-specific prompts, skills, or tighter policy |
 | RBAC enforcement (`InjectionError`, `FactoryError`, `DefinitionError`) | The permission grants for your caller/identity, and the `granted_permissions` you pass to `build_runtime` |
 | A LangGraph-backed `AgentRuntime` that turns an equipped runtime into something you can call `run_turn` on | Any LangChain `BaseChatModel` to bind it to, unless the agent declares its own `model:` |
 
@@ -227,7 +227,7 @@ via `[tool.hatch.build.targets.wheel.force-include]` in `pyproject.toml`).
 Your own deployment overrides are never part of the install; you keep them
 in your own application's repository and point `RootConfig` at them.
 
-**The concrete roles are deprecated (coming in the next release).** Only the
+**The concrete roles are deprecated (since `v0.6.0`).** Only the
 generic parents, `base` and `agent`, stay supported API (ADR-010). The eight
 concrete roles (`sales-agent`, `support-agent`, `data-agent`, `summary-agent`,
 `accountant-agent`, `orchestrator`, `developer-agent`, `operator-agent`) have
@@ -388,8 +388,8 @@ Four things the example shows on purpose:
 - **`granted_permissions` is the only grant.** Here the caller holds
   `read:catalog`, so `catalog_search` is the only tool equipped.
 - **A deprecated name, for now.** `"sales-agent"` is a concrete predefined
-  role, so this example emits a `PredefinedRoleDeprecationWarning` in the
-  next release (see "Import name and platform roles"). With a copy of
+  role, so this example emits a `PredefinedRoleDeprecationWarning` since
+  `v0.6.0` (see "Import name and platform roles"). With a copy of
   `examples/agents/sales-agent/`, pass `agents_system.Agent.from_folder(path)`
   in its place; the registry and the grants stay the same.
 - **No deployment override.** Without `client=`, `build_runtime` uses the

@@ -151,7 +151,7 @@ These are platform-level defaults. An agent's `policy.md` may define stricter va
 | Max delegation depth | 2 | Parent → child → grandchild; no deeper |
 | Max clarification attempts | 3 | Before forcing escalation on ambiguous input |
 
-### Raising limits for a deployment (coming in the next release)
+### Raising limits for a deployment
 
 An agent definition alone can never raise a limit. The deployment, which pays for and operates the service, can: it sets `total_execution_timeout_s`, `tool_call_timeout_s` and `max_tool_calls` per runtime id, and each value replaces the platform default as that runtime's ceiling. The agent's own `execution_limits` may still tighten it, never exceed it.
 
@@ -168,7 +168,7 @@ An agent definition alone can never raise a limit. The deployment, which pays fo
 - **The margin holds the checkpointer.** Of the 60 s, `REPLY_SEND_ALLOWANCE_S` keeps 20 s for the reply send, and the rest holds the thread read and save, each bounded by `CHECKPOINTER_TIMEOUT_S`. So `CHECKPOINTER_TIMEOUT_S` may be at most 20 s (`max_checkpointer_timeout_s()`); above it, a boot that binds a runtime to a channel with a checkpointer fails. Past the margin, a turn near the bound would outlast the lease and run again on another worker, tools included.
 - **Logged.** Each runtime logs `runtime.execution_limits` with the limits it booted with and the keys the deployment set; `AgentRuntime.execution_limits` returns them.
 
-### The timeout reply (coming in the next release)
+### The timeout reply
 
 A turn that runs out of time answers "This is taking longer than expected. Please try again." A deployment serving users in another language sets its own text per runtime: `create_app(timeout_reply={"support": "..."})`, the `TURN_TIMEOUT_REPLY` variable (`{"runtime id": "text"}`), or `AgentRuntime(timeout_reply=...)`. It is plain text of at most 1000 characters, sent exactly as given: never templated with user or tool data.
 

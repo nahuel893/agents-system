@@ -260,7 +260,7 @@ Which shipped roles that concerns, and whether it is intended:
 | `sales-agent`, `data-agent` | 60 (the platform default, `PLATFORM_DEFAULT_LIMITS`; the roles set nothing) | No: 60 s is above the 45 s request timeout |
 | `developer-agent` | 120 (set on purpose) | No |
 | `operator-agent` | 30 (set on purpose: the role can change the host, so its limits are tightened) | Yes, on every boot |
-| The reference `developer-agent` (`examples/agents/developer-agent/`, coming in the next release) | 30, inherited from the reference `operator-agent`: an agent folder cannot raise its parent's limit (`docs/platform/role.md`, "Reference agents") | Yes, on every boot |
+| The reference `developer-agent` (`examples/agents/developer-agent/`, since `v0.6.0`) | 30, inherited from the reference `operator-agent`: an agent folder cannot raise its parent's limit (`docs/platform/role.md`, "Reference agents") | Yes, on every boot |
 
 The 60 s of `sales-agent` and `data-agent` is the intended default, not an
 oversight, and it is what keeps their boot quiet. The `operator-agent` warning

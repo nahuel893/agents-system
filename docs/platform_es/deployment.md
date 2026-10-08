@@ -307,7 +307,7 @@ DEPLOY_GRANTS='{"acme-sales": ["read:catalog", "write:orders"], "support": ["rea
 - **Roles predefinidos, o una carpeta.** Una variable de entorno no puede llevar un objeto `Agent`; un valor es el nombre de un rol predefinido, o `"folder:<name>"` (abajo). Cualquier otra cosa se registra con `agents=`.
 - **`agents=` gana.** Cuando `create_app` recibe `agents=`, `AGENT_REGISTRATIONS` se ignora, nunca se mezcla.
 
-### Servir una carpeta de agente: `AGENTS_ROOT` (próxima versión)
+### Servir una carpeta de agente: `AGENTS_ROOT`
 
 Un valor de la forma `"folder:<name>"` registra la carpeta de agente `<name>` bajo el directorio que nombra `AGENTS_ROOT`, por ejemplo una copia de un [agente de referencia](../../examples/agents/README.md):
 
@@ -327,7 +327,7 @@ DEPLOY_GRANTS='{"support": ["read:catalog"]}'
 
 La carpeta queda sujeta al techo del importador como cualquier `Agent.from_folder`. El nombre de un rol predefinido sigue funcionando, con su aviso de obsolescencia.
 
-### Límites de ejecución y respuesta por timeout (próxima versión)
+### Límites de ejecución y respuesta por timeout
 
 El despliegue fija los límites de cada runtime y el texto con el que responde un turno que se queda sin tiempo, con los mismos ids que `grants`:
 

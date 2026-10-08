@@ -1,6 +1,6 @@
 # Turnos programados
 
-*Llega en el próximo release.* Un usuario final le pide al agente por un canal: "mandame las ventas semanales todos los lunes a las 8". El agente crea una programación para ese usuario; más tarde la plataforma la ejecuta como un turno **para ese usuario** y le entrega la respuesta. Diseño: [ADR-011](../architecture_es/adr-011-end-user-scope.md) (sujeto y actor del turno, handle de alcance, entrega proactiva); issue #175.
+*Desde `v0.7.0`.* Un usuario final le pide al agente por un canal: "mandame las ventas semanales todos los lunes a las 8". El agente crea una programación para ese usuario; más tarde la plataforma la ejecuta como un turno **para ese usuario** y le entrega la respuesta. Diseño: [ADR-011](../architecture_es/adr-011-end-user-scope.md) (sujeto y actor del turno, handle de alcance, entrega proactiva); issue #175.
 
 El modelo nunca elige para quién es la programación ni quién la recibe. Ambos los pone la plataforma: el dueño es el sujeto del turno y la entrega va solo a ese dueño por la [entrega proactiva](proactive.md).
 
