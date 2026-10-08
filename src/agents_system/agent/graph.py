@@ -28,6 +28,7 @@ import asyncio
 import dataclasses
 import itertools
 import json
+import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import aclosing, nullcontext
@@ -62,6 +63,7 @@ from agents_system.config import ModelPrice
 from agents_system.execution_limits import (
     DEFAULT_TIMEOUT_REPLY,
     DEPLOYMENT_LIMIT_KEYS,
+    check_effective_limits,
     validate_execution_limits,
     validate_timeout_reply,
 )
@@ -385,17 +387,28 @@ def _effective_limits(
     #278: a key the deployment sets replaces the platform default and caps
     the definition's own value, so the definition may tighten it, never
     exceed it -- including a platform role that declares above the default.
+    A tool-call timeout neither of them sets is capped at the turn's, so a
+    turn lowered below the 10 s default does not outlast its own tool call.
+    A non-finite declared value raises ``ValueError``: it would bound nothing.
     """
     ceiling = deployment_limits or {}
+    declared = execution_limits or {}
     merged: dict[str, Any] = {
         key: ceiling.get(key, PLATFORM_DEFAULT_LIMITS[key])
         for key in _ENFORCED_LIMIT_KEYS
     }
-    if execution_limits:
-        for key in _ENFORCED_LIMIT_KEYS:
-            value = execution_limits.get(key)
-            if value is not None:
-                merged[key] = min(value, ceiling[key]) if key in ceiling else value
+    for key in _ENFORCED_LIMIT_KEYS:
+        value = declared.get(key)
+        if value is None:
+            continue
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(
+                f"execution_limits sets {key}={value}, not a finite number"
+            )
+        merged[key] = min(value, ceiling[key]) if key in ceiling else value
+    tool_key = "tool_call_timeout_s"
+    if tool_key not in ceiling and declared.get(tool_key) is None:
+        merged[tool_key] = min(merged[tool_key], merged["total_execution_timeout_s"])
     return merged
 
 
@@ -1279,7 +1292,9 @@ class AgentRuntime:
         # #278 -- the deployment's ceiling, from build_runtime and from here.
         who = f"runtime {self._runtime_id!r}"
         self._deployment_limits = _tighter(
-            validate_execution_limits(runtime.deployment_limits, who=who),
+            validate_execution_limits(
+                getattr(runtime, "deployment_limits", None), who=who
+            ),
             validate_execution_limits(execution_limits, who=who),
         )
         self._timeout_reply = (
@@ -1288,6 +1303,10 @@ class AgentRuntime:
             else validate_timeout_reply(timeout_reply, who=who)
         )
         effective = self.execution_limits
+        if self._deployment_limits:
+            # Each ceiling was valid alone; what runs is their combination
+            # with the definition's own values.
+            check_effective_limits(effective, who=who)
         logger.info(
             "runtime.execution_limits",
             runtime_id=self._runtime_id,

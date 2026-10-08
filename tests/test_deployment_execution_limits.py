@@ -16,6 +16,8 @@ still fires in order.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import types
 from collections.abc import Coroutine, Sequence
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -28,7 +30,13 @@ from langchain_core.language_models.fake_chat_models import (
 )
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatResult
-from test_main import _make_settings, _runtime_lease_invariant_patches, _stack
+from test_main import (
+    WHATSAPP_RUNTIME_ID,
+    _fake_checkpointer_cm_factory,
+    _make_settings,
+    _runtime_lease_invariant_patches,
+    _stack,
+)
 
 import agents_system
 from agents_system.agent.graph import _effective_limits
@@ -482,3 +490,169 @@ def test_the_environment_variables_are_validated_at_load() -> None:
         _make_settings(execution_limits={"sales": {"total_execution_timeout_s": 600}})
     with pytest.raises(ValueError, match="'sales'"):
         _make_settings(turn_timeout_reply={"sales": "  "})
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: the combined limits are what is checked
+# ---------------------------------------------------------------------------
+
+
+def test_an_agent_tightened_turn_under_a_longer_deployment_tool_call_is_refused() -> (
+    None
+):
+    """Each input is valid alone; together they would run 100 s tool calls
+    inside 70 s turns."""
+    tightened = _agent(execution_limits={"total_execution_timeout_s": 70})
+    equipped = agents_system.build_runtime(
+        tightened,
+        _registry(),
+        [],
+        execution_limits={"total_execution_timeout_s": 240, "tool_call_timeout_s": 100},
+    )
+
+    with pytest.raises(ValueError, match="'reporter'") as excinfo:
+        agents_system.AgentRuntime(equipped, model=_model(), runtime_id="reporter")
+    assert "tool_call_timeout_s=100" in str(excinfo.value)
+    assert "total_execution_timeout_s=70" in str(excinfo.value)
+
+
+def test_split_ceilings_that_combine_into_a_short_turn_are_refused() -> None:
+    with pytest.raises(ValueError, match="'reporter'"):
+        _runtime(
+            build_limits={"total_execution_timeout_s": 90, "tool_call_timeout_s": 80},
+            execution_limits={"total_execution_timeout_s": 50},
+        )
+
+
+def test_split_ceilings_that_combine_validly_construct() -> None:
+    """The reverse: the runtime's 100 s tool call fits the build's 240 s turn,
+    though it would not fit the 60 s default on its own."""
+    runtime = _runtime(
+        build_limits={"total_execution_timeout_s": 240},
+        execution_limits={"tool_call_timeout_s": 100},
+    )
+
+    assert runtime.execution_limits["total_execution_timeout_s"] == 240
+    assert runtime.execution_limits["tool_call_timeout_s"] == 100
+
+
+def test_a_deployment_may_lower_only_the_turn_below_the_default_tool_timeout() -> None:
+    runtime = _runtime(build_limits={"total_execution_timeout_s": 8})
+
+    assert runtime.execution_limits["total_execution_timeout_s"] == 8
+    assert runtime.execution_limits["tool_call_timeout_s"] == 8
+    settings = _make_settings(
+        execution_limits={"sales": {"total_execution_timeout_s": 8}}
+    )
+    assert settings.execution_limits == {"sales": {"total_execution_timeout_s": 8}}
+
+
+def test_an_explicit_tool_timeout_above_the_turn_still_fails() -> None:
+    with pytest.raises(ValueError, match="tool_call_timeout_s"):
+        _runtime(
+            build_limits={"total_execution_timeout_s": 8, "tool_call_timeout_s": 9}
+        )
+
+
+def test_an_agent_declaration_above_a_lowered_ceiling_is_capped_not_refused() -> None:
+    """The deployment lowers the turn to 25 s; the agent's 50 s is within the
+    platform default, so it loads, and the deployment's 25 s is what runs."""
+    declared = _agent(execution_limits={"total_execution_timeout_s": 50})
+    runtime = _runtime(declared, build_limits={"total_execution_timeout_s": 25})
+
+    assert runtime.execution_limits["total_execution_timeout_s"] == 25
+    messages, elapsed = _run(_timed_turn(runtime))
+    assert messages[-1].content == DEFAULT_TIMEOUT_REPLY
+    assert elapsed == pytest.approx(25.0)
+
+
+def test_a_stand_in_without_deployment_limits_keeps_working() -> None:
+    equipped = agents_system.build_runtime(_agent(), _registry(), [])
+    stand_in = types.SimpleNamespace(
+        **{
+            field.name: getattr(equipped, field.name)
+            for field in dataclasses.fields(equipped)
+            if field.name != "deployment_limits"
+        }
+    )
+
+    runtime = agents_system.AgentRuntime(
+        stand_in,  # type: ignore[arg-type]
+        model=_model(),
+        runtime_id="reporter",
+    )
+    assert runtime.execution_limits["total_execution_timeout_s"] == 60
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_a_non_finite_declared_limit_is_refused(value: float) -> None:
+    with pytest.raises(ValueError, match="total_execution_timeout_s"):
+        _effective_limits(
+            {"total_execution_timeout_s": value}, {"total_execution_timeout_s": 240}
+        )
+
+
+@pytest.mark.asyncio
+async def test_boot_checks_the_combined_limits_of_a_runtime_on_no_channel() -> None:
+    definition = MagicMock()
+    definition.permissions = ("read:catalog",)
+    definition.execution_limits = {"total_execution_timeout_s": 70}
+    definition.model = None
+    _, _, patches = _runtime_lease_invariant_patches(definition)
+    app = _served_app(
+        execution_limits={
+            "reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 100}
+        }
+    )
+
+    with (
+        patch("agents_system.main.get_settings", return_value=_served_settings()),
+        _stack(patches),
+        pytest.raises(ValueError, match="'reports'"),
+    ):
+        async with lifespan(app):
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: the lease margin must cover the checkpointer and the send
+# ---------------------------------------------------------------------------
+
+
+def test_the_margin_covers_two_checkpointer_calls_and_the_send() -> None:
+    from agents_system.execution_limits import (
+        REPLY_SEND_ALLOWANCE_S,
+        check_margin_covers_checkpointer,
+        max_checkpointer_timeout_s,
+    )
+
+    assert REPLY_SEND_ALLOWANCE_S == 20
+    assert max_checkpointer_timeout_s() == 20
+    check_margin_covers_checkpointer(20)
+    with pytest.raises(ValueError, match="CHECKPOINTER_TIMEOUT_S"):
+        check_margin_covers_checkpointer(20.5)
+
+
+@pytest.mark.asyncio
+async def test_boot_refuses_a_checkpointer_timeout_the_margin_cannot_cover() -> None:
+    settings = _make_settings(
+        adapter_runtimes=[],
+        whatsapp_runtime_id=WHATSAPP_RUNTIME_ID,
+        checkpointer_timeout_s=25.0,
+    )
+    definition = MagicMock()
+    definition.permissions = ("read:catalog",)
+    definition.execution_limits = None
+    _, _, patches = _runtime_lease_invariant_patches(definition)
+
+    with (
+        patch("agents_system.main.get_settings", return_value=settings),
+        patch(
+            "agents_system.main._build_checkpointer_cm",
+            side_effect=_fake_checkpointer_cm_factory(MagicMock()),
+        ),
+        _stack(patches),
+        pytest.raises(ValueError, match="CHECKPOINTER_TIMEOUT_S"),
+    ):
+        async with lifespan(create_test_app()):
+            pass

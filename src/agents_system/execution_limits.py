@@ -30,6 +30,12 @@ OUTBOX_LEASE_S = 600
 #: bookkeeping. A turn must end before ``lease - margin``.
 LEASE_MARGIN_S = 60
 
+#: The part of the margin kept for sending the reply: the channel's HTTP
+#: client allows 5 s each to connect, write, read and get a pooled
+#: connection. The checkpointer's read and save share the rest, so
+#: ``CHECKPOINTER_TIMEOUT_S`` may be at most ``max_checkpointer_timeout_s()``.
+REPLY_SEND_ALLOWANCE_S = 20
+
 #: The limits a deployment may set per runtime.
 DEPLOYMENT_LIMIT_KEYS = (
     "total_execution_timeout_s",
@@ -60,6 +66,43 @@ def check_turn_fits_lease(
         )
 
 
+def max_checkpointer_timeout_s() -> float:
+    """The longest checkpointer read or save the margin covers, twice over."""
+    return (LEASE_MARGIN_S - REPLY_SEND_ALLOWANCE_S) / 2
+
+
+def check_margin_covers_checkpointer(checkpointer_timeout_s: float) -> None:
+    """Raise ``ValueError`` unless the margin holds the thread read, the save
+    and the reply send. Past it, a turn near the bound outlasts the lease and
+    another worker runs it again, tools included."""
+    if 2 * checkpointer_timeout_s + REPLY_SEND_ALLOWANCE_S > LEASE_MARGIN_S:
+        raise ValueError(
+            f"CHECKPOINTER_TIMEOUT_S={checkpointer_timeout_s:g} does not fit the "
+            f"{LEASE_MARGIN_S}s lease margin: a channel turn reads and saves its "
+            f"thread (2 x {checkpointer_timeout_s:g}s) and sends its reply "
+            f"({REPLY_SEND_ALLOWANCE_S}s), so it may be at most "
+            f"{max_checkpointer_timeout_s():g}s"
+        )
+
+
+def check_effective_limits(
+    effective: Mapping[str, Any], *, who: str, lease_s: float = OUTBOX_LEASE_S
+) -> None:
+    """Check the limits a runtime will actually run with: the deployment's
+    ceilings combined with the definition's own values. Each input may be
+    valid alone and the combination not."""
+    total = effective["total_execution_timeout_s"]
+    tool = effective["tool_call_timeout_s"]
+    if tool > total:
+        raise ValueError(
+            f"{who} would run with tool_call_timeout_s={tool} above "
+            f"total_execution_timeout_s={total} (the deployment's limits and "
+            "the agent's own combined); a tool call cannot outlast the turn it "
+            "runs in"
+        )
+    check_turn_fits_lease(total, who=who, lease_s=lease_s)
+
+
 def _checked_value(key: str, value: Any, *, who: str) -> int | float:
     if (
         isinstance(value, bool)
@@ -85,9 +128,10 @@ def validate_execution_limits(
     """One runtime's deployment-set limits, checked; ``{}`` for ``None``.
 
     Fails closed with ``ValueError`` naming *who* on an unknown key, a value
-    that is not a positive finite number, a ``tool_call_timeout_s`` above the
-    turn's, or a turn that does not fit the outbox lease. A key left out keeps
-    the platform default, and the checks read that default.
+    that is not a positive finite number, a ``tool_call_timeout_s`` above a
+    ``total_execution_timeout_s`` set beside it, or a turn that does not fit
+    the outbox lease. What one input leaves out is decided only once the
+    inputs are combined: ``check_effective_limits``.
     """
     if raw is None:
         return {}
@@ -104,23 +148,16 @@ def validate_execution_limits(
         )
     limits = {key: _checked_value(key, value, who=who) for key, value in raw.items()}
 
-    # Deferred: the loader is heavy and imports the agent package.
-    from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS
-
-    total = limits.get(
-        "total_execution_timeout_s",
-        PLATFORM_DEFAULT_LIMITS["total_execution_timeout_s"],
-    )
-    tool = limits.get(
-        "tool_call_timeout_s", PLATFORM_DEFAULT_LIMITS["tool_call_timeout_s"]
-    )
-    if tool > total:
+    total = limits.get("total_execution_timeout_s")
+    tool = limits.get("tool_call_timeout_s")
+    if total is not None and tool is not None and tool > total:
         raise ValueError(
             f"{who} has tool_call_timeout_s={tool} above "
             f"total_execution_timeout_s={total}; a tool call cannot outlast "
             "the turn it runs in"
         )
-    check_turn_fits_lease(total, who=who, lease_s=lease_s)
+    if total is not None:
+        check_turn_fits_lease(total, who=who, lease_s=lease_s)
     return limits
 
 

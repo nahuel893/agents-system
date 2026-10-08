@@ -351,7 +351,7 @@ TURN_TIMEOUT_REPLY='{"reports": "Esto está tardando más de lo esperado. Probá
 ```
 
 - **Solo el despliegue sube.** Un valor reemplaza al defecto de la plataforma (60 s por turno, 10 s por llamada a herramienta, 20 llamadas) como techo de ese runtime; el agente puede ajustarlo hacia abajo, nunca superarlo.
-- **El lease lo acota.** Un turno tiene que durar menos de 540 s: el lease de 600 s del outbox menos los 60 s de `LEASE_MARGIN_S` para el envío de la respuesta y el checkpointer. Un turno que no entra, una llamada a herramienta más larga que su turno, una clave desconocida o un id que el arranque no construye hacen fallar el arranque, nombrando el runtime.
+- **El lease lo acota.** Un turno tiene que durar menos de 540 s: el lease de 600 s del outbox menos los 60 s de `LEASE_MARGIN_S` para el envío de la respuesta y el checkpointer. Un turno que no entra, una llamada a herramienta más larga que su turno (validada otra vez al combinarse con los límites del agente), una clave desconocida o un id que el arranque no construye hacen fallar el arranque, nombrando el runtime. El margen también cubre la lectura y el guardado del checkpointer, así que con un canal y checkpointer `CHECKPOINTER_TIMEOUT_S` puede ser de hasta 20 s.
 - **La respuesta es texto plano**, de hasta 1000 caracteres, y se envía tal cual. Un runtime sin respuesta propia responde el texto por defecto en inglés.
 
 Ver [Política: límites de ejecución](policy.md#límites-de-ejecución-execution-limits).

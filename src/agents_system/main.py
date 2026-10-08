@@ -55,6 +55,8 @@ from agents_system.channels.whatsapp import (
 )
 from agents_system.config import Settings, get_settings
 from agents_system.execution_limits import (
+    check_effective_limits,
+    check_margin_covers_checkpointer,
     check_turn_fits_lease,
     parse_execution_limits,
     parse_timeout_replies,
@@ -446,7 +448,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
 
         if plan.registrations:
-            from agents_system.agent.graph import AgentRuntime
+            from agents_system.agent.graph import AgentRuntime, _effective_limits
             from agents_system.harness.factory import build_runtime
             from agents_system.harness.loader import resolve
             from agents_system.services.embeddings import (
@@ -630,6 +632,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     channel_name
                 )
 
+            # #278 -- the lease margin must hold a channel turn's thread read
+            # and save, and its reply send.
+            if channels_by_runtime and checkpointer is not None:
+                check_margin_covers_checkpointer(settings.checkpointer_timeout_s)
+
             runtimes: dict[str, AgentRuntime] = {}
             for runtime_id, registration in plan.registrations.items():
                 client = registration.client
@@ -684,6 +691,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                         "or add the deployment folder."
                     )
 
+                if deployment_limits:
+                    # #278 -- every runtime the deployment set limits for,
+                    # channel-bound or not: the combination is what runs.
+                    check_effective_limits(
+                        _effective_limits(
+                            getattr(definition, "execution_limits", None),
+                            deployment_limits,
+                        ),
+                        who=f"runtime {runtime_id!r}",
+                        lease_s=DEFAULT_LEASE_DURATION.total_seconds(),
+                    )
                 _warn_if_turn_budget_below_request_timeout(
                     runtime_id, definition, settings, deployment_limits
                 )

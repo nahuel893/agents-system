@@ -580,8 +580,9 @@ def build_runtime(
         ``max_tool_calls``. It replaces the platform default as the ceiling;
         the agent's own declaration may tighten it, never exceed it. A turn
         must fit the outbox lease (``execution_limits.LEASE_MARGIN_S``) and a
-        tool call its turn, or this raises ``ValueError``. ``None`` keeps the
-        platform defaults.
+        tool call set beside it must fit that turn, or this raises
+        ``ValueError``; ``AgentRuntime`` checks them again once combined with
+        the agent's own limits. ``None`` keeps the platform defaults.
     """
     if roots is None:
         roots = RootConfig()

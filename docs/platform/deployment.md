@@ -261,7 +261,7 @@ TURN_TIMEOUT_REPLY='{"reports": "Esto está tardando más de lo esperado. Probá
 ```
 
 - **Only the deployment raises.** A value replaces the platform default (60 s per turn, 10 s per tool call, 20 tool calls) as that runtime's ceiling; the agent may tighten it, never exceed it.
-- **The lease bounds it.** A turn must be shorter than 540 s: the 600 s outbox lease minus the 60 s `LEASE_MARGIN_S` for the reply send and the checkpointer. A turn that does not fit, a tool call longer than its turn, an unknown key, or an id the boot does not build fails boot, naming the runtime.
+- **The lease bounds it.** A turn must be shorter than 540 s: the 600 s outbox lease minus the 60 s `LEASE_MARGIN_S` for the reply send and the checkpointer. A turn that does not fit, a tool call longer than its turn (checked again once combined with the agent's own limits), an unknown key, or an id the boot does not build fails boot, naming the runtime. The margin also holds the checkpointer's read and save, so with a channel and a checkpointer `CHECKPOINTER_TIMEOUT_S` may be at most 20 s.
 - **The reply is plain text**, at most 1000 characters, sent as given. A runtime without one answers the default English text.
 
 See [Policy: execution limits](policy.md#execution-limits).
