@@ -161,9 +161,31 @@ def map_messages(openai_messages: list[dict[str, Any]]) -> list[AnyMessage]:
         elif role == "user":
             result.append(HumanMessage(content=content))
         elif role == "assistant":
+            # A client such as Open WebUI keeps a failed reply in its history
+            # as an assistant message with null or empty content and resends
+            # it on every later request. Mapping null raised and an empty one
+            # reached the model, so one failed reply broke the conversation
+            # for good. It carries nothing for the model: drop it.
+            if not _has_text(content):
+                continue
             result.append(AIMessage(content=content))
         # Unknown roles are silently skipped
     return result
+
+
+def _has_text(content: Any) -> bool:
+    """Whether OpenAI message *content* (a string or a list of parts) holds
+    any non-blank text."""
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(
+            isinstance(part, dict)
+            and isinstance(part.get("text"), str)
+            and part["text"].strip()
+            for part in content
+        )
+    return False
 
 
 def _extract_assistant_text(messages: list[AnyMessage]) -> str:
