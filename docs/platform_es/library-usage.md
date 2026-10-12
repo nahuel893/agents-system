@@ -465,14 +465,16 @@ ninguna variable del servidor (`META_WEBHOOK_SECRET`, URL de base de datos, ...)
 | Proveedor | Variables |
 |---|---|
 | `openai_compatible` | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` |
-| `anthropic` | `ANTHROPIC_API_KEY` |
+| `anthropic` | `ANTHROPIC_API_KEY`; `ANTHROPIC_MODEL` (opcional, por defecto `claude-haiku-5-5`) |
 | `groq` | `GROQ_API_KEY` |
 | `ollama` | `OLLAMA_BASE_URL` |
 
 Una variable obligatoria faltante (`OPENAI_COMPATIBLE_BASE_URL`,
 `ANTHROPIC_API_KEY`) falla al construir, con un error que nombra al agente y a
 la variable. `OPENAI_COMPATIBLE_API_KEY` es opcional, para endpoints locales
-sin clave.
+sin clave. `ANTHROPIC_MODEL` es el modelo que se usa cuando el agente no
+declara ninguno; el modelo que declara el agente tiene prioridad, y un
+`ANTHROPIC_MODEL` vacío falla al construir.
 
 ### Cuando pasás un modelo Y el agente declara uno
 

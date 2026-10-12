@@ -450,14 +450,16 @@ through a narrow provider-only loader, so none of the server's variables
 | Provider | Variables |
 |---|---|
 | `openai_compatible` | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` |
-| `anthropic` | `ANTHROPIC_API_KEY` |
+| `anthropic` | `ANTHROPIC_API_KEY`; `ANTHROPIC_MODEL` (optional, default `claude-haiku-5-5`) |
 | `groq` | `GROQ_API_KEY` |
 | `ollama` | `OLLAMA_BASE_URL` |
 
 A missing required variable (`OPENAI_COMPATIBLE_BASE_URL`,
 `ANTHROPIC_API_KEY`) fails at construction with an error that names the agent
 and the variable. `OPENAI_COMPATIBLE_API_KEY` is optional, for keyless local
-endpoints.
+endpoints. `ANTHROPIC_MODEL` is the model used when the agent declares none; a
+model the agent declares wins, and an empty `ANTHROPIC_MODEL` fails at
+construction.
 
 ### When you pass a model AND the agent declares one
 

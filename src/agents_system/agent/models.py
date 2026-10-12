@@ -107,9 +107,9 @@ def build_chat_model(
     issue #186 -- ``settings_source`` says where the ``openai_compatible`` and
     ``ollama`` branches read their host and model from. ``None`` (default)
     reads ``ProviderSettings`` (`get_provider_settings`), which needs no server
-    environment; the served app passes ``config.get_settings``. It is called
-    only by the branches that need it, so ``groq``/``anthropic`` never build
-    any settings object.
+    environment; the served app passes ``config.get_settings``. ``anthropic``
+    reads its model the same way. It is called only by the branches that
+    need it, so ``groq`` never builds any settings object.
     """
     source = settings_source if settings_source is not None else get_provider_settings
 
@@ -152,13 +152,18 @@ def build_chat_model(
             raise ValueError(
                 "ANTHROPIC_API_KEY is required when ADAPTER_PROVIDER=anthropic"
             )
+        anthropic_model_id = model_override or source().anthropic_model
+        if not anthropic_model_id:
+            raise ValueError(
+                "ANTHROPIC_MODEL is required when ADAPTER_PROVIDER=anthropic"
+            )
         anthropic_kwargs: dict[str, Any] = {}
         if temperature is not None:
             anthropic_kwargs["temperature"] = temperature
         if max_tokens is not None:
             anthropic_kwargs["max_tokens"] = max_tokens
         return ChatAnthropic(  # type: ignore[call-arg]
-            model=model_override or "claude-3-5-haiku-latest",
+            model=anthropic_model_id,
             anthropic_api_key=anthropic_api_key,
             **anthropic_kwargs,
         )

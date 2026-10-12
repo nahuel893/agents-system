@@ -92,7 +92,7 @@ Every feature of the kit on one page, with the name to reach it and the page tha
 | Turn admission | Caps how many turns run at once in one process. The worker claims durable work only when a slot is free. | `TurnAdmissionLimiter`; `MAX_CONCURRENT_TURNS`, `ADMISSION_WAIT_TIMEOUT_S` | `server` | [Deployment](deployment.md) |
 | Participant identity | Maps a channel sender to a person you know. Identity is per channel, so one channel cannot pose as another. | `ParticipantDirectory`, `ChannelParticipantDirectory`; `create_app(participant_directory=...)` | `server` | [Channel](channel.md) |
 | Conversation recorder | A hook for storing the transcript in your own store. The kit ships the protocol only, no production implementation (see #27 below). | `ConversationRecorder` protocol; `create_app(conversation_recorder=...)` | `server` | [ADR-002](../architecture/adr-002-agent-model-and-capabilities.md) |
-| Chat providers | Anthropic, Groq, Ollama or any OpenAI-compatible endpoint. | `ADAPTER_PROVIDER`; `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`, `OPENAI_COMPATIBLE_MODEL` | `anthropic`, `groq`, `ollama` or `openai` | [Library usage](library-usage.md) |
+| Chat providers (Anthropic model setting: coming in the next release) | Anthropic, Groq, Ollama or any OpenAI-compatible endpoint. The Anthropic model is chosen with `ANTHROPIC_MODEL` (default `claude-haiku-5-5`); a model an agent declares still wins. | `ADAPTER_PROVIDER`; `ANTHROPIC_MODEL`; `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`, `OPENAI_COMPATIBLE_MODEL` | `anthropic`, `groq`, `ollama` or `openai` | [Library usage](library-usage.md) |
 
 ## Observability
 

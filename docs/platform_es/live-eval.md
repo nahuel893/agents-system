@@ -183,6 +183,20 @@ export OPENAI_COMPATIBLE_API_KEY=...   # tu propia clave -- nunca la commitees
 uv run --env-file .env pytest -m live
 ```
 
+Anthropic funciona igual; el modelo es opcional (por defecto
+`claude-haiku-5-5`):
+
+```bash
+export EVAL_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=...           # tu propia clave -- nunca la commitees
+export ANTHROPIC_MODEL=<id-del-modelo> # opcional
+export MODEL_PRICES='{"<id-del-modelo>": {"input_per_million": ..., "output_per_million": ...}}'
+uv run --env-file .env pytest -m live
+```
+
+`MODEL_PRICES` debe incluir el precio de ese modelo, con el id del modelo como
+clave; si no, el costo no se informa.
+
 (O guardá estos valores en tu `.env` — `Settings` lo carga automáticamente;
 nunca imprimas ni commitees ese archivo.) El nombre de modelo que reporta
 `ScenarioResult` se lee de vuelta del modelo ya construido
