@@ -748,6 +748,78 @@ def test_map_messages_role_types():
     assert not any(isinstance(m, LCSystem) for m in mapped)
 
 
+@pytest.mark.parametrize(
+    "content",
+    [None, "", "   \n", [], [{"type": "text", "text": ""}]],
+    ids=["null", "empty", "blank", "empty-parts", "empty-text-part"],
+)
+def test_map_messages_drops_an_assistant_message_with_no_content(content):
+    """A client such as Open WebUI keeps a failed reply in its history as an
+    assistant message with null or empty content and resends it on every
+    later request. Mapping it raised (null) or forwarded an empty assistant
+    message (empty) on every turn, which left the conversation unusable for
+    good. Such a message carries nothing for the model, so it is dropped."""
+    from langchain_core.messages import AIMessage as LCAI
+    from langchain_core.messages import HumanMessage as LCHuman
+
+    from agents_system.integration.openai_adapter import map_messages
+
+    mapped = map_messages(
+        [
+            {"role": "user", "content": "hola"},
+            {"role": "assistant", "content": content},
+            {"role": "user", "content": "otra vez"},
+        ]
+    )
+
+    assert [type(m) for m in mapped] == [LCHuman, LCHuman]
+    assert [m.content for m in mapped] == ["hola", "otra vez"]
+    assert not any(isinstance(m, LCAI) for m in mapped)
+
+
+def test_map_messages_keeps_an_assistant_message_given_as_text_parts():
+    """Content as a list of parts with text is a real reply, and is kept."""
+    from langchain_core.messages import AIMessage as LCAI
+
+    from agents_system.integration.openai_adapter import map_messages
+
+    mapped = map_messages(
+        [
+            {"role": "user", "content": "hola"},
+            {"role": "assistant", "content": [{"type": "text", "text": "buenas"}]},
+        ]
+    )
+
+    assert isinstance(mapped[1], LCAI)
+    assert mapped[1].text == "buenas"
+
+
+def test_chat_completion_survives_a_failed_reply_in_the_history(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """End to end through the route: a history holding a null assistant reply
+    still gets an answer instead of failing every later request."""
+    client = _make_client(
+        runtime_ids=["acme__sales-agent"],
+        adapter_api_key="test-key",
+        monkeypatch=monkeypatch,
+    )
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "acme__sales-agent",
+            "messages": [
+                {"role": "user", "content": "hola"},
+                {"role": "assistant", "content": None},
+                {"role": "user", "content": "otra vez"},
+            ],
+        },
+        headers={"Authorization": "Bearer test-key"},
+    )
+
+    assert response.status_code == 200, response.text
+
+
 # ---------------------------------------------------------------------------
 # The adapter surface is NOT the runtime cache
 # ---------------------------------------------------------------------------
