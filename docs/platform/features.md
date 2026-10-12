@@ -8,7 +8,7 @@ Every feature of the kit on one page, with the name to reach it and the page tha
 
 - Each table row is one feature. **How to use it** names a class, function, setting or file that exists on `main`.
 - **Extra needed** is the install extra (see [Extras](library-usage.md#extras)). `None` means the light core is enough.
-- A feature marked **coming in the next release** is merged on `main` but not in the latest release, `v0.7.0`. Everything else is in `v0.7.0`.
+- A feature marked **coming in the next release** is merged on `main` but not in the latest release, `v0.7.1`. Everything else is in `v0.7.1`.
 - Settings are environment variables. `CHECKPOINTER_RETENTION_S` is the setting `checkpointer_retention_s`, and so on.
 - Things the kit does not do yet are listed at the end, in [Not in the kit yet](#not-in-the-kit-yet). Nothing there is available.
 
@@ -85,14 +85,14 @@ Every feature of the kit on one page, with the name to reach it and the page tha
 | Feature | What it does | How to use it | Extra needed | Docs |
 |---|---|---|---|---|
 | Serve agents over HTTP | Builds the FastAPI app for the agents you register. | `create_app(registry_factory=..., agents={...}, grants={...})`; `agents_system.server:app` with `AGENT_REGISTRATIONS`, `REGISTRY_FACTORY` | `server` plus a provider extra | [Deployment](deployment.md), [Operations](../operations/deployment.md) |
-| OpenAI-compatible API | Exposes registered agents as models of an OpenAI-style API. The caller sends the whole history: client `system` messages are dropped, and **coming in the next release**, so is an assistant message with no text (a failed reply a client such as Open WebUI kept), so one failed reply no longer breaks the conversation. | `GET /v1/models`, `POST /v1/chat/completions`; `ADAPTER_RUNTIMES`, `ADAPTER_API_KEY` | `server` | [Deployment](deployment.md) |
+| OpenAI-compatible API | Exposes registered agents as models of an OpenAI-style API. The caller sends the whole history: client `system` messages are dropped, and, since `v0.7.1`, so is an assistant message with no text (a failed reply a client such as Open WebUI kept), so one failed reply no longer breaks the conversation. | `GET /v1/models`, `POST /v1/chat/completions`; `ADAPTER_RUNTIMES`, `ADAPTER_API_KEY` | `server` | [Deployment](deployment.md) |
 | Channel port | Adds a messaging channel with one adapter: it verifies, parses and sends. The kit supplies the route, the inbox, the worker and the audit. | `Channel`, `ChannelAdapter`; `create_app(channels={"name": Channel(...)})`; `POST /webhook/<name>` | `server` | [Channel](channel.md) |
 | WhatsApp | A built-in channel with signature check, verification handshake and reply sending. | `WhatsAppChannel`; `WHATSAPP_RUNTIME_ID`, `META_WEBHOOK_SECRET`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | `server` | [Channel](channel.md) |
 | Durable inbox and outbox | Stores each inbound message once, answers the provider at once and processes it later. Work survives crashes and is retried. | `accept_inbound_message`, `DeferredWebhookWorker`; `WEBHOOK_WORKER_POLL_INTERVAL_S`; migrations `002` to `006` | `server` | [Webhook delivery](../architecture/webhook-delivery.md), [Channel](channel.md) |
 | Turn admission | Caps how many turns run at once in one process. The worker claims durable work only when a slot is free. | `TurnAdmissionLimiter`; `MAX_CONCURRENT_TURNS`, `ADMISSION_WAIT_TIMEOUT_S` | `server` | [Deployment](deployment.md) |
 | Participant identity | Maps a channel sender to a person you know. Identity is per channel, so one channel cannot pose as another. | `ParticipantDirectory`, `ChannelParticipantDirectory`; `create_app(participant_directory=...)` | `server` | [Channel](channel.md) |
 | Conversation recorder | A hook for storing the transcript in your own store. The kit ships the protocol only, no production implementation (see #27 below). | `ConversationRecorder` protocol; `create_app(conversation_recorder=...)` | `server` | [ADR-002](../architecture/adr-002-agent-model-and-capabilities.md) |
-| Chat providers (Anthropic model setting: coming in the next release) | Anthropic, Groq, Ollama or any OpenAI-compatible endpoint. The Anthropic model is chosen with `ANTHROPIC_MODEL` (default `claude-haiku-5-5`); a model an agent declares still wins. | `ADAPTER_PROVIDER`; `ANTHROPIC_MODEL`; `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`, `OPENAI_COMPATIBLE_MODEL` | `anthropic`, `groq`, `ollama` or `openai` | [Library usage](library-usage.md) |
+| Chat providers | Anthropic, Groq, Ollama or any OpenAI-compatible endpoint. Since `v0.7.1`, the Anthropic model is chosen with `ANTHROPIC_MODEL` (default `claude-haiku-5-5`); a model an agent declares still wins. | `ADAPTER_PROVIDER`; `ANTHROPIC_MODEL`; `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`, `OPENAI_COMPATIBLE_MODEL` | `anthropic`, `groq`, `ollama` or `openai` | [Library usage](library-usage.md) |
 
 ## Observability
 
