@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.1](https://github.com/nahuel893/agents-system/compare/v0.7.0...v0.7.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **adapter:** drop assistant messages with no text from the request history ([#291](https://github.com/nahuel893/agents-system/issues/291)) ([3b7efee](https://github.com/nahuel893/agents-system/commit/3b7efeef8c7e931bd76f4c4ff3ed6e384c24a7b0))
+* **evals:** schedule_cancel accepts a cancel by the id create_schedule returned ([#296](https://github.com/nahuel893/agents-system/issues/296)) ([#297](https://github.com/nahuel893/agents-system/issues/297)) ([b7f7b1e](https://github.com/nahuel893/agents-system/commit/b7f7b1e8e3237c4a86c3c7cdcc5577bd53f79e9a))
+* **models:** choose the Anthropic model with ANTHROPIC_MODEL, defaulting to claude-haiku-5-5 ([#292](https://github.com/nahuel893/agents-system/issues/292)) ([#293](https://github.com/nahuel893/agents-system/issues/293)) ([82e7ae4](https://github.com/nahuel893/agents-system/commit/82e7ae4b001b8f2de132e0da3ea606dfc3d129f0))
+
+
+### Documentation
+
+* **features:** mark the 0.7.1 fixes as released ([#294](https://github.com/nahuel893/agents-system/issues/294)) ([88c0e07](https://github.com/nahuel893/agents-system/commit/88c0e0791547be7ed9d83487f7cdc5911577c21d))
+
 ## [0.7.0](https://github.com/nahuel893/agents-system/compare/v0.6.0...v0.7.0) (2026-10-08)
 
 
