@@ -1,13 +1,14 @@
 # Capability: user-requested schedules (ADR-011, #175).
 #
-# Stopping a schedule needs its id, which only list_schedules returns. An id
-# that is not the user's reports error_kind not_found, so delete_schedule only
-# counts as succeeded when it actually deleted something.
+# Stopping a schedule needs its real id, which the model has from the
+# create_schedule reply or can get from list_schedules. An id that is not the
+# user's reports error_kind not_found, so delete_schedule only counts as
+# succeeded when it actually deleted something.
 agent: schedules-agent
 category: happy_path
 description: >
-  A customer sets up a daily report, then asks to stop it. The model looks the
-  schedule up and deletes it.
+  A customer sets up a daily report, then asks to stop it. The model deletes the
+  schedule by its real id, taken from the create reply or from a lookup.
 end_user: eval-customer
 turns:
   - "Please send me the stock report every day at 09:00. My time zone is UTC."
@@ -16,5 +17,4 @@ granted_permissions:
   - write:schedule
   - send:escalation
 assertions:
-  tools_called: [list_schedules]
   tools_succeeded: [create_schedule, delete_schedule]

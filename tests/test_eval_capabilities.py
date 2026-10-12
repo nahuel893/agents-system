@@ -650,6 +650,33 @@ async def test_cancelling_an_invented_schedule_id_fails_the_gate(
     assert not result.gate.passed
 
 
+async def test_cancelling_by_the_id_create_schedule_returned_passes_the_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """create_schedule returns the id, so deleting with it without listing first
+    is a correct cancel."""
+    case = next(c for c in _CASES if c.scenario.name == "schedule_cancel")
+    no_list = [
+        _call(
+            "create_schedule",
+            {
+                "prompt": "Send me the stock report",
+                "frequency": "daily",
+                "time": "09:00",
+                "timezone": "UTC",
+            },
+        ),
+        _say("Scheduled daily at 09:00."),
+        _call("delete_schedule", {"id": _PINNED_SCHEDULE_ID}, "call-2"),
+        _say("Stopped."),
+    ]
+
+    result = await _run_script(case, no_list, monkeypatch)
+
+    assert result.runs[0].passed
+    assert result.gate.passed
+
+
 def test_missing_requirements_names_absent_host_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
