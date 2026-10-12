@@ -106,6 +106,9 @@ class ProviderSettings(BaseSettings):
     # http://localhost:11434) instead of treating "" as a real base URL.
     ollama_model: str = "qwen2.5:3b"
     ollama_base_url: str = ""
+    # issue #292 -- the anthropic provider's model, mirroring openai_compatible_model:
+    # a role's declared model still wins; this is the fallback when none is set.
+    anthropic_model: str = "claude-haiku-5-5"
 
 
 class Settings(ProviderSettings):

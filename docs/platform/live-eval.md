@@ -170,6 +170,20 @@ export OPENAI_COMPATIBLE_API_KEY=...   # your own key -- never commit it
 uv run --env-file .env pytest -m live
 ```
 
+Anthropic works the same way; the model is optional (default
+`claude-haiku-5-5`):
+
+```bash
+export EVAL_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=...           # your own key -- never commit it
+export ANTHROPIC_MODEL=<model-id>      # optional
+export MODEL_PRICES='{"<model-id>": {"input_per_million": ..., "output_per_million": ...}}'
+uv run --env-file .env pytest -m live
+```
+
+`MODEL_PRICES` must carry that model's price, keyed by the model id, or the
+cost is not reported.
+
 (Or keep these in your `.env` — `Settings` loads it automatically; never
 print or commit that file.) The model name `ScenarioResult` reports is read
 back from the constructed model itself

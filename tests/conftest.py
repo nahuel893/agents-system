@@ -76,6 +76,7 @@ _ENV_ISOLATED_EXACT_NAMES = frozenset(
         # Model/embedding provider credentials and endpoints
         # (agents_system.config.Settings).
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_MODEL",
         "OPENAI_API_KEY",
         "OPENAI_COMPATIBLE_API_KEY",
         "OPENAI_COMPATIBLE_BASE_URL",

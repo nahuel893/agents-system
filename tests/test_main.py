@@ -883,6 +883,48 @@ def test_build_chat_model_anthropic_requires_api_key(
         _build_chat_model("anthropic")
 
 
+def _anthropic_model_id(
+    monkeypatch: pytest.MonkeyPatch, *, model_override: str | None = None
+) -> str:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    with patch(
+        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+    ):
+        model = _build_chat_model("anthropic", model_override=model_override)
+    return str(model.model)
+
+
+def test_build_chat_model_anthropic_defaults_to_haiku(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue #292: no declared model and no ANTHROPIC_MODEL -> the default."""
+    assert _anthropic_model_id(monkeypatch) == "claude-haiku-5-5"
+
+
+def test_build_chat_model_anthropic_reads_model_from_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-from-env")
+    assert _anthropic_model_id(monkeypatch) == "claude-from-env"
+
+
+def test_build_chat_model_anthropic_declared_model_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-from-env")
+    assert (
+        _anthropic_model_id(monkeypatch, model_override="declared-id") == "declared-id"
+    )
+
+
+def test_build_chat_model_anthropic_empty_model_names_the_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_MODEL", "")
+    with pytest.raises(ValueError, match="ANTHROPIC_MODEL"):
+        _anthropic_model_id(monkeypatch)
+
+
 def test_build_chat_model_wires_openai_compatible_from_settings() -> None:
     with patch(
         "agents_system.main.get_settings", return_value=_openai_compatible_settings()

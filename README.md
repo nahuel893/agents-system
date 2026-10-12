@@ -365,6 +365,7 @@ Environment variables (loaded from `.env`). Key settings:
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
 | `CHECKPOINTER_RETENTION_S` | `86400` | How long an idle conversation is kept before the purge deletes it; `never` keeps it indefinitely. See [conversation memory](docs/platform/conversation-memory.md) |
 | `ANTHROPIC_API_KEY` | — | Anthropic Claude API key |
+| `ANTHROPIC_MODEL` | `claude-haiku-5-5` | Anthropic chat model, used when the agent declares none |
 | `OPENAI_API_KEY` | — | OpenAI API key — **embeddings only** (see `OPENAI_COMPATIBLE_API_KEY` for chat) |
 | `ADAPTER_PROVIDER` | `ollama` | LLM provider: `ollama`, `groq`, `anthropic`, `openai_compatible` |
 | `AGENT_REGISTRATIONS` | `{}` | Which runtimes the app builds when `create_app` gets no `agents=` (ADR-004). JSON object mapping each runtime id you choose to a predefined role, as `"{role}"` or `"{role}@{client}"` — e.g. `{"acme-sales": "sales-agent@acme"}`. A value may also be `"folder:<name>"`, an agent folder under `AGENTS_ROOT`. A malformed id or value fails boot, naming it. Replaces the removed `{deployment}__{role}` ids: see [migrating](docs/platform/deployment.md#migrating-from-the-old-runtime-ids) |
