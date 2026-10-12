@@ -73,4 +73,4 @@ The store is a registered `SubjectDataStore` named `schedules`: the operator exp
 
 ## Evals
 
-The `schedules` capability ships a fixture agent (`schedules-agent`) and three scenarios: `schedule_create` (a weekly request becomes the right schedule), `schedule_cancel` (a schedule is looked up and deleted) and `schedule_limit` (a refused, too-frequent schedule is reported and the allowed one created). See [Live eval](live-eval.md).
+The `schedules` capability ships a fixture agent (`schedules-agent`) and three scenarios: `schedule_create` (a weekly request becomes the right schedule), `schedule_cancel` (a schedule is deleted by its real id) and `schedule_limit` (a refused, too-frequent schedule is reported and the allowed one created). See [Live eval](live-eval.md).

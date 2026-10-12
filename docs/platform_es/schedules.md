@@ -73,4 +73,4 @@ El almacén es un `SubjectDataStore` registrado con el nombre `schedules`: la ex
 
 ## Evals
 
-La capacidad `schedules` trae un agente de prueba (`schedules-agent`) y tres escenarios: `schedule_create` (un pedido semanal se vuelve la programación correcta), `schedule_cancel` (se busca y se borra una programación) y `schedule_limit` (una programación rechazada por demasiado frecuente se informa y se crea la permitida). Ver [Evals en vivo](live-eval.md).
+La capacidad `schedules` trae un agente de prueba (`schedules-agent`) y tres escenarios: `schedule_create` (un pedido semanal se vuelve la programación correcta), `schedule_cancel` (se borra una programación por su id real) y `schedule_limit` (una programación rechazada por demasiado frecuente se informa y se crea la permitida). Ver [Evals en vivo](live-eval.md).
