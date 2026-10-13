@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.2](https://github.com/nahuel893/agents-system/compare/v0.7.1...v0.7.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **outbox:** retry only transient turn failures and tell the user when a turn fails for good ([#290](https://github.com/nahuel893/agents-system/issues/290)) ([#299](https://github.com/nahuel893/agents-system/issues/299)) ([d103c55](https://github.com/nahuel893/agents-system/commit/d103c551824fcdc3120cc4d7aeb04bfca0d252c4))
+* **runtime:** a raising tool reaches the model as an error result ([#289](https://github.com/nahuel893/agents-system/issues/289)) ([#298](https://github.com/nahuel893/agents-system/issues/298)) ([c08d55e](https://github.com/nahuel893/agents-system/commit/c08d55e5421f0778258553c93a318ed9c29de8aa))
+
+
+### Documentation
+
+* **features:** mark the 0.7.2 fixes as released ([#301](https://github.com/nahuel893/agents-system/issues/301)) ([7566e1e](https://github.com/nahuel893/agents-system/commit/7566e1e297db1f4ad6c04b93179e3c2ea115a35e))
+
 ## [0.7.1](https://github.com/nahuel893/agents-system/compare/v0.7.0...v0.7.1) (2026-10-12)
 
 
