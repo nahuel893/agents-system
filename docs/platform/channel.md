@@ -36,7 +36,7 @@ class ChannelAdapter(Protocol):
 | `verify_inbound` | In the request, on the raw body, after the size ceiling and **before anything is parsed or persisted** | Reject by raising `fastapi.HTTPException` (normally 403). Compare secrets in constant time (`hmac.compare_digest` / `secrets.compare_digest`). |
 | `read_inbound` | In the request, only after `verify_inbound` passed | Return `InboundDelivery(payload, messages)`. `payload` (a JSON-serializable dict) is stored against every message; `messages` is one `InboundRef(message_id, conversation_key)` each. No messages means "acknowledge, persist nothing" (a status callback, a malformed body). Must not raise on attacker-shaped input. |
 | `extract_turn` | In the deferred worker, once per stored message | Given the stored `payload` and the message's own id, return `InboundTurn(message_id, sender, text)`, or `None` to complete it without a turn (a non-text message, say). |
-| `send_text` | In the deferred worker | Send `body` to `to` (the sender, normalized for this channel by the deployment's participant directory). Raise on failure: the worker retries. Delivery is **at least once** -- an ambiguous send can be repeated. |
+| `send_text` | In the deferred worker | Send `body` to `to` (the sender, normalized for this channel by the deployment's participant directory). Raise on failure: the worker retries a transient one and, when the message fails for good, sends the user a fallback reply once ([retry policy](deployment.md#retrying-failed-messages-and-the-failure-reply)). Delivery is **at least once** -- an ambiguous send can be repeated. |
 
 Rules the platform relies on:
 

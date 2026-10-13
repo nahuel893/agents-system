@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 import structlog
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from prometheus_client import Counter
 
 from agents_system.channels.port import ChannelAdapter, TextSender
 from agents_system.channels.whatsapp import WHATSAPP_CHANNEL, WhatsAppChannel
@@ -36,7 +37,12 @@ from agents_system.services.outbox import (
     claim_available_outbox_work,
     complete_outbox_work,
     persist_outbound_intent,
+    record_fallback_delivery,
     record_outbox_failure,
+)
+from agents_system.services.outbox_metrics import (
+    DEFAULT_OUTBOX_FAILURES,
+    exception_label,
 )
 from agents_system.services.participants import (
     ChannelParticipantDirectory,
@@ -44,6 +50,7 @@ from agents_system.services.participants import (
     Participant,
     ParticipantDirectory,
 )
+from agents_system.services.retry_policy import OutboxRetryPolicy
 from agents_system.subject import TurnActor, TurnSubject
 
 logger = structlog.get_logger()
@@ -78,6 +85,16 @@ class ChannelBinding:
     adapter: ChannelAdapter
     runtime: _Runtime
     checkpointer_enabled: bool = True
+    retry_policy: OutboxRetryPolicy = field(default_factory=OutboxRetryPolicy)
+    """#290 -- which failures are retried, how often, and the reply the user
+    gets when the work fails for good."""
+
+
+class _RetryableCondition(RuntimeError):
+    """A failure the worker itself reports about its environment (no
+    directory, no channel binding, a failed completion write). It says
+    nothing about the message, so it is retried whatever the policy's
+    classifier thinks of a ``RuntimeError``."""
 
 
 class _WhatsAppOnlyDirectory:
@@ -167,6 +184,8 @@ class DeferredWebhookWorker:
         claim_limit: int = 10,
         admission_limiter: TurnAdmissionLimiter | None = None,
         channels: Mapping[str, ChannelBinding] | None = None,
+        retry_policy: OutboxRetryPolicy | None = None,
+        failure_counter: Counter | None = None,
     ) -> None:
         if not worker_id:
             raise ValueError("worker_id must not be empty")
@@ -186,6 +205,7 @@ class DeferredWebhookWorker:
                 adapter=WhatsAppChannel(sender=whatsapp_client),
                 runtime=runtime,
                 checkpointer_enabled=checkpointer_enabled,
+                retry_policy=retry_policy or OutboxRetryPolicy(),
             )
         if not bindings:
             raise ValueError("a webhook worker needs at least one channel binding")
@@ -197,6 +217,14 @@ class DeferredWebhookWorker:
         self._terminal_notifier = terminal_notifier
         self._poll_interval_s = poll_interval_s
         self._claim_limit = claim_limit
+        self._failure_counter = (
+            failure_counter if failure_counter is not None else DEFAULT_OUTBOX_FAILURES
+        )
+        # A crashed claim is capped by the most generous policy served here;
+        # a failure the worker records is capped by its own channel's policy.
+        self._claim_max_attempts = max(
+            binding.retry_policy.max_attempts for binding in bindings.values()
+        )
         # #46 -- shared, process-wide bound (see services/admission.py). A
         # caller that shares one limiter across every turn-running entry
         # point (main.py's lifespan does, for the OpenAI adapter too) gets a
@@ -296,6 +324,7 @@ class DeferredWebhookWorker:
                         worker_id=self._worker_id,
                         limit=reserved,
                         lease_duration=DEFAULT_LEASE_DURATION,
+                        max_attempts=self._claim_max_attempts,
                     )
             except Exception:
                 logger.exception(
@@ -356,7 +385,9 @@ class DeferredWebhookWorker:
                 channel=channel,
             )
             await self._record_failure(
-                work, RuntimeError(f"no binding for channel {channel!r}")
+                work,
+                _RetryableCondition(f"no binding for channel {channel!r}"),
+                channel=channel,
             )
             return
 
@@ -365,7 +396,7 @@ class DeferredWebhookWorker:
                 inbound.payload, channel_native_key(channel, inbound.meta_message_id)
             )
         except Exception as exc:
-            await self._record_failure(work, exc)
+            await self._record_failure(work, exc, channel=channel, binding=binding)
             return
         if turn is None:
             await self._complete_or_retry(
@@ -381,7 +412,10 @@ class DeferredWebhookWorker:
                 message_id=inbound.meta_message_id,
             )
             await self._record_failure(
-                work, RuntimeError("participant directory is unavailable")
+                work,
+                _RetryableCondition("participant directory is unavailable"),
+                channel=channel,
+                binding=binding,
             )
             return
 
@@ -397,7 +431,7 @@ class DeferredWebhookWorker:
             await self._complete_or_retry(work, "inbound address is not serviceable")
             return
         except Exception as exc:
-            await self._record_failure(work, exc)
+            await self._record_failure(work, exc, channel=channel, binding=binding)
             return
 
         try:
@@ -406,7 +440,7 @@ class DeferredWebhookWorker:
                     session, address, channel=channel
                 )
         except Exception as exc:
-            await self._record_failure(work, exc)
+            await self._record_failure(work, exc, channel=channel, binding=binding)
             return
 
         if participant is None or not participant.active:
@@ -416,6 +450,8 @@ class DeferredWebhookWorker:
         # The conversation this turn belongs to: the normalized address,
         # scoped to its channel so two channels never share one thread.
         conversation = channel_scoped_key(channel, address)
+        # #290 -- who is told, and under which key, if this turn fails for good.
+        fallback_to = (address, f"{inbound.meta_message_id}:fallback")
         replay = _persisted_reply(work)
         # #26: a runtime whose memory_policy says `persist_conversation: false`
         # gets no checkpointer thread and no ConversationRecorder write.
@@ -444,7 +480,9 @@ class DeferredWebhookWorker:
                 )
                 assistant_text = _extract_assistant_text(result_messages)
             except Exception as exc:
-                await self._record_failure(work, exc)
+                await self._record_failure(
+                    work, exc, channel=channel, binding=binding, fallback_to=fallback_to
+                )
                 return
 
             if persist:
@@ -475,14 +513,16 @@ class DeferredWebhookWorker:
                 logger.info("webhook_worker.lease_lost", outbox_work_id=str(work.id))
                 return
             except Exception as exc:
-                await self._record_failure(work, exc)
+                await self._record_failure(
+                    work, exc, channel=channel, binding=binding, fallback_to=fallback_to
+                )
                 return
 
         body, _send_key = replay
         try:
             await binding.adapter.send_text(to=body["to"], body=body["body"])
         except Exception as exc:
-            await self._record_failure(work, exc)
+            await self._record_failure(work, exc, channel=channel, binding=binding)
             return
 
         await self._complete_or_retry(work, "provider send succeeded")
@@ -526,10 +566,35 @@ class DeferredWebhookWorker:
         except OutboxLeaseLostError:
             logger.info("webhook_worker.lease_lost", outbox_work_id=str(work.id))
         except Exception as exc:
-            await self._record_failure(work, RuntimeError(f"{reason}: {exc}"))
+            await self._record_failure(work, _RetryableCondition(f"{reason}: {exc}"))
 
-    async def _record_failure(self, work: OutboxWork, exc: Exception) -> None:
+    async def _record_failure(
+        self,
+        work: OutboxWork,
+        exc: Exception,
+        *,
+        channel: str = "unknown",
+        binding: ChannelBinding | None = None,
+        fallback_to: tuple[str, str] | None = None,
+    ) -> None:
+        """Record a failed attempt under the channel's retry policy (#290).
+
+        A permanent failure is terminal now; a transient one is retried until
+        the policy's cap. Whenever the work ends for good with no reply
+        committed, *fallback_to* (the user's address and the send key) gets
+        the policy's fallback reply, once.
+        """
         error = f"{type(exc).__name__}: {exc}"
+        policy = binding.retry_policy if binding is not None else OutboxRetryPolicy()
+        retryable = self._is_retryable(exc, policy)
+        fallback = (
+            (
+                {"to": fallback_to[0], "body": policy.fallback_reply},
+                fallback_to[1],
+            )
+            if fallback_to is not None
+            else None
+        )
         try:
             async with self._session_factory() as session:
                 outcome = await record_outbox_failure(
@@ -537,6 +602,10 @@ class DeferredWebhookWorker:
                     work=work,
                     worker_id=self._worker_id,
                     error=error,
+                    max_attempts=policy.max_attempts,
+                    retryable=retryable,
+                    failure_class=type(exc).__name__,
+                    fallback=fallback,
                 )
         except OutboxLeaseLostError:
             logger.info("webhook_worker.lease_lost", outbox_work_id=str(work.id))
@@ -548,8 +617,65 @@ class DeferredWebhookWorker:
             )
             return
 
+        if outcome.terminal:
+            self._count_failure(work, exc, channel=channel, retryable=retryable)
         if outcome.terminal and outcome.alert_required:
             await self._notify_terminal_failure(work, error)
+        if outcome.fallback_body is not None and binding is not None:
+            await self._send_fallback(work, binding, outcome.fallback_body)
+
+    def _is_retryable(self, exc: Exception, policy: OutboxRetryPolicy) -> bool:
+        if isinstance(exc, _RetryableCondition):
+            return True
+        try:
+            return bool(policy.is_transient(exc))
+        except Exception:
+            # A broken classifier must not turn into lost work: fall back to
+            # the pre-#290 behavior, retry up to the cap.
+            logger.exception("webhook_worker.retry_classifier_failed")
+            return True
+
+    def _count_failure(
+        self, work: OutboxWork, exc: Exception, *, channel: str, retryable: bool
+    ) -> None:
+        reason = "retries_exhausted" if retryable else "permanent"
+        exception = exception_label(exc)
+        logger.error(
+            "webhook_worker.permanent_failure",
+            outbox_work_id=str(work.id),
+            channel=channel,
+            exception_class=exception,
+            reason=reason,
+            attempt_count=work.attempt_count,
+        )
+        self._failure_counter.labels(
+            channel=channel, exception=exception, reason=reason
+        ).inc()
+
+    async def _send_fallback(
+        self, work: OutboxWork, binding: ChannelBinding, body: dict[str, Any]
+    ) -> None:
+        """Send the fallback committed with the terminal state, once.
+
+        The intent was committed before this send and the row is terminal, so
+        no later claim reaches it: a failed or lost send is audited, never
+        repeated.
+        """
+        delivered = False
+        try:
+            await binding.adapter.send_text(to=body["to"], body=body["body"])
+            delivered = True
+        except Exception:
+            logger.exception(
+                "webhook_worker.fallback_send_failed", outbox_work_id=str(work.id)
+            )
+        try:
+            async with self._session_factory() as session:
+                await record_fallback_delivery(session, work=work, delivered=delivered)
+        except Exception:
+            logger.exception(
+                "webhook_worker.fallback_audit_failed", outbox_work_id=str(work.id)
+            )
 
     async def _notify_terminal_failure(self, work: OutboxWork, error: str) -> None:
         """Invoke the optional notifier only after its durable signal committed."""

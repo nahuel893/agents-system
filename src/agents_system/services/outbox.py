@@ -22,9 +22,10 @@ except ImportError as exc:
 
 from agents_system.models.audit_event import AuditEvent
 from agents_system.models.outbox import LEGACY_CHANNEL, InboundMessage, OutboxWork
+from agents_system.services.retry_policy import DEFAULT_MAX_OUTBOX_ATTEMPTS
 
 _INBOX_META_MESSAGE_CONSTRAINT = "uq_webhook_inbox_meta_message_id"
-MAX_OUTBOX_ATTEMPTS = 5
+MAX_OUTBOX_ATTEMPTS = DEFAULT_MAX_OUTBOX_ATTEMPTS
 # A turn plus its reply send must finish inside the lease, or another worker
 # may reclaim the row and answer twice. Every runtime bound to a channel, and
 # every deployment-set limit (#278), is checked against it with
@@ -52,6 +53,10 @@ class OutboxFailureOutcome:
 
     terminal: bool
     alert_required: bool
+    fallback_body: dict[str, Any] | None = None
+    """#290 -- the reply committed with the terminal state, for the worker to
+    send once. ``None``: nothing to send (a retry is scheduled, no fallback was
+    asked for, or a reply was already committed on this row)."""
 
 
 @dataclass(frozen=True)
@@ -325,6 +330,7 @@ async def claim_available_outbox_work(
     worker_id: str,
     limit: int,
     lease_duration: timedelta = DEFAULT_LEASE_DURATION,
+    max_attempts: int = MAX_OUTBOX_ATTEMPTS,
 ) -> OutboxClaimOutcome:
     """Commit leases and terminal recovery state using the database clock.
 
@@ -351,7 +357,7 @@ async def claim_available_outbox_work(
     claimed: list[OutboxWork] = []
     terminalized: list[OutboxWork] = []
     for work in work_rows:
-        if work.attempt_count >= MAX_OUTBOX_ATTEMPTS:
+        if work.attempt_count >= max_attempts:
             _terminalize_work(
                 session,
                 work=work,
@@ -417,23 +423,48 @@ async def record_outbox_failure(
     worker_id: str,
     error: str,
     jitter: Callable[[], float] = random.random,
+    max_attempts: int = MAX_OUTBOX_ATTEMPTS,
+    retryable: bool = True,
+    failure_class: str | None = None,
+    fallback: tuple[dict[str, Any], str] | None = None,
 ) -> OutboxFailureOutcome:
-    """Fence a failure transition to its live lease using database time."""
+    """Fence a failure transition to its live lease using database time.
+
+    #290 -- ``retryable=False`` (a failure that will repeat with the same
+    input) is terminal at once; a retryable one is terminal at
+    ``max_attempts``. *fallback* is ``(body, send_key)``: the reply for the
+    end user, committed as the row's outbound intent in the same transaction
+    as the terminal state, and only when the row holds no reply yet. A reply
+    already committed (sent or not) is never replaced, and a terminal row is
+    never claimed again, so the fallback can be sent at most once.
+    """
     database_now = await _database_now(session)
     current = await _locked_live_work(session, work_id=work.id, worker_id=worker_id)
     current.last_error = error
     current.lease_owner = None
     current.lease_expires_at = None
 
-    if current.attempt_count >= MAX_OUTBOX_ATTEMPTS:
+    if not retryable or current.attempt_count >= max_attempts:
+        fallback_body: dict[str, Any] | None = None
+        if fallback is not None and current.outbound_body is None:
+            fallback_body, fallback_key = fallback
+            current.outbound_body = fallback_body
+            current.outbound_send_key = fallback_key
         _terminalize_work(
             session,
             work=current,
             occurred_at=database_now,
             error=error,
+            details={
+                "failure_class": failure_class,
+                "permanent": not retryable,
+                "fallback_reply": "recorded" if fallback_body else "not_recorded",
+            },
         )
         await _commit_or_rollback(session)
-        return OutboxFailureOutcome(terminal=True, alert_required=True)
+        return OutboxFailureOutcome(
+            terminal=True, alert_required=True, fallback_body=fallback_body
+        )
 
     retry_window_seconds = min(
         _RETRY_BASE_SECONDS * (2**current.attempt_count),
@@ -488,6 +519,7 @@ def _terminalize_work(
     work: OutboxWork,
     occurred_at: datetime,
     error: str,
+    details: dict[str, Any] | None = None,
 ) -> None:
     """Make terminal failure and its durable operator-action event atomic."""
     work.last_error = error
@@ -506,9 +538,39 @@ def _terminalize_work(
                 "attempt_count": work.attempt_count,
                 "outbox_work_id": str(work.id),
                 "operator_action": "required",
+                **(details or {}),
             },
         )
     )
+
+
+async def record_fallback_delivery(
+    session: AsyncSession,
+    *,
+    work: OutboxWork,
+    delivered: bool,
+) -> None:
+    """Audit the one send of a failed work item's fallback reply (#290).
+
+    Written after the send, outside the terminal transaction: the reply
+    intent is committed first, so a crash in between loses the notice
+    instead of repeating it. A send is never retried.
+    """
+    occurred_at = await _database_now(session)
+    session.add(
+        AuditEvent(
+            event_id=uuid.uuid4(),
+            occurred_at=occurred_at,
+            correlation_id=f"outbox:{work.id}",
+            sequence=work.attempt_count + 1,
+            event_type="webhook_fallback_reply",
+            payload={
+                "outbox_work_id": str(work.id),
+                "delivered": delivered,
+            },
+        )
+    )
+    await _commit_or_rollback(session)
 
 
 async def _commit_or_rollback(session: AsyncSession) -> None:

@@ -271,6 +271,42 @@ TOOL_ERROR_REPLY='{"reports": "No pude completar esto porque una herramienta fal
 
 See [Policy: execution limits](policy.md#execution-limits).
 
+### Retrying failed messages and the failure reply
+
+A channel message that fails in the deferred worker is retried only when the failure can go away on its own. Each retry runs the whole turn again (model calls, SQL, code execution), so a failure that repeats with the same input is not worth it.
+
+- **Transient failures are retried** with backoff, up to `max_attempts` (default 5): provider rate limits (429), 5xx and timeouts, network and connection errors, database connection errors, `TimeoutError` and `ConnectionError`. A wrapper raised `from` one of these counts too.
+- **Everything else is permanent** and runs once: an exception from a tool or the turn logic, a bad input, a security abort. (With tool errors returned to the model, what is left here is mostly bugs and aborts.)
+- **The user is told once.** When a message fails for good, whether permanent or out of retries, the user receives a fallback reply through the same channel. The reply is committed with the terminal state and sent after it, so a crash in between loses the notice and never repeats it, and a failed send is audited, not retried. It is not sent when the row already holds a reply (a timed-out turn answers the timeout reply as a normal reply).
+- **It is visible.** The terminal audit event `webhook_delivery_terminal_failure` carries `failure_class`, `permanent` and `fallback_reply`; `webhook_fallback_reply` records whether the notice was `delivered`. A permanent failure is logged (`webhook_worker.permanent_failure`) and counted in `outbox_permanent_failures_total{channel, exception, reason}`, with the exception **class name** only, never its message.
+
+```python
+from agents_system.services.retry_policy import OutboxRetryPolicy
+
+app = create_app(
+    ...,
+    outbox_retry={
+        "reports": OutboxRetryPolicy(
+            max_attempts=3,
+            fallback_reply="Algo salió mal con tu mensaje. Probá de nuevo.",
+        ),
+        # only these exceptions are retried; add include_default=True to keep the built-in list
+        "billing": OutboxRetryPolicy.retrying(MyBackendUnavailable, max_attempts=4),
+    },
+)
+```
+
+Without an entry a runtime keeps the defaults (5 attempts, the built-in classifier, an English fallback). `is_transient` takes any predicate over the exception. The environment carries the two plain values, keyed by runtime id; a policy in `create_app` replaces them whole:
+
+```bash
+OUTBOX_MAX_ATTEMPTS='{"reports": 3}'
+OUTBOX_FALLBACK_REPLY='{"reports": "Algo salió mal con tu mensaje. Probá de nuevo."}'
+```
+
+- **The reply is plain text**, at most 1000 characters, sent as given and never templated.
+- **Boot fails** for a policy that names a runtime it does not build, or an invalid value, naming the runtime.
+- **A crash is not covered.** A row whose worker died on its last attempt is closed at the next claim with the terminal audit event but no reply: the platform does not know the user's address there.
+
 ### Migrating from the old runtime ids
 
 Before ADR-004, the Settings-driven boot read the role and the deployment out of the runtime id itself: `acme__sales-agent`, or `_generic__sales-agent` for no deployment. That scheme is gone. A runtime id is only a key, and a deployment still configured the old way fails boot, naming the unregistered id and pointing at `AGENT_REGISTRATIONS`. To migrate:

@@ -18,6 +18,7 @@ from agents_system.services.outbox import (
     claim_available_outbox_work,
     complete_outbox_work,
     persist_outbound_intent,
+    record_fallback_delivery,
     record_outbox_failure,
 )
 
@@ -277,3 +278,153 @@ class TestOutboundIntent:
         assert stale_work.outbound_body is None
         assert session.commit_count == 0
         assert session.rollback_count == 1
+
+
+class TestRetryPolicyFailure:
+    """#290 -- a permanent failure is not retried; a policy sets the cap."""
+
+    @staticmethod
+    def _leased(*, attempts: int) -> tuple[OutboxWork, _MutationSession, datetime]:
+        now = datetime(2026, 8, 4, tzinfo=UTC)
+        work = _work(attempt_count=attempts)
+        work.lease_owner = "worker-a"
+        work.lease_expires_at = now + timedelta(minutes=2)
+        return work, _MutationSession(current_work=work, database_now=now), now
+
+    async def test_a_permanent_failure_is_terminal_on_the_first_attempt(
+        self,
+    ) -> None:
+        work, session, now = self._leased(attempts=1)
+
+        outcome = await record_outbox_failure(
+            cast(AsyncSession, session),
+            work=work,
+            worker_id="worker-a",
+            error="ValueError: bad input",
+            retryable=False,
+            failure_class="ValueError",
+        )
+
+        assert outcome.terminal is True
+        assert outcome.alert_required is True
+        assert work.failed_at == now
+        audit = next(row for row in session.added if isinstance(row, AuditEvent))
+        assert audit.payload["failure_class"] == "ValueError"
+        assert audit.payload["permanent"] is True
+
+    async def test_a_transient_failure_below_the_cap_is_still_retried(self) -> None:
+        work, session, now = self._leased(attempts=1)
+
+        outcome = await record_outbox_failure(
+            cast(AsyncSession, session),
+            work=work,
+            worker_id="worker-a",
+            error="TimeoutError: slow",
+            retryable=True,
+            jitter=lambda: 1.0,
+        )
+
+        assert outcome.terminal is False
+        assert work.failed_at is None
+        assert work.available_at == now + timedelta(seconds=2)
+
+    async def test_the_cap_comes_from_the_policy(self) -> None:
+        work, session, _ = self._leased(attempts=2)
+
+        outcome = await record_outbox_failure(
+            cast(AsyncSession, session),
+            work=work,
+            worker_id="worker-a",
+            error="TimeoutError: slow",
+            max_attempts=2,
+        )
+
+        assert outcome.terminal is True
+        audit = next(row for row in session.added if isinstance(row, AuditEvent))
+        assert audit.payload["permanent"] is False
+
+    async def test_a_terminal_failure_commits_the_fallback_as_the_reply_intent(
+        self,
+    ) -> None:
+        work, session, _ = self._leased(attempts=1)
+
+        outcome = await record_outbox_failure(
+            cast(AsyncSession, session),
+            work=work,
+            worker_id="worker-a",
+            error="ValueError: bad input",
+            retryable=False,
+            fallback=({"to": "+54911", "body": "Sorry"}, "wamid.1:fallback"),
+        )
+
+        assert outcome.fallback_body == {"to": "+54911", "body": "Sorry"}
+        assert work.outbound_body == {"to": "+54911", "body": "Sorry"}
+        assert work.outbound_send_key == "wamid.1:fallback"
+        assert work.failed_at is not None
+        assert session.commit_count == 1
+        audit = next(row for row in session.added if isinstance(row, AuditEvent))
+        assert audit.payload["fallback_reply"] == "recorded"
+
+    async def test_no_fallback_when_a_reply_is_already_committed(self) -> None:
+        work, session, _ = self._leased(attempts=1)
+        work.outbound_body = {"to": "+54911", "body": "the real reply"}
+        work.outbound_send_key = "wamid.1:reply"
+
+        outcome = await record_outbox_failure(
+            cast(AsyncSession, session),
+            work=work,
+            worker_id="worker-a",
+            error="ProviderError: rejected",
+            retryable=False,
+            fallback=({"to": "+54911", "body": "Sorry"}, "wamid.1:fallback"),
+        )
+
+        assert outcome.terminal is True
+        assert outcome.fallback_body is None
+        assert work.outbound_body == {"to": "+54911", "body": "the real reply"}
+        assert work.outbound_send_key == "wamid.1:reply"
+
+    async def test_no_fallback_while_a_retry_is_still_scheduled(self) -> None:
+        work, session, _ = self._leased(attempts=1)
+
+        outcome = await record_outbox_failure(
+            cast(AsyncSession, session),
+            work=work,
+            worker_id="worker-a",
+            error="TimeoutError: slow",
+            retryable=True,
+            fallback=({"to": "+54911", "body": "Sorry"}, "wamid.1:fallback"),
+        )
+
+        assert outcome.terminal is False
+        assert outcome.fallback_body is None
+        assert work.outbound_body is None
+
+    async def test_claim_terminalizes_at_the_policy_cap(self) -> None:
+        now = datetime(2026, 8, 4, tzinfo=UTC)
+        work = _work(attempt_count=3)
+        session = _ClaimSession([work], database_now=now)
+
+        outcome = await claim_available_outbox_work(
+            cast(AsyncSession, session),
+            worker_id="recovery-worker",
+            limit=1,
+            max_attempts=3,
+        )
+
+        assert outcome.claimed == []
+        assert outcome.terminalized == [work]
+
+    async def test_fallback_delivery_is_audited(self) -> None:
+        work, session, _ = self._leased(attempts=1)
+
+        await record_fallback_delivery(
+            cast(AsyncSession, session), work=work, delivered=False
+        )
+
+        audit = next(row for row in session.added if isinstance(row, AuditEvent))
+        assert audit.event_type == "webhook_fallback_reply"
+        assert audit.correlation_id == f"outbox:{work.id}"
+        assert audit.payload["delivered"] is False
+        assert audit.payload["outbox_work_id"] == str(work.id)
+        assert session.commit_count == 1
