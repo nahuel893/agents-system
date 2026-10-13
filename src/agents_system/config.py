@@ -394,6 +394,15 @@ class Settings(ProviderSettings):
     # e.g. TOOL_ERROR_REPLY='{"support": "Algo salio mal, intenta de nuevo."}'
     tool_error_reply: dict[str, str] = {}
 
+    # #290 -- how a runtime's channel work is retried, keyed by runtime id.
+    # OUTBOX_MAX_ATTEMPTS is the most times one message is run (default 5,
+    # only transient failures are retried); OUTBOX_FALLBACK_REPLY is the plain
+    # text the user gets, once, when it fails for good. The retryable
+    # exception types are code (create_app(outbox_retry=...)), not a variable.
+    # e.g. OUTBOX_MAX_ATTEMPTS='{"support": 3}'
+    outbox_max_attempts: dict[str, int] = {}
+    outbox_fallback_reply: dict[str, str] = {}
+
     # #78 Phase 0 Slice 2 -- GET /metrics (Prometheus text format,
     # `main.py`'s `metrics()` route, `observability/metrics.py`). Off by
     # default: an operator must explicitly opt in, the same fail-closed
@@ -551,6 +560,19 @@ class Settings(ProviderSettings):
         from agents_system.execution_limits import parse_tool_error_replies
 
         return parse_tool_error_replies(value)
+
+    @field_validator("outbox_max_attempts", "outbox_fallback_reply", mode="after")
+    @classmethod
+    def parse_outbox_retry(cls, value: dict[str, Any], info: Any) -> dict[str, Any]:
+        from agents_system.services.retry_policy import build_retry_policies
+
+        key = (
+            "max_attempts"
+            if info.field_name == "outbox_max_attempts"
+            else ("fallback_replies")
+        )
+        build_retry_policies(**{key: value})
+        return value
 
     @field_validator("subject_data_retention", mode="before")
     @classmethod

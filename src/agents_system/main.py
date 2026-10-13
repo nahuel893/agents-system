@@ -119,6 +119,7 @@ from agents_system.services.participants import (
     SubjectResolver,
 )
 from agents_system.services.redis import close_redis_pool, get_redis_client
+from agents_system.services.retry_policy import OutboxRetryPolicy, build_retry_policies
 
 
 def _build_checkpointer_cm(settings: Settings) -> Any:
@@ -913,6 +914,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 ),
                 recorder=app.state.conversation_recorder,
                 checkpointer_enabled=whatsapp.checkpointer_enabled,
+                retry_policy=plan.retry_policies.get(whatsapp.runtime_id or ""),
                 poll_interval_s=settings.webhook_worker_poll_interval_s,
                 claim_limit=settings.webhook_worker_claim_limit,
                 admission_limiter=app.state.turn_admission_limiter,
@@ -920,6 +922,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     name: ChannelBinding(
                         adapter=channel.adapter,
                         runtime=app.state.runtimes[channel.runtime_id],
+                        retry_policy=plan.retry_policies.get(
+                            channel.runtime_id, OutboxRetryPolicy()
+                        ),
                     )
                     for name, channel in registered_channels.items()
                 },
@@ -1240,6 +1245,8 @@ class _BootPlan:
     tool_error_replies: dict[str, str]
     """#289 -- each runtime's reply when tool errors reach the cap; absent
     means the default text."""
+    retry_policies: dict[str, OutboxRetryPolicy]
+    """#290 -- each runtime's outbox retry policy; absent means the defaults."""
 
 
 def _refuse_builtin_default_tools(registry: ToolRegistry) -> None:
@@ -1669,6 +1676,21 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
                 f"{', '.join(unknown)}. Refusing to boot."
             )
 
+    raw_retry = getattr(app.state, "outbox_retry", None)
+    retry_policies = build_retry_policies(
+        policies=raw_retry,
+        max_attempts=settings.outbox_max_attempts,
+        fallback_replies=settings.outbox_fallback_reply,
+    )
+    unknown_retry = sorted(set(retry_policies) - set(registrations))
+    if unknown_retry:
+        raise ValueError(
+            "outbox retry policies (create_app(outbox_retry=...), "
+            "OUTBOX_MAX_ATTEMPTS, OUTBOX_FALLBACK_REPLY) name runtime id(s) "
+            f"this boot does not build: {', '.join(unknown_retry)}. "
+            "Refusing to boot."
+        )
+
     return _BootPlan(
         registrations=registrations,
         grants=grants if grants is not None else settings.deploy_grants,
@@ -1678,6 +1700,7 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
         execution_limits=execution_limits,
         timeout_replies=timeout_replies,
         tool_error_replies=tool_error_replies,
+        retry_policies=retry_policies,
     )
 
 
@@ -1698,6 +1721,7 @@ def create_app(
     execution_limits: Mapping[str, Mapping[str, Any]] | None = None,
     timeout_reply: Mapping[str, str] | None = None,
     tool_error_reply: Mapping[str, str] | None = None,
+    outbox_retry: Mapping[str, OutboxRetryPolicy | Mapping[str, Any]] | None = None,
     scope_provider_factory: Callable[[AsyncEngine], ScopeProvider] | None = None,
     roots: RootConfig | None = None,
     title: str = "agents_system",
@@ -1784,6 +1808,17 @@ def create_app(
         ``max_tool_errors`` limit (``execution_limits``, default 3), by
         runtime id; falls back to ``TOOL_ERROR_REPLY``, then to the default
         English text. Plain text, sent as given.
+    outbox_retry:
+        #290: how the channel outbox retries a runtime's failed messages, by
+        runtime id: an ``OutboxRetryPolicy`` (or a mapping of its fields) with
+        ``max_attempts`` (default 5), ``is_transient`` (which exceptions are
+        worth another attempt; the default retries provider rate limits, 5xx,
+        timeouts and network or database connection errors and nothing else)
+        and ``fallback_reply`` (plain text sent to the user, once, when the
+        message fails for good). Without an entry the runtime keeps the
+        defaults, or the ``OUTBOX_MAX_ATTEMPTS`` / ``OUTBOX_FALLBACK_REPLY``
+        values for it; an entry here replaces them whole. Boot fails for a
+        runtime id it does not build.
     roots:
         Consumer-owned path configuration for platform and deployment roles.
         A client override (``clients[id]``, or an ``AGENT_REGISTRATIONS``
@@ -1840,6 +1875,7 @@ def create_app(
     application.state.execution_limits = execution_limits
     application.state.timeout_reply = timeout_reply
     application.state.tool_error_reply = tool_error_reply
+    application.state.outbox_retry = outbox_retry
     application.state.usage_ledger = None
     application.state.checkpoint_threads = None
     application.state.scope_provider_factory = scope_provider_factory

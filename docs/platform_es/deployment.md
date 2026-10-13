@@ -361,6 +361,42 @@ TOOL_ERROR_REPLY='{"reports": "No pude completar esto porque una herramienta fal
 
 Ver [Política: límites de ejecución](policy.md#límites-de-ejecución-execution-limits).
 
+### Reintentar mensajes fallidos y la respuesta de falla
+
+Un mensaje de canal que falla en el worker diferido se reintenta solo cuando la falla puede resolverse sola. Cada reintento vuelve a correr el turno entero (llamadas al modelo, SQL, ejecución de código), así que una falla que se repite con la misma entrada no lo vale.
+
+- **Las fallas transitorias se reintentan** con backoff, hasta `max_attempts` (por defecto 5): límites de tasa del proveedor (429), 5xx y timeouts, errores de red y de conexión, errores de conexión a la base de datos, `TimeoutError` y `ConnectionError`. Una excepción levantada `from` una de estas también cuenta.
+- **Todo lo demás es permanente** y se ejecuta una sola vez: una excepción de una herramienta o de la lógica del turno, una entrada inválida, un aborto de seguridad. (Con los errores de herramienta devueltos al modelo, lo que queda aquí son sobre todo bugs y abortos.)
+- **Se avisa al usuario una vez.** Cuando un mensaje falla definitivamente, sea permanente o sin reintentos, el usuario recibe una respuesta de respaldo por el mismo canal. La respuesta se confirma junto con el estado terminal y se envía después, de modo que una caída en el medio pierde el aviso y nunca lo repite; un envío fallido se audita y no se reintenta. No se envía si la fila ya tiene una respuesta (un turno con timeout responde el texto de timeout como una respuesta normal).
+- **Queda visible.** El evento de auditoría terminal `webhook_delivery_terminal_failure` lleva `failure_class`, `permanent` y `fallback_reply`; `webhook_fallback_reply` registra si el aviso fue `delivered`. Una falla permanente se registra en el log (`webhook_worker.permanent_failure`) y se cuenta en `outbox_permanent_failures_total{channel, exception, reason}`, solo con el **nombre de la clase** de la excepción, nunca su mensaje.
+
+```python
+from agents_system.services.retry_policy import OutboxRetryPolicy
+
+app = create_app(
+    ...,
+    outbox_retry={
+        "reports": OutboxRetryPolicy(
+            max_attempts=3,
+            fallback_reply="Algo salió mal con tu mensaje. Probá de nuevo.",
+        ),
+        # solo se reintentan estas excepciones; con include_default=True se conserva la lista integrada
+        "billing": OutboxRetryPolicy.retrying(MyBackendUnavailable, max_attempts=4),
+    },
+)
+```
+
+Sin una entrada, un runtime conserva los valores por defecto (5 intentos, el clasificador integrado, una respuesta de respaldo en inglés). `is_transient` acepta cualquier predicado sobre la excepción. El entorno lleva los dos valores simples, por id de runtime; una política en `create_app` los reemplaza por completo:
+
+```bash
+OUTBOX_MAX_ATTEMPTS='{"reports": 3}'
+OUTBOX_FALLBACK_REPLY='{"reports": "Algo salió mal con tu mensaje. Probá de nuevo."}'
+```
+
+- **La respuesta es texto plano**, de hasta 1000 caracteres, enviada tal cual y nunca con plantillas.
+- **El arranque falla** ante una política que nombra un runtime que no construye, o ante un valor inválido, nombrando el runtime.
+- **Una caída no está cubierta.** Una fila cuyo worker murió en el último intento se cierra en el siguiente claim con el evento de auditoría terminal pero sin respuesta: la plataforma no conoce ahí la dirección del usuario.
+
 ### Migrar desde los ids de runtime viejos
 
 Antes de ADR-004, el arranque desde Settings leía el rol y el despliegue del propio id de runtime: `acme__sales-agent`, o `_generic__sales-agent` sin despliegue. Ese esquema ya no existe. Un id de runtime es solo una clave, y un despliegue que sigue configurado a la vieja usanza falla al arrancar, nombrando el id no registrado y señalando `AGENT_REGISTRATIONS`. Para migrar:
