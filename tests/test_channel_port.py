@@ -170,7 +170,12 @@ class _Store:
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         async def claim(
-            session: object, *, worker_id: str, limit: int, lease_duration: object
+            session: object,
+            *,
+            worker_id: str,
+            limit: int,
+            lease_duration: object,
+            max_attempts: int,
         ) -> OutboxClaimOutcome:
             ready = [w for w in self.work.values() if w.id not in self.claimed]
             ready = ready[:limit]
@@ -194,7 +199,12 @@ class _Store:
             self.completed.add(work.id)
 
         async def record_failure(
-            session: object, *, work: OutboxWork, worker_id: str, error: str
+            session: object,
+            *,
+            work: OutboxWork,
+            worker_id: str,
+            error: str,
+            **policy: object,
         ) -> OutboxFailureOutcome:
             self.failures.append(error)
             return OutboxFailureOutcome(terminal=False, alert_required=False)
