@@ -148,12 +148,13 @@ These are platform-level defaults. An agent's `policy.md` may define stricter va
 | Tool call timeout | 10s | Per individual tool call |
 | Total execution timeout | 60s | From trigger receipt to final output |
 | Max tool calls per execution | 20 | Prevents runaway loops |
+| Max tool errors per turn | 3 | A tool that raised or timed out; reaching it ends the turn with a controlled reply (see "Tool errors") |
 | Max delegation depth | 2 | Parent → child → grandchild; no deeper |
 | Max clarification attempts | 3 | Before forcing escalation on ambiguous input |
 
 ### Raising limits for a deployment
 
-An agent definition alone can never raise a limit. The deployment, which pays for and operates the service, can: it sets `total_execution_timeout_s`, `tool_call_timeout_s` and `max_tool_calls` per runtime id, and each value replaces the platform default as that runtime's ceiling. The agent's own `execution_limits` may still tighten it, never exceed it.
+An agent definition alone can never raise a limit. The deployment, which pays for and operates the service, can: it sets `total_execution_timeout_s`, `tool_call_timeout_s`, `max_tool_calls` and `max_tool_errors` per runtime id, and each value replaces the platform default as that runtime's ceiling. The agent's own `execution_limits` may still tighten it, never exceed it.
 
 | Where | How |
 |---|---|
@@ -171,6 +172,26 @@ An agent definition alone can never raise a limit. The deployment, which pays fo
 ### The timeout reply
 
 A turn that runs out of time answers "This is taking longer than expected. Please try again." A deployment serving users in another language sets its own text per runtime: `create_app(timeout_reply={"support": "..."})`, the `TURN_TIMEOUT_REPLY` variable (`{"runtime id": "text"}`), or `AgentRuntime(timeout_reply=...)`. It is plain text of at most 1000 characters, sent exactly as given: never templated with user or tool data.
+
+### Tool errors
+
+*Coming in the next release.* A tool that raises does not abort the turn. The runtime hands the model an error result (a `ToolMessage` with `status="error"`, the same shape as a tool timeout) and the model gets another step, so it can shorten an argument or change approach. The text is one line: the tool name, the exception class and its message cut to 300 characters, for example `Tool 'run_code' failed: ValueError: codigo must be a non-empty string`. It never carries a traceback. It is truncated and flattened, not scrubbed: the platform has no secret-redaction helper for it, so a tool must not put a secret in an exception message. The call is still recorded as an `"error"` outcome in `agent_tool_calls_total`, and the runtime logs `runtime.tool_error` with the tool and the exception class.
+
+**The cap.** `max_tool_errors` (default 3) counts every error result in a turn, whether the tool raised or timed out. When the count reaches it, the turn ends with a controlled reply instead of letting the model retry again, and `agent_limit_trips_total{limit="max_tool_errors"}` is incremented. It is an execution limit like the others: the agent may tighten it, the deployment may set it (`create_app(execution_limits={"support": {"max_tool_errors": 5}})`, `EXECUTION_LIMITS`), and it must be a positive whole number. The default reply is "I could not complete this because a tool kept failing. Please try again or rephrase your request." A deployment sets its own text per runtime: `create_app(tool_error_reply={"support": "..."})`, the `TOOL_ERROR_REPLY` variable (`{"runtime id": "text"}`), or `AgentRuntime(tool_error_reply=...)`. It is plain text of at most 1000 characters, sent exactly as given.
+
+**What still aborts the turn.** Only an `Exception` becomes an error result. The set below carries a security or permission decision, so it propagates and aborts the turn: handing it to the model as a retryable error would invite it to try around the decision. The set is defined in one place, `aborting_exceptions()` in `agent/tool_errors.py`.
+
+| Exception | Why it aborts |
+|---|---|
+| `AgentPermissionError` (and subclasses) | The permission model failed: a decision about what may run |
+| `ProactivePermissionError` | The caller lacks `send:proactive` within the deploy grants |
+| `RecipientNotAuthorizedError` | The deployment's directory does not authorize the recipient |
+| `QueryRejectedError` | The SQL guard refused a query that the connector did not answer itself |
+| `UnsafeQueryRoleError` | The database role is unsafe for model-authored SQL |
+| `UnfencedRoleError` | The database role bypasses row-level security |
+| `BaseException` (`asyncio.CancelledError`, `KeyboardInterrupt`) | Never caught: the turn's own total timeout works by cancelling it |
+
+Exceptions from an optional extra that is not installed cannot be raised and are skipped. The interceptor's own denials (`PolicyViolation`: tool not in the surface, permission revoked, revalidation required, memory policy, missing subject) were never raised out of the turn: they were already returned to the model as a "blocked" error result, still are, and do not count toward `max_tool_errors`.
 
 ---
 

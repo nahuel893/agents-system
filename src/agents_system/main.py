@@ -60,6 +60,7 @@ from agents_system.execution_limits import (
     check_turn_fits_lease,
     parse_execution_limits,
     parse_timeout_replies,
+    parse_tool_error_replies,
 )
 from agents_system.harness.loader import (
     _SAFE_SEGMENT,
@@ -817,6 +818,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     user_memory=user_memory,
                     # #278: the deployment's text for a timed-out turn.
                     timeout_reply=plan.timeout_replies.get(runtime_id),
+                    # #289: the deployment's text for a turn that ends at
+                    # max_tool_errors.
+                    tool_error_reply=plan.tool_error_replies.get(runtime_id),
                 )
                 _logger.info("adapter.runtime_cached", model_id=runtime_id)
 
@@ -1233,6 +1237,9 @@ class _BootPlan:
     """#278 -- each runtime's deployment-set limits, checked against the lease."""
     timeout_replies: dict[str, str]
     """#278 -- each runtime's timeout reply; absent means the default text."""
+    tool_error_replies: dict[str, str]
+    """#289 -- each runtime's reply when tool errors reach the cap; absent
+    means the default text."""
 
 
 def _refuse_builtin_default_tools(registry: ToolRegistry) -> None:
@@ -1644,9 +1651,16 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
     timeout_replies = parse_timeout_replies(
         raw_replies if raw_replies is not None else settings.turn_timeout_reply
     )
+    raw_error_replies = getattr(app.state, "tool_error_reply", None)
+    tool_error_replies = parse_tool_error_replies(
+        raw_error_replies
+        if raw_error_replies is not None
+        else settings.tool_error_reply
+    )
     for source, configured in (
         ("execution limits (EXECUTION_LIMITS)", execution_limits),
         ("timeout replies (TURN_TIMEOUT_REPLY)", timeout_replies),
+        ("tool error replies (TOOL_ERROR_REPLY)", tool_error_replies),
     ):
         unknown = sorted(set(configured) - set(registrations))
         if unknown:
@@ -1663,6 +1677,7 @@ def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
         else "DEPLOY_GRANTS",
         execution_limits=execution_limits,
         timeout_replies=timeout_replies,
+        tool_error_replies=tool_error_replies,
     )
 
 
@@ -1682,6 +1697,7 @@ def create_app(
     budgets: Mapping[str, BudgetCaps | Mapping[str, Any]] | None = None,
     execution_limits: Mapping[str, Mapping[str, Any]] | None = None,
     timeout_reply: Mapping[str, str] | None = None,
+    tool_error_reply: Mapping[str, str] | None = None,
     scope_provider_factory: Callable[[AsyncEngine], ScopeProvider] | None = None,
     roots: RootConfig | None = None,
     title: str = "agents_system",
@@ -1753,7 +1769,7 @@ def create_app(
     execution_limits:
         #278: per-runtime limits by runtime id, e.g. ``{"reports":
         {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60,
-        "max_tool_calls": 30}}``; falls back to ``EXECUTION_LIMITS``. Set by
+        "max_tool_calls": 30, "max_tool_errors": 5}}``; falls back to ``EXECUTION_LIMITS``. Set by
         the deployment only. Each value replaces the platform default as the
         runtime's ceiling; the agent may tighten it, never exceed it. Boot
         fails, naming the runtime, when a turn plus ``LEASE_MARGIN_S`` does
@@ -1763,6 +1779,11 @@ def create_app(
         #278: the text a timed-out turn answers, by runtime id; falls back to
         ``TURN_TIMEOUT_REPLY``, then to the default English text. Plain text,
         sent as given.
+    tool_error_reply:
+        #289: the text a turn answers when its tool errors reach the
+        ``max_tool_errors`` limit (``execution_limits``, default 3), by
+        runtime id; falls back to ``TOOL_ERROR_REPLY``, then to the default
+        English text. Plain text, sent as given.
     roots:
         Consumer-owned path configuration for platform and deployment roles.
         A client override (``clients[id]``, or an ``AGENT_REGISTRATIONS``
@@ -1818,6 +1839,7 @@ def create_app(
     application.state.budgets = budgets
     application.state.execution_limits = execution_limits
     application.state.timeout_reply = timeout_reply
+    application.state.tool_error_reply = tool_error_reply
     application.state.usage_ledger = None
     application.state.checkpoint_threads = None
     application.state.scope_provider_factory = scope_provider_factory

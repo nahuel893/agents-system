@@ -41,11 +41,19 @@ DEPLOYMENT_LIMIT_KEYS = (
     "total_execution_timeout_s",
     "tool_call_timeout_s",
     "max_tool_calls",
+    "max_tool_errors",
 )
 
 #: What a timed-out turn answers when the deployment configures nothing.
 DEFAULT_TIMEOUT_REPLY = "This is taking longer than expected. Please try again."
 MAX_TIMEOUT_REPLY_CHARS = 1000
+
+#: What a turn answers when it ends at ``max_tool_errors`` (#289).
+DEFAULT_TOOL_ERROR_REPLY = (
+    "I could not complete this because a tool kept failing. "
+    "Please try again or rephrase your request."
+)
+MAX_TOOL_ERROR_REPLY_CHARS = 1000
 
 
 def max_turn_timeout_s(lease_s: float = OUTBOX_LEASE_S) -> float:
@@ -103,6 +111,9 @@ def check_effective_limits(
     check_turn_fits_lease(total, who=who, lease_s=lease_s)
 
 
+_WHOLE_NUMBER_KEYS = ("max_tool_calls", "max_tool_errors")
+
+
 def _checked_value(key: str, value: Any, *, who: str) -> int | float:
     if (
         isinstance(value, bool)
@@ -114,10 +125,9 @@ def _checked_value(key: str, value: Any, *, who: str) -> int | float:
             f"execution_limits for {who}: {key} must be a positive, finite "
             f"number, got {value!r}"
         )
-    if key == "max_tool_calls" and not isinstance(value, int):
+    if key in _WHOLE_NUMBER_KEYS and not isinstance(value, int):
         raise ValueError(
-            f"execution_limits for {who}: max_tool_calls must be a whole "
-            f"number, got {value!r}"
+            f"execution_limits for {who}: {key} must be a whole number, got {value!r}"
         )
     return value
 
@@ -202,5 +212,32 @@ def parse_timeout_replies(raw: Mapping[str, Any]) -> dict[str, str]:
         )
     return {
         str(runtime_id): validate_timeout_reply(text, who=f"runtime {runtime_id!r}")
+        for runtime_id, text in raw.items()
+    }
+
+
+def validate_tool_error_reply(text: Any, *, who: str) -> str:
+    """A tool-error reply (#289), checked: non-blank plain text, at most
+    ``MAX_TOOL_ERROR_REPLY_CHARS``. It is sent as given, never templated."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError(
+            f"tool error reply for {who} must be non-empty plain text, got {text!r}"
+        )
+    if len(text) > MAX_TOOL_ERROR_REPLY_CHARS:
+        raise ValueError(
+            f"tool error reply for {who} has {len(text)} characters; the most is "
+            f"{MAX_TOOL_ERROR_REPLY_CHARS}"
+        )
+    return text
+
+
+def parse_tool_error_replies(raw: Mapping[str, Any]) -> dict[str, str]:
+    """``{runtime_id: reply}``, the shape of ``DEPLOY_GRANTS``."""
+    if not isinstance(raw, Mapping):
+        raise ValueError(  # noqa: TRY004 - settings validators raise ValueError
+            f"tool error replies must map runtime ids to text, got {type(raw).__name__}"
+        )
+    return {
+        str(runtime_id): validate_tool_error_reply(text, who=f"runtime {runtime_id!r}")
         for runtime_id, text in raw.items()
     }

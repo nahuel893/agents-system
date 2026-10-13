@@ -172,6 +172,9 @@ _PLATFORM_DEFAULT_LIMITS: dict[str, int] = {
     "tool_call_timeout_s": 10,
     "total_execution_timeout_s": 60,
     "max_tool_calls": 20,
+    # #289: tool errors (a raising tool, a tool timeout) a turn tolerates;
+    # reaching it ends the turn with a controlled reply.
+    "max_tool_errors": 3,
     "max_delegation_depth": 2,
     "max_clarification_attempts": 3,
     # Issue #28: estimated tokens a model call may carry (system prompt,

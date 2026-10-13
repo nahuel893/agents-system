@@ -389,6 +389,11 @@ class Settings(ProviderSettings):
     # sent as given. e.g. TURN_TIMEOUT_REPLY='{"support": "Un momento..."}'
     turn_timeout_reply: dict[str, str] = {}
 
+    # #289 -- the text a turn answers when its tool errors reach the
+    # ``max_tool_errors`` limit, per runtime id. Plain text, sent as given.
+    # e.g. TOOL_ERROR_REPLY='{"support": "Algo salio mal, intenta de nuevo."}'
+    tool_error_reply: dict[str, str] = {}
+
     # #78 Phase 0 Slice 2 -- GET /metrics (Prometheus text format,
     # `main.py`'s `metrics()` route, `observability/metrics.py`). Off by
     # default: an operator must explicitly opt in, the same fail-closed
@@ -539,6 +544,13 @@ class Settings(ProviderSettings):
         from agents_system.execution_limits import parse_timeout_replies
 
         return parse_timeout_replies(value)
+
+    @field_validator("tool_error_reply", mode="after")
+    @classmethod
+    def parse_tool_error_reply(cls, value: dict[str, str]) -> dict[str, str]:
+        from agents_system.execution_limits import parse_tool_error_replies
+
+        return parse_tool_error_replies(value)
 
     @field_validator("subject_data_retention", mode="before")
     @classmethod

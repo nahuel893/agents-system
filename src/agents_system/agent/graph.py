@@ -54,6 +54,7 @@ from langgraph.graph import END, StateGraph
 from agents_system.agent.context import ContextTrim, trim_history
 from agents_system.agent.models import build_agent_model, declared_model
 from agents_system.agent.state import AgentState
+from agents_system.agent.tool_errors import aborting_exceptions, tool_error_text
 from agents_system.agent.untrusted import (
     DEFAULT_TURN_MAX_CHARS,
     UntrustedData,
@@ -62,10 +63,12 @@ from agents_system.agent.untrusted import (
 from agents_system.config import ModelPrice
 from agents_system.execution_limits import (
     DEFAULT_TIMEOUT_REPLY,
+    DEFAULT_TOOL_ERROR_REPLY,
     DEPLOYMENT_LIMIT_KEYS,
     check_effective_limits,
     validate_execution_limits,
     validate_timeout_reply,
+    validate_tool_error_reply,
 )
 from agents_system.harness.factory import EquippedRuntime
 from agents_system.harness.injector import _emit
@@ -104,11 +107,14 @@ logger = structlog.get_logger()
 
 # Terminal node reached when a turn exhausts its max_tool_calls budget.
 _LIMIT_REACHED_NODE = "limit_reached"
+# Terminal node reached when a turn's tool errors reach max_tool_errors (#289).
+_TOOL_ERRORS_NODE = "tool_errors_reached"
 
 # The subset of PLATFORM_DEFAULT_LIMITS the agent loop enforces (it also
 # carries max_delegation_depth/max_clarification_attempts, not yet read here).
 _ENFORCED_LIMIT_KEYS = (
     "max_tool_calls",
+    "max_tool_errors",
     "total_execution_timeout_s",
     "tool_call_timeout_s",
     "max_context_tokens",
@@ -639,9 +645,18 @@ async def _execute_tools(
     "blocked" for a Layer-2 revalidation failure on a tool that WAS equipped
     (reason in {"revalidation_required", "permission_revoked"}), "timeout"
     when the call exceeds tool_call_timeout_s, and "error" for anything else
-    the connector itself raises -- recorded, then re-raised unchanged so
-    error handling behavior is exactly what it was before this metric
-    existed. The "denied" branch records the fixed `_UNRECOGNIZED_TOOL_LABEL`
+    the connector itself raises.
+
+    #289 -- an ``Exception`` a tool raises is recorded as "error" and then
+    handed to the model as an error ToolMessage (``status="error"``, see
+    ``agent/tool_errors.py``) so it can correct itself. The exceptions that
+    carry a security or permission decision (``aborting_exceptions()``) are
+    recorded and re-raised, aborting the turn, and ``BaseException``
+    (cancellation, the turn's own timeout) is never caught. Every error
+    ToolMessage from a raise or a timeout counts in ``tool_error_count``
+    (``max_tool_errors``).
+
+    The "denied" branch records the fixed `_UNRECOGNIZED_TOOL_LABEL`
     instead of the model-supplied `tool_name` -- that name was never checked
     against the equipped surface, so it is untrusted (possibly
     prompt-injected or hallucinated) text with no monitoring value, and must
@@ -651,6 +666,7 @@ async def _execute_tools(
     tool_calls: list[dict[str, Any]] = getattr(last_message, "tool_calls", []) or []
 
     result_messages: list[ToolMessage] = []
+    tool_errors = 0
 
     session_cm = (
         equipped.session_provider() if equipped.session_provider else nullcontext()
@@ -690,6 +706,7 @@ async def _execute_tools(
                     duration_s=time.monotonic() - call_start,
                 )
             except TimeoutError:
+                tool_errors += 1
                 result_messages.append(
                     ToolMessage(
                         content=f"Tool call timed out after {tool_call_timeout_s}s",
@@ -742,18 +759,35 @@ async def _execute_tools(
                     outcome=policy_outcome,
                     duration_s=time.monotonic() - call_start,
                 )
-            except Exception:
+            except Exception as error:
                 record_tool_call(
                     metrics,
                     tool=tool_name,
                     outcome="error",
                     duration_s=time.monotonic() - call_start,
                 )
-                raise
+                if isinstance(error, aborting_exceptions()):
+                    # A security or permission decision: the turn aborts, the
+                    # model is not told to try around it (agent/tool_errors.py).
+                    raise
+                tool_errors += 1
+                logger.warning(
+                    "runtime.tool_error",
+                    tool=tool_name,
+                    error_class=type(error).__name__,
+                )
+                result_messages.append(
+                    ToolMessage(
+                        content=tool_error_text(tool_name, error),
+                        tool_call_id=call_id,
+                        status="error",
+                    )
+                )
 
     return {
         "messages": result_messages,
         "tool_call_count": state.get("tool_call_count", 0) + len(tool_calls),
+        "tool_error_count": state.get("tool_error_count", 0) + tool_errors,
     }
 
 
@@ -782,9 +816,33 @@ async def _limit_reached(state: AgentState, metrics: Metrics) -> dict[str, Any]:
     }
 
 
+async def _tool_errors_reached(
+    state: AgentState, metrics: Metrics, reply: str
+) -> dict[str, Any]:
+    """Terminal node reached when a turn's tool errors reach max_tool_errors (#289).
+
+    Ends the turn with the deployment's controlled reply, sent as given and
+    never templated with anything from the turn, instead of letting the model
+    retry a failing tool again.
+    """
+    logger.warning(
+        "runtime.tool_errors_reached",
+        tool_error_count=state.get("tool_error_count", 0),
+    )
+    record_limit_trip(metrics, limit="max_tool_errors")
+    return {"messages": [AIMessage(content=reply)]}
+
+
 # ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
+
+
+def _after_tools(state: AgentState, max_tool_errors: int) -> str:
+    """Back to the model, unless the turn's tool errors reached the cap (#289)."""
+    if state.get("tool_error_count", 0) >= max_tool_errors:
+        return _TOOL_ERRORS_NODE
+    return "call_model"
 
 
 def _route(state: AgentState, max_tool_calls: int) -> str:
@@ -820,6 +878,8 @@ def _build_graph(
     runtime_id: str | None = None,
     budget_gate: BudgetGate | None = None,
     untrusted_text: str = "",
+    max_tool_errors: int = PLATFORM_DEFAULT_LIMITS["max_tool_errors"],
+    tool_error_reply: str = DEFAULT_TOOL_ERROR_REPLY,
 ) -> StateGraph[AgentState]:
     """Build the StateGraph with call_model, execute_tools and limit_reached nodes."""
     graph = StateGraph(AgentState)
@@ -851,13 +911,20 @@ def _build_graph(
         ),
     )
     graph.add_node(_LIMIT_REACHED_NODE, partial(_limit_reached, metrics=metrics))
+    graph.add_node(
+        _TOOL_ERRORS_NODE,
+        partial(_tool_errors_reached, metrics=metrics, reply=tool_error_reply),
+    )
 
     graph.set_entry_point("call_model")
     graph.add_conditional_edges(
         "call_model", partial(_route, max_tool_calls=max_tool_calls)
     )
-    graph.add_edge("execute_tools", "call_model")
+    graph.add_conditional_edges(
+        "execute_tools", partial(_after_tools, max_tool_errors=max_tool_errors)
+    )
     graph.add_edge(_LIMIT_REACHED_NODE, END)
+    graph.add_edge(_TOOL_ERRORS_NODE, END)
 
     return graph
 
@@ -1225,6 +1292,11 @@ class AgentRuntime:
     timeout_reply:
         #278 -- the text a timed-out turn answers, sent as given (never
         templated with user or tool data). ``None``: ``DEFAULT_TIMEOUT_REPLY``.
+    tool_error_reply:
+        #289 -- the text a turn answers when its tool errors reach
+        ``max_tool_errors`` (a limit like the others in ``execution_limits``,
+        default 3), sent as given (never templated). ``None``:
+        ``DEFAULT_TOOL_ERROR_REPLY``.
     """
 
     def __init__(
@@ -1242,6 +1314,7 @@ class AgentRuntime:
         user_memory: UserMemoryLimits | None = None,
         execution_limits: Mapping[str, Any] | None = None,
         timeout_reply: str | None = None,
+        tool_error_reply: str | None = None,
     ) -> None:
         if user_memory is not None and (scope_provider is None or runtime_id is None):
             raise ValueError(
@@ -1301,6 +1374,11 @@ class AgentRuntime:
             DEFAULT_TIMEOUT_REPLY
             if timeout_reply is None
             else validate_timeout_reply(timeout_reply, who=who)
+        )
+        self._tool_error_reply = (
+            DEFAULT_TOOL_ERROR_REPLY
+            if tool_error_reply is None
+            else validate_tool_error_reply(tool_error_reply, who=who)
         )
         effective = self.execution_limits
         if self._deployment_limits:
@@ -1628,6 +1706,8 @@ class AgentRuntime:
             effective_permissions,
             max_tool_calls=max_tool_calls,
             tool_call_timeout_s=effective_limits["tool_call_timeout_s"],
+            max_tool_errors=int(effective_limits["max_tool_errors"]),
+            tool_error_reply=self._tool_error_reply,
             metrics=self._metrics,
             max_context_tokens=int(effective_limits["max_context_tokens"]),
             scope_provider=self._scope_provider,
@@ -1674,6 +1754,7 @@ class AgentRuntime:
             # a per-turn budget must reset to 0 even when this thread resumes
             # from persisted state (design AD-1 gotcha).
             "tool_call_count": 0,
+            "tool_error_count": 0,
             # #78 Phase 0 -- same reset-per-turn reasoning as tool_call_count
             # above: a resumed checkpointed thread must never inherit a
             # prior turn's usage entries.
