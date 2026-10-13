@@ -340,19 +340,24 @@ app = create_app(
         "reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}
     },
     timeout_reply={"reports": "Esto está tardando más de lo esperado. Probá de nuevo."},
+    tool_error_reply={
+        "reports": "No pude completar esto porque una herramienta falló. Probá de nuevo."
+    },
 )
 ```
 
-Sin esos argumentos, la fuente son `EXECUTION_LIMITS` y `TURN_TIMEOUT_REPLY`, con la misma forma:
+Sin esos argumentos, la fuente son `EXECUTION_LIMITS`, `TURN_TIMEOUT_REPLY` y `TOOL_ERROR_REPLY`, con la misma forma:
 
 ```bash
 EXECUTION_LIMITS='{"reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}}'
 TURN_TIMEOUT_REPLY='{"reports": "Esto está tardando más de lo esperado. Probá de nuevo."}'
+TOOL_ERROR_REPLY='{"reports": "No pude completar esto porque una herramienta falló. Probá de nuevo."}'
 ```
 
 - **Solo el despliegue sube.** Un valor reemplaza al defecto de la plataforma (60 s por turno, 10 s por llamada a herramienta, 20 llamadas) como techo de ese runtime; el agente puede ajustarlo hacia abajo, nunca superarlo.
 - **El lease lo acota.** Un turno tiene que durar menos de 540 s: el lease de 600 s del outbox menos los 60 s de `LEASE_MARGIN_S` para el envío de la respuesta y el checkpointer. Un turno que no entra, una llamada a herramienta más larga que su turno (validada otra vez al combinarse con los límites del agente), una clave desconocida o un id que el arranque no construye hacen fallar el arranque, nombrando el runtime. El margen también cubre la lectura y el guardado del checkpointer, así que con un canal y checkpointer `CHECKPOINTER_TIMEOUT_S` puede ser de hasta 20 s.
 - **La respuesta es texto plano**, de hasta 1000 caracteres, y se envía tal cual. Un runtime sin respuesta propia responde el texto por defecto en inglés.
+- **Errores de herramienta** *(llega en el próximo release)*. Una herramienta que lanza una excepción llega al modelo como un resultado de error; `max_tool_errors` (por defecto 3, configurable como los demás límites) termina el turno con `tool_error_reply` cuando esa cantidad de llamadas lanzó una excepción o agotó su tiempo. Ver [Política: errores de herramienta](policy.md#errores-de-herramienta).
 
 Ver [Política: límites de ejecución](policy.md#límites-de-ejecución-execution-limits).
 

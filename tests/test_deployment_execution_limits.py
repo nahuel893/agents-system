@@ -438,6 +438,7 @@ async def test_boot_refuses_limits_or_replies_for_a_runtime_it_does_not_build() 
     for overrides in (
         {"execution_limits": {"typo": RAISED}},
         {"timeout_reply": {"typo": "Un momento."}},
+        {"tool_error_reply": {"typo": "Algo salio mal."}},
     ):
         app = _served_app(**overrides)
         with (
@@ -458,6 +459,7 @@ async def test_boot_hands_each_runtime_its_limits_and_reply() -> None:
     app = _served_app(
         execution_limits={"reports": RAISED},
         timeout_reply={"reports": "Un momento, por favor."},
+        tool_error_reply={"reports": "Algo salio mal."},
     )
 
     with (
@@ -472,6 +474,7 @@ async def test_boot_hands_each_runtime_its_limits_and_reply() -> None:
 
     (runtime_call,) = runtime_cls.call_args_list
     assert runtime_call.kwargs["timeout_reply"] == "Un momento, por favor."
+    assert runtime_call.kwargs["tool_error_reply"] == "Algo salio mal."
     (build_call,) = build.call_args_list
     assert build_call.kwargs["execution_limits"] == RAISED
     (resolve_call,) = res.call_args_list
@@ -482,7 +485,9 @@ def test_the_environment_variables_are_validated_at_load() -> None:
     settings = _make_settings(
         execution_limits={"sales": RAISED},
         turn_timeout_reply={"sales": "Un momento."},
+        tool_error_reply={"sales": "Algo salio mal."},
     )
+    assert settings.tool_error_reply == {"sales": "Algo salio mal."}
     assert settings.execution_limits == {"sales": RAISED}
     assert settings.turn_timeout_reply == {"sales": "Un momento."}
 
@@ -490,6 +495,8 @@ def test_the_environment_variables_are_validated_at_load() -> None:
         _make_settings(execution_limits={"sales": {"total_execution_timeout_s": 600}})
     with pytest.raises(ValueError, match="'sales'"):
         _make_settings(turn_timeout_reply={"sales": "  "})
+    with pytest.raises(ValueError, match="'sales'"):
+        _make_settings(tool_error_reply={"sales": "  "})
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,10 @@ class AgentState(TypedDict):
     session_id: str
     current_permissions: tuple[str, ...]
     tool_call_count: int
+    # #289 -- error ToolMessages (a raising tool, a tool timeout) so far THIS
+    # turn. Reset to 0 by `run_turn` like `tool_call_count`; absent in a state
+    # built by hand, which reads as 0.
+    tool_error_count: NotRequired[int]
     # #78 Phase 0 -- one entry per `_call_model` invocation made so far THIS
     # turn, in order. `None` means that particular model call reported no
     # `usage_metadata` (see `TurnUsage`'s honesty rule in `agent/graph.py`).

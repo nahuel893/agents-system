@@ -148,12 +148,13 @@ Estos son los valores predeterminados de la plataforma. La política `policy.md`
 | Timeout de llamada a herramienta | 10s | Por cada llamada individual |
 | Timeout total de ejecución | 60s | Desde la recepción del trigger hasta la salida final |
 | Máximo de llamadas a herramientas | 20 | Evita bucles infinitos de ejecución |
+| Máximo de errores de herramienta por turno | 3 | Una herramienta que lanzó una excepción o agotó su tiempo; al alcanzarlo el turno termina con una respuesta controlada (ver "Errores de herramienta") |
 | Máxima profundidad de delegación | 2 | Padre → hijo → nieto; no más profundo |
 | Máximos intentos de aclaración | 3 | Antes de forzar el escalamiento ante entradas ambiguas |
 
 ### Subir los límites desde el despliegue
 
-Una definición de agente sola nunca puede subir un límite. El despliegue, que paga y opera el servicio, sí: fija `total_execution_timeout_s`, `tool_call_timeout_s` y `max_tool_calls` por id de runtime, y cada valor reemplaza al valor por defecto de la plataforma como techo de ese runtime. Las `execution_limits` del propio agente todavía pueden ajustarlo hacia abajo, nunca superarlo.
+Una definición de agente sola nunca puede subir un límite. El despliegue, que paga y opera el servicio, sí: fija `total_execution_timeout_s`, `tool_call_timeout_s`, `max_tool_calls` y `max_tool_errors` por id de runtime, y cada valor reemplaza al valor por defecto de la plataforma como techo de ese runtime. Las `execution_limits` del propio agente todavía pueden ajustarlo hacia abajo, nunca superarlo.
 
 | Dónde | Cómo |
 |---|---|
@@ -171,6 +172,26 @@ Una definición de agente sola nunca puede subir un límite. El despliegue, que 
 ### La respuesta por timeout
 
 Un turno que se queda sin tiempo responde "This is taking longer than expected. Please try again." Un despliegue que atiende usuarios en otro idioma fija su propio texto por runtime: `create_app(timeout_reply={"support": "..."})`, la variable `TURN_TIMEOUT_REPLY` (`{"id de runtime": "texto"}`), o `AgentRuntime(timeout_reply=...)`. Es texto plano de hasta 1000 caracteres y se envía tal cual: nunca se arma con datos del usuario ni de las herramientas.
+
+### Errores de herramienta
+
+*Llega en el próximo release.* Una herramienta que lanza una excepción ya no aborta el turno. El runtime le entrega al modelo un resultado de error (un `ToolMessage` con `status="error"`, con la misma forma que un timeout de herramienta) y el modelo recibe un paso más, de modo que puede acortar un argumento o cambiar de enfoque. El texto es de una sola línea: el nombre de la herramienta, la clase de la excepción y su mensaje recortado a 300 caracteres, por ejemplo `Tool 'run_code' failed: ValueError: codigo must be a non-empty string`. Nunca incluye un traceback. Se recorta y se aplana, pero no se depura: la plataforma no tiene un helper de redacción de secretos para este caso, así que una herramienta no debe poner un secreto en el mensaje de una excepción. La llamada se sigue registrando como resultado `"error"` en `agent_tool_calls_total`, y el runtime registra `runtime.tool_error` con la herramienta y la clase de la excepción.
+
+**El tope.** `max_tool_errors` (por defecto 3) cuenta cada resultado de error de un turno, ya sea que la herramienta haya lanzado una excepción o agotado su tiempo. Al alcanzarlo, el turno termina con una respuesta controlada en lugar de dejar que el modelo reintente de nuevo, y se incrementa `agent_limit_trips_total{limit="max_tool_errors"}`. Es un límite de ejecución como los demás: el agente puede ajustarlo hacia abajo, el despliegue puede fijarlo (`create_app(execution_limits={"support": {"max_tool_errors": 5}})`, `EXECUTION_LIMITS`), y debe ser un entero positivo. La respuesta por defecto es "I could not complete this because a tool kept failing. Please try again or rephrase your request." Un despliegue fija su propio texto por runtime: `create_app(tool_error_reply={"support": "..."})`, la variable `TOOL_ERROR_REPLY` (`{"id de runtime": "texto"}`), o `AgentRuntime(tool_error_reply=...)`. Es texto plano de hasta 1000 caracteres y se envía tal cual.
+
+**Qué sigue abortando el turno.** Solo una `Exception` se convierte en resultado de error. El conjunto de abajo lleva una decisión de seguridad o de permisos, así que se propaga y aborta el turno: entregárselo al modelo como un error reintentable lo invitaría a rodear la decisión. El conjunto se define en un único lugar, `aborting_exceptions()` en `agent/tool_errors.py`.
+
+| Excepción | Por qué aborta |
+|---|---|
+| `AgentPermissionError` (y subclases) | Falló el modelo de permisos: una decisión sobre qué puede ejecutarse |
+| `ProactivePermissionError` | El invocador no tiene `send:proactive` dentro de los permisos del despliegue |
+| `RecipientNotAuthorizedError` | El directorio del despliegue no autoriza al destinatario |
+| `QueryRejectedError` | El guard de SQL rechazó una consulta que el conector no respondió por sí mismo |
+| `UnsafeQueryRoleError` | El rol de base de datos no es seguro para SQL escrito por el modelo |
+| `UnfencedRoleError` | El rol de base de datos evita la seguridad a nivel de fila |
+| `BaseException` (`asyncio.CancelledError`, `KeyboardInterrupt`) | Nunca se captura: el timeout total del turno funciona cancelándolo |
+
+Las excepciones de un extra opcional que no está instalado no pueden lanzarse y se omiten. Las denegaciones del propio interceptor (`PolicyViolation`: herramienta fuera de la superficie, permiso revocado, revalidación requerida, política de memoria, sujeto ausente) nunca se lanzaron fuera del turno: ya se devolvían al modelo como un resultado de error "blocked", lo siguen haciendo y no cuentan para `max_tool_errors`.
 
 ---
 

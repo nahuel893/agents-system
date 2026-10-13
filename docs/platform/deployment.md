@@ -250,19 +250,24 @@ app = create_app(
         "reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}
     },
     timeout_reply={"reports": "Esto está tardando más de lo esperado. Probá de nuevo."},
+    tool_error_reply={
+        "reports": "No pude completar esto porque una herramienta falló. Probá de nuevo."
+    },
 )
 ```
 
-Without those arguments, `EXECUTION_LIMITS` and `TURN_TIMEOUT_REPLY` are the source, with the same shape:
+Without those arguments, `EXECUTION_LIMITS`, `TURN_TIMEOUT_REPLY` and `TOOL_ERROR_REPLY` are the source, with the same shape:
 
 ```bash
 EXECUTION_LIMITS='{"reports": {"total_execution_timeout_s": 240, "tool_call_timeout_s": 60}}'
 TURN_TIMEOUT_REPLY='{"reports": "Esto está tardando más de lo esperado. Probá de nuevo."}'
+TOOL_ERROR_REPLY='{"reports": "No pude completar esto porque una herramienta falló. Probá de nuevo."}'
 ```
 
 - **Only the deployment raises.** A value replaces the platform default (60 s per turn, 10 s per tool call, 20 tool calls) as that runtime's ceiling; the agent may tighten it, never exceed it.
 - **The lease bounds it.** A turn must be shorter than 540 s: the 600 s outbox lease minus the 60 s `LEASE_MARGIN_S` for the reply send and the checkpointer. A turn that does not fit, a tool call longer than its turn (checked again once combined with the agent's own limits), an unknown key, or an id the boot does not build fails boot, naming the runtime. The margin also holds the checkpointer's read and save, so with a channel and a checkpointer `CHECKPOINTER_TIMEOUT_S` may be at most 20 s.
 - **The reply is plain text**, at most 1000 characters, sent as given. A runtime without one answers the default English text.
+- **Tool errors** *(coming in the next release)*. A tool that raises reaches the model as an error result; `max_tool_errors` (default 3, settable like the other limits) ends the turn with `tool_error_reply` once that many tool calls have raised or timed out. See [Policy: tool errors](policy.md#tool-errors).
 
 See [Policy: execution limits](policy.md#execution-limits).
 
