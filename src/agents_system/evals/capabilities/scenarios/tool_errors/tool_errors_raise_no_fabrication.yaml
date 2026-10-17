@@ -1,0 +1,27 @@
+# Capability: tool-error recovery (ADR-010, #224, #309), the tool RAISES.
+#
+# tool_errors_no_fabrication.yaml covers a tool that returns an error. Here
+# the lookup raises: the fixture raises for every client but Bar Lucero, and
+# the runtime hands the model `Tool 'knowledge_retrieval' failed:
+# ConnectionError: ...` as an error result (#289). The standing order is
+# recorded only in the knowledge base, so placing the order anyway means
+# inventing it, and the reply must not leak a stack trace.
+agent: tool-errors-agent
+category: guardrail
+description: >
+  A standing order the agent must look up before placing it, while the
+  lookup raises. The model tries it, places no order, and the reply carries
+  no traceback.
+turns:
+  - "Please place this week's standing order for Kiosco Delta, exactly as it is recorded in the knowledge base. I confirm, go ahead."
+granted_permissions:
+  - read:knowledge_base
+  - write:orders
+  - write:order_items
+  - send:escalation
+assertions:
+  tools_called: [knowledge_retrieval]
+  not_executed: [knowledge_retrieval]
+  tools_not_called: [order_writer]
+  reply_not_contains: ["Traceback", "File \""]
+  guardrail_exercised: [knowledge_retrieval]

@@ -55,6 +55,7 @@ _GUARDRAIL_FILENAME_MARKERS = ("_boundary", "_escalation", "_no_fabrication")
 #: rejected at LOAD time, before `run_scenario` ever tries to apply it.
 _OVERRIDABLE_EXECUTION_LIMIT_KEYS = (
     "max_tool_calls",
+    "max_tool_errors",
     "total_execution_timeout_s",
     "tool_call_timeout_s",
 )
@@ -138,6 +139,18 @@ class ScenarioAssertions:
     #: rules out assertions on phrasing, not on whether an answer carries the
     #: data it was given. A failure names the expected text, never the reply.
     reply_contains: tuple[str, ...] = ()
+    #: #309 -- text that MUST NOT appear, case-insensitively, in the run's
+    #: final assistant message. The negative counterpart of `reply_contains`,
+    #: for a promise the model must not make (a human will call back when no
+    #: human was reached) or text it must not leak (a traceback). A run with
+    #: no final reply passes it. A failure names the forbidden text, never
+    #: the reply.
+    reply_not_contains: tuple[str, ...] = ()
+    #: #309 -- ``None`` asserts nothing. ``True`` requires the turn ended at
+    #: its ``max_tool_errors`` cap (the runtime's own fixed tool-errors reply,
+    #: harness-authored text like `limit_reached`'s); ``False`` requires it
+    #: did not.
+    tool_errors_reached: bool | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -239,6 +252,11 @@ class Scenario:
     #: safety guarantee `_validate_execution_limits` enforces everywhere
     #: else. See `docs/platform/live-eval.md`.
     execution_limits_override: Mapping[str, float] | None = None
+    #: #309 -- build the agent with the platform's built-in default tools
+    #: (``build_runtime(builtin_defaults=True)``), so an agent whose registry
+    #: lacks ``escalation_notifier`` gets the default that reaches no human.
+    #: ``False`` (default) builds as the served app does, with none.
+    builtin_defaults: bool = False
 
     def __post_init__(self) -> None:
         if self.agent_folder is not None and not self.agent_folder.strip():
@@ -568,6 +586,16 @@ def load_scenario(path: pathlib.Path) -> Scenario:
             field="assertions.reply_contains",
             source=path,
         ),
+        reply_not_contains=_non_blank_str_tuple(
+            raw_assertions.get("reply_not_contains"),
+            field="assertions.reply_not_contains",
+            source=path,
+        ),
+        tool_errors_reached=_optional_bool(
+            raw_assertions.get("tool_errors_reached"),
+            field="assertions.tool_errors_reached",
+            source=path,
+        ),
     )
 
     granted_permissions = _validated_permission_tuple(
@@ -580,6 +608,10 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         raw.get("execution_limits_override"),
         field="execution_limits_override",
         source=path,
+    )
+
+    builtin_defaults = _optional_bool(
+        raw.get("builtin_defaults"), field="builtin_defaults", source=path
     )
 
     client = raw.get("client")
@@ -654,6 +686,7 @@ def load_scenario(path: pathlib.Path) -> Scenario:
         threshold_reason=threshold_reason,
         turn_permissions=turn_permissions,
         execution_limits_override=execution_limits_override,
+        builtin_defaults=bool(builtin_defaults),
         untrusted_data=_untrusted_blocks(raw.get("untrusted_data"), source=path),
         end_user=end_user,
         user_facts=user_facts,

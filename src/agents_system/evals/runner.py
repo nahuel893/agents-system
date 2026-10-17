@@ -46,6 +46,7 @@ from agents_system.evals.schema import (
     ScenarioAssertions,
     ScenarioError,
 )
+from agents_system.execution_limits import DEFAULT_TOOL_ERROR_REPLY
 from agents_system.harness.factory import EquippedRuntime, build_runtime
 from agents_system.harness.loader import FolderLocator, RootConfig, resolve
 from agents_system.harness.registry import ToolRegistry
@@ -566,6 +567,22 @@ def _limit_was_reached(messages: Sequence[AnyMessage]) -> bool:
     )
 
 
+#: #309 -- `execution_limits.DEFAULT_TOOL_ERROR_REPLY`, the reply the
+#: runtime ends a turn with when its tool errors reach ``max_tool_errors``
+#: (#289). Harness-authored like `_LIMIT_REACHED_PREFIX`. Matched on the
+#: first sentence: a deployment's own ``tool_error_reply`` is not covered.
+_TOOL_ERRORS_REACHED_PREFIX = DEFAULT_TOOL_ERROR_REPLY.split(". ")[0]
+
+
+def _tool_errors_were_reached(messages: Sequence[AnyMessage]) -> bool:
+    return any(
+        isinstance(message, AIMessage)
+        and isinstance(message.content, str)
+        and message.content.startswith(_TOOL_ERRORS_REACHED_PREFIX)
+        for message in messages
+    )
+
+
 def _scalar_values(value: Any) -> Iterator[Any]:
     """#224 -- *value* itself when it is a scalar, else every scalar inside
     the list or object, at any depth (object keys are not values)."""
@@ -806,6 +823,7 @@ def evaluate_assertions(
     succeeded = _succeeded_tool_names(messages)
     blocked = _blocked_tool_names(messages)
     limit_reached = _limit_was_reached(messages)
+    tool_errors_reached = _tool_errors_were_reached(messages)
     captured_event_types = _captured_event_types(audit_events)
 
     for tool in assertions.tools_called:
@@ -880,6 +898,18 @@ def evaluate_assertions(
             )
         )
 
+    if (
+        assertions.tool_errors_reached is not None
+        and tool_errors_reached != assertions.tool_errors_reached
+    ):
+        failures.append(
+            AssertionFailure(
+                "tool_errors_reached",
+                f"expected tool_errors_reached={assertions.tool_errors_reached}, "
+                f"got {tool_errors_reached}",
+            )
+        )
+
     for event_type in assertions.audit_event:
         if event_type not in captured_event_types:
             failures.append(
@@ -941,6 +971,18 @@ def evaluate_assertions(
                     )
                 )
 
+    if assertions.reply_not_contains:
+        reply = _final_reply(messages)
+        for text in assertions.reply_not_contains:
+            if reply is not None and _reply_carries(reply, text):
+                # Names the forbidden text, never the reply.
+                failures.append(
+                    AssertionFailure(
+                        "reply_not_contains",
+                        f"the final reply must not contain {text!r}, but it does",
+                    )
+                )
+
     exercised_signals: list[bool] = []
     if assertions.tools_not_called:
         exercised_signals.append(
@@ -963,6 +1005,8 @@ def evaluate_assertions(
         )
     if assertions.limit_reached is True:
         exercised_signals.append(limit_reached)
+    if assertions.tool_errors_reached is True:
+        exercised_signals.append(tool_errors_reached)
     if assertions.audit_event:
         exercised_signals.append(
             any(
@@ -1212,8 +1256,9 @@ async def run_scenario(
                 client=scenario.client,
                 roots=roots,
                 # Issue #168 -- evaluate what is served: no in-process
-                # default stands in for a missing escalation_notifier.
-                builtin_defaults=False,
+                # default stands in for a missing escalation_notifier. A
+                # scenario about that default (#309) opts back in.
+                builtin_defaults=scenario.builtin_defaults,
             )
             # #76 -- merge this scenario's execution_limits_override (if any)
             # over whatever the resolved role's own manifest declares. Never

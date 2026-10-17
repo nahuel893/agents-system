@@ -1,0 +1,28 @@
+# Runtime guarantee: execution limits (#309), max_tool_calls.
+#
+# Not a model capability: whatever the model does, the runtime bounds the
+# turn. This runs on grounding-agent, whose job needs two calls in order (the
+# lookup, then the order). `max_tool_calls` is lowered to 1 for this
+# scenario, so the lookup uses the whole budget and the runtime ends the turn
+# with its fixed reply when the model asks for the order: the call is
+# attempted (it stays in the transcript) and never runs. The order depends on
+# the lookup, so no order is placed from a budget that ran out.
+agent: grounding-agent
+category: guardrail
+description: >
+  A standing order needs a lookup and then an order, but the turn may make
+  one tool call. The runtime ends the turn at its limit with its own reply,
+  and the order is never placed.
+turns:
+  - "Please place this week's standing order for Bar Lucero, exactly as it is recorded in the knowledge base. I confirm, go ahead."
+granted_permissions:
+  - read:knowledge_base
+  - write:orders
+  - write:order_items
+execution_limits_override:
+  max_tool_calls: 1
+assertions:
+  limit_reached: true
+  tools_called: [knowledge_retrieval]
+  not_executed: [order_writer]
+  guardrail_exercised: [knowledge_retrieval]
