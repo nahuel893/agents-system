@@ -368,3 +368,59 @@ async def test_a_lease_expiry_is_audited_once_per_message(sink: Sink) -> None:
     expired = events[-1]
     assert expired.actor == ACTOR.label and expired.subject == ALICE.key
     assert expired.payload["reason"] == "lease_expired"
+
+
+def test_quiet_hours_do_not_hold_a_message_outside_the_window() -> None:
+    policy = ProactivePolicy(quiet_hours=(time(22, 0), time(8, 0)))
+    assert policy.quiet_until(NOW) is None
+    assert ProactivePolicy().quiet_until(NOW) is None
+
+
+async def test_a_recipient_on_a_channel_the_dispatcher_lacks_is_failed() -> None:
+    channel = FakeChannel()
+    sender, _, queue = _stack(channel)
+    await _submit(sender)
+    without_channel = ProactiveDispatcher(
+        queue, _directory(), {}, deploy_grants=GRANTS, clock=lambda: NOW
+    )
+    outcome = await without_channel.run_once("w1")
+    assert outcome.status == "failed" and outcome.reason == "no_channel"
+    assert channel.calls == []
+
+
+async def test_a_failing_permission_lookup_stops_the_message_rather_than_sending() -> (
+    None
+):
+    channel = FakeChannel()
+    sender, _, queue = _stack(channel)
+    await _submit(sender)
+
+    async def broken(runtime_id: str, actor: str) -> set[str]:
+        raise OSError("grant store down")
+
+    dispatcher = ProactiveDispatcher(
+        queue,
+        _directory(),
+        {"whatsapp": channel},
+        deploy_grants=GRANTS,
+        current_permissions=broken,
+        clock=lambda: NOW,
+    )
+    outcome = await dispatcher.run_once("w1")
+    assert outcome.status == "failed" and outcome.reason == "permission_revoked"
+    assert channel.calls == []
+
+
+async def test_a_failing_audit_sink_never_changes_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BrokenSink:
+        async def record(self, event: Any) -> None:
+            raise OSError("audit down")
+
+    monkeypatch.setattr(AuditSink, "registered", classmethod(lambda cls: BrokenSink()))
+    channel = FakeChannel()
+    sender, dispatcher, _ = _stack(channel)
+    await _submit(sender, "report ready")
+    assert (await dispatcher.run_once("w1")).status == "sent"
+    assert channel.calls == [("549111", "report ready")]

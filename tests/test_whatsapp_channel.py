@@ -326,3 +326,37 @@ def test_verify_subscription_never_matches_an_empty_configured_token() -> None:
         with pytest.raises(HTTPException) as exc_info:
             channel.verify_subscription(params)
         assert exc_info.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"entry": "nope"},
+        {"entry": ["nope", {"changes": "nope"}, {"changes": ["nope"]}]},
+        {"entry": [{"changes": [{"value": "nope"}]}]},
+        {"entry": [{"changes": [{"value": {"messages": "nope"}}]}]},
+        {"entry": [{"changes": [{"value": {"messages": ["nope"]}}]}]},
+        {},
+    ],
+)
+def test_a_malformed_envelope_yields_no_turn_instead_of_raising(
+    payload: dict[str, object],
+) -> None:
+    assert _channel().extract_turn(payload, "wamid.1") is None
+
+
+def test_a_non_text_message_completes_without_a_turn_and_is_logged() -> None:
+    image = {"id": "wamid.1", "from": "549111", "type": "image"}
+
+    with structlog.testing.capture_logs() as logs:
+        turn = _channel().extract_turn(_envelope(image), "wamid.1")
+
+    assert turn is None
+    [entry] = [e for e in logs if e["event"] == "webhook_worker.non_text_message"]
+    assert entry["message_type"] == "image"
+
+
+def test_a_message_that_is_not_the_requested_id_is_skipped() -> None:
+    other = {"id": "wamid.2", "from": "549111", "text": {"body": "hi"}}
+
+    assert _channel().extract_turn(_envelope(other), "wamid.1") is None

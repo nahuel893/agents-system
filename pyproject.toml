@@ -170,8 +170,15 @@ addopts = "-m 'not integration and not live and not load'"
 # explicitly (`pytest.mark.filterwarnings("ignore::...")`, as the modules that
 # still name the roles do until #229 moves them), so the suite cannot quietly
 # grow new uses of a deprecated path.
+#
+# The filter matches the warning's message with the stdlib `DeprecationWarning`
+# category instead of naming `PredefinedRoleDeprecationWarning`: pytest
+# resolves a dotted category by importing it while it parses this file, which
+# imports `agents_system` before pytest-cov starts and reports every
+# module-level line of the harness as missed (about 310 lines, 3 points of
+# coverage). The message prefix is the one `_warn_deprecated_role` emits.
 filterwarnings = [
-    "error::agents_system.harness.loader.PredefinedRoleDeprecationWarning",
+    "error:Predefined role .* is deprecated and will be removed:DeprecationWarning",
 ]
 
 [tool.mypy]

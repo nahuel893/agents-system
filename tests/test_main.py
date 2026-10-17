@@ -36,9 +36,18 @@ from prometheus_client import CollectorRegistry
 
 import agents_system.harness.factory  # noqa: F401 -- see the note below
 from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI
+from agents_system.channels.port import Channel
 from agents_system.config import Settings, get_settings
 from agents_system.harness.loader import DefinitionError, RootConfig
-from agents_system.main import _build_chat_model, lifespan
+from agents_system.main import (
+    ProviderHealthProbe,
+    _build_chat_model,
+    _build_registrations,
+    _folder_registration,
+    _provider_probe_target,
+    _validate_channels,
+    lifespan,
+)
 from agents_system.observability.metrics import DEFAULT_METRICS, build_metrics
 from agents_system.observability.provider_http import MetricsHTTPTransport
 from agents_system.permissions import UntrustedInputGrantError
@@ -536,7 +545,12 @@ async def test_lifespan_warns_that_the_legacy_ttl_setting_is_deprecated(
 
 
 async def _boot_and_capture_logs(
-    total_execution_timeout_s: float, capsys: pytest.CaptureFixture[str]
+    total_execution_timeout_s: float,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    embedder_error: Exception | None = None,
+    purger: Any = None,
+    **settings_overrides: object,
 ) -> list[dict[str, Any]]:
     """Boot the lifespan and return the JSON log lines it wrote to stdout.
 
@@ -551,6 +565,7 @@ async def _boot_and_capture_logs(
         openai_compatible_model="test-model",
         openai_compatible_api_key="test-key",
         openai_compatible_request_timeout_s=45.0,
+        **settings_overrides,
     )
     fake_definition = MagicMock()
     fake_definition.permissions = ("read:catalog",)
@@ -573,10 +588,12 @@ async def _boot_and_capture_logs(
         patch(
             "agents_system.services.embeddings.get_embedding_provider",
             return_value=MagicMock(),
+            side_effect=embedder_error,
         ),
         patch("agents_system.harness.loader.resolve", return_value=fake_definition),
         patch("agents_system.harness.factory.build_runtime", return_value=MagicMock()),
         patch("agents_system.agent.graph.AgentRuntime"),
+        patch("agents_system.main.SubjectDataPurger", new=purger or MagicMock()),
     ):
         app = create_test_app()
         async with lifespan(app):
@@ -618,6 +635,59 @@ async def test_lifespan_is_quiet_when_the_turn_budget_holds_a_provider_call(
         for entry in logs
         if entry["event"] == "runtime.turn_budget_below_request_timeout"
     ]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_boots_without_the_embeddings_extra_and_says_so(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from agents_system.extras import MissingExtraError
+
+    error = MissingExtraError("embeddings", "Local embeddings", "sentence_transformers")
+
+    logs = await _boot_and_capture_logs(60, capsys, embedder_error=error)
+
+    [warning] = [entry for entry in logs if entry["event"] == "embeddings.unavailable"]
+    assert warning["level"] == "warning"
+    assert warning["extra"] == "embeddings"
+    assert "Booting anyway" in warning["message"]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_still_fails_when_another_extra_is_missing() -> None:
+    from agents_system.extras import MissingExtraError
+
+    error = MissingExtraError("postgres", "The database", "asyncpg")
+
+    with pytest.raises(MissingExtraError, match="postgres"):
+        await _boot_and_capture_logs(
+            60,
+            MagicMock(),
+            embedder_error=error,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_lifespan_runs_one_purger_over_the_configured_retention(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    purger_class = MagicMock()
+    purger_class.return_value.start = AsyncMock()
+    purger_class.return_value.stop = AsyncMock()
+
+    await _boot_and_capture_logs(
+        60,
+        capsys,
+        purger=purger_class,
+        subject_data_retention={"proactive": 3_600},
+        subject_data_purge_interval_s=120.0,
+    )
+
+    purger_class.assert_called_once()
+    assert purger_class.call_args.kwargs["retention"] == {"proactive": 3_600}
+    assert purger_class.call_args.kwargs["interval_s"] == 120.0
+    purger_class.return_value.start.assert_awaited_once()
+    purger_class.return_value.stop.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -3689,3 +3759,111 @@ async def test_the_served_app_registers_and_binds_the_proactive_store(
     store = registry.stores["proactive"]
     await store.export(SubjectRef("rt", "participant:1"))
     assert providers[0].scopes == [("rt", "participant:1")]
+
+
+# --- registration and probe validation -----------------------------------------
+
+
+def test_a_registration_that_is_neither_an_agent_nor_a_role_name_is_refused() -> None:
+    with pytest.raises(DefinitionError, match=r"must be an Agent or a predefined role"):
+        _build_registrations({"ref": 42}, None)  # type: ignore[dict-item]
+
+
+def test_a_folder_registration_naming_a_file_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / "notes").write_text("not an agent folder")
+
+    with pytest.raises(DefinitionError, match="is not a directory under AGENTS_ROOT"):
+        _folder_registration("folder:notes", str(tmp_path))
+
+
+class _CompleteAdapter:
+    def verify_inbound(self, body: bytes, headers: Any) -> None: ...
+
+    def read_inbound(self, body: bytes) -> Any: ...
+
+    def extract_turn(self, payload: dict[str, Any], message_id: str) -> Any: ...
+
+    async def send_text(self, to: str, body: str) -> None: ...
+
+
+@pytest.mark.parametrize("runtime_id", ["", 7])
+def test_a_channel_must_name_a_runtime_id(runtime_id: Any) -> None:
+    channel = Channel(adapter=_CompleteAdapter(), runtime_id=runtime_id)
+
+    with pytest.raises(DefinitionError, match="runtime_id must name a registered"):
+        _validate_channels({"telegram": channel})
+
+
+def test_a_complete_channel_is_accepted() -> None:
+    channel = Channel(adapter=_CompleteAdapter(), runtime_id="support")
+
+    assert _validate_channels({"telegram": channel}) == {"telegram": channel}
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    [
+        ("ollama", "http://localhost:11434"),
+        ("groq", "https://api.groq.com"),
+        ("anthropic", "https://api.anthropic.com"),
+    ],
+)
+def test_the_provider_probe_targets_the_public_origin(
+    provider: str, expected: str
+) -> None:
+    settings = MagicMock(adapter_provider=provider, ollama_base_url="")
+
+    assert _provider_probe_target(settings) == expected
+
+
+def test_the_probe_target_for_a_configured_ollama_drops_a_trailing_slash() -> None:
+    settings = MagicMock(adapter_provider="ollama", ollama_base_url="http://gpu:11434/")
+
+    assert _provider_probe_target(settings) == "http://gpu:11434"
+
+
+def test_the_probe_target_for_openai_compatible_uses_the_configured_url() -> None:
+    settings = MagicMock(
+        adapter_provider="openai_compatible",
+        openai_compatible_base_url="https://llm.internal/v1/",
+    )
+
+    assert _provider_probe_target(settings) == "https://llm.internal/v1"
+
+
+async def test_a_second_probe_inside_the_ttl_reuses_the_cached_answer() -> None:
+    requests: list[str] = []
+
+    async def request(target: str) -> None:
+        requests.append(target)
+
+    clock = [100.0]
+    probe = ProviderHealthProbe(request=request, monotonic=lambda: clock[0])
+    settings = MagicMock(adapter_provider="groq")
+
+    assert await probe.probe(settings) is True
+    clock[0] += 1.0
+    assert await probe.probe(settings) is True
+    assert requests == ["https://api.groq.com"]
+
+    clock[0] += 60.0
+    assert await probe.probe(settings) is True
+    assert len(requests) == 2
+
+
+async def test_an_unreachable_provider_is_reported_and_cached_as_down() -> None:
+    attempts = 0
+
+    async def request(target: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ConnectError("refused")
+
+    probe = ProviderHealthProbe(request=request, monotonic=lambda: 1.0)
+    settings = MagicMock(adapter_provider="groq")
+
+    assert await probe.probe(settings) is False
+    assert await probe.probe(settings) is False
+    assert attempts == 1
