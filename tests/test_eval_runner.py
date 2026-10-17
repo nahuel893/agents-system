@@ -2532,3 +2532,138 @@ async def test_run_scenario_hands_the_scenario_untrusted_data_to_every_turn() ->
     )
 
     assert seen and "planted-text" in seen[0] and "customer_note" in seen[0]
+
+
+# ---------------------------------------------------------------------------
+# #309 -- tool_errors_reached, reply_not_contains, builtin_defaults
+# ---------------------------------------------------------------------------
+
+_TOOL_ERRORS_REPLY = (
+    "I could not complete this because a tool kept failing. "
+    "Please try again or rephrase your request."
+)
+
+
+def test_evaluate_assertions_tool_errors_reached_true_passes_on_the_fixed_reply() -> (
+    None
+):
+    messages = [AIMessage(content=_TOOL_ERRORS_REPLY)]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tool_errors_reached=True), messages
+    )
+
+    assert outcome.passed
+    assert outcome.exercised is True
+
+
+def test_evaluate_assertions_tool_errors_reached_true_fails_when_never_hit() -> None:
+    messages = [AIMessage(content="The lookup failed, sorry.")]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tool_errors_reached=True), messages
+    )
+
+    assert not outcome.passed
+    assert outcome.failures[0].kind == "tool_errors_reached"
+    assert outcome.exercised is False
+
+
+def test_evaluate_assertions_tool_errors_reached_false_fails_when_hit() -> None:
+    messages = [AIMessage(content=_TOOL_ERRORS_REPLY)]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(tool_errors_reached=False), messages
+    )
+
+    assert not outcome.passed
+
+
+def test_evaluate_assertions_reply_not_contains_fails_on_a_forbidden_text() -> None:
+    messages = [AIMessage(content="Someone WILL CONTACT YOU shortly.")]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(reply_not_contains=("will contact you",)), messages
+    )
+
+    assert not outcome.passed
+    assert outcome.failures[0].kind == "reply_not_contains"
+    # The reply is never reported.
+    assert "WILL CONTACT" not in outcome.failures[0].detail
+
+
+def test_evaluate_assertions_reply_not_contains_passes_when_absent_or_no_reply() -> (
+    None
+):
+    absent = evaluate_assertions(
+        ScenarioAssertions(reply_not_contains=("Traceback",)),
+        [AIMessage(content="I could not reach it.")],
+    )
+    no_reply = evaluate_assertions(
+        ScenarioAssertions(reply_not_contains=("Traceback",)), []
+    )
+
+    assert absent.passed
+    assert no_reply.passed
+
+
+def test_evaluate_assertions_reply_not_contains_reads_the_final_reply_only() -> None:
+    messages = [
+        AIMessage(content="Traceback (most recent call last)"),
+        AIMessage(content="It failed."),
+    ]
+
+    outcome = evaluate_assertions(
+        ScenarioAssertions(reply_not_contains=("Traceback",)), messages
+    )
+
+    assert outcome.passed
+
+
+async def test_run_scenario_builtin_defaults_gives_an_agent_the_default_escalation() -> (
+    None
+):
+    """A scenario with `builtin_defaults` builds the agent as `build_runtime`
+    does by default: a registry without `escalation_notifier` gets the
+    built-in one, which reaches no human and audits that."""
+    from conftest import build_test_registry
+
+    from agents_system.harness.registry import ToolRegistry
+
+    full = build_test_registry()
+    registry = ToolRegistry()
+    for name in full.names():
+        if name != "escalation_notifier":
+            registry.register(full.get(name))
+    scenario = Scenario(
+        name="builtin-default",
+        role="sales-agent",
+        turns=("Let me talk to a person.",),
+        assertions=ScenarioAssertions(
+            tools_called=("escalation_notifier",),
+            audit_event=("escalation_not_delivered",),
+        ),
+        granted_permissions=("send:escalation",),
+        builtin_defaults=True,
+    )
+    model = ToolAwareFakeModel(
+        responses=[
+            _tool_call(
+                "escalation_notifier",
+                {"reason": "explicit_user_request", "details": "wants a person"},
+            ),
+            AIMessage(content="I could not reach a person."),
+        ]
+    )
+
+    result = await run_scenario(
+        scenario,
+        model=model,
+        model_name="fake-model",
+        registry=registry,
+        roots=RootConfig(),
+        runs=1,
+    )
+
+    assert result.runs[0].passed, result.runs[0].failures
+    assert result.runs[0].error is None

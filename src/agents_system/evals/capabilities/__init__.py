@@ -47,7 +47,7 @@ from agents_system.connectors.platform_connectors import (
 from agents_system.evals.runner import ScenarioResult, run_scenario
 from agents_system.evals.schema import Scenario, ScenarioError, load_scenarios
 from agents_system.harness.loader import RootConfig
-from agents_system.harness.registry import ToolRegistry
+from agents_system.harness.registry import ToolRegistry, ToolSpec
 from agents_system.schedules import build_schedule_tool_specs
 from agents_system.services.reference import (
     InMemoryOrderWriter,
@@ -65,6 +65,11 @@ _PACKAGE_DIR = pathlib.Path(__file__).resolve().parent
 AGENTS_ROOT = _PACKAGE_DIR / "agents"
 #: One directory per capability id, holding that capability's scenarios.
 SCENARIOS_ROOT = _PACKAGE_DIR / "scenarios"
+#: Scenarios of the runtime's own guarantees (execution limits, #309): the
+#: runtime bounds the turn whatever the model does, so they are not a
+#: capability. Each runs on the fixture agent and backends of the capability
+#: whose agent it names.
+RUNTIME_SCENARIOS_ROOT = _PACKAGE_DIR / "runtime_scenarios"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -209,6 +214,25 @@ def load_capability_scenarios(
     )
 
 
+def load_runtime_scenarios() -> tuple[CapabilityScenario, ...]:
+    """Load the scenarios under `RUNTIME_SCENARIOS_ROOT` (#309), each paired
+    with the capability whose fixture agent it targets, so
+    `run_capability_scenario` runs it on that agent's backends."""
+    cases = []
+    for scenario in load_scenarios(RUNTIME_SCENARIOS_ROOT):
+        capability = next(
+            (c for c in CAPABILITIES if c.agent == scenario.agent_folder), None
+        )
+        if capability is None:
+            raise ScenarioError(
+                f"{scenario.source}: a runtime scenario must target a "
+                f"capability's fixture agent, got "
+                f"{scenario.agent_folder or scenario.role!r}"
+            )
+        cases.append(CapabilityScenario(capability=capability, scenario=scenario))
+    return tuple(cases)
+
+
 # ---------------------------------------------------------------------------
 # Backends: the in-memory reference backends, seeded per capability
 # ---------------------------------------------------------------------------
@@ -255,6 +279,27 @@ class _UnreachableKnowledgeBase:
 
     async def search(self, session: Any, *, query: str) -> dict[str, Any]:
         raise ConnectionError("the knowledge base is unreachable")
+
+
+def _raising_unless_lucero(spec: ToolSpec) -> ToolSpec:
+    """*spec* with a connector that RAISES for every lookup that does not
+    name Bar Lucero (#309).
+
+    ``knowledge_retrieval`` catches what its knowledge base raises and
+    returns an ``error_kind``, so a failing knowledge base never exercises
+    the runtime's handling of a tool that raises (#289: the model is told
+    ``Tool '<name>' failed: <ErrorClass>: <message>``, and ``max_tool_errors``
+    counts it). Replacing the connector does. Bar Lucero keeps the returned
+    error (`_UnreachableKnowledgeBase`), so both paths stay covered.
+    """
+    returned_error = spec.connector
+
+    async def connector(inputs: dict[str, Any], *, session: Any = None) -> Any:
+        if "lucero" in str(inputs.get("q", "")).casefold():
+            return await returned_error(inputs, session=session)
+        raise ConnectionError("the standing-order service dropped the connection")
+
+    return dataclasses.replace(spec, connector=connector)
 
 
 _OPENING_HOURS = _FixtureDocument(
@@ -343,10 +388,17 @@ _KNOWLEDGE: dict[str, Sequence[_FixtureDocument] | None] = {
 }
 
 
-def _build_registry(capability: Capability, model: BaseChatModel) -> ToolRegistry:
+def _build_registry(
+    capability: Capability,
+    model: BaseChatModel,
+    *,
+    with_escalation_channel: bool = True,
+) -> ToolRegistry:
     """One fresh registry: every tool a fixture agent can declare, with
     stateful backends built anew. Layer 1 equips only what the agent's
-    manifest names and its grant covers."""
+    manifest names and its grant covers. Without an escalation channel
+    (#309) it holds no ``escalation_notifier`` at all, as an adopter's
+    registry that wired none."""
     if capability.id in _KNOWLEDGE and _KNOWLEDGE[capability.id] is None:
         knowledge: Any = _UnreachableKnowledgeBase()
     else:
@@ -355,8 +407,14 @@ def _build_registry(capability: Capability, model: BaseChatModel) -> ToolRegistr
     summarizer.seed_session(_SUPPORT_CHAT_ID, _SUPPORT_CHAT)
 
     registry = ToolRegistry()
-    registry.register(build_escalation_notifier_tool_spec(LoggingEscalationChannel()))
-    registry.register(build_knowledge_retrieval_tool_spec(knowledge))
+    if with_escalation_channel:
+        registry.register(
+            build_escalation_notifier_tool_spec(LoggingEscalationChannel())
+        )
+    knowledge_retrieval = build_knowledge_retrieval_tool_spec(knowledge)
+    if capability.id == "tool_errors":
+        knowledge_retrieval = _raising_unless_lucero(knowledge_retrieval)
+    registry.register(knowledge_retrieval)
     registry.register(build_conversation_summarizer_tool_spec(summarizer))
     registry.register(build_order_writer_tool_spec(InMemoryOrderWriter()))
     for spec in build_user_memory_tool_specs():
@@ -367,15 +425,22 @@ def _build_registry(capability: Capability, model: BaseChatModel) -> ToolRegistr
 
 
 def build_capability_registry_factory(
-    capability: Capability, *, model: BaseChatModel
+    capability: Capability,
+    *,
+    model: BaseChatModel,
+    with_escalation_channel: bool = True,
 ) -> Callable[[], ToolRegistry]:
     """Return a closure for `run_scenario(registry_factory=...)`: each call
     builds a fresh registry for *capability*, so no run sees another run's
     orders or escalations. *model* backs `conversation_summarizer`, which
-    summarizes with the agent's own model (ADR-002 C.15)."""
+    summarizes with the agent's own model (ADR-002 C.15).
+    *with_escalation_channel* ``False`` leaves ``escalation_notifier`` out
+    (#309), for a scenario about the built-in default."""
 
     def factory() -> ToolRegistry:
-        return _build_registry(capability, model)
+        return _build_registry(
+            capability, model, with_escalation_channel=with_escalation_channel
+        )
 
     return factory
 
@@ -396,7 +461,10 @@ async def run_capability_scenario(
         model=model,
         model_name=model_name,
         registry_factory=build_capability_registry_factory(
-            case.capability, model=summarizer_model or model
+            case.capability,
+            model=summarizer_model or model,
+            # A scenario about the built-in default has no channel wired.
+            with_escalation_channel=not case.scenario.builtin_defaults,
         ),
         roots=RootConfig(),
         runs=runs,
@@ -407,12 +475,14 @@ async def run_capability_scenario(
 __all__ = [
     "AGENTS_ROOT",
     "CAPABILITIES",
+    "RUNTIME_SCENARIOS_ROOT",
     "SCENARIOS_ROOT",
     "Capability",
     "CapabilityScenario",
     "build_capability_registry_factory",
     "get_capability",
     "load_capability_scenarios",
+    "load_runtime_scenarios",
     "missing_requirements",
     "run_capability_scenario",
 ]

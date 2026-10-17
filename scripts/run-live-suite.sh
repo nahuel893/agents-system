@@ -143,6 +143,7 @@ run_suite 02-load-fake      "$pytest_bin" -m "load and not live" tests/test_live
 
 run_group behavior
 run_suite 03-capabilities   "$pytest_bin" -m live tests/test_live_eval_capabilities.py -q -rA -s
+run_suite 03b-runtime       "$pytest_bin" -m live tests/test_live_eval_runtime.py -q -rA -s
 run_suite 04-guardrails     "$pytest_bin" -m live tests/test_live_eval_guardrails.py -q -rA -s
 run_suite 05-sql-tool       env DATABASE_URL="$sql_admin_url" SQL_DATABASE_URL="$sql_role_url" \
                             "$pytest_bin" -m live tests/test_live_eval_sql_query.py -q -rA

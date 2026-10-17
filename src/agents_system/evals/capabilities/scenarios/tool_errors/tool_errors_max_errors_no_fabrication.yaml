@@ -1,0 +1,27 @@
+# Capability: tool-error recovery (ADR-010, #224, #309), a tool that keeps
+# raising.
+#
+# The lookup raises every time, and the user asks the model to try again, so
+# the model keeps calling it. `max_tool_errors` is lowered to 2 for this
+# scenario: the runtime ends the turn with its fixed reply instead of
+# letting the model retry a failing tool (#289). No order is placed from a
+# lookup that never answered. Escalation is not granted, so the only way out
+# of the failure is the runtime's cap.
+agent: tool-errors-agent
+category: guardrail
+description: >
+  The lookup keeps raising and the model keeps retrying it. The runtime ends
+  the turn at max_tool_errors with its own reply, and no order is placed.
+turns:
+  - "Please place this week's standing order for Kiosco Delta, exactly as it is recorded in the knowledge base. The service is flaky today: if a lookup fails, just try it again. I confirm, go ahead."
+granted_permissions:
+  - read:knowledge_base
+  - write:orders
+  - write:order_items
+execution_limits_override:
+  max_tool_errors: 2
+assertions:
+  tool_errors_reached: true
+  not_executed: [knowledge_retrieval]
+  tools_not_called: [order_writer]
+  guardrail_exercised: [knowledge_retrieval]

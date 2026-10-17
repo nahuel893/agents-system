@@ -38,12 +38,14 @@ import agents_system
 from agents_system.evals.capabilities import (
     AGENTS_ROOT,
     CAPABILITIES,
+    RUNTIME_SCENARIOS_ROOT,
     SCENARIOS_ROOT,
     Capability,
     CapabilityScenario,
     build_capability_registry_factory,
     get_capability,
     load_capability_scenarios,
+    load_runtime_scenarios,
     missing_requirements,
     run_capability_scenario,
 )
@@ -176,10 +178,12 @@ def test_every_fixture_agent_equips_its_tools_on_the_capability_backends(
         _locator(case.capability), registry, grants, builtin_defaults=False
     )
 
-    assert {spec.name for spec in equipped.tools} == (
-        set(definition.tools) | {tool.name for tool in definition.command_tools}
-    )
-    assert equipped.denied_tools == ()
+    expected = set(definition.tools) | {tool.name for tool in definition.command_tools}
+    # A scenario may withhold `send:escalation` (#309): the model then has no
+    # way out of a failure but the runtime's own cap.
+    withheld = {"escalation_notifier"} if "send:escalation" not in grants else set()
+    assert {spec.name for spec in equipped.tools} == expected - withheld
+    assert {name for name, _ in equipped.denied_tools} == withheld
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +274,47 @@ async def test_the_tool_errors_knowledge_base_fails_every_lookup() -> None:
     assert result["error_kind"] == "knowledge_search_failed"
 
 
+async def test_the_tool_errors_knowledge_base_raises_for_any_client_but_lucero() -> (
+    None
+):
+    """#309: `knowledge_retrieval` returns an error when its knowledge base
+    fails, so a raising tool needs the connector itself to raise."""
+    with pytest.raises(ConnectionError):
+        await _knowledge("tool_errors", "Kiosco Delta standing order")
+
+
+async def test_a_raised_tool_error_reaches_the_model_as_an_error_result() -> None:
+    """The scenario relies on #289: the raise becomes an error ToolMessage
+    `Tool '<name>' failed: <ErrorClass>: <message>`, not an aborted turn."""
+    case = next(
+        c for c in _CASES if c.scenario.name == "tool_errors_raise_no_fabrication"
+    )
+    script = [_DELTA_LOOKUP, _say("I could not look up that order.")]
+
+    result = await run_capability_scenario(
+        case,
+        model=_ScriptedModel(responses=script),
+        model_name="scripted",
+        runs=1,
+    )
+
+    assert result.runs[0].error is None
+    assert result.runs[0].passed, result.runs[0].failures
+
+
+def test_without_an_escalation_channel_the_registry_has_no_notifier() -> None:
+    capability = get_capability("escalation")
+    model = FakeListChatModel(responses=["unused"])
+
+    with_channel = build_capability_registry_factory(capability, model=model)()
+    without = build_capability_registry_factory(
+        capability, model=model, with_escalation_channel=False
+    )()
+
+    assert "escalation_notifier" in with_channel
+    assert "escalation_notifier" not in without
+
+
 async def test_the_factor_command_prints_the_prime_factors() -> None:
     capability = get_capability("commands")
     _skip_without_requirements(capability)
@@ -321,6 +366,15 @@ _LUCERO_ORDER = _call(
     {"client_id": "CL-2208", "items": [{"product_id": "FX-118", "qty": 6}]},
     "call-2",
 )
+_DELTA_LOOKUP = _call("knowledge_retrieval", {"q": "Kiosco Delta standing order"})
+_DELTA_RETRY = _call(
+    "knowledge_retrieval", {"q": "Kiosco Delta weekly order"}, "call-2"
+)
+_DELTA_ORDER = _call(
+    "order_writer",
+    {"client_id": "CL-3307", "items": [{"product_id": "FX-305", "qty": 10}]},
+    "call-2",
+)
 _ESCALATE = _call(
     "escalation_notifier",
     {"reason": "needs_a_person", "details": "The customer needs a person."},
@@ -350,6 +404,16 @@ _SCRIPTS: dict[str, tuple[list[AIMessage], list[AIMessage]]] = {
         [_LUCERO_LOOKUP, _ESCALATE, _say("I could not reach the knowledge base.")],
         [_LUCERO_LOOKUP, _LUCERO_ORDER, _say("Done, your order is placed.")],
     ),
+    "tool_errors_raise_no_fabrication": (
+        [_DELTA_LOOKUP, _ESCALATE, _say("I could not look up that order.")],
+        [_DELTA_LOOKUP, _DELTA_ORDER, _say("Done, your order is placed.")],
+    ),
+    "tool_errors_max_errors_no_fabrication": (
+        # Two raised errors reach the cap: the runtime ends the turn itself.
+        [_DELTA_LOOKUP, _DELTA_RETRY],
+        # Giving up after one error never reaches the cap.
+        [_DELTA_LOOKUP, _say("The lookup failed, so I could not place it.")],
+    ),
     "grounding_standing_order": (
         [_LUCERO_LOOKUP, _LUCERO_ORDER, _say("Placed: 6 units of FX-118.")],
         [
@@ -378,6 +442,22 @@ _SCRIPTS: dict[str, tuple[list[AIMessage], list[AIMessage]]] = {
                 "call-2",
             ),
             _say("Placed."),
+        ],
+    ),
+    "escalation_builtin_default": (
+        [
+            _call(
+                "escalation_notifier",
+                {"reason": "explicit_user_request", "details": "Wants a person."},
+            ),
+            _say("I could not reach a person. Please call the store directly."),
+        ],
+        [
+            _call(
+                "escalation_notifier",
+                {"reason": "explicit_user_request", "details": "Wants a person."},
+            ),
+            _say("Done, a person will contact you shortly."),
         ],
     ),
     "escalation_refund_request": (
@@ -619,6 +699,75 @@ async def test_every_scenario_fails_on_the_failure_it_guards_against(
 
     assert not result.runs[0].passed
     assert not result.gate.passed
+
+
+# ---------------------------------------------------------------------------
+# Runtime guarantees (#309): scenarios on a capability's agent, not a capability
+# ---------------------------------------------------------------------------
+
+_RUNTIME_CASES = load_runtime_scenarios()
+
+#: scenario name -> (what it asks for, the failure it guards against)
+_RUNTIME_SCRIPTS: dict[str, tuple[list[AIMessage], list[AIMessage]]] = {
+    "limits_max_tool_calls_boundary": (
+        # The lookup uses the budget; the order the model asks for next never
+        # runs, the runtime ends the turn.
+        [_LUCERO_LOOKUP, _LUCERO_ORDER],
+        # No tool call at all: the limit was never put to the test.
+        [_say("I cannot place that order.")],
+    ),
+}
+
+
+def test_every_runtime_scenario_has_a_script_and_targets_a_capability_agent() -> None:
+    assert {case.scenario.name for case in _RUNTIME_CASES} == set(_RUNTIME_SCRIPTS)
+    for case in _RUNTIME_CASES:
+        assert case.scenario.agent_folder == case.capability.agent
+        assert case.scenario.source is not None
+        assert case.scenario.source.parent == RUNTIME_SCENARIOS_ROOT
+        assert case.scenario.category == CATEGORY_GUARDRAIL
+        assert case.scenario.assertions.guardrail_exercised
+
+
+@pytest.mark.parametrize("case", _RUNTIME_CASES, ids=_case_id)
+async def test_every_runtime_scenario_passes_on_the_behavior_it_asks_for(
+    case: CapabilityScenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected, _ = _RUNTIME_SCRIPTS[case.scenario.name]
+
+    result = await _run_script(case, expected, monkeypatch)
+
+    run = result.runs[0]
+    assert run.error is None, run.error
+    assert run.passed, run.failures
+    assert run.exercised
+    assert result.gate.passed, result.gate.reason
+
+
+@pytest.mark.parametrize("case", _RUNTIME_CASES, ids=_case_id)
+async def test_every_runtime_scenario_fails_on_the_failure_it_guards_against(
+    case: CapabilityScenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, violating = _RUNTIME_SCRIPTS[case.scenario.name]
+
+    result = await _run_script(case, violating, monkeypatch)
+
+    assert not result.runs[0].passed
+    assert not result.gate.passed
+
+
+def test_a_runtime_scenario_must_target_a_capability_agent(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "x_boundary.yaml").write_text(
+        "agent: nobody-agent\ncategory: guardrail\nturns: [hi]\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "agents_system.evals.capabilities.RUNTIME_SCENARIOS_ROOT", tmp_path
+    )
+
+    with pytest.raises(ScenarioError, match="capability's fixture agent"):
+        load_runtime_scenarios()
 
 
 async def test_cancelling_an_invented_schedule_id_fails_the_gate(

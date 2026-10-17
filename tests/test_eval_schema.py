@@ -765,3 +765,75 @@ def test_load_scenario_rejects_a_malformed_untrusted_block(
 
     with pytest.raises(ScenarioError, match="untrusted_data"):
         load_scenario(_write(tmp_path, "bad.yaml", text))
+
+
+# ---------------------------------------------------------------------------
+# #309 -- max_tool_errors override, tool_errors_reached, reply_not_contains,
+# builtin_defaults
+# ---------------------------------------------------------------------------
+
+
+def test_load_scenario_accepts_a_max_tool_errors_override(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = _MINIMAL + "\nexecution_limits_override:\n  max_tool_errors: 2\n"
+    path = _write(tmp_path, "errors.yaml", text)
+
+    scenario = load_scenario(path)
+
+    assert scenario.execution_limits_override == {"max_tool_errors": 2.0}
+
+
+def test_load_scenario_parses_tool_errors_reached_and_reply_not_contains(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = (
+        _MINIMAL + "\nassertions:\n  tool_errors_reached: true\n"
+        '  reply_not_contains: ["Traceback", "will contact you"]\n'
+    )
+    path = _write(tmp_path, "new.yaml", text)
+
+    assertions = load_scenario(path).assertions
+
+    assert assertions.tool_errors_reached is True
+    assert assertions.reply_not_contains == ("Traceback", "will contact you")
+
+
+def test_the_new_assertions_default_to_asserting_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(tmp_path, "minimal.yaml", _MINIMAL)
+
+    assertions = load_scenario(path).assertions
+
+    assert assertions.tool_errors_reached is None
+    assert assertions.reply_not_contains == ()
+
+
+def test_load_scenario_rejects_a_blank_reply_not_contains_entry(
+    tmp_path: pathlib.Path,
+) -> None:
+    text = _MINIMAL + '\nassertions:\n  reply_not_contains: ["  "]\n'
+    path = _write(tmp_path, "blank.yaml", text)
+
+    with pytest.raises(ScenarioError, match="reply_not_contains"):
+        load_scenario(path)
+
+
+def test_load_scenario_parses_builtin_defaults(tmp_path: pathlib.Path) -> None:
+    on = load_scenario(
+        _write(tmp_path, "on.yaml", _MINIMAL + "\nbuiltin_defaults: true\n")
+    )
+    off = load_scenario(_write(tmp_path, "off.yaml", _MINIMAL))
+
+    assert on.builtin_defaults is True
+    assert off.builtin_defaults is False
+
+
+def test_load_scenario_rejects_a_non_boolean_builtin_defaults(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = _write(tmp_path, "bad.yaml", _MINIMAL + '\nbuiltin_defaults: "yes"\n')
+
+    with pytest.raises(ScenarioError, match="builtin_defaults"):
+        load_scenario(path)
