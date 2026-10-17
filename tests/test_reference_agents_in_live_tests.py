@@ -12,16 +12,23 @@ that the scenario files a live module loads name an agent folder under
 from __future__ import annotations
 
 import pathlib
+import re
 import tomllib
 
 import pytest
 
 from agents_system.evals.schema import load_scenarios
+from agents_system.harness import loader
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _TESTS = _REPO_ROOT / "tests"
 _REFERENCE_AGENTS_ROOT = _REPO_ROOT / "examples" / "agents"
 _DEPRECATION = "agents_system.harness.loader.PredefinedRoleDeprecationWarning"
+# The filter names the stdlib category and matches the message: a dotted
+# custom category would make pytest import `agents_system` before pytest-cov
+# starts (see the comment above `filterwarnings` in pyproject.toml).
+_DEPRECATION_FILTER_PREFIX = "error:Predefined role "
+_DEPRECATION_FILTER_SUFFIX = ":DeprecationWarning"
 
 _LIVE_MODULES = sorted(_TESTS.glob("test_live_*.py"))
 
@@ -33,7 +40,22 @@ def test_the_deprecation_warning_is_an_error_for_every_test() -> None:
     config = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text("utf-8"))
     filters = config["tool"]["pytest"]["ini_options"]["filterwarnings"]
 
-    assert f"error::{_DEPRECATION}" in filters
+    (entry,) = [f for f in filters if f.startswith(_DEPRECATION_FILTER_PREFIX)]
+    assert entry.endswith(_DEPRECATION_FILTER_SUFFIX)
+    assert _DEPRECATION not in entry
+
+
+def test_the_deprecation_filter_matches_the_message_the_loader_emits() -> None:
+    config = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text("utf-8"))
+    filters = config["tool"]["pytest"]["ini_options"]["filterwarnings"]
+    (entry,) = [f for f in filters if f.startswith(_DEPRECATION_FILTER_PREFIX)]
+    message = entry.removeprefix("error:").removesuffix(_DEPRECATION_FILTER_SUFFIX)
+
+    with pytest.warns(DeprecationWarning) as caught:
+        loader._warn_deprecated_role("sales-agent")
+
+    assert re.match(message, str(caught[0].message))
+    assert not re.match(message, "pkg.thing is deprecated")
 
 
 def test_the_live_modules_are_found() -> None:

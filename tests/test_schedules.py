@@ -15,7 +15,9 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from agents_system.proactive import (
     InMemoryProactiveQueue,
+    ProactivePermissionError,
     ProactiveSender,
+    RecipientNotAuthorizedError,
     StaticRecipientDirectory,
 )
 from agents_system.schedules import (
@@ -553,3 +555,191 @@ async def test_deleting_an_unknown_id_reports_not_found() -> None:
     )
     assert out["deleted"] is False
     assert out["error_kind"] == "not_found"
+
+
+# --- limits, recurrence and tool validation ------------------------------------
+
+
+@pytest.mark.parametrize("name", ["max_per_user", "min_interval_s", "max_prompt_chars"])
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_limits_reject_a_non_positive_or_non_integer_bound(
+    name: str, value: Any
+) -> None:
+    with pytest.raises(ValueError, match=name):
+        ScheduleLimits(**{name: value})
+
+
+@pytest.mark.parametrize("value", [-1, True, 0.5])
+def test_limits_reject_a_negative_or_non_integer_grace(value: Any) -> None:
+    with pytest.raises(ValueError, match="missed_grace_s"):
+        ScheduleLimits(missed_grace_s=value)
+
+
+def test_limits_allow_a_zero_grace() -> None:
+    assert ScheduleLimits(missed_grace_s=0).missed_grace_s == 0
+
+
+def test_limits_reject_an_unknown_zone() -> None:
+    with pytest.raises(ScheduleRejected, match="unknown time zone"):
+        ScheduleLimits(quiet_tz="Mars/Base")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"frequency": "yearly"}, "frequency must be one of"),
+        ({"frequency": "daily"}, "needs a time"),
+        ({"frequency": "weekly"}, "needs a time"),
+        ({"frequency": "weekly", "time_of_day": time(8, 0)}, "needs a weekday"),
+        (
+            {"frequency": "weekly", "time_of_day": time(8, 0), "weekday": 7},
+            "needs a weekday",
+        ),
+        ({"frequency": "interval"}, "every_hours above 0"),
+        ({"frequency": "interval", "interval_s": 0}, "every_hours above 0"),
+    ],
+)
+def test_a_recurrence_built_directly_is_validated(
+    kwargs: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ScheduleRejected, match=message):
+        Recurrence(**kwargs)
+
+
+def test_parse_recurrence_rejects_a_non_string_timezone() -> None:
+    with pytest.raises(ScheduleRejected, match="timezone must be an IANA name"):
+        parse_recurrence(
+            {"frequency": "daily", "time": "08:00", "timezone": 3}, default_tz="UTC"
+        )
+
+
+def test_a_recurrence_describes_itself_for_each_frequency() -> None:
+    assert Recurrence("interval", interval_s=5400).describe() == "every 1.5 hours"
+    daily = Recurrence("daily", time_of_day=time(8, 5), tz="UTC")
+    assert daily.describe() == "every day at 08:05 UTC"
+    weekly = Recurrence("weekly", time_of_day=time(8, 0), weekday=0, tz="UTC")
+    assert weekly.describe() == "every Monday at 08:00 UTC"
+
+
+async def test_a_create_with_a_malformed_recurrence_is_refused_with_its_kind() -> None:
+    scope = InMemoryScopeProvider().scope(RT, ALICE.key)
+    out = await _call(
+        _tools(),
+        "create_schedule",
+        {"prompt": "ping", "frequency": "daily", "time": "99:99"},
+        scope,
+    )
+    assert out["error_kind"] == "invalid_schedule"
+    assert "HH:MM" in out["error"]
+    assert (await _call(_tools(), "list_schedules", {}, scope))["schedules"] == []
+
+
+def test_a_scope_without_a_schedule_backend_is_a_type_error() -> None:
+    with pytest.raises(TypeError, match="no schedule backend for a object scope"):
+        schedule_backend_for(object())
+
+
+# --- runner: failures the loop must survive -------------------------------------
+
+
+class _ContentBlocksResult(FakeTurnResult):
+    def __init__(self) -> None:
+        super().__init__("unused")
+        self.messages = [
+            AIMessage(content=[{"type": "text", "text": "Sales"}, "up 4%"]),
+        ]
+
+
+class _BlocksRuntime(FakeRuntime):
+    async def run_turn_with_usage(self, *a: Any, **k: Any) -> Any:
+        return _ContentBlocksResult()
+
+
+async def test_a_reply_made_of_content_blocks_is_delivered_as_joined_text() -> None:
+    env = Env(runtime=_BlocksRuntime())
+    await env.add()
+    out = await env.runner.run_once(now=UTC_MONDAY_7 + timedelta(minutes=1))
+    assert out.status == "delivered"
+    (queued,) = await env.queued()
+    assert queued.text == "Sales up 4%"
+
+
+async def test_a_turn_that_timed_out_is_a_failed_run_with_nothing_delivered() -> None:
+    class TimedOut(FakeRuntime):
+        async def run_turn_with_usage(self, *a: Any, **k: Any) -> Any:
+            result = FakeTurnResult("partial")
+            result.timed_out = True
+            return result
+
+    env = Env(runtime=TimedOut())
+    await env.add()
+    out = await env.runner.run_once(now=UTC_MONDAY_7 + timedelta(minutes=1))
+    assert (out.status, out.reason) == ("failed", "turn_timed_out")
+    assert await env.queued() == []
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (RecipientNotAuthorizedError(), "recipient_not_authorized"),
+        (ProactivePermissionError(), "delivery_not_permitted"),
+    ],
+)
+async def test_a_delivery_refusal_is_recorded_under_its_reason(
+    error: Exception, reason: str
+) -> None:
+    env = Env()
+    await env.add()
+
+    async def refuse(*a: Any, **k: Any) -> Any:
+        raise error
+
+    env.sender.submit = refuse  # type: ignore[method-assign]
+    out = await env.runner.run_once(now=UTC_MONDAY_7 + timedelta(minutes=1))
+    assert (out.status, out.reason) == ("failed", reason)
+
+
+async def test_a_failure_to_record_the_outcome_does_not_lose_the_outcome() -> None:
+    env = Env()
+    await env.add()
+
+    async def broken(*a: Any, **k: Any) -> None:
+        raise OSError("db down")
+
+    env.store.record = broken  # type: ignore[method-assign]
+    out = await env.runner.run_once(now=UTC_MONDAY_7 + timedelta(minutes=1))
+    assert out.status == "delivered"
+
+
+async def test_cancellation_is_never_swallowed_by_the_runner() -> None:
+    class Cancelled(FakeRuntime):
+        async def run_turn_with_usage(self, *a: Any, **k: Any) -> Any:
+            raise asyncio.CancelledError
+
+    env = Env(runtime=Cancelled())
+    await env.add()
+    with pytest.raises(asyncio.CancelledError):
+        await env.runner.run_once(now=UTC_MONDAY_7 + timedelta(minutes=1))
+
+    env = Env()
+    await env.add()
+
+    async def cancelled_lookup(*a: Any, **k: Any) -> Any:
+        raise asyncio.CancelledError
+
+    env.directory.authorize = cancelled_lookup  # type: ignore[method-assign]
+    with pytest.raises(asyncio.CancelledError):
+        await env.runner.run_once(now=UTC_MONDAY_7 + timedelta(minutes=1))
+
+    env = Env()
+    await env.add()
+    env.sender.submit = cancelled_lookup  # type: ignore[method-assign]
+    with pytest.raises(asyncio.CancelledError):
+        await env.runner.run_once(now=UTC_MONDAY_7 + timedelta(minutes=1))
+
+
+async def test_an_unknown_permission_name_in_the_deploy_grants_grants_nothing() -> None:
+    env = Env(grants={RT: {"send:proactive", "not-a-permission"}})
+    await env.add()
+    out = await env.runner.run_once(now=UTC_MONDAY_7 + timedelta(minutes=1))
+    assert (out.status, out.reason) == ("skipped", "not_permitted")
