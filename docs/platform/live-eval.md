@@ -634,6 +634,166 @@ assertions:
 None of the three changes how a run is judged exercised, and none reports what
 the model sent.
 
+## Live coverage
+
+Does a feature have a live test? This section answers it for every row of
+[Features](features.md). A live test runs a real model; the offline mechanism
+suite (`tests/test_mechanism_suite.py`) proves the guards with a scripted
+model and is not one. The gaps are tracked in issue #309.
+
+| Class | Meaning |
+|---|---|
+| direct | A live scenario deliberately triggers the behavior |
+| regression | Live runs pass through the code, but nothing triggers the behavior |
+| none | No live test touches it |
+| n/a-live | No model-facing behavior (packaging, migrations, health endpoints, offline tooling) |
+
+Counts for the 84 rows: **41 direct, 15 regression, 12 none, 16 n/a-live**.
+They started at 38 / 18 / 12 / 16 on `cc6ddb0`; the live scenarios for raising
+tools, the built-in escalation default and execution limits moved three rows
+(Tool errors reach the model, Built-in escalation, Execution limits) from
+regression to direct. For a regression row, *Where* names the path the live
+runs pass through; for a none row it is "—".
+
+### Defining agents
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| Agents in Python | direct | `test_live_eval_phase4`, `test_live_eval_phase1` |
+| Agents in Markdown folders | direct | `test_live_eval_folder_target`, `test_live_eval_composition`; the fixture agents of `test_live_eval_capabilities` |
+| Predefined roles | regression | Folder agents extend `platform/roles/agent`; the `support` role runs in `test_live_eval_guardrails` |
+| Reference agents | direct | `test_live_eval_composition`: sales, developer over operator, data; `test_live_eval_guardrails`: support |
+| Serve an agent folder from the environment | direct | `test_live_smoke::test_smoke_turn_through_a_folder_registered_reference_agent` |
+| Inheritance | direct | `test_live_eval_phase4`; `test_live_eval_composition`: developer over operator |
+| Client overrides | none | — |
+| Skills | direct | `test_live_eval_phase4` (inline `skill_contents`) |
+| Model per agent | none | — |
+| Build the declared model in-process | none | — |
+
+### Tools and connectors
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| Your own tools | direct | `test_live_eval_phase4`, `test_live_eval_phase1` |
+| Capability tiers | n/a-live | — |
+| Declarative command tools | direct | capabilities: `commands_factor`; `test_live_eval_phase1::test_command_tools_agent_runs_a_declared_command_tool`; `test_live_eval_phase4` |
+| Read-only SQL tool | direct | `test_live_eval_sql_query`, `test_live_eval_phase1` |
+| Operator tools | direct | `test_live_eval_composition`: developer (needs `bwrap`) |
+| Reference backends | direct | `test_live_eval_composition`: sales, data; capabilities: `tool_choice_summarize` |
+| Catalog retrieval | none | — |
+| Built-in escalation | direct | capabilities: `escalation_builtin_default` |
+
+### Permissions and security
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| Permission families | regression | Every scenario's grant strings pass through the permission registry |
+| Grants (build-time barrier) | direct | `test_live_eval_guardrails`, `test_live_eval_phase4` |
+| Call-time interceptor | regression | Every call passes `intercept`; a revoked-grant attempt is offline only |
+| Untrusted input | direct | capabilities: `untrusted_input_boundary`, `untrusted_input_block`; `test_live_eval_guardrails` |
+| Untrusted-data blocks | direct | capabilities: `untrusted_input_block`, `user_memory_boundary` |
+| Deploy grants | regression | The harness passes the deploy permissions on every turn |
+| Fail-closed defaults | n/a-live | — |
+| Audit redaction | regression | Audit rows are read; redaction is not asserted |
+
+### Runtime
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| Agent runtime | direct | all live modules |
+| Execution limits | direct | runtime scenarios: `limits_max_tool_calls_boundary` (`test_live_eval_runtime`) |
+| Deployment-raised execution limits and timeout reply | regression | The harness sets no `EXECUTION_LIMITS` and no timeout reply |
+| Tool errors reach the model | direct | capabilities: `tool_errors_raise_no_fabrication`, `tool_errors_max_errors_no_fabrication` |
+| Turn usage and cost | direct | capabilities (usage in every result); `test_live_load_phase3` (reported) |
+| End-user turn scope | regression | The eval runner binds a `TurnSubject`; channel binding is not asserted |
+| Memory policy enforcement | regression | Passes through every turn; no scenario asserts a denial |
+| Per-user usage and budgets | none | — |
+| Per-user memory | direct | capabilities: `user_memory_recall`, `user_memory_boundary` (in-memory store; Postgres row-level security is not live) |
+| Tool-call repair | none | — |
+| Proactive outbound delivery | none | — |
+| Scheduled turns | direct | capabilities: `schedule_create`, `schedule_cancel`, `schedule_limit` cover the tools; `ScheduledTurnRunner` is not live |
+| Escalation to a human | direct | capabilities: `escalation_refund_request`, `escalation_builtin_default`; `test_live_eval_composition` |
+
+### Conversation memory and context
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| Durable conversation memory | direct | `test_live_eval_composition::test_sales_agent_composition`; `test_live_smoke` |
+| Retention and purge | none | — |
+| Failure policy | none | — |
+| Context budget | none | — |
+| Conversation isolation | regression | `thread_id` is the phone in `test_live_eval_composition`; no scenario checks two phones apart |
+
+### Serving and channels
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| Serve agents over HTTP | direct | `test_live_smoke`, `test_live_eval_composition`, `test_live_eval_phase1` |
+| OpenAI-compatible API | direct | Core: `test_live_smoke`, `test_live_eval_composition`, `test_live_eval_phase4`. Dropping an empty assistant message and a client `system` message: regression |
+| Channel port | regression | WhatsApp and the API both go through the port |
+| WhatsApp | direct | `test_live_smoke`, `test_live_eval_composition` |
+| Durable inbox and outbox | direct | Happy path: `test_live_smoke`, `test_live_eval_composition` |
+| Outbox retry policy and failure reply | regression | The harness sets no retry policy or failure reply |
+| Turn admission | regression | `test_live_load_phase3` runs 20 concurrent turns; no cap is asserted |
+| Participant identity | regression | Webhook turns resolve a participant; identity is not asserted |
+| Conversation recorder | n/a-live | — |
+| Chat providers | regression | Only `openai_compatible` and `anthropic` (through `EVAL_PROVIDER_OVERRIDE`) run live; Groq and Ollama have none |
+
+### Observability
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| Liveness and readiness | n/a-live | — |
+| Prometheus metrics | direct | `test_live_smoke`, `test_live_load_phase3` |
+| Provider metrics | none | — |
+| Request IDs and logs | n/a-live | — |
+| Audit trail | direct | `test_live_eval_composition`, `test_live_eval_phase1`, `test_live_eval_phase4` |
+
+### Evaluation
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| YAML scenarios | direct | `test_live_eval_guardrails`, `test_live_eval_folder_target`, capabilities |
+| Scenario targets | direct | `test_live_eval_folder_target`, `test_live_eval_guardrails`, capabilities; a Python `Agent` target is not live |
+| Capability suite | direct | `test_live_eval_capabilities` |
+| Per-model capability matrix | none | — |
+| Behavior assertions | direct | `test_live_eval_capabilities` |
+| Live eval against a real model | direct | every live module |
+| Whole suite in one command | n/a-live | — |
+| Agents extending an agent | n/a-live | — |
+| Success-rate gates | direct | every gated live module |
+| Guardrail assertions | direct | `test_live_eval_capabilities`, `test_live_eval_guardrails` |
+| Offline mechanism suite | n/a-live | — |
+| Composition scenarios on reference agents | direct | `test_live_eval_composition` |
+| Load scenarios | direct | `test_live_load_phase3` (reported, not gated) |
+| Result files | direct | `test_live_eval_capabilities`, `test_live_eval_sql_query`, `test_live_eval_folder_target`, `test_live_eval_guardrails` |
+
+### Installation and packaging
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| Light core | n/a-live | — |
+| Extras | n/a-live | — |
+| Missing-extra errors | n/a-live | — |
+| Roles inside the wheel | n/a-live | — |
+| Releases | n/a-live | — |
+
+### Operations
+
+| Feature | Live coverage | Where |
+|---|---|---|
+| Docker deployment | n/a-live | — |
+| systemd deployment | n/a-live | — |
+| Migrations | n/a-live | — |
+| Sandboxed execution | direct | `test_live_eval_composition`: developer (the `/etc` allowlist has no live scenario) |
+| Database provisioning | direct | `test_live_eval_sql_query`, `test_live_eval_phase1` |
+| Demo | regression | The live harness uses the `agents_system_demo` database; the demo app itself is not run |
+
+### Keeping this current
+
+A pull request that adds or changes a live scenario updates its row here and
+in the Spanish twin, and the counts above.
+
 ## Per-model capability matrix (issue #228)
 
 The capability suite is a kit feature: given candidate models, it runs each

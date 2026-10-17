@@ -679,6 +679,168 @@ assertions:
 Ninguna de las tres cambia cómo se decide si una corrida fue ejercitada, y
 ninguna reporta lo que mandó el modelo.
 
+## Cobertura en vivo
+
+¿Una funcionalidad tiene un test en vivo? Esta sección lo responde para cada
+fila de [Funcionalidades](features.md). Un test en vivo corre un modelo real;
+la suite de mecanismos offline (`tests/test_mechanism_suite.py`) prueba las
+protecciones con un modelo guionado y no cuenta como uno. Las brechas se
+siguen en el issue #309.
+
+| Clase | Significado |
+|---|---|
+| directa | Un escenario en vivo dispara el comportamiento a propósito |
+| regresión | Las corridas en vivo pasan por el código, pero nada dispara el comportamiento |
+| ninguna | Ningún test en vivo lo toca |
+| no aplica en vivo | Sin comportamiento visible para el modelo (empaquetado, migraciones, endpoints de salud, herramientas offline) |
+
+Conteo de las 84 filas: **41 directas, 15 regresión, 12 ninguna, 16 no aplica en vivo**.
+Partían de 38 / 18 / 12 / 16 en `cc6ddb0`; los escenarios en vivo de
+herramientas que lanzan excepciones, del default de escalamiento incorporado
+y de los límites de ejecución movieron tres filas (Los errores de herramienta
+llegan al modelo, Escalamiento incorporado, Límites de ejecución) de
+regresión a directa. En una fila de regresión, *Dónde* nombra el camino por el
+que pasan las corridas en vivo; en una fila sin cobertura es "—".
+
+### Definir agentes
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Agentes en Python | directa | `test_live_eval_phase4`, `test_live_eval_phase1` |
+| Agentes en carpetas Markdown | directa | `test_live_eval_folder_target`, `test_live_eval_composition`; los agentes fixture de `test_live_eval_capabilities` |
+| Roles predefinidos | regresión | Los agentes de carpeta extienden `platform/roles/agent`; el rol `support` corre en `test_live_eval_guardrails` |
+| Agentes de referencia | directa | `test_live_eval_composition`: sales, developer sobre operator, data; `test_live_eval_guardrails`: support |
+| Servir una carpeta de agente desde el entorno | directa | `test_live_smoke::test_smoke_turn_through_a_folder_registered_reference_agent` |
+| Herencia | directa | `test_live_eval_phase4`; `test_live_eval_composition`: developer sobre operator |
+| Overrides por cliente | ninguna | — |
+| Skills | directa | `test_live_eval_phase4` (`skill_contents` en línea) |
+| Modelo por agente | ninguna | — |
+| Construir el modelo declarado en el mismo proceso | ninguna | — |
+
+### Herramientas y conectores
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Herramientas propias | directa | `test_live_eval_phase4`, `test_live_eval_phase1` |
+| Tiers de capacidad | no aplica en vivo | — |
+| Herramientas de comando declarativas | directa | capacidades: `commands_factor`; `test_live_eval_phase1::test_command_tools_agent_runs_a_declared_command_tool`; `test_live_eval_phase4` |
+| Herramienta SQL de solo lectura | directa | `test_live_eval_sql_query`, `test_live_eval_phase1` |
+| Herramientas de operador | directa | `test_live_eval_composition`: developer (necesita `bwrap`) |
+| Backends de referencia | directa | `test_live_eval_composition`: sales, data; capacidades: `tool_choice_summarize` |
+| Recuperación de catálogo | ninguna | — |
+| Escalamiento incorporado | directa | capacidades: `escalation_builtin_default` |
+
+### Permisos y seguridad
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Familias de permisos | regresión | Las cadenas de grant de todos los escenarios pasan por el registro de permisos |
+| Grants (barrera en la construcción) | directa | `test_live_eval_guardrails`, `test_live_eval_phase4` |
+| Interceptor en tiempo de llamada | regresión | Toda llamada pasa por `intercept`; un intento con grant revocado solo se prueba offline |
+| Entrada no confiable | directa | capacidades: `untrusted_input_boundary`, `untrusted_input_block`; `test_live_eval_guardrails` |
+| Bloques de datos no confiables | directa | capacidades: `untrusted_input_block`, `user_memory_boundary` |
+| Grants de deploy | regresión | El harness pasa los permisos de deploy en cada turno |
+| Valores por defecto cerrados | no aplica en vivo | — |
+| Redacción en la auditoría | regresión | Se leen las filas de auditoría; no se asevera la redacción |
+
+### Runtime
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Runtime del agente | directa | todos los módulos en vivo |
+| Límites de ejecución | directa | escenarios de runtime: `limits_max_tool_calls_boundary` (`test_live_eval_runtime`) |
+| Límites de ejecución subidos por el despliegue y respuesta por timeout | regresión | El harness no define `EXECUTION_LIMITS` ni respuesta por timeout |
+| Los errores de herramienta llegan al modelo | directa | capacidades: `tool_errors_raise_no_fabrication`, `tool_errors_max_errors_no_fabrication` |
+| Uso y costo por turno | directa | capacidades (uso en cada resultado); `test_live_load_phase3` (se reporta) |
+| Alcance del turno por usuario final | regresión | El runner de evals liga un `TurnSubject`; no se asevera el ligado por canal |
+| Aplicación de memory_policy | regresión | Pasa por cada turno; ningún escenario asevera una denegación |
+| Uso y presupuestos por usuario | ninguna | — |
+| Memoria por usuario | directa | capacidades: `user_memory_recall`, `user_memory_boundary` (almacén en memoria; la seguridad por filas de Postgres no corre en vivo) |
+| Reparación de llamadas a herramientas | ninguna | — |
+| Entrega saliente proactiva | ninguna | — |
+| Turnos programados | directa | capacidades: `schedule_create`, `schedule_cancel`, `schedule_limit` cubren las herramientas; `ScheduledTurnRunner` no corre en vivo |
+| Escalamiento a una persona | directa | capacidades: `escalation_refund_request`, `escalation_builtin_default`; `test_live_eval_composition` |
+
+### Memoria de conversación y contexto
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Memoria de conversación durable | directa | `test_live_eval_composition::test_sales_agent_composition`; `test_live_smoke` |
+| Retención y purga | ninguna | — |
+| Política de fallas | ninguna | — |
+| Presupuesto de contexto | ninguna | — |
+| Aislamiento de conversaciones | regresión | `thread_id` es el teléfono en `test_live_eval_composition`; ningún escenario verifica dos teléfonos por separado |
+
+### Servicio y canales
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Servir agentes por HTTP | directa | `test_live_smoke`, `test_live_eval_composition`, `test_live_eval_phase1` |
+| API compatible con OpenAI | directa | Núcleo: `test_live_smoke`, `test_live_eval_composition`, `test_live_eval_phase4`. El descarte de un mensaje vacío del asistente y de un mensaje `system` del cliente: regresión |
+| Puerto de canales | regresión | WhatsApp y la API pasan por el puerto |
+| WhatsApp | directa | `test_live_smoke`, `test_live_eval_composition` |
+| Inbox y outbox durables | directa | Camino feliz: `test_live_smoke`, `test_live_eval_composition` |
+| Política de reintentos del outbox y respuesta de falla | regresión | El harness no define política de reintentos ni respuesta de falla |
+| Admisión de turnos | regresión | `test_live_load_phase3` corre 20 turnos concurrentes; no se asevera ningún tope |
+| Identidad del participante | regresión | Los turnos por webhook resuelven un participante; no se asevera la identidad |
+| Registrador de conversaciones | no aplica en vivo | — |
+| Proveedores de chat | regresión | Solo `openai_compatible` y `anthropic` (con `EVAL_PROVIDER_OVERRIDE`) corren en vivo; Groq y Ollama no tienen ninguna |
+
+### Observabilidad
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Liveness y readiness | no aplica en vivo | — |
+| Métricas Prometheus | directa | `test_live_smoke`, `test_live_load_phase3` |
+| Métricas del proveedor | ninguna | — |
+| IDs de request y logs | no aplica en vivo | — |
+| Registro de auditoría | directa | `test_live_eval_composition`, `test_live_eval_phase1`, `test_live_eval_phase4` |
+
+### Evaluación
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Escenarios YAML | directa | `test_live_eval_guardrails`, `test_live_eval_folder_target`, capacidades |
+| Destinos de escenario | directa | `test_live_eval_folder_target`, `test_live_eval_guardrails`, capacidades; un destino `Agent` de Python no corre en vivo |
+| Suite de capacidades | directa | `test_live_eval_capabilities` |
+| Matriz de capacidades por modelo | ninguna | — |
+| Aserciones de comportamiento | directa | `test_live_eval_capabilities` |
+| Evaluación en vivo contra un modelo real | directa | todos los módulos en vivo |
+| Toda la suite con un comando | no aplica en vivo | — |
+| Agentes que extienden a otro | no aplica en vivo | — |
+| Umbrales de tasa de éxito | directa | todos los módulos en vivo con umbral |
+| Aserciones de guardrails | directa | `test_live_eval_capabilities`, `test_live_eval_guardrails` |
+| Suite de mecanismos offline | no aplica en vivo | — |
+| Escenarios de composición sobre agentes de referencia | directa | `test_live_eval_composition` |
+| Escenarios de carga | directa | `test_live_load_phase3` (se reporta, sin umbral) |
+| Archivos de resultados | directa | `test_live_eval_capabilities`, `test_live_eval_sql_query`, `test_live_eval_folder_target`, `test_live_eval_guardrails` |
+
+### Instalación y empaquetado
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Núcleo liviano | no aplica en vivo | — |
+| Extras | no aplica en vivo | — |
+| Errores de extra faltante | no aplica en vivo | — |
+| Roles dentro del wheel | no aplica en vivo | — |
+| Releases | no aplica en vivo | — |
+
+### Operaciones
+
+| Funcionalidad | Cobertura en vivo | Dónde |
+|---|---|---|
+| Deploy con Docker | no aplica en vivo | — |
+| Deploy con systemd | no aplica en vivo | — |
+| Migraciones | no aplica en vivo | — |
+| Ejecución en sandbox | directa | `test_live_eval_composition`: developer (la allowlist de `/etc` no tiene escenario en vivo) |
+| Aprovisionamiento de base de datos | directa | `test_live_eval_sql_query`, `test_live_eval_phase1` |
+| Demo | regresión | El harness en vivo usa la base `agents_system_demo`; la app de demo no se corre |
+
+### Mantenerla al día
+
+Un pull request que agrega o cambia un escenario en vivo actualiza su fila
+aquí y en la versión en inglés, junto con el conteo de arriba.
+
 ## Matriz de capacidades por modelo (issue #228)
 
 La suite de capacidades es una funcionalidad del kit: dados modelos
