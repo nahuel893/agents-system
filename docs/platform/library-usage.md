@@ -63,11 +63,16 @@ async def main(model):
 if __name__ == "__main__":
     from langchain_anthropic import ChatAnthropic  # reads ANTHROPIC_API_KEY
 
-    messages = asyncio.run(main(ChatAnthropic(model="claude-sonnet-4-5")))
-    print(messages[-1].content)
+    messages = asyncio.run(main(ChatAnthropic(model="claude-sonnet-5-5")))
+    print(messages[-1].text)
 ```
 
-`tests/test_quickstart_example.py` executes this block as written, and
+The same code is in [`examples/quickstart.py`](../../examples/quickstart.py).
+From a clone, with `ANTHROPIC_API_KEY` in `.env`, run it with
+`uv run --env-file .env python examples/quickstart.py`.
+
+`tests/test_quickstart_example.py` executes this block as written, checks
+that the script is the same code, and
 `scripts/smoke-installed-wheel.sh` runs it against the built wheel installed
 outside the repository, with the core alone: no extra. Any LangChain chat
 model works in place of `ChatAnthropic`, which comes from
