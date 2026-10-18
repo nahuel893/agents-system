@@ -35,6 +35,8 @@ DOCUMENTS = (
     "docs/platform_es/library-usage.md",
 )
 
+SCRIPT = "examples/quickstart.py"
+
 #: "About ten lines of user code", counted as statements so that line
 #: wrapping does not matter. Imports are not counted.
 MAX_STATEMENTS = 12
@@ -128,3 +130,13 @@ def test_both_documents_carry_the_same_quickstart_code() -> None:
     )
 
     assert english == spanish
+
+
+def test_the_example_script_is_the_documented_quickstart() -> None:
+    """Issue #315 -- `examples/quickstart.py` is the block above as a file,
+    so the tests that run the block cover the script too. Only comments may
+    differ."""
+    script = (REPO_ROOT / SCRIPT).read_text(encoding="utf-8")
+    documented = extract_quickstart(REPO_ROOT / DOCUMENTS[0])
+
+    assert ast.dump(ast.parse(script)) == ast.dump(ast.parse(documented))
