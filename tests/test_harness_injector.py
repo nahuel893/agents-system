@@ -482,3 +482,95 @@ def test_unrelated_class_grant_never_covers_by_tier_alone() -> None:
 
     assert result.granted == ()
     assert result.denied == (("write_tool", "missing permissions: write:orders"),)
+
+
+# ---------------------------------------------------------------------------
+# Issue #312 -- explain_denial: why a tool is denied, for `agents check`
+# ---------------------------------------------------------------------------
+_CATALOG_TOOL = ToolSpec(
+    name="catalog_search",
+    required_permissions=("read:catalog",),
+    connector=_connector,
+    tier=Tier.T1,
+)
+
+
+def test_explain_denial_is_empty_for_a_granted_tool() -> None:
+    from agents_system.harness.injector import explain_denial
+
+    definition = _definition(tools=("catalog_search",), permissions=("read:catalog",))
+
+    assert explain_denial(_CATALOG_TOOL, definition, ["read:catalog"]) == ()
+
+
+def test_explain_denial_names_a_permission_the_agent_does_not_declare() -> None:
+    # Issue #310: granted by the caller, but outside the agent's ceiling.
+    from agents_system.harness.injector import explain_denial
+
+    definition = _definition(tools=("catalog_search",), permissions=())
+
+    assert explain_denial(_CATALOG_TOOL, definition, ["read:catalog"]) == (
+        "read:catalog is not in the agent's permissions",
+    )
+
+
+def test_explain_denial_names_a_permission_the_caller_does_not_grant() -> None:
+    from agents_system.harness.injector import explain_denial
+
+    definition = _definition(tools=("catalog_search",), permissions=("read:catalog",))
+
+    assert explain_denial(_CATALOG_TOOL, definition, []) == (
+        "read:catalog is not granted by the caller",
+    )
+
+
+def test_explain_denial_places_each_missing_permission() -> None:
+    from agents_system.harness.injector import explain_denial
+
+    spec = ToolSpec(
+        name="order_writer",
+        required_permissions=("write:orders", "write:order_items"),
+        connector=_connector,
+        tier=Tier.T2,
+    )
+    definition = _definition(tools=("order_writer",), permissions=("write:orders",))
+
+    assert explain_denial(spec, definition, ["write:order_items"]) == (
+        "write:orders is not granted by the caller",
+        "write:order_items is not in the agent's permissions",
+    )
+
+
+def test_explain_denial_agrees_with_the_injector() -> None:
+    """Granted exactly when `resolve_tool_surface` grants it, for every
+    combination of declared and granted."""
+    from agents_system.harness.injector import explain_denial, resolve_tool_surface
+
+    registry = ToolRegistry()
+    registry.register(_CATALOG_TOOL)
+    for declared in ((), ("read:catalog",)):
+        for granted in ((), ("read:catalog",)):
+            definition = _definition(tools=("catalog_search",), permissions=declared)
+            surface = resolve_tool_surface(definition, registry, granted)
+            explained = explain_denial(_CATALOG_TOOL, definition, granted)
+            assert (surface.granted == (_CATALOG_TOOL,)) == (explained == ()), (
+                declared,
+                granted,
+            )
+
+
+def test_explain_denial_reports_the_untrusted_input_t3_barrier() -> None:
+    from agents_system.harness.injector import explain_denial
+
+    spec = ToolSpec(
+        name="run_command",
+        required_permissions=("exec:command",),
+        connector=_connector,
+        tier=Tier.T3,
+    )
+    definition = _definition(
+        tools=("run_command",), permissions=("exec:command",), untrusted_input=True
+    )
+
+    (reason,) = explain_denial(spec, definition, ["exec:command"])
+    assert "untrusted_input" in reason

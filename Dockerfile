@@ -37,7 +37,6 @@ COPY --from=builder --chown=agents:agents /app/.venv /app/.venv
 
 # Copy application source code and configuration
 COPY --chown=agents:agents alembic.ini ./
-COPY --chown=agents:agents alembic/ ./alembic/
 COPY --chown=agents:agents platform/ ./platform/
 COPY --chown=agents:agents src/ ./src/
 

@@ -538,9 +538,18 @@ def _unguarded_optional_imports(
     return found
 
 
+#: Issue #312: the migrations ship in the package, but they are not modules of
+#: it. Only alembic loads them, by path, and `agents db upgrade` checks the
+#: `postgres` extra before it starts alembic, so their `from alembic import op`
+#: is never reached by a core install.
+MIGRATIONS_ROOT = SOURCE_ROOT / "migrations"
+
+
 def test_every_module_level_optional_import_is_guarded() -> None:
     offenders = []
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
+        if MIGRATIONS_ROOT in path.parents:
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in _unguarded_optional_imports(tree.body, guarded=False):
             relative = path.relative_to(REPO_ROOT)

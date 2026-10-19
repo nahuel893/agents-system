@@ -9,13 +9,16 @@ Migrating a server must not require editing a versioned file, and a checked-in
 integration tests point alembic at a throwaway database.
 """
 
-# Make `agents_system` importable before any agents_system import below. This block must
-# run at module level, above those imports, so E402/E401 are silenced there
-# rather than reordered away.
+# Make `agents_system` importable before any agents_system import below: a
+# contributor's `alembic upgrade head` from a source checkout loads this file
+# by path. This block must run at module level, above those imports, so
+# E402/E401 are silenced there rather than reordered away. From an installed
+# package (`agents db upgrade`, issue #312) the directory is already on the
+# path and this is a no-op.
 import sys
 from pathlib import Path
 
-SRC_PATH = Path(__file__).resolve().parents[1] / "src"
+SRC_PATH = Path(__file__).resolve().parents[2]
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 

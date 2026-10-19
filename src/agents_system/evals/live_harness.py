@@ -564,7 +564,7 @@ async def _drop_database(admin_url: str, name: str) -> None:
 def _run_migrations(database_url: str, *, repo_root: Path) -> None:
     """`alembic upgrade head` against *database_url*, mirroring the CI
     `audit-migration`/`outbox-migration` jobs' own throwaway-database
-    pattern. `alembic/env.py` reads `DATABASE_URL` from the environment in
+    pattern. `migrations/env.py` reads `DATABASE_URL` from the environment in
     preference to `Settings` (see its own module docstring), which is
     exactly why only the env var needs to change here.
 

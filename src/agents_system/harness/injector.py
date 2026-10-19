@@ -102,6 +102,11 @@ class InjectionError(Exception):
     pass
 
 
+#: How `_deny_reason` starts a denial for missing permissions, as opposed to
+#: the untrusted_input/T3 barrier, which denies whatever is granted.
+_MISSING_PERMISSIONS = "missing permissions: "
+
+
 @dataclass(frozen=True)
 class InjectionResult:
     granted: tuple[ToolSpec, ...]
@@ -149,7 +154,58 @@ def _deny_reason(
     )
     if not missing:
         return None
-    return f"missing permissions: {', '.join(missing)}"
+    return f"{_MISSING_PERMISSIONS}{', '.join(missing)}"
+
+
+def explain_denial(
+    spec: ToolSpec,
+    definition: AgentDefinition,
+    granted_permissions: Iterable[str],
+) -> tuple[str, ...]:
+    """Why ``spec`` is denied to ``definition``, one cause per entry; empty
+    when it is granted.
+
+    The decision is ``_deny_reason``'s, taken over the same effective set
+    ``build_runtime`` hands the injector (the declared permissions a grant
+    covers), so the two cannot disagree. Each missing permission is then
+    placed where it falls short: the agent does not declare it (its ceiling,
+    ``Agent(permissions=...)``), or it declares it and the caller does not
+    grant it (issue #310). ``agents check`` prints these (issue #312).
+    """
+    granted_classes: set[type] = set()
+    for name in granted_permissions:
+        try:
+            granted_classes.add(resolve(name))
+        except UnknownPermissionNameError:
+            continue
+    declared_classes: dict[str, type] = {}
+    for name in definition.permissions:
+        try:
+            declared_classes[name] = resolve(name)
+        except UnknownPermissionNameError:
+            continue
+    effective = {
+        name
+        for name, declared_cls in declared_classes.items()
+        if any(covers(granted_cls, declared_cls) for granted_cls in granted_classes)
+    }
+
+    reason = _deny_reason(spec, definition, effective)
+    if reason is None:
+        return ()
+    if not reason.startswith(_MISSING_PERMISSIONS):
+        return (reason,)
+    effective_classes = [declared_classes[name] for name in effective]
+    causes: list[str] = []
+    for name in spec.required_permissions:
+        needed = resolve(name)
+        if any(covers(cls, needed) for cls in effective_classes):
+            continue
+        if any(covers(cls, needed) for cls in declared_classes.values()):
+            causes.append(f"{name} is not granted by the caller")
+        else:
+            causes.append(f"{name} is not in the agent's permissions")
+    return tuple(causes)
 
 
 def resolve_tool_surface(

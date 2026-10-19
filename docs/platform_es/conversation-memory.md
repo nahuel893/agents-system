@@ -208,7 +208,7 @@ ejecutando las migraciones propias del saver, no una copia de su DDL. Por eso:
   olvidaría cada conversación y nunca purgaría ninguna. Una conexión de solo
   lectura (`default_transaction_read_only`, o un servidor standby) se rechaza
   por la misma razón. El error nombra cada privilegio que falta;
-- `alembic revision --autogenerate` ignora estas tablas (`alembic/env.py`).
+- `alembic revision --autogenerate` ignora estas tablas (`src/agents_system/migrations/env.py`).
 
 Cuando una versión nueva de `langgraph-checkpoint-postgres` trae migraciones
 nuevas, una base que ya está en la revisión 007 no las recibe. La suite

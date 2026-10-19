@@ -82,6 +82,12 @@ dev = [
     "mypy>=1.13",
 ]
 
+# Issue #312: the command line. `agents-system` is an alias that keeps working
+# when another package in the same environment also installs an `agents`.
+[project.scripts]
+agents = "agents_system.cli:main"
+agents-system = "agents_system.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/nahuel893/agents-system"
 Repository = "https://github.com/nahuel893/agents-system"
@@ -184,6 +190,10 @@ filterwarnings = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
+# Issue #312: the migrations ship in the package, but they are alembic
+# scripts loaded by path (their file names are not module names), not modules
+# of it. They were never type-checked from the repository root either.
+exclude = ["^src/agents_system/migrations/"]
 
 [[tool.mypy.overrides]]
 module = [

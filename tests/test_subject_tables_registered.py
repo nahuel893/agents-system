@@ -18,7 +18,13 @@ from agents_system.subject_data import DEFAULT_REGISTRY
 
 import agents_system.services.user_facts_postgres  # noqa: F401  isort:skip
 
-_VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+_VERSIONS = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "agents_system"
+    / "migrations"
+    / "versions"
+)
 _TABLE_CALL = re.compile(
     r"""(?:create_table|add_column)\(\s*["'](\w+)["'](.*?)(?:\n\s*\)|\Z)""", re.DOTALL
 )

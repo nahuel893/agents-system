@@ -30,7 +30,9 @@ pytestmark = pytest.mark.integration
 
 _MIGRATION = (
     Path(__file__).resolve().parents[1]
-    / "alembic"
+    / "src"
+    / "agents_system"
+    / "migrations"
     / "versions"
     / "009_subject_usage.py"
 )

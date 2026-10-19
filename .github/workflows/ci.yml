@@ -444,6 +444,45 @@ jobs:
       - name: Verify the durable inbox/outbox migration
         run: uv run pytest -m integration tests/test_outbox_migration_integration.py -v
 
+  # Issue #312 -- `agents db upgrade` applies every migration the package
+  # carries to an empty database, run from outside the checkout so the
+  # repository's alembic.ini cannot help it. Its own disposable database: the
+  # test downgrades to base before and after.
+  cli-db-migration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cli_db_migration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cli_db_migration_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CLI_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cli_db_migration_test
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Verify agents db upgrade
+        run: uv run pytest -m integration tests/test_cli_db_integration.py -v
+
   # Issue #24 -- the conversation checkpointer on Postgres: revision 007
   # creates its tables, a conversation survives a process restart, the
   # retention purge deletes idle threads and prunes superseded checkpoints,

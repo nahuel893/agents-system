@@ -463,7 +463,7 @@ incluido `_terminalize_work`, el día que cualquier otra cosa escriba bajo
 - `src/agents_system/audit/sink.py` — cola, drainer, escrituras por lote
 - `src/agents_system/harness/injector.py` — `_emit` / `_emit_async`
 - `src/agents_system/models/audit_event.py` — modelo ORM, propiedad de Alembic
-- `alembic/versions/` — tabla, particiones y la partición `DEFAULT`
+- `src/agents_system/migrations/versions/` — tabla, particiones y la partición `DEFAULT`
 - `tests/test_audit_wiring.py` — entrega punta a punta, verificada por mutación
 - `tests/test_audit_sink.py`, `tests/test_audit_redactor.py`,
   `tests/test_audit_recorder.py` — cobertura unitaria

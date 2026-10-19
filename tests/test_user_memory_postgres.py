@@ -30,7 +30,13 @@ from agents_system.user_memory import UserFacts, UserMemoryLimits, backend_for
 
 pytestmark = pytest.mark.integration
 
-_VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+_VERSIONS = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "agents_system"
+    / "migrations"
+    / "versions"
+)
 _MIGRATIONS = ("010_subject_facts.py", "011_subject_facts_purge.py")
 NOW = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 
