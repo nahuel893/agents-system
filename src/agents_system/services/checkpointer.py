@@ -60,7 +60,7 @@ logger = structlog.get_logger()
 CHECKPOINT_SCHEMA_VERSION = 9
 
 #: The tables the saver owns. Alembic's autogenerate must ignore them
-#: (``alembic/env.py``): they are not in the ORM metadata by design.
+#: (``migrations/env.py``): they are not in the ORM metadata by design.
 CHECKPOINT_TABLES = frozenset(
     {"checkpoints", "checkpoint_blobs", "checkpoint_writes", "checkpoint_migrations"}
 )

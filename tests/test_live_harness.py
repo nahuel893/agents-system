@@ -266,7 +266,7 @@ def test_run_migrations_does_not_copy_unrelated_secrets_into_subprocess_env(
     `{**os.environ, "DATABASE_URL": ...}` -- a full copy of the process
     environment, including any real model-provider secret a developer
     exported to run the live harness against a real model. It only needs
-    `DATABASE_URL` (`alembic/env.py` reads that directly) plus `PATH` to
+    `DATABASE_URL` (`migrations/env.py` reads that directly) plus `PATH` to
     locate the interpreter; nothing else should ever reach the child
     process's environment."""
     import subprocess

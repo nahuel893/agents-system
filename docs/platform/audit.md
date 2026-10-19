@@ -444,7 +444,7 @@ the day anything else writes under `"outbox:*"`.
 - `src/agents_system/audit/sink.py` — queue, drainer, batched writes
 - `src/agents_system/harness/injector.py` — `_emit` / `_emit_async`
 - `src/agents_system/models/audit_event.py` — ORM model, Alembic-owned
-- `alembic/versions/` — table, partitions, and the `DEFAULT` partition
+- `src/agents_system/migrations/versions/` — table, partitions, and the `DEFAULT` partition
 - `tests/test_audit_wiring.py` — end-to-end delivery, mutation-verified
 - `tests/test_audit_sink.py`, `tests/test_audit_redactor.py`,
   `tests/test_audit_recorder.py` — unit coverage

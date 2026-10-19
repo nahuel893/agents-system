@@ -193,7 +193,7 @@ running the saver's own migrations, not a copy of their DDL. So:
   forget every conversation and never purge one. A read-only connection
   (`default_transaction_read_only`, or a standby server) is refused for the
   same reason. The error names each missing privilege;
-- `alembic revision --autogenerate` ignores these tables (`alembic/env.py`).
+- `alembic revision --autogenerate` ignores these tables (`src/agents_system/migrations/env.py`).
 
 When an upgraded `langgraph-checkpoint-postgres` ships new migrations, a
 database already at revision 007 does not get them. The offline suite fails

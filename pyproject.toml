@@ -184,6 +184,10 @@ filterwarnings = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
+# Issue #312: the migrations ship in the package, but they are alembic
+# scripts loaded by path (their file names are not module names), not modules
+# of it. They were never type-checked from the repository root either.
+exclude = ["^src/agents_system/migrations/"]
 
 [[tool.mypy.overrides]]
 module = [
