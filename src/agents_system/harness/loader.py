@@ -2482,6 +2482,29 @@ def _declared_memory_policy(policy_fm: Mapping[str, Any]) -> dict[str, Any]:
     return dict(value)
 
 
+def extends_chain(
+    locator: RoleLocator | Agent, *, roots: RootConfig | None = None
+) -> tuple[str, ...]:
+    """The role names of ``locator`` and of every role it extends, leaf first:
+    ``("shop", "agent", "base")``.
+
+    For display (``agents check``, issue #312). It reads the same files
+    ``_resolve_role_chain`` reads, through the same ``_load_role_files``, and
+    validates nothing of its own: call it after ``resolve`` succeeded on the
+    same locator.
+    """
+    if not isinstance(locator, str | FolderLocator | InlineLocator):
+        locator = locator._to_locator()
+    if roots is None:
+        roots = RootConfig()
+    names: list[str] = []
+    current: RoleLocator | None = locator
+    while current is not None and len(names) < _MAX_ROLE_CHAIN_DEPTH:
+        definition, current, _ = _load_role_files(current, roots)
+        names.append(definition.role_name)
+    return tuple(names)
+
+
 def load_generic(
     locator: RoleLocator,
     *,

@@ -186,7 +186,8 @@ scripts/healthcheck.sh all         # Prueba ambos endpoints
 
 Las migraciones de base de datos son administradas mediante Alembic y se ejecutan automáticamente en cada despliegue antes de que inicie la aplicación.
 
-- **Resolución de URL:** `DATABASE_URL` se lee directamente desde el entorno en `alembic/env.py`. El archivo versionado `alembic.ini` no contiene credenciales.
+- **Dónde están:** las migraciones vienen dentro del paquete, en `src/agents_system/migrations/`. Desde un checkout, `alembic upgrade head` las aplica a través del `alembic.ini` del repositorio. Desde un wheel instalado, sin checkout, `agents db upgrade` aplica las mismas migraciones (llega en el próximo release; ver [Línea de comandos](../platform_es/cli.md#agents-db-upgrade-y-agents-db-current)).
+- **Resolución de URL:** `DATABASE_URL` se lee directamente desde el entorno en `src/agents_system/migrations/env.py` (`agents db upgrade --database-url` lo define para un comando). El archivo versionado `alembic.ini` no contiene credenciales.
 - **Verificación en seco (Dry-run):**
   ```bash
   DATABASE_URL="postgresql+asyncpg://user:pass@host:5432/dbname" uv run alembic upgrade head --sql

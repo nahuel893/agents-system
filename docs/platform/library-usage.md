@@ -84,6 +84,10 @@ model works in place of `ChatAnthropic`, which comes from
 - A tool that reads or changes your data declares a permission (for example
   `read:catalog`) and a tier to match, and the caller grants it in
   `granted_permissions`. The complete example below shows that.
+- Coming in the next release: `agents check ./my-agent --grant read:catalog`
+  prints which tools an agent folder equips and why each other one is denied,
+  and `agents chat ./my-agent` talks to it in the terminal, with no code. See
+  [Command line](cli.md).
 
 ---
 

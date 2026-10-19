@@ -19,8 +19,17 @@
 # exactly once per process (issue #166). Everything it creates lives in one
 # temporary directory that is removed on exit, success or failure.
 #
+# It also runs the command the wheel installs (issue #312), from outside the
+# repository: `agents --help`, `agents-system --help`, and `agents check` on a
+# copy of the reference sales-agent, and checks that the wheel carries every
+# migration. With SMOKE_DATABASE_URL set to a THROWAWAY Postgres database, it
+# then installs the `postgres` extra and runs `agents db upgrade` and
+# `agents db current` against it.
+#
 # Usage:
 #   scripts/smoke-installed-wheel.sh
+#   SMOKE_DATABASE_URL=postgresql+asyncpg://user:pw@host:5432/db \
+#     scripts/smoke-installed-wheel.sh
 #
 # Prerequisites: uv. Third-party dependencies are pinned to uv.lock, so the
 # install is what the test suite runs against (and is served from uv's cache
@@ -253,4 +262,50 @@ run_example() {
 
 run_example library "${workdir}/README.md" "README library example"
 run_example quickstart "${workdir}/library-usage.md" "library-usage Quickstart"
+
+# Issue #312: the command the wheel installs, run from outside the repository
+# on the core install, with an empty environment.
+log "running the agents command"
+for command in agents agents-system; do
+  (cd -- "${workdir}" && env -i "${workdir}/venv/bin/${command}" --help) \
+    >"${workdir}/${command}-help.log" 2>&1 ||
+    { cat -- "${workdir}/${command}-help.log" >&2; fail "${command} --help failed"; }
+  grep -q "check" "${workdir}/${command}-help.log" ||
+    fail "${command} --help does not list its subcommands"
+done
+cp -R -- "${repo_root}/examples/agents/sales-agent" "${workdir}/sales-agent"
+if ! (cd -- "${workdir}" && env -i "${workdir}/venv/bin/agents" check ./sales-agent \
+  --grant read:catalog) >"${workdir}/check.log" 2>&1; then
+  cat -- "${workdir}/check.log" >&2
+  fail "agents check on the reference sales-agent failed"
+fi
+grep -q "sales-agent -> agent -> base" "${workdir}/check.log" ||
+  { cat -- "${workdir}/check.log" >&2; fail "agents check did not print the chain"; }
+grep -q "read:catalog is not" "${workdir}/check.log" &&
+  { cat -- "${workdir}/check.log" >&2; fail "a granted, declared permission was reported missing"; }
+log "agents check: $(grep -c "denied" "${workdir}/check.log") denied tool(s) reported with reasons"
+
+shipped="$(env -i "${venv_python}" -I -c \
+  'import agents_system, pathlib; print(len(list((pathlib.Path(agents_system.__file__).parent / "migrations" / "versions").glob("*.py"))))')"
+expected="$(find "${repo_root}/src/agents_system/migrations/versions" -maxdepth 1 -name '*.py' | wc -l)"
+[[ "${shipped}" -eq "${expected}" && "${shipped}" -gt 0 ]] ||
+  fail "the wheel carries ${shipped} migration(s), the repository ${expected}"
+log "the wheel carries all ${shipped} migrations"
+
+if [[ -n "${SMOKE_DATABASE_URL:-}" ]]; then
+  log "installing the postgres extra and running agents db upgrade"
+  uv pip install --quiet --python "${venv_python}" \
+    --constraints "${workdir}/constraints.txt" "${wheels[0]}[postgres]"
+  (cd -- "${workdir}" && env -i PATH="${workdir}/venv/bin:/usr/bin:/bin" \
+    agents db upgrade --database-url "${SMOKE_DATABASE_URL}") \
+    >"${workdir}/db.log" 2>&1 ||
+    { cat -- "${workdir}/db.log" >&2; fail "agents db upgrade failed"; }
+  (cd -- "${workdir}" && env -i PATH="${workdir}/venv/bin:/usr/bin:/bin" \
+    agents db current --database-url "${SMOKE_DATABASE_URL}") \
+    >"${workdir}/db-current.log" 2>&1 ||
+    { cat -- "${workdir}/db-current.log" >&2; fail "agents db current failed"; }
+  grep -q "(head)" "${workdir}/db-current.log" ||
+    { cat -- "${workdir}/db-current.log" >&2; fail "the database is not at head"; }
+  log "agents db: $(grep "(head)" "${workdir}/db-current.log")"
+fi
 log "OK"

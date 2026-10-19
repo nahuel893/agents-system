@@ -26,12 +26,7 @@ try:
 except ImportError as exc:
     raise_missing_extra("server", "The served app", exc)
 
-from agents_system.connectors.order_connector import build_order_writer_tool_spec
-from agents_system.connectors.platform_connectors import (
-    build_conversation_summarizer_tool_spec,
-    build_escalation_notifier_tool_spec,
-    build_knowledge_retrieval_tool_spec,
-)
+from agents_system.connectors.reference_registry import build_reference_registry
 from agents_system.connectors.report_connector import build_report_tool_spec
 from agents_system.connectors.sales_reports import CATALOG
 from agents_system.harness.registry import RegistryFactory, ToolRegistry
@@ -54,35 +49,7 @@ def default_registry_factory(
     must configure REGISTRY_FACTORY to supply a registry providing every tool
     their agents declare.
     """
-    registry = ToolRegistry()
-    registry.register(build_knowledge_retrieval_tool_spec(None))
-    registry.register(build_conversation_summarizer_tool_spec(None))
-    registry.register(build_escalation_notifier_tool_spec(None))
-    registry.register(build_order_writer_tool_spec(None))
-    # #250: inert unless a role names them, its memory_policy opts in and the
-    # deployment grants read:user_memory / write:user_memory.
-    from agents_system.user_memory import (
-        UserMemoryLimits,
-        build_user_memory_tool_specs,
-        limits_from_settings,
-    )
-
-    for spec in build_user_memory_tool_specs(
-        limits_from_settings(settings) if settings is not None else UserMemoryLimits()
-    ):
-        registry.register(spec)
-    # #175: inert unless a role names them and the deployment grants
-    # write:schedule (T2, needs a DEPLOY_GRANTS entry).
-    from agents_system.schedules import (
-        ScheduleLimits,
-        build_schedule_tool_specs,
-    )
-    from agents_system.schedules import limits_from_settings as schedule_limits
-
-    for spec in build_schedule_tool_specs(
-        schedule_limits(settings) if settings is not None else ScheduleLimits()
-    ):
-        registry.register(spec)
+    registry = build_reference_registry(settings)
     registry.register(build_report_tool_spec(bi_engine, CATALOG))
 
     if settings is not None:

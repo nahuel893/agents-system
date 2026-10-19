@@ -86,6 +86,10 @@ viene de `langchain-anthropic` (el extra `anthropic`; ver "Extras" más abajo).
 - Una tool que lee o cambia tus datos declara un permiso (por ejemplo
   `read:catalog`) y un tier acorde, y el caller lo concede en
   `granted_permissions`. El ejemplo completo de más abajo lo muestra.
+- Llega en el próximo release: `agents check ./my-agent --grant read:catalog`
+  imprime qué tools equipa una carpeta de agente y por qué se deniega cada
+  una de las otras, y `agents chat ./my-agent` conversa con él en la
+  terminal, sin escribir código. Ver [Línea de comandos](cli.md).
 
 ---
 

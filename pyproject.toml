@@ -82,6 +82,12 @@ dev = [
     "mypy>=1.13",
 ]
 
+# Issue #312: the command line. `agents-system` is an alias that keeps working
+# when another package in the same environment also installs an `agents`.
+[project.scripts]
+agents = "agents_system.cli:main"
+agents-system = "agents_system.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/nahuel893/agents-system"
 Repository = "https://github.com/nahuel893/agents-system"

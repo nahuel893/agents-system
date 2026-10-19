@@ -8,6 +8,8 @@
 
 **agents-system** is a development kit for building AI agents. You describe an agent (a system prompt, the tools it may call, the policy that bounds it), hand it your own tools, and the kit assembles a permission-bound runtime around it. The smallest path is an agent with one tool of your own in about ten lines: see the [Quickstart](docs/platform/library-usage.md#quickstart), which also covers installing the kit from another repository. For every feature in one place, with its entry point and the doc that explains it, see the [Feature reference](docs/platform/features.md).
 
+Installing the package also installs a command, `agents` (coming in the next release; see [Command line](docs/platform/cli.md)). `agents check ./my-agent` shows what an agent resolves to: each declared tool equipped or denied, and why. `agents chat ./my-agent` talks to it in the terminal, `agents serve` runs the server, and `agents db upgrade` applies the database migrations from an installed package.
+
 Everything else is an optional piece you turn on at runtime, only when you need it: an OpenAI-compatible **server**, **channels** such as WhatsApp, the eight **predefined roles** (reusable agent archetypes), and **reference backends** (Postgres, Redis, embeddings). A plain install is the light core that runs the Quickstart (about 76 MB); the server, the channels and the reference backends are extras you install when you use them (`agents-system[server]`, `[postgres]`, `[embeddings]`, ...), and the predefined roles ship with the core. Agent definitions can be declarative Markdown folders *and* plain Python; a two-layer deployment model lets your application inject its own tools, skills, and per-client overrides, all without modifying the core.
 
 > 🇪🇸 Documentación en español disponible en [`docs/platform_es/`](docs/platform_es/).
@@ -283,6 +285,15 @@ uv run uvicorn agents_system.main:app --reload --port 8000
 
 # Production
 uv run uvicorn agents_system.main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+The `agents` command (coming in the next release; see [Command line](docs/platform/cli.md)) does the same from an installed package, with no checkout:
+
+```bash
+agents db upgrade                      # apply the migrations (the postgres extra)
+agents serve --host 0.0.0.0 --port 8000 --workers 4   # the served app (the server extra)
+agents check ./my-agent --grant read:catalog          # what an agent resolves to
+agents chat ./my-agent --provider anthropic           # talk to it in the terminal
 ```
 
 The platform exposes an **OpenAI-compatible adapter** at `/v1/*` — any OpenAI SDK client can point to it and get agent responses. This lets you use the platform as a drop-in replacement for OpenAI with your own roles and tools.
