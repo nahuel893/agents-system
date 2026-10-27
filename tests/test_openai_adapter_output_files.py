@@ -638,3 +638,21 @@ async def test_parallel_requests_each_get_only_their_own_files(
             assert all(f"[{o}.txt]" not in content for o in others)
             url, _ = URL_RE.search(content).groups()  # type: ignore[union-attr]
             assert (await client.get(url)).content == user.encode()
+
+
+def test_download_token_never_reaches_the_request_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hook = _Hook(OutputFile(filename="r.csv", mime_type="text/csv", data=b"a,b"))
+    client = TestClient(
+        _app(_fake_runtime(), monkeypatch, output_files=_config(tmp_path, hook))
+    )
+    url, token = URL_RE.search(_content(_post(client))).groups()  # type: ignore[union-attr]
+
+    with structlog.testing.capture_logs() as logs:
+        assert client.get(url).status_code == 200
+        assert client.get("/v1/files/" + "A" * len(token)).status_code == 404
+
+    paths = [e["path"] for e in logs if e["event"].startswith("request.")]
+    assert paths and all(p == "/v1/files/<redacted>" for p in paths)
+    assert token not in repr(logs)
