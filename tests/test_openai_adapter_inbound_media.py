@@ -53,7 +53,9 @@ def clear_settings_cache():
     get_settings.cache_clear()
 
 
-def _client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, _RecordingModel]:
+def _client(
+    monkeypatch: pytest.MonkeyPatch, *, untrusted_input: bool = False
+) -> tuple[TestClient, _RecordingModel]:
     definition = AgentDefinition(
         role_name="vision-agent",
         version="1.0",
@@ -69,6 +71,7 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, _RecordingMode
         memory_policy={},
         audit_policy={},
         execution_limits=None,
+        untrusted_input=untrusted_input,
     )
     equipped = EquippedRuntime(
         definition=definition,
@@ -143,3 +146,32 @@ def test_plain_string_content_still_reaches_the_model(
 
     assert response.status_code == 200
     assert "hello there" in str(_last_human_content(model))
+
+
+def test_inbound_image_part_survives_an_untrusted_input_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, model = _client(monkeypatch, untrusted_input=True)
+    payload = {
+        "model": MODEL_ID,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "what is this?"},
+                    {"type": "image_url", "image_url": {"url": IMAGE_URL}},
+                ],
+            }
+        ],
+    }
+
+    response = client.post("/v1/chat/completions", json=payload)
+
+    assert response.status_code == 200
+    content = _last_human_content(model)
+    assert isinstance(content, list), f"content was stringified: {content!r}"
+    images = [
+        p for p in content if isinstance(p, dict) and p.get("type") == "image_url"
+    ]
+    assert len(images) == 1
+    assert images[0]["image_url"]["url"] == IMAGE_URL
