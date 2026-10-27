@@ -430,6 +430,58 @@ app = create_app(
 
 Quien usa la biblioteca y corre los turnos por su cuenta pasa el mismo texto directamente: `run_turn(..., trusted_context="...")`.
 
+### Archivos que produce un turno, por la API compatible con OpenAI
+
+Un turno de canal puede entregar los archivos que produjo (una planilla, un gráfico) porque la aplicación los envía por el propio canal. Chat completions no tiene un campo para archivos del asistente, así que el adaptador responde solo texto salvo que la aplicación le entregue los archivos:
+
+```python
+from agents_system.integration.output_files import (
+    LocalDirectoryFileStore,
+    OutputFile,
+    OutputFiles,
+)
+from agents_system.integration.request_context import AdapterRequestInfo
+
+
+async def turn_files(info: AdapterRequestInfo, messages) -> list[OutputFile]:
+    # Buscar lo que este turno escribió en el espacio de trabajo de este usuario.
+    return [
+        OutputFile(filename="sales.csv", mime_type="text/csv", path=...),
+        OutputFile(
+            filename="chart.png",
+            mime_type="image/png",
+            data=png,
+            caption="Sales by region",
+        ),
+    ]
+
+
+app = create_app(
+    ...,
+    output_files=OutputFiles(
+        hook=turn_files,
+        store=LocalDirectoryFileStore("/var/lib/my-app/output-files"),
+        inline_image_max_bytes=256 * 1024,  # el valor por defecto
+        max_file_bytes=20 * 1024 * 1024,  # el valor por defecto
+        ttl_s=3600,  # el valor por defecto
+        max_files_per_turn=10,  # el valor por defecto
+        max_total_bytes=50 * 1024 * 1024,  # el valor por defecto
+        public_base_url="https://chat.example.com",  # recomendado en producción
+    ),
+)
+```
+
+- **El hook corre después del turno.** El adaptador lo espera una vez por solicitud, cuando el turno terminó y liberó su lugar de capacidad, con el mismo `AdapterRequestInfo` que recibe el [hook de contexto por solicitud](#contexto-por-solicitud-para-la-api-compatible-con-openai) (así `info.subject` indica de quién fue el turno) y los mensajes del turno. Devuelve objetos `OutputFile`: `filename`, `mime_type` (un `type/subtype` sin parámetros), exactamente uno de `data` (bytes) o `path`, y un `caption` opcional. `None` o una lista vacía no agregan nada. Un `path` debe ser un archivo regular: se rechaza un enlace simbólico (como último componente), un dispositivo, un FIFO o un socket, y la lectura se detiene en el límite de tamaño sin importar lo que informe el archivo. El adaptador no restringe las rutas a un directorio, así que el hook resuelve cada ruta dentro de una raíz propia y nunca la arma a partir de texto del modelo o del usuario.
+- **Se muestran como Markdown que el cliente ya renderiza.** Cada archivo se agrega al `content` del asistente, después del texto, uno por párrafo. Una imagen de hasta `inline_image_max_bytes` se vuelve `![caption](data:image/png;base64,...)`. Una imagen más grande se vuelve una imagen Markdown que apunta a una URL de descarga, y cualquier otro archivo un enlace, `[sales.csv](https://.../v1/files/<token>)`, seguido de su caption. Los nombres de archivo y los captions se escapan, así que no pueden romper el Markdown.
+- **Las URL de descarga son enlaces de capacidad sin bearer.** `GET /v1/files/{token}` sirve el archivo sin la clave bearer del adaptador, para que un navegador pueda abrirlo desde el chat. El token es la única autoridad: 43 caracteres seguros para URL generados con `secrets`, guardados solo como su hash SHA-256, sin ninguna ruta que los liste. Mantenga el TTL corto: quien vea un enlace (una captura compartida, un mensaje reenviado, un log de un proxy o de acceso) puede descargar el archivo hasta que venza. Los logs de solicitudes de la aplicación (`request.started`, `request.completed`) y el log de acceso de uvicorn, una vez que corrió `create_app`, registran la ruta como `/v1/files/<redacted>`; un proxy inverso o un balanceador delante de la aplicación registra la URL completa, token incluido, salvo que se lo configure para no hacerlo. Sin `public_base_url`, el host del enlace sale del encabezado `Host` de la solicitud, que controla el cliente; configure `public_base_url` en producción, y siempre que el adaptador esté detrás de un proxy que reescribe el host.
+- **Vencido, desconocido o malformado: el mismo 404.** Un enlace deja de funcionar `ttl_s` segundos después de la respuesta. Cada fallo responde el mismo `404 Not Found` que responde una ruta inexistente, así que un sondeo no puede saber si un archivo existió alguna vez. La descarga se transmite desde el disco como adjunto con su tipo MIME y su longitud guardados, un nombre de archivo saneado, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store` y una `Content-Security-Policy` con sandbox.
+- **Límites.** Un archivo que supera `max_file_bytes` queda afuera y se registra como `adapter.output_file_skipped` (`reason="too_large"`, su `size` y el `limit`); los demás archivos y el texto se responden igual. Un turno muestra como mucho `max_files_per_turn` archivos (`reason="too_many_files"` para el resto) y como mucho `max_total_bytes` entre todos (`reason="turn_total_too_large"` para el archivo que lo superaría). Una ruta que no es un archivo regular se omite con `reason="not_a_regular_file"`, una que el adaptador no puede leer con `reason="unreadable"`, y una que el almacenamiento rechaza con `reason="store_failed"`.
+- **Un hook que falla responde el texto.** Un hook que levanta una excepción, o que devuelve algo que no sea una lista de `OutputFile`, registra `adapter.output_files_failed` con el stack y la respuesta lleva solo el texto. Esto difiere a propósito del hook de contexto: el turno ya corrió y su costo ya se pagó, así que hacer fallar la solicitud descartaría una respuesta válida.
+- **El almacenamiento es un puerto.** `LocalDirectoryFileStore` guarda cada archivo con un nombre elegido por el servidor en un directorio (nunca el nombre que da el cliente), lo borra al consultarlo si ya venció y barre los vencidos como mucho una vez por minuto al guardar. El barrido toca solo los nombres propios del almacenamiento (un SHA-256 seguido de `.json`, `.bin` o un sufijo temporal), así que lo demás que haya en el directorio se conserva; de todos modos, asigne al almacenamiento un directorio propio. Varios procesos pueden compartir el directorio. Otro backend implementa `OutputFileStore`: `put` devuelve un token nuevo, `get` devuelve el archivo o `None`, `cleanup` borra los vencidos.
+- **Los archivos mostrados no vuelven al modelo.** Un cliente reenvía todo el historial, archivos mostrados incluidos. Con `output_files` configurado, el adaptador reescribe cada mensaje anterior del asistente antes de que lo vea el modelo: una imagen `data:` inline se vuelve `[image: <caption>]`, un enlace de descarga `[file: <name>]`, y cualquier otra ruta `/v1/files/<token>` se vuelve `/v1/files/<redacted>`. El base64 nunca cuenta contra el contexto y los tokens de descarga vigentes nunca llegan al proveedor del modelo. Los mensajes del usuario quedan como están.
+- **Local a la solicitud.** Cada solicitud pasa su propio `info` y sus propios mensajes al hook y renderiza sus propios archivos; las solicitudes concurrentes nunca ven los de otra.
+- **Sin configuración, sin cambios.** Sin `output_files`, las respuestas son idénticas byte a byte a las de antes y `/v1/files/{token}` no se monta.
+
 ### Migrar desde los ids de runtime viejos
 
 Antes de ADR-004, el arranque desde Settings leía el rol y el despliegue del propio id de runtime: `acme__sales-agent`, o `_generic__sales-agent` sin despliegue. Ese esquema ya no existe. Un id de runtime es solo una clave, y un despliegue que sigue configurado a la vieja usanza falla al arrancar, nombrando el id no registrado y señalando `AGENT_REGISTRATIONS`. Para migrar:

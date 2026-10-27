@@ -70,8 +70,10 @@ from agents_system.harness.loader import (
 )
 from agents_system.harness.registry import RegistryFactory, ToolRegistry
 from agents_system.integration import openai_router, webhook_router
+from agents_system.integration.openai_adapter import output_files_router
 from agents_system.integration.operator_api import SubjectThreads
 from agents_system.integration.operator_api import router as operator_router
+from agents_system.integration.output_files import OutputFiles
 from agents_system.integration.request_context import (
     DEFAULT_ADAPTER_CHANNEL,
     RequestContextHook,
@@ -1733,6 +1735,7 @@ def create_app(
     channels: Mapping[str, Channel] | None = None,
     request_context_hook: RequestContextHook | None = None,
     adapter_channel: str = DEFAULT_ADAPTER_CHANNEL,
+    output_files: OutputFiles | None = None,
 ) -> FastAPI:
     """Application factory. Returns a configured FastAPI instance.
 
@@ -1867,11 +1870,21 @@ def create_app(
     adapter_channel:
         #249: the channel label the adapter hands ``request_context_hook``,
         a non-empty string; ``"openai-adapter"`` by default.
+    output_files:
+        #319: an ``OutputFiles`` (hook, store, limits) that returns the files
+        each ``/v1/chat/completions`` turn produced. The adapter appends them
+        to the assistant message as Markdown: a small image inline as a
+        ``data:`` URI, anything else as a link to ``GET /v1/files/{token}``,
+        a bearer-free download that expires after ``ttl_s``. A hook that
+        fails leaves the reply as text alone and is logged. ``None`` (the
+        default) keeps the response as it was and mounts no download route.
     """
     if request_context_hook is not None and not callable(request_context_hook):
         raise TypeError("request_context_hook must be an async callable or None")
     if not isinstance(adapter_channel, str) or not adapter_channel:
         raise ValueError("adapter_channel must be a non-empty string")
+    if output_files is not None and not isinstance(output_files, OutputFiles):
+        raise TypeError("output_files must be an OutputFiles or None")
     setup_logging()
     registered_channels = _validate_channels(channels)
 
@@ -1892,6 +1905,7 @@ def create_app(
     application.state.subject_resolver = subject_resolver
     application.state.request_context_hook = request_context_hook
     application.state.adapter_channel = adapter_channel
+    application.state.output_files = output_files
     application.state.subject_data_registry = (
         subject_data if subject_data is not None else DEFAULT_SUBJECT_DATA
     )
@@ -1924,6 +1938,9 @@ def create_app(
     application.add_middleware(RequestIdMiddleware)
     application.include_router(webhook_router)
     application.include_router(openai_router)
+    # #319: no output files configured, no download route.
+    if output_files is not None:
+        application.include_router(output_files_router)
     # ADR-011 part 6: no operator key, no operator routes (fail closed).
     if get_settings().operator_api_key:
         application.include_router(operator_router)
