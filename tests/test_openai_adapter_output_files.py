@@ -778,7 +778,7 @@ def test_uvicorn_access_log_redacts_the_download_token() -> None:
 
     messages = [record.getMessage() for record in records]
     assert messages == [
-        '127.0.0.1:5000 - "GET /v1/files/<redacted> HTTP/1.1" 200',
+        '127.0.0.1:5000 - "GET /v1/files/<redacted>?download=1 HTTP/1.1" 200',
         '127.0.0.1:5000 - "GET /v1/models HTTP/1.1" 200',
     ]
     assert (
@@ -965,3 +965,20 @@ def test_a_download_is_streamed_with_its_length_and_headers(
     assert download.headers["content-type"] == "application/zip"
     assert download.headers["x-content-type-options"] == "nosniff"
     assert download.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/v1/files/abc_-123", "/v1/files/<redacted>"),
+        ("/api/v1/files/abc_-123", "/api/v1/files/<redacted>"),
+        ("/api/v1/files/abc_-123?x=1", "/api/v1/files/<redacted>?x=1"),
+        ("/v1/chat/completions", "/v1/chat/completions"),
+    ],
+)
+def test_loggable_path_redacts_the_token_under_any_root_path(
+    path: str, expected: str
+) -> None:
+    from agents_system.observability.logging import loggable_path
+
+    assert loggable_path(path) == expected

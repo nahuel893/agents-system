@@ -16,7 +16,8 @@ logger = structlog.get_logger()
 
 #: An output-file download path carries its bearer-free capability token
 #: (#319): whoever reads the logs must not be able to download the file.
-_DOWNLOAD_TOKEN = re.compile(r"^(/v1/files/)[^/]+")
+#: Not anchored: behind ``--root-path`` the logged path starts with the prefix.
+_DOWNLOAD_TOKEN = re.compile(r"(/v1/files/)[^/?#\s]+")
 
 
 def loggable_path(path: str) -> str:
