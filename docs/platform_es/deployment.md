@@ -397,6 +397,39 @@ OUTBOX_FALLBACK_REPLY='{"reports": "Algo salió mal con tu mensaje. Probá de nu
 - **El arranque falla** ante una política que nombra un runtime que no construye, o ante un valor inválido, nombrando el runtime.
 - **Una caída no está cubierta.** Una fila cuyo worker murió en el último intento se cierra en el siguiente claim con el evento de auditoría terminal pero sin respuesta: la plataforma no conoce ahí la dirección del usuario.
 
+### Contexto por solicitud para la API compatible con OpenAI
+
+Un turno de canal puede llevar contexto determinista (el canal, la fecha de hoy en la zona horaria del despliegue, reglas de formato de salida) porque lo construye la aplicación. Un turno de `/v1/chat/completions` lo construye el adaptador, así que la aplicación pasa un hook:
+
+```python
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from agents_system.integration.request_context import AdapterRequestInfo
+
+
+async def request_context(info: AdapterRequestInfo) -> str | None:
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    return f"Channel: {info.channel}. Today is {today.isoformat()}."
+
+
+app = create_app(
+    ...,
+    request_context_hook=request_context,
+    adapter_channel="web-chat",  # por defecto "openai-adapter"
+)
+```
+
+- **Entrada: solo metadatos de la plataforma.** El adaptador espera el hook una vez por solicitud con un `AdapterRequestInfo` inmutable: `runtime_id` (el modelo solicitado), `channel` (la etiqueta `adapter_channel`), `request_id` (el encabezado de respuesta `x-request-id`), `session_id` (el del turno) y `subject` (el usuario final que resolvió un `SubjectResolver`, o `None`; ver [Alcance por usuario final](end-user-scope.md)). Nada del cuerpo de la solicitud llega al hook.
+- **Salida: contexto confiable en una posición fija.** El texto que devuelve se agrega al mensaje de sistema, después del prompt propio del agente, bajo un encabezado fijo `## Context for this request`. El prompt del agente queda primero y conserva la prioridad; el contexto nunca lo reemplaza. Los mensajes `system` del cliente se siguen descartando. `None` o un texto en blanco no agregan nada.
+- **Confiable frente a no confiable.** La salida del hook es confiable: la construye la aplicación, por eso va en el mensaje de sistema. El contenido del usuario sigue siendo no confiable, igual que cualquier dato almacenado o externo. No copie texto de la solicitud, el valor de un encabezado ni una fila de base de datos en la salida del hook; pase ese tipo de datos como un bloque de datos no confiables (`run_turn(untrusted_data=...)`).
+- **Nunca se persiste.** Como el prompt de sistema, el contexto se agrega al llamar al modelo y nunca se guarda en el estado de la conversación. Cuenta contra `max_context_tokens`.
+- **Local a la solicitud.** Cada solicitud construye su propio contexto y lo pasa a su propio turno; las solicitudes concurrentes nunca ven el de otra.
+- **Falla cerrada.** Un hook que levanta una excepción, o que devuelve algo que no sea texto o `None`, hace fallar la solicitud con un `500` (`The request context could not be built.`), registra `adapter.request_context_failed` con el stack y no corre ningún turno. El error del hook nunca llega al cliente. El hook corre antes de que el turno ocupe un lugar de capacidad.
+- **Sin hook, sin cambios.** Sin `request_context_hook`, el adaptador llama al runtime exactamente como antes.
+
+Quien usa la biblioteca y corre los turnos por su cuenta pasa el mismo texto directamente: `run_turn(..., trusted_context="...")`.
+
 ### Migrar desde los ids de runtime viejos
 
 Antes de ADR-004, el arranque desde Settings leía el rol y el despliegue del propio id de runtime: `acme__sales-agent`, o `_generic__sales-agent` sin despliegue. Ese esquema ya no existe. Un id de runtime es solo una clave, y un despliegue que sigue configurado a la vieja usanza falla al arrancar, nombrando el id no registrado y señalando `AGENT_REGISTRATIONS`. Para migrar:

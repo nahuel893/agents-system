@@ -72,6 +72,10 @@ from agents_system.harness.registry import RegistryFactory, ToolRegistry
 from agents_system.integration import openai_router, webhook_router
 from agents_system.integration.operator_api import SubjectThreads
 from agents_system.integration.operator_api import router as operator_router
+from agents_system.integration.request_context import (
+    DEFAULT_ADAPTER_CHANNEL,
+    RequestContextHook,
+)
 from agents_system.integration.whatsapp_client import WhatsAppClient
 from agents_system.models.base import get_bi_engine, get_engine, get_session_factory
 from agents_system.observability import RequestIdMiddleware, setup_logging
@@ -1727,6 +1731,8 @@ def create_app(
     title: str = "agents_system",
     chat_model: BaseChatModel | None = None,
     channels: Mapping[str, Channel] | None = None,
+    request_context_hook: RequestContextHook | None = None,
+    adapter_channel: str = DEFAULT_ADAPTER_CHANNEL,
 ) -> FastAPI:
     """Application factory. Returns a configured FastAPI instance.
 
@@ -1848,7 +1854,24 @@ def create_app(
         or ``AGENT_REGISTRATIONS``), resolve ``untrusted_input=True`` and fit
         the outbox lease, or boot fails -- the checks ``WHATSAPP_RUNTIME_ID``
         gets. ``None`` (the default) registers none.
+    request_context_hook:
+        #249: an async callable the OpenAI-compatible adapter awaits once per
+        ``/v1/chat/completions`` request with an ``AdapterRequestInfo``
+        (runtime id, ``adapter_channel``, request id, session id, resolved
+        subject) and nothing client-chosen. The text it returns is attached
+        to that turn as trusted context, after the agent's system prompt
+        (``run_turn(trusted_context=...)``); ``None`` or blank attaches
+        nothing. A hook that raises, or returns anything but text or
+        ``None``, fails the request with a 500 and runs no turn. ``None``
+        (the default) keeps the adapter exactly as it was.
+    adapter_channel:
+        #249: the channel label the adapter hands ``request_context_hook``,
+        a non-empty string; ``"openai-adapter"`` by default.
     """
+    if request_context_hook is not None and not callable(request_context_hook):
+        raise TypeError("request_context_hook must be an async callable or None")
+    if not isinstance(adapter_channel, str) or not adapter_channel:
+        raise ValueError("adapter_channel must be a non-empty string")
     setup_logging()
     registered_channels = _validate_channels(channels)
 
@@ -1867,6 +1890,8 @@ def create_app(
     application.state.participant_directory = participant_directory
     application.state.conversation_recorder = conversation_recorder
     application.state.subject_resolver = subject_resolver
+    application.state.request_context_hook = request_context_hook
+    application.state.adapter_channel = adapter_channel
     application.state.subject_data_registry = (
         subject_data if subject_data is not None else DEFAULT_SUBJECT_DATA
     )
