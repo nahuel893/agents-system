@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import time
 from uuid import uuid4
 
@@ -17,15 +16,7 @@ try:
 except ImportError as exc:
     raise_missing_extra("server", "The request ID middleware", exc)
 
-from agents_system.observability.logging import logger
-
-#: An output-file download path carries its bearer-free capability token
-#: (#319): whoever reads the logs must not be able to download the file.
-_DOWNLOAD_TOKEN = re.compile(r"^(/v1/files/)[^/]+")
-
-
-def _loggable_path(path: str) -> str:
-    return _DOWNLOAD_TOKEN.sub(r"\1<redacted>", path)
+from agents_system.observability.logging import loggable_path, logger
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -36,7 +27,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         request_id = uuid4().hex[:8]
         structlog.contextvars.bind_contextvars(request_id=request_id)
-        path = _loggable_path(request.url.path)
+        path = loggable_path(request.url.path)
         logger.info("request.started", method=request.method, path=path)
         start = time.monotonic()
         try:

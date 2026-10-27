@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
+import os
 import re
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -32,8 +35,9 @@ from agents_system.integration.output_files import (
     LocalDirectoryFileStore,
     OutputFile,
     OutputFiles,
+    StoredFile,
     markdown_label,
-    strip_inline_images,
+    strip_rendered_files,
 )
 from agents_system.integration.request_context import AdapterRequestInfo
 
@@ -116,6 +120,14 @@ class _Hook:
     ) -> Any:
         self.seen.append((info, list(messages)))
         return self.result
+
+
+def _read(stored: StoredFile) -> bytes:
+    if stored.data is not None:
+        return stored.data
+    assert stored.file is not None
+    with stored.file as handle:
+        return handle.read()
 
 
 def _config(tmp_path: Path, hook: Any, **overrides: Any) -> OutputFiles:
@@ -520,7 +532,7 @@ async def test_store_cleanup_removes_only_expired_files(tmp_path: Path) -> None:
     assert await store.get(old) is None
     stored = await store.get(fresh)
     assert stored is not None
-    assert (stored.data, stored.filename, stored.mime_type) == (
+    assert (_read(stored), stored.filename, stored.mime_type) == (
         b"new",
         "n.txt",
         "text/plain",
@@ -533,12 +545,12 @@ async def test_store_cleanup_removes_only_expired_files(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_strip_inline_images_keeps_the_label_and_drops_the_payload() -> None:
+def test_strip_rendered_files_keeps_the_label_and_drops_the_payload() -> None:
     content = (
         "see ![Sales \\[Q3\\]](data:image/png;base64,iVBORw0K+/=) and [r](http://x)"
     )
 
-    assert strip_inline_images(content) == (
+    assert strip_rendered_files(content) == (
         "see [image: Sales \\[Q3\\]] and [r](http://x)"
     )
 
@@ -656,3 +668,300 @@ def test_download_token_never_reaches_the_request_logs(
     paths = [e["path"] for e in logs if e["event"].startswith("request.")]
     assert paths and all(p == "/v1/files/<redacted>" for p in paths)
     assert token not in repr(logs)
+
+
+# ---------------------------------------------------------------------------
+# Security review of #319: hardening
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "![" * 50_000,
+        "![](data:" * 50_000,
+        "[](" * 50_000,
+        "[a](http://x/v1/files/" * 50_000,
+        "[" + "\\[" * 50_000,
+    ],
+    ids=["image-openers", "data-uris", "link-openers", "download-urls", "escapes"],
+)
+def test_strip_rendered_files_is_fast_on_hostile_input(hostile: str) -> None:
+    start = time.monotonic()
+
+    strip_rendered_files(hostile)
+
+    assert time.monotonic() - start < 1.0
+
+
+def test_strip_rendered_files_replaces_download_links_with_a_placeholder() -> None:
+    token = "T" * 43
+    content = (
+        f"[ventas \\(Q3\\).csv](https://chat.example.com/v1/files/{token}) - Sales\n"
+        f"![chart.png](http://testserver/v1/files/{token})\n"
+        f"raw http://testserver/v1/files/{token} and [r](http://x)"
+    )
+
+    stripped = strip_rendered_files(content)
+
+    assert token not in stripped
+    assert stripped == (
+        "[file: ventas \\(Q3\\).csv] - Sales\n"
+        "[file: chart.png]\n"
+        "raw http://testserver/v1/files/<redacted> and [r](http://x)"
+    )
+
+
+def test_with_output_files_download_links_in_history_never_reach_the_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime = _fake_runtime()
+    client = TestClient(
+        _app(runtime, monkeypatch, output_files=_config(tmp_path, _Hook()))
+    )
+    token = "k" * 43
+    user_text = f"open [x](http://testserver/v1/files/{token})"
+
+    _post(
+        client,
+        [
+            {"role": "user", "content": user_text},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": f"[a.csv](http://t/v1/files/{token})"}
+                ],
+            },
+            {"role": "user", "content": "thanks"},
+        ],
+    )
+
+    sent = runtime.run_turn_with_usage.await_args.kwargs["messages"]
+    assert sent[0].content == user_text
+    assert token not in repr(sent[1].content)
+    assert "[file: a.csv]" in repr(sent[1].content)
+
+
+def test_uvicorn_access_log_redacts_the_download_token() -> None:
+    from agents_system.observability import setup_logging
+
+    setup_logging()
+    setup_logging()  # idempotent: one filter, not two
+    access = logging.getLogger("uvicorn.access")
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Capture()
+    access.addHandler(handler)
+    old_level = access.level
+    access.setLevel(logging.INFO)
+    token = "Z" * 43
+    try:
+        # uvicorn's own access-log call (protocols/http/h11_impl.py).
+        access.info(
+            '%s - "%s %s HTTP/%s" %d',
+            "127.0.0.1:5000",
+            "GET",
+            f"/v1/files/{token}?download=1",
+            "1.1",
+            200,
+        )
+        access.info(
+            '%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "GET", "/v1/models", "1.1", 200
+        )
+    finally:
+        access.removeHandler(handler)
+        access.setLevel(old_level)
+
+    messages = [record.getMessage() for record in records]
+    assert messages == [
+        '127.0.0.1:5000 - "GET /v1/files/<redacted> HTTP/1.1" 200',
+        '127.0.0.1:5000 - "GET /v1/models HTTP/1.1" 200',
+    ]
+    assert (
+        len([f for f in access.filters if type(f).__name__ == "DownloadTokenFilter"])
+        == 1
+    )
+
+
+def _path_hook(path: Path) -> _Hook:
+    return _Hook(
+        OutputFile(filename="f.txt", mime_type="text/plain", path=path),
+        OutputFile(filename="ok.txt", mime_type="text/plain", data=b"fine"),
+    )
+
+
+def _skips_for(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, hook: Any, **overrides: Any
+) -> tuple[str, list[dict[str, Any]]]:
+    client = TestClient(
+        _app(
+            _fake_runtime(),
+            monkeypatch,
+            output_files=_config(tmp_path, hook, **overrides),
+        )
+    )
+    with structlog.testing.capture_logs() as logs:
+        content = _content(_post(client))
+    return content, [e for e in logs if e["event"] == "adapter.output_file_skipped"]
+
+
+def test_a_symlinked_path_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_bytes(b"DATABASE_URL=postgres://u:p@h/db")
+    link = tmp_path / "innocent.txt"
+    link.symlink_to(secret)
+
+    content, skipped = _skips_for(monkeypatch, tmp_path, _path_hook(link))
+
+    assert "[f.txt]" not in content and "[ok.txt](" in content
+    assert [e["reason"] for e in skipped] == ["not_a_regular_file"]
+
+
+@pytest.mark.parametrize("make", ["fifo", "dev_zero"])
+def test_a_non_regular_file_is_refused_without_blocking(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, make: str
+) -> None:
+    if make == "fifo":
+        path = tmp_path / "pipe"
+        os.mkfifo(path)
+    else:
+        path = Path("/dev/zero")
+        if not path.exists():
+            pytest.skip("no /dev/zero here")
+
+    content, skipped = _skips_for(monkeypatch, tmp_path, _path_hook(path))
+
+    assert "[f.txt]" not in content and "[ok.txt](" in content
+    assert [e["reason"] for e in skipped] == ["not_a_regular_file"]
+
+
+def test_a_file_whose_size_lies_is_read_only_up_to_the_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = Path("/proc/self/status")  # a regular file whose st_size is 0
+    if not path.exists() or path.stat().st_size != 0:
+        pytest.skip("no zero-size /proc file here")
+
+    content, skipped = _skips_for(
+        monkeypatch, tmp_path, _path_hook(path), max_file_bytes=10
+    )
+
+    assert "[f.txt]" not in content
+    assert [(e["reason"], e["size"], e["limit"]) for e in skipped] == [
+        ("too_large", 11, 10)
+    ]
+
+
+async def test_cleanup_only_touches_the_stores_own_files(tmp_path: Path) -> None:
+    clock = _Clock(now=time.time())
+    directory = tmp_path / "files"
+    store = LocalDirectoryFileStore(directory, clock=clock, stale_tmp_s=60)
+    token = await store.put(b"x", filename="a.txt", mime_type="text/plain", ttl_s=10)
+    foreign = {
+        "package.json": b'{"name": "app"}',
+        "notes.bin": b"mine",
+        ("a" * 64) + ".json.bak": b"{}",
+        "report.json.tmp": b"draft",
+    }
+    for name, data in foreign.items():
+        (directory / name).write_bytes(data)
+    stale = directory / (("b" * 64) + ".bin.tmp")
+    stale.write_bytes(b"half")
+    os.utime(stale, (clock.now - 120, clock.now - 120))
+    fresh = directory / (("c" * 64) + ".json.tmp")
+    fresh.write_bytes(b"{")
+    clock.now += 11
+
+    await store.cleanup()
+
+    assert await store.get(token) is None
+    for name, data in foreign.items():
+        assert (directory / name).read_bytes() == data
+    assert not stale.exists()
+    assert fresh.exists()
+
+
+def test_files_beyond_the_per_turn_count_are_skipped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    hook = _Hook(
+        *(
+            OutputFile(filename=f"f{i}.txt", mime_type="text/plain", data=b"x")
+            for i in range(4)
+        )
+    )
+
+    content, skipped = _skips_for(monkeypatch, tmp_path, hook, max_files_per_turn=2)
+
+    assert "[f0.txt](" in content and "[f1.txt](" in content
+    assert "f2" not in content and "f3" not in content
+    assert [(e["reason"], e["index"]) for e in skipped] == [
+        ("too_many_files", 2),
+        ("too_many_files", 3),
+    ]
+
+
+def test_files_beyond_the_per_turn_total_are_skipped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    hook = _Hook(
+        OutputFile(filename="a.txt", mime_type="text/plain", data=b"a" * 6),
+        OutputFile(filename="b.txt", mime_type="text/plain", data=b"b" * 6),
+        OutputFile(filename="c.txt", mime_type="text/plain", data=b"c" * 4),
+    )
+
+    content, skipped = _skips_for(monkeypatch, tmp_path, hook, max_total_bytes=10)
+
+    assert "[a.txt](" in content and "[c.txt](" in content and "b.txt" not in content
+    assert [(e["reason"], e["index"]) for e in skipped] == [("turn_total_too_large", 1)]
+
+
+@pytest.mark.parametrize(
+    "overrides", [{"max_files_per_turn": 0}, {"max_total_bytes": 0}]
+)
+def test_output_files_refuses_bad_per_turn_caps(
+    tmp_path: Path, overrides: dict[str, Any]
+) -> None:
+    with pytest.raises(ValueError):
+        _config(tmp_path, _Hook(), **overrides)
+
+
+async def test_the_local_store_hands_back_an_open_file_not_its_bytes(
+    tmp_path: Path,
+) -> None:
+    store = LocalDirectoryFileStore(tmp_path / "files")
+    token = await store.put(b"abc", filename="a.txt", mime_type="text/plain", ttl_s=60)
+
+    stored = await store.get(token)
+
+    assert stored is not None and stored.data is None and stored.size == 3
+    for path in (tmp_path / "files").iterdir():
+        path.unlink()  # an open handle survives the expiry sweep
+    assert _read(stored) == b"abc"
+
+
+def test_a_download_is_streamed_with_its_length_and_headers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = os.urandom(300_000)
+    hook = _Hook(
+        OutputFile(filename="big.bin", mime_type="application/zip", data=payload)
+    )
+    client = TestClient(
+        _app(_fake_runtime(), monkeypatch, output_files=_config(tmp_path, hook))
+    )
+    url, _ = URL_RE.search(_content(_post(client))).groups()  # type: ignore[union-attr]
+
+    download = client.get(url)
+
+    assert download.content == payload
+    assert download.headers["content-length"] == str(len(payload))
+    assert download.headers["content-type"] == "application/zip"
+    assert download.headers["x-content-type-options"] == "nosniff"
+    assert download.headers["cache-control"] == "private, no-store"

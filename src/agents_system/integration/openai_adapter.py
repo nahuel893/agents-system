@@ -32,6 +32,7 @@ import json
 import secrets
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import AsyncExitStack
 from typing import Annotated, Any
 
@@ -42,6 +43,7 @@ from agents_system.subject import TurnActor, TurnSubject
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Request, Response
+    from fastapi.responses import StreamingResponse
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 except ImportError as exc:
     raise_missing_extra("server", "The OpenAI-compatible adapter", exc)
@@ -51,10 +53,11 @@ from agents_system.config import get_settings
 from agents_system.integration.body_limits import read_bounded_body
 from agents_system.integration.output_files import (
     OutputFiles,
+    StoredFile,
     append_to_content,
     content_disposition,
     render_output_files,
-    strip_inline_images,
+    strip_rendered_files,
     validated_files,
 )
 from agents_system.integration.request_context import (
@@ -330,9 +333,10 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     openai_messages: list[dict[str, Any]] = body.get("messages", [])
     output_files: OutputFiles | None = getattr(request.app.state, "output_files", None)
     if output_files is not None:
-        # #319 -- the client resends the whole history, inline images the
-        # adapter rendered included: keep their base64 away from the model.
-        openai_messages = _without_inline_images(openai_messages)
+        # #319 -- the client resends the whole history, the files the
+        # adapter rendered included: keep their base64 and their live
+        # download tokens away from the model and its provider.
+        openai_messages = _without_rendered_files(openai_messages)
     lc_messages = map_messages(openai_messages)
 
     # ADR-011: who this turn is for. Only a deployment-supplied resolver over
@@ -499,11 +503,12 @@ async def _with_output_files(
     return append_to_content(text, parts)
 
 
-def _without_inline_images(
+def _without_rendered_files(
     openai_messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Assistant messages with every inline ``data:`` image replaced by its
-    label; user messages untouched."""
+    """Assistant messages with every file the adapter rendered replaced by a
+    token-free placeholder (``strip_rendered_files``); user messages
+    untouched."""
     result: list[dict[str, Any]] = []
     for msg in openai_messages:
         if not isinstance(msg, dict) or msg.get("role") != "assistant":
@@ -511,10 +516,10 @@ def _without_inline_images(
             continue
         content = msg.get("content")
         if isinstance(content, str):
-            result.append({**msg, "content": strip_inline_images(content)})
+            result.append({**msg, "content": strip_rendered_files(content)})
         elif isinstance(content, list):
             parts = [
-                {**part, "text": strip_inline_images(part["text"])}
+                {**part, "text": strip_rendered_files(part["text"])}
                 if isinstance(part, dict) and isinstance(part.get("text"), str)
                 else part
                 for part in content
@@ -551,17 +556,29 @@ async def download_output_file(token: str, request: Request) -> Response:
         stored = None
     if stored is None:
         raise HTTPException(status_code=404, detail=_FILE_NOT_FOUND)
-    return Response(
-        content=stored.data,
-        media_type=stored.mime_type,
-        headers={
-            "Content-Disposition": content_disposition(stored.filename),
-            "X-Content-Type-Options": "nosniff",
-            "Cache-Control": "private, no-store",
-            "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Referrer-Policy": "no-referrer",
-        },
+    headers = {
+        "Content-Disposition": content_disposition(stored.filename),
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Referrer-Policy": "no-referrer",
+    }
+    if stored.file is None:
+        return Response(
+            content=stored.data, media_type=stored.mime_type, headers=headers
+        )
+    headers["Content-Length"] = str(stored.size)
+    return StreamingResponse(
+        _stream(stored), media_type=stored.mime_type, headers=headers
     )
+
+
+def _stream(stored: StoredFile) -> Iterator[bytes]:
+    """The stored file in chunks, from disk; the handle closes at the end."""
+    assert stored.file is not None
+    with stored.file as handle:
+        while chunk := handle.read(64 * 1024):
+            yield chunk
 
 
 def _usage_payload(usage: Any) -> dict[str, int] | None:
