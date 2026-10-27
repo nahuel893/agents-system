@@ -54,4 +54,12 @@ Not in scope: #319 itself, channel turns, any business concept in the library.
   - Docs: `docs/platform/deployment.md` and `docs/platform_es/deployment.md` (new section), `features.md` row EN + ES marked as coming in the next release.
 - 2026-10-27: T2 done. `uv run ruff check .`: all checks passed. `uv run ruff format --check .`: 620 files already formatted. `uv run mypy src/`: no issues in 106 source files. `uv run pytest -q`: 4001 passed, 262 deselected, 17 xfailed. Forbidden-terms scan over changed files: clean.
   - Note: the new test file was first named `tests/test_adapter_request_context.py` and broke two log-capture tests in `tests/test_agent_runtime.py` by ordering: any earlier test that calls `create_app` runs `setup_logging()` and switches structlog to JSON. Pre-existing; unchanged files reproduce it (`pytest tests/test_openai_adapter.py tests/test_agent_runtime.py` fails the same two tests). Renamed to sort after; the fragility itself is a follow-up candidate.
-- Next: T3 live scenarios (parent), then T4.
+- 2026-10-27: parent spot check: `pytest -q tests/test_openai_adapter_request_context.py tests/test_openai_adapter.py`: 52 passed. Review assess over origin/main..0dd6330: risk medium, `slice_budget_reached`. The preflight STATUS stopped with `rdd_disabled`: receipt-driven development is off globally, so no native review runs; the medium tier is covered by the writer's self-verification (Opus) plus this spot check.
+- 2026-10-27: T3 done (delegated verification), on `claude-haiku-5-5` with `EVAL_RUNS=3` (the reference model's key answers 401):
+  - `tests/test_live_eval_phase1.py`: 3 passed (`sql_query` 3/3).
+  - `tests/test_live_smoke.py`: 2 passed.
+  - `tests/test_live_eval_composition.py`: 3 passed, 11 scenarios at 3/3.
+  - `tests/test_live_eval_capabilities.py`: 17 passed, 1 failed. `escalation_builtin_default` held 2/3 against a 100% threshold, and fails the same way on base 98aa9e8, so it is pre-existing.
+  - `tests/test_live_eval_guardrails.py`: 1 passed.
+  - No live scenario configures a hook, so these runs show no regression when the hook is absent; the hook's own behavior is covered offline.
+- Next: push and PR.
