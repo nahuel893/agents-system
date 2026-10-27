@@ -340,6 +340,56 @@ app = create_app(
 
 A library caller that runs turns itself passes the same text directly: `run_turn(..., trusted_context="...")`.
 
+### Files a turn produces, through the OpenAI-compatible API
+
+A channel turn can deliver the files it produced (a spreadsheet, a chart) because the application sends them through the channel itself. Chat completions has no field for assistant files, so the adapter answers text only unless the application hands it the files:
+
+```python
+from agents_system.integration.output_files import (
+    LocalDirectoryFileStore,
+    OutputFile,
+    OutputFiles,
+)
+from agents_system.integration.request_context import AdapterRequestInfo
+
+
+async def turn_files(info: AdapterRequestInfo, messages) -> list[OutputFile]:
+    # Find what this turn wrote to this user's workspace.
+    return [
+        OutputFile(filename="sales.csv", mime_type="text/csv", path=...),
+        OutputFile(
+            filename="chart.png",
+            mime_type="image/png",
+            data=png,
+            caption="Sales by region",
+        ),
+    ]
+
+
+app = create_app(
+    ...,
+    output_files=OutputFiles(
+        hook=turn_files,
+        store=LocalDirectoryFileStore("/var/lib/my-app/output-files"),
+        inline_image_max_bytes=256 * 1024,  # the default
+        max_file_bytes=20 * 1024 * 1024,  # the default
+        ttl_s=3600,  # the default
+        public_base_url="https://chat.example.com",  # optional
+    ),
+)
+```
+
+- **The hook runs after the turn.** The adapter awaits it once per request, after the turn finished and released its capacity slot, with the same `AdapterRequestInfo` the [per-request context hook](#per-request-context-for-the-openai-compatible-api) gets (so `info.subject` says whose turn it was) and the turn's messages. It returns `OutputFile`s: `filename`, `mime_type` (a bare `type/subtype`), exactly one of `data` (bytes) or `path`, and an optional `caption`. `None` or an empty list adds nothing.
+- **Rendered as Markdown a client already shows.** Each file is appended to the assistant `content`, after the text, one per paragraph. An image at or below `inline_image_max_bytes` becomes `![caption](data:image/png;base64,...)`. A larger image becomes a Markdown image pointing to a download URL, and any other file a link, `[sales.csv](https://.../v1/files/<token>)`, followed by its caption. Filenames and captions are escaped, so they cannot break the Markdown.
+- **Download URLs are bearer-free capability links.** `GET /v1/files/{token}` serves the file without the adapter's bearer key, so a browser can open it from the chat. The token is the only authority: 43 URL-safe characters from `secrets`, stored only as its SHA-256 hash, with no listing route. Keep the TTL short: anyone who sees a link (a shared screenshot, a forwarded message, a proxy or access log) can download the file until it expires. The URL is built from the request's base URL; set `public_base_url` when the adapter sits behind a proxy that rewrites it.
+- **Expired, unknown or malformed: the same 404.** A link stops working `ttl_s` seconds after the reply. Every miss answers the same `404 Not Found` a missing route answers, so a probe cannot tell whether a file ever existed. A download is served as an attachment with its stored MIME type, a sanitized filename, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store` and a sandboxing `Content-Security-Policy`.
+- **Limits.** A file above `max_file_bytes` is left out and logged as `adapter.output_file_skipped` (`reason="too_large"`, its `size` and the `limit`); the other files and the text still answer. A file the adapter cannot read, or the store refuses, is skipped the same way.
+- **A failing hook answers the text.** A hook that raises, or returns anything but a list of `OutputFile`, logs `adapter.output_files_failed` with the stack and the reply carries the text alone. This differs from the context hook on purpose: the turn already ran and its cost is spent, so failing the request would throw a good answer away.
+- **Storage is a port.** `LocalDirectoryFileStore` keeps each file under a server-chosen name in one directory (never the client filename), deletes it once expired when looked up, and sweeps expired files at most once a minute when storing. Several processes can share the directory. Another backend implements `OutputFileStore`: `put` returns a new token, `get` returns the file or `None`, `cleanup` deletes expired files.
+- **Inline images do not reach the model twice.** A client resends the whole history, inline images included. With `output_files` set, the adapter replaces each inline `data:` image in an earlier assistant message with `[image: <caption>]` before the model sees it, so base64 never counts against the context.
+- **Request-local.** Each request passes its own `info` and messages to the hook and renders its own files; concurrent requests never see each other's.
+- **Nothing configured, nothing changes.** Without `output_files`, responses are byte-identical to before and `/v1/files/{token}` is not mounted.
+
 ### Migrating from the old runtime ids
 
 Before ADR-004, the Settings-driven boot read the role and the deployment out of the runtime id itself: `acme__sales-agent`, or `_generic__sales-agent` for no deployment. That scheme is gone. A runtime id is only a key, and a deployment still configured the old way fails boot, naming the unregistered id and pointing at `AGENT_REGISTRATIONS`. To migrate:

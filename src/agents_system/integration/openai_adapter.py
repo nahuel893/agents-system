@@ -3,6 +3,10 @@
 Exposes:
   GET  /v1/models            — list of configured agent runtimes in OpenAI models-list shape
   POST /v1/chat/completions  — forward to AgentRuntime.run_turn; non-streaming only
+  GET  /v1/files/{token}     — download an output file (#319); mounted only
+                               when create_app(output_files=...) is set, and
+                               served without the bearer key (the token is
+                               the capability)
 
 Auth:
   If Settings.adapter_api_key is set, every /v1/* request must carry
@@ -37,7 +41,7 @@ from agents_system.extras import raise_missing_extra
 from agents_system.subject import TurnActor, TurnSubject
 
 try:
-    from fastapi import APIRouter, Depends, HTTPException, Request
+    from fastapi import APIRouter, Depends, HTTPException, Request, Response
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 except ImportError as exc:
     raise_missing_extra("server", "The OpenAI-compatible adapter", exc)
@@ -45,6 +49,14 @@ from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 
 from agents_system.config import get_settings
 from agents_system.integration.body_limits import read_bounded_body
+from agents_system.integration.output_files import (
+    OutputFiles,
+    append_to_content,
+    content_disposition,
+    render_output_files,
+    strip_inline_images,
+    validated_files,
+)
 from agents_system.integration.request_context import (
     DEFAULT_ADAPTER_CHANNEL,
     AdapterRequestInfo,
@@ -55,6 +67,7 @@ logger = structlog.get_logger()
 _http_bearer = HTTPBearer(auto_error=False)
 
 openai_router = APIRouter(prefix="/v1", tags=["openai-adapter"])
+output_files_router = APIRouter(prefix="/v1", tags=["openai-adapter"])
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +328,11 @@ async def chat_completions(request: Request) -> dict[str, Any]:
 
     # Map messages (client system dropped — AD#6)
     openai_messages: list[dict[str, Any]] = body.get("messages", [])
+    output_files: OutputFiles | None = getattr(request.app.state, "output_files", None)
+    if output_files is not None:
+        # #319 -- the client resends the whole history, inline images the
+        # adapter rendered included: keep their base64 away from the model.
+        openai_messages = _without_inline_images(openai_messages)
     lc_messages = map_messages(openai_messages)
 
     # ADR-011: who this turn is for. Only a deployment-supplied resolver over
@@ -331,18 +349,14 @@ async def chat_completions(request: Request) -> dict[str, Any]:
     # Passed explicitly into this request's turn, so concurrent requests can
     # never see each other's. No hook, or nothing to say, leaves the call
     # below exactly as it was.
-    trusted_context = await _request_context(
-        request,
-        AdapterRequestInfo(
-            runtime_id=model_id,
-            channel=getattr(
-                request.app.state, "adapter_channel", DEFAULT_ADAPTER_CHANNEL
-            ),
-            request_id=structlog.contextvars.get_contextvars().get("request_id"),
-            session_id=session_id,
-            subject=subject,
-        ),
+    request_info = AdapterRequestInfo(
+        runtime_id=model_id,
+        channel=getattr(request.app.state, "adapter_channel", DEFAULT_ADAPTER_CHANNEL),
+        request_id=structlog.contextvars.get_contextvars().get("request_id"),
+        session_id=session_id,
+        subject=subject,
     )
+    trusted_context = await _request_context(request, request_info)
     context_kwargs: dict[str, str] = (
         {"trusted_context": trusted_context} if trusted_context else {}
     )
@@ -422,6 +436,10 @@ async def chat_completions(request: Request) -> dict[str, Any]:
 
     # Extract final assistant text
     assistant_text = _extract_assistant_text(turn_result.messages)
+    if output_files is not None:
+        assistant_text = await _with_output_files(
+            request, output_files, request_info, turn_result.messages, assistant_text
+        )
 
     now = int(time.time())
     return {
@@ -446,6 +464,104 @@ async def chat_completions(request: Request) -> dict[str, Any]:
         # CompletionUsage requires non-Optional ints).
         "usage": _usage_payload(turn_result.usage),
     }
+
+
+async def _with_output_files(
+    request: Request,
+    config: OutputFiles,
+    info: AdapterRequestInfo,
+    messages: list[AnyMessage],
+    text: str,
+) -> str:
+    """``text`` followed by the files the application's hook returns (#319).
+
+    Called after the turn, outside its capacity slot, with this request's
+    own ``info`` and messages, so concurrent requests never see each other's
+    files. Unlike the request-context hook, a failure here does not fail the
+    request: the turn already ran and its cost is spent, so the reply carries
+    the text alone and the failure is logged. The hook's error never reaches
+    the client.
+    """
+    log_fields = {"model_id": info.runtime_id, "session_id": info.session_id}
+    try:
+        files = validated_files(await config.hook(info, messages))
+    except Exception:
+        structlog.get_logger(__name__).exception(
+            "adapter.output_files_failed", **log_fields
+        )
+        return text
+    if not files:
+        return text
+    base_url = config.public_base_url or str(request.base_url).rstrip("/")
+    parts = await render_output_files(
+        config, files, base_url=base_url, log_fields=log_fields
+    )
+    return append_to_content(text, parts)
+
+
+def _without_inline_images(
+    openai_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Assistant messages with every inline ``data:`` image replaced by its
+    label; user messages untouched."""
+    result: list[dict[str, Any]] = []
+    for msg in openai_messages:
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
+            result.append(msg)
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            result.append({**msg, "content": strip_inline_images(content)})
+        elif isinstance(content, list):
+            parts = [
+                {**part, "text": strip_inline_images(part["text"])}
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+                else part
+                for part in content
+            ]
+            result.append({**msg, "content": parts})
+        else:
+            result.append(msg)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/files/{token} -- #319, mounted only when output files are configured
+# ---------------------------------------------------------------------------
+
+# FastAPI's own answer for a path that matches no route, so an unknown,
+# expired or malformed token is indistinguishable from a missing route.
+_FILE_NOT_FOUND = "Not Found"
+
+
+@output_files_router.get("/files/{token}")
+async def download_output_file(token: str, request: Request) -> Response:
+    """Serve one output file by its token, with no bearer key.
+
+    The token is the only authority: unguessable, short-lived, stored as a
+    hash. There is no listing route. Every miss answers the same 404.
+    """
+    config: OutputFiles | None = getattr(request.app.state, "output_files", None)
+    if config is None:
+        raise HTTPException(status_code=404, detail=_FILE_NOT_FOUND)
+    try:
+        stored = await config.store.get(token)
+    except Exception:
+        structlog.get_logger(__name__).exception("adapter.output_file_read_failed")
+        stored = None
+    if stored is None:
+        raise HTTPException(status_code=404, detail=_FILE_NOT_FOUND)
+    return Response(
+        content=stored.data,
+        media_type=stored.mime_type,
+        headers={
+            "Content-Disposition": content_disposition(stored.filename),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 
 def _usage_payload(usage: Any) -> dict[str, int] | None:
