@@ -26,16 +26,18 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import errno
 import hashlib
 import json
 import os
 import re
 import secrets
+import stat
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, BinaryIO, Protocol, runtime_checkable
 from urllib.parse import quote
 
 import structlog
@@ -46,6 +48,8 @@ from agents_system.integration.request_context import AdapterRequestInfo
 DEFAULT_INLINE_IMAGE_MAX_BYTES = 256 * 1024
 DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024
 DEFAULT_TTL_S = 3600.0
+DEFAULT_MAX_FILES_PER_TURN = 10
+DEFAULT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 
 # type/subtype only: no parameters, nothing that could end a header or a
 # data: URI early.
@@ -55,7 +59,24 @@ _MIME_RE = re.compile(
 # secrets.token_urlsafe(32) is 43 characters; anything else is not ours.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{43,128}")
 _MARKDOWN_SPECIAL_RE = re.compile(r"([\\`*_\[\]()<>!#|~])")
-_INLINE_IMAGE_RE = re.compile(r"!\[((?:[^\]\\\n]|\\.)*)\]\(data:[^)\s]*\)")
+# The rendered-file patterns run over client-sent history, so they must stay
+# linear on hostile input (#319 review, B1). A match starts only at an
+# unescaped `[` (or `![`), a label cannot contain an unescaped bracket and is
+# bounded in length, and a URL stops at the first bracket, so no two match
+# attempts scan the same text. Labels from `markdown_label` escape every
+# bracket, so the adapter's own output always matches.
+_LABEL_MAX = 1000
+_LABEL = rf"((?:[^\[\]\\\n]|\\.){{0,{_LABEL_MAX}}})"
+_INLINE_IMAGE_RE = re.compile(r"(?<!\\)!\[" + _LABEL + r"\]\(data:[^)\s\[\]]*\)")
+_DOWNLOAD_LINK_RE = re.compile(
+    r"(?:(?<!\\)!|(?<![\\!]))\["
+    + _LABEL
+    + r"\]\([^)\s\[\]]*?/v1/files/[A-Za-z0-9_-]+\)"
+)
+_DOWNLOAD_PATH_RE = re.compile(r"/v1/files/[A-Za-z0-9_-]+")
+# The store's own names: a SHA-256 key, then .json, .bin or a temp file.
+_RECORD_RE = re.compile(r"([0-9a-f]{64})\.json")
+_TMP_RE = re.compile(r"[0-9a-f]{64}\.(?:json|bin)\.tmp")
 
 
 @dataclass(frozen=True)
@@ -107,11 +128,22 @@ the text alone: the turn already ran and its cost is spent.
 
 @dataclass(frozen=True)
 class StoredFile:
-    """A file a store hands back for a download."""
+    """A file a store hands back for a download.
+
+    Exactly one of ``data`` (the bytes) or ``file`` (a handle open for
+    reading, which the download streams and then closes) is set. ``size`` is
+    the length in bytes.
+    """
 
     filename: str
     mime_type: str
-    data: bytes
+    size: int
+    data: bytes | None = None
+    file: BinaryIO | None = None
+
+    def __post_init__(self) -> None:
+        if (self.data is None) == (self.file is None):
+            raise ValueError("StoredFile takes exactly one of data or file")
 
 
 @runtime_checkable
@@ -140,8 +172,12 @@ class LocalDirectoryFileStore:
     token, never the client filename or the token itself: a directory listing
     reveals no token, and a lookup never compares a token byte by byte.
     Expired files are deleted when looked up and by ``cleanup``, which ``put``
-    also runs at most once every ``cleanup_interval_s``. Several processes
-    can share the directory.
+    also runs at most once every ``cleanup_interval_s``. ``cleanup`` touches
+    only the store's own names, so a directory that holds anything else keeps
+    it; temp files a crashed write left behind go once older than
+    ``stale_tmp_s``. Several processes can share the directory. ``get`` hands
+    back an open file, so a download streams from disk and survives the
+    file's removal mid-download.
     """
 
     def __init__(
@@ -150,10 +186,12 @@ class LocalDirectoryFileStore:
         *,
         clock: Callable[[], float] = time.time,
         cleanup_interval_s: float = 60.0,
+        stale_tmp_s: float = DEFAULT_TTL_S,
     ) -> None:
         self._directory = Path(directory)
         self._clock = clock
         self._cleanup_interval_s = cleanup_interval_s
+        self._stale_tmp_s = stale_tmp_s
         self._next_cleanup = float("-inf")
 
     async def put(
@@ -189,11 +227,19 @@ class LocalDirectoryFileStore:
             self._remove(key)
             return None
         try:
-            data = (self._directory / f"{key}.bin").read_bytes()
+            handle = (self._directory / f"{key}.bin").open("rb")
         except OSError:
             return None
+        try:
+            size = os.fstat(handle.fileno()).st_size
+        except OSError:
+            handle.close()
+            return None
         return StoredFile(
-            filename=meta["filename"], mime_type=meta["mime_type"], data=data
+            filename=meta["filename"],
+            mime_type=meta["mime_type"],
+            size=size,
+            file=handle,
         )
 
     def _meta(self, key: str) -> dict[str, Any] | None:
@@ -213,14 +259,24 @@ class LocalDirectoryFileStore:
     def _cleanup(self, now: float) -> int:
         removed = 0
         try:
-            records = list(self._directory.glob("*.json"))
+            names = [entry.name for entry in os.scandir(self._directory)]
         except OSError:
             return 0
-        for record in records:
-            meta = self._meta(record.stem)
-            if meta is None or now >= meta["expires_at"]:
-                self._remove(record.stem)
-                removed += 1
+        for name in names:
+            record = _RECORD_RE.fullmatch(name)
+            if record is not None:
+                key = record.group(1)
+                meta = self._meta(key)
+                if meta is None or now >= meta["expires_at"]:
+                    self._remove(key)
+                    removed += 1
+            elif _TMP_RE.fullmatch(name):
+                path = self._directory / name
+                try:
+                    if now - path.stat().st_mtime > self._stale_tmp_s:
+                        path.unlink(missing_ok=True)
+                except OSError:
+                    pass
         return removed
 
     def _remove(self, key: str) -> None:
@@ -249,10 +305,12 @@ class OutputFiles:
 
     ``hook`` returns each turn's files. ``store`` keeps linked files until
     they expire. An image at or below ``inline_image_max_bytes`` is inlined
-    (``0`` links every image). A file above ``max_file_bytes`` is left out
-    and logged. A link expires ``ttl_s`` seconds after the reply. Links are
-    built from the request's base URL, or from ``public_base_url`` when the
-    adapter sits behind a proxy that rewrites it.
+    (``0`` links every image). A file above ``max_file_bytes``, beyond the
+    first ``max_files_per_turn``, or that would take the turn past
+    ``max_total_bytes`` is left out and logged. A link expires ``ttl_s``
+    seconds after the reply. Links are built from the request's base URL
+    (its ``Host`` header), or from ``public_base_url``, which production
+    should set.
     """
 
     hook: OutputFilesHook
@@ -261,6 +319,8 @@ class OutputFiles:
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES
     ttl_s: float = DEFAULT_TTL_S
     public_base_url: str | None = None
+    max_files_per_turn: int = DEFAULT_MAX_FILES_PER_TURN
+    max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES
 
     def __post_init__(self) -> None:
         if not callable(self.hook):
@@ -273,6 +333,10 @@ class OutputFiles:
             raise ValueError("OutputFiles.max_file_bytes must be > 0")
         if not isinstance(self.ttl_s, int | float) or not self.ttl_s > 0:
             raise ValueError("OutputFiles.ttl_s must be > 0")
+        if not _is_int(self.max_files_per_turn) or self.max_files_per_turn <= 0:
+            raise ValueError("OutputFiles.max_files_per_turn must be > 0")
+        if not _is_int(self.max_total_bytes) or self.max_total_bytes <= 0:
+            raise ValueError("OutputFiles.max_total_bytes must be > 0")
         if self.public_base_url is not None:
             if not isinstance(self.public_base_url, str) or not re.match(
                 r"https?://[^\s/]+", self.public_base_url
@@ -294,18 +358,24 @@ def _is_int(value: object) -> bool:
 
 def markdown_label(text: str) -> str:
     """``text`` made safe as Markdown link or image text: on one line, with
-    every character that could open or close markup backslash-escaped."""
-    one_line = " ".join(text.split())
+    every character that could open or close markup backslash-escaped, and
+    short enough that ``strip_rendered_files`` always recognizes it."""
+    one_line = " ".join(text.split())[:200]
     return _MARKDOWN_SPECIAL_RE.sub(r"\\\1", one_line)
 
 
-def strip_inline_images(content: str) -> str:
-    """Replace every inline ``data:`` image in ``content`` with its label.
+def strip_rendered_files(content: str) -> str:
+    """Take the files the adapter rendered back out of ``content``.
 
-    A client sends the whole history back on the next request, so an image
-    the adapter inlined would otherwise reach the model again as base64 text.
+    A client sends the whole history back on the next request. Without this,
+    an inline image would reach the model again as base64 text, and a
+    download link would hand a live token to the model provider. An inline
+    image becomes ``[image: label]``, a download link ``[file: label]``, and
+    any other download path loses its token.
     """
-    return _INLINE_IMAGE_RE.sub(r"[image: \1]", content)
+    content = _INLINE_IMAGE_RE.sub(r"[image: \1]", content)
+    content = _DOWNLOAD_LINK_RE.sub(r"[file: \1]", content)
+    return _DOWNLOAD_PATH_RE.sub("/v1/files/<redacted>", content)
 
 
 def append_to_content(text: str, parts: Sequence[str]) -> str:
@@ -342,16 +412,30 @@ async def render_output_files(
 ) -> list[str]:
     """Render ``files`` as Markdown, storing every one that is linked.
 
-    A file over the size limit, unreadable, or that the store refused is left
-    out and logged as ``adapter.output_file_skipped``; the others still
-    render.
+    A file over a limit, unreadable, not a regular file, or that the store
+    refused is left out and logged as ``adapter.output_file_skipped`` with
+    its ``reason``; the others still render.
     """
     log = structlog.get_logger(__name__)
     parts: list[str] = []
+    total = 0
     for index, file in enumerate(files):
         fields = {**log_fields, "index": index, "mime_type": file.mime_type}
+        if index >= config.max_files_per_turn:
+            log.warning(
+                "adapter.output_file_skipped",
+                reason="too_many_files",
+                limit=config.max_files_per_turn,
+                **fields,
+            )
+            continue
         try:
             data, size = await _load(file, config.max_file_bytes)
+        except _NotRegularFile:
+            log.warning(
+                "adapter.output_file_skipped", reason="not_a_regular_file", **fields
+            )
+            continue
         except OSError:
             log.warning("adapter.output_file_skipped", reason="unreadable", **fields)
             continue
@@ -364,10 +448,25 @@ async def render_output_files(
                 **fields,
             )
             continue
+        if total + size > config.max_total_bytes:
+            log.warning(
+                "adapter.output_file_skipped",
+                reason="turn_total_too_large",
+                size=size,
+                limit=config.max_total_bytes,
+                **fields,
+            )
+            continue
+        total += size
         part = await _render(config, file, data, base_url, log, fields)
         if part:
             parts.append(part)
     return parts
+
+
+class _NotRegularFile(Exception):
+    """The hook's path is a symlink, a device, a FIFO or anything but a
+    regular file."""
 
 
 async def _load(file: OutputFile, limit: int) -> tuple[bytes | None, int]:
@@ -375,13 +474,42 @@ async def _load(file: OutputFile, limit: int) -> tuple[bytes | None, int]:
     if file.data is not None:
         size = len(file.data)
         return (file.data if size <= limit else None), size
-    path = Path(file.path or "")
-    size = (await asyncio.to_thread(path.stat)).st_size
-    if size > limit:
-        return None, size
-    data = await asyncio.to_thread(path.read_bytes)
-    # The file can grow between the stat and the read.
-    return (data if len(data) <= limit else None), len(data)
+    return await asyncio.to_thread(_read_regular_file, Path(file.path or ""), limit)
+
+
+def _read_regular_file(path: Path, limit: int) -> tuple[bytes | None, int]:
+    """Read at most ``limit + 1`` bytes of a regular file, never a symlink.
+
+    The reported size is not trusted (``/proc`` files report 0), so the read
+    itself is bounded. ``O_NONBLOCK`` keeps a FIFO from blocking the open;
+    the ``S_ISREG`` check then refuses it, a device or a socket. Only the
+    last path component is checked for a symlink: a hook resolves its paths
+    under a root it owns.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow and path.is_symlink():
+        raise _NotRegularFile
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise _NotRegularFile from None
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise _NotRegularFile
+        chunks: list[bytes] = []
+        read = 0
+        while read <= limit:
+            chunk = os.read(fd, min(1024 * 1024, limit + 1 - read))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            read += len(chunk)
+    finally:
+        os.close(fd)
+    return (b"".join(chunks) if read <= limit else None), read
 
 
 async def _render(
