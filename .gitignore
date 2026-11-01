@@ -57,8 +57,10 @@ skills-lock.json
 .codegraph/
 
 # Engram memory export (`engram sync`). The chunks are gzipped, so text scans
-# never see inside them, and they hold private working notes that have no
-# business in a public repository. Keep memories in Engram itself, not here.
+# never see inside them, and a raw export holds private working notes that have
+# no business in a public repository. The tracked export was redacted and
+# scanned (`rg -z`) before it was force-added; a new raw chunk stays ignored
+# until it gets the same treatment.
 .engram/
 
 # Host forensic dumps (lastb/last/journal output). Machine-local evidence, and
