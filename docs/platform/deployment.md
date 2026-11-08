@@ -307,6 +307,39 @@ OUTBOX_FALLBACK_REPLY='{"reports": "Algo salió mal con tu mensaje. Probá de nu
 - **Boot fails** for a policy that names a runtime it does not build, or an invalid value, naming the runtime.
 - **A crash is not covered.** A row whose worker died on its last attempt is closed at the next claim with the terminal audit event but no reply: the platform does not know the user's address there.
 
+### Per-request context for the OpenAI-compatible API
+
+A channel turn can carry deterministic context (the channel, today's date in the deployment's timezone, output-format rules) because the application builds it. A `/v1/chat/completions` turn is built by the adapter, so the application passes a hook instead:
+
+```python
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from agents_system.integration.request_context import AdapterRequestInfo
+
+
+async def request_context(info: AdapterRequestInfo) -> str | None:
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    return f"Channel: {info.channel}. Today is {today.isoformat()}."
+
+
+app = create_app(
+    ...,
+    request_context_hook=request_context,
+    adapter_channel="web-chat",  # default "openai-adapter"
+)
+```
+
+- **Input: platform metadata only.** The adapter awaits the hook once per request with a frozen `AdapterRequestInfo`: `runtime_id` (the requested model), `channel` (the `adapter_channel` label), `request_id` (the `x-request-id` response header), `session_id` (the turn's) and `subject` (the end user a `SubjectResolver` resolved, or `None`; see [End-user scope](end-user-scope.md)). Nothing from the request body reaches it.
+- **Output: trusted context in a fixed position.** The text it returns is appended to the system message, after the agent's own prompt, under a fixed `## Context for this request` header. The agent's prompt stays first and keeps priority; the context never replaces it. Client `system` messages are still dropped. `None` or blank text attaches nothing.
+- **Trusted versus untrusted.** Hook output is trusted: the application builds it, so it sits in the system message. User content stays untrusted, and so does any stored or external data. Never copy request text, a header value or a database row into the hook's output; pass that kind of data as an untrusted-data block (`run_turn(untrusted_data=...)`) instead.
+- **Never persisted.** Like the system prompt, the context is added when the model is called and never stored in the conversation state. It counts against `max_context_tokens`.
+- **Request-local.** Each request builds its own context and passes it to its own turn; concurrent requests never see each other's.
+- **Fail-closed.** A hook that raises, or returns anything but text or `None`, fails the request with a `500` (`The request context could not be built.`), logs `adapter.request_context_failed` with the stack, and runs no turn. The hook's error never reaches the client. The hook runs before the turn takes a capacity slot.
+- **No hook, no change.** Without `request_context_hook`, the adapter calls the runtime exactly as before.
+
+A library caller that runs turns itself passes the same text directly: `run_turn(..., trusted_context="...")`.
+
 ### Migrating from the old runtime ids
 
 Before ADR-004, the Settings-driven boot read the role and the deployment out of the runtime id itself: `acme__sales-agent`, or `_generic__sales-agent` for no deployment. That scheme is gone. A runtime id is only a key, and a deployment still configured the old way fails boot, naming the unregistered id and pointing at `AGENT_REGISTRATIONS`. To migrate:

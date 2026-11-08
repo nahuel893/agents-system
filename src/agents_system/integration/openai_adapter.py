@@ -45,6 +45,10 @@ from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 
 from agents_system.config import get_settings
 from agents_system.integration.body_limits import read_bounded_body
+from agents_system.integration.request_context import (
+    DEFAULT_ADAPTER_CHANNEL,
+    AdapterRequestInfo,
+)
 
 logger = structlog.get_logger()
 
@@ -235,6 +239,39 @@ async def _resolve_subject(request: Request) -> TurnSubject | None:
     return TurnSubject.for_participant(participant.id, channel="api")
 
 
+async def _request_context(request: Request, info: AdapterRequestInfo) -> str:
+    """The trusted context the application's hook builds for this request.
+
+    Issue #249. Empty when no hook is registered or the hook has nothing to
+    say. Fails closed: a hook that raises, or returns anything but text or
+    ``None``, answers a 500 and no turn runs, because a turn without the
+    context the application asked for (its channel's format rules, say)
+    would be a different turn, not a degraded one. The hook's own error never
+    reaches the client: it can carry a DSN or a customer's data.
+    """
+    hook = getattr(request.app.state, "request_context_hook", None)
+    if hook is None:
+        return ""
+    try:
+        text = await hook(info)
+        if text is not None and not isinstance(text, str):
+            raise TypeError(
+                f"request_context_hook returned {type(text).__name__}, "
+                "expected str or None"
+            )
+    except Exception:
+        structlog.get_logger(__name__).exception(
+            "adapter.request_context_failed",
+            model_id=info.runtime_id,
+            session_id=info.session_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="The request context could not be built. The failure has been logged.",
+        ) from None
+    return text.strip() if text else ""
+
+
 @openai_router.post("/chat/completions", dependencies=[Depends(verify_bearer)])
 async def chat_completions(request: Request) -> dict[str, Any]:
     """Forward a chat-completion request to the resolved AgentRuntime.
@@ -288,6 +325,27 @@ async def chat_completions(request: Request) -> dict[str, Any]:
 
     # Call AgentRuntime.run_turn
     session_id = str(uuid.uuid4())
+
+    # Issue #249 -- the application's per-request context, built from platform
+    # metadata only (never the body), before the turn takes a capacity slot.
+    # Passed explicitly into this request's turn, so concurrent requests can
+    # never see each other's. No hook, or nothing to say, leaves the call
+    # below exactly as it was.
+    trusted_context = await _request_context(
+        request,
+        AdapterRequestInfo(
+            runtime_id=model_id,
+            channel=getattr(
+                request.app.state, "adapter_channel", DEFAULT_ADAPTER_CHANNEL
+            ),
+            request_id=structlog.contextvars.get_contextvars().get("request_id"),
+            session_id=session_id,
+            subject=subject,
+        ),
+    )
+    context_kwargs: dict[str, str] = (
+        {"trusted_context": trusted_context} if trusted_context else {}
+    )
     # Permissions: omitted — run_turn defaults to the runtime's own resolved
     # grants (design AD-4). The adapter has no separate caller identity, so
     # the role's own permissions ARE the correct execution-time RBAC set.
@@ -344,6 +402,7 @@ async def chat_completions(request: Request) -> dict[str, Any]:
                 session_id=session_id,
                 subject=subject,
                 actor=actor,
+                **context_kwargs,
             )
         except Exception:
             # Anything escaping run_turn used to leave here as a raw 500 with
