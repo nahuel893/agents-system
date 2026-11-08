@@ -437,7 +437,9 @@ def test_an_oversize_file_is_skipped_and_logged(
     with structlog.testing.capture_logs() as logs:
         content = _content(_post(client))
 
-    assert "big" not in content
+    # "big." and not "big": ok.txt's link carries a random base64url token,
+    # which can contain "big" but never a ".".
+    assert "big." not in content
     assert "[ok.txt](" in content
     skipped = [e for e in logs if e["event"] == "adapter.output_file_skipped"]
     assert [(e["reason"], e["size"], e["limit"]) for e in skipped] == [
@@ -900,7 +902,9 @@ def test_files_beyond_the_per_turn_count_are_skipped(
     content, skipped = _skips_for(monkeypatch, tmp_path, hook, max_files_per_turn=2)
 
     assert "[f0.txt](" in content and "[f1.txt](" in content
-    assert "f2" not in content and "f3" not in content
+    # Match the filename with its dot: a download token is base64url, which has
+    # no ".", so a bare "f2" could match inside a token and fail at random.
+    assert "f2.txt" not in content and "f3.txt" not in content
     assert [(e["reason"], e["index"]) for e in skipped] == [
         ("too_many_files", 2),
         ("too_many_files", 3),
