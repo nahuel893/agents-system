@@ -4,9 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  # #330 -- a gate that only runs on a push never sees what changes outside the
+  # repository: a new advisory against a locked package, a runner image update.
+  # On 2026-11-08 main held 22 advisories (#328) that nothing reported until an
+  # unrelated PR went red. The weekly run turns main red on its own (Monday
+  # 06:00 UTC); workflow_dispatch re-runs it on demand.
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 # One run per PR or per main push. A newer push to a PR cancels the stale run;
-# runs on main are never cancelled, so every merged commit gets a full result.
+# runs on main (push, schedule, dispatch) are never cancelled, so every merged
+# commit and every weekly run gets a full result.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
