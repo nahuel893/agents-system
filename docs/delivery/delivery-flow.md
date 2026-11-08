@@ -121,6 +121,12 @@ not twice. A newer push to a pull request cancels the run it supersedes; runs
 on `main` are never cancelled. A branch without a pull request gets no CI
 until it has one.
 
+CI also runs on `main` every Monday at 06:00 UTC, and on demand through
+`workflow_dispatch` (#330). A push-only gate never sees what changes outside
+the repository: on 2026-11-08 `main` held 22 advisories against its locked
+dependencies (#328) and nothing reported them until an unrelated pull request
+went red. The weekly run turns `main` red on its own.
+
 Formatting is enforced: the `ci` job runs `ruff format --check .` and fails on
 drift, and the `ruff-format` pre-commit hook formats what a commit touches.
 
@@ -139,6 +145,10 @@ Dependencies and secrets are checked too: a `dependency-audit` job runs
 known vulnerability that is not explicitly allowlisted, and a `secret-scan`
 job runs `gitleaks` over each pull request's own commit range, with
 Dependabot enabled for `pip`/`uv` and GitHub Actions (ADR-002 H.29, H.30).
+Dependabot alerts and security updates are enabled on the repository as well
+(#330), so an advisory against a transitive package opens its own pull request
+instead of waiting for the weekly grouped update, which only moves direct
+minor and patch versions.
 
 ### 5. Review — required, and by the right person
 
@@ -229,21 +239,31 @@ and that the hook we added to catch it matched PEM headers exclusively.
 
 ## What is enforced, and what is not
 
-### Landed — branch protection on `main` (2026-08-30, #54)
+### Landed — branch protection on `main` (2026-08-30, #54; re-read 2026-11-08, #330)
 
-Read back from the API rather than trusted because a call returned `200`:
+Read back from the API rather than trusted because a call returned `200`. The
+table records the state read back on 2026-11-08, after #330 restored the
+up-to-date requirement; the 2026-08-30 settings had drifted in between, and
+this page had not followed.
 
 | Setting | Value |
 |---|---|
 | Pull request required | yes — a direct `push` to `main` is refused |
-| Required status checks | `ci`, `bi-readonly`, `audit-migration` |
-| Branch must be up to date before merge | yes |
-| Stale approvals dismissed on new commits | yes |
+| Required status checks | `ci`, `secret-scan`, `dependency-audit`, `predefined-role-governance-marker` |
+| Branch must be up to date before merge | yes (`strict: true`, restored by #330) |
 | Applies to administrators | yes |
 | Force pushes, branch deletion | both refused |
-| **Required approving reviews** | **`0`** |
+| **Required approving reviews** | **none** (`required_pull_request_reviews: null`) |
 
-That last row is the one deviation and it is deliberate. Every pull request in
+The up-to-date requirement is what makes a green check mean something: without
+it, a pull request merges on a result computed against an older `main`, and
+two pull requests that each pass alone can still break `main` together.
+
+The integration jobs (`db-integration`, `sandbox-integration` and the rest) run
+on every pull request but do not block a merge. Making the security-relevant
+ones required is a follow-up of #330.
+
+That last table row is the one deviation and it is deliberate. Every pull request in
 this repository is authored by the single account that owns it, including the
 ones a coding agent opens, because the agent uses that account's token — and
 GitHub does not permit self-approval. At `1`, no pull request could ever be
