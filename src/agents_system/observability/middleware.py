@@ -16,7 +16,7 @@ try:
 except ImportError as exc:
     raise_missing_extra("server", "The request ID middleware", exc)
 
-from agents_system.observability.logging import logger
+from agents_system.observability.logging import loggable_path, logger
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -27,7 +27,8 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         request_id = uuid4().hex[:8]
         structlog.contextvars.bind_contextvars(request_id=request_id)
-        logger.info("request.started", method=request.method, path=request.url.path)
+        path = loggable_path(request.url.path)
+        logger.info("request.started", method=request.method, path=path)
         start = time.monotonic()
         try:
             response = await call_next(request)
@@ -35,7 +36,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             logger.info(
                 "request.completed",
                 method=request.method,
-                path=request.url.path,
+                path=path,
                 status_code=response.status_code,
                 elapsed_ms=elapsed_ms,
             )
