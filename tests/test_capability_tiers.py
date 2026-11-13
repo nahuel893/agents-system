@@ -27,7 +27,7 @@ from agents_system.permissions import Run, UnknownPermissionNameError, resolve, 
 #: covers only Read/Write/Send/Exec/Spawn) -- declarative command-tool
 #: permissions are registered dynamically, one dedicated subclass per wire
 #: name (a class holds exactly one canonical name -- spec: "Unique wire
-#: name per class"), the same way `harness.loader._parse_command_tools`
+#: name per class"), the same way `harness.definition.command_tools._parse_command_tools`
 #: registers one per manifest-declared command tool. These two names
 #: mirror `tests/test_command_tools_*.py`'s own fixtures so the lower-level
 #: ToolSpec-construction tests below can exercise Run without going
