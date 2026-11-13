@@ -1012,7 +1012,7 @@ una bandera extra, no solo una expresión regular que se supone debe
 rechazarla.
 
 **Estado.** ✅ hecho — `command_tools:` se analiza y valida por completo en
-tiempo de carga en `harness/loader.py` (`CommandToolDeclaration`/
+tiempo de carga en `harness/definition/command_tools.py` (`CommandToolDeclaration`/
 `CommandToolParam`, `_parse_command_tools`): un marcador de posición debe
 ocupar un elemento completo de `argv`, cada marcador de posición tiene un
 parámetro declarado correspondiente y cada parámetro declarado se usa,

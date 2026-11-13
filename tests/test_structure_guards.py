@@ -36,7 +36,7 @@ MAX_MODULE_LINES = 500
 # Modules already over the cap, each with the ceiling it may not pass. Lower a
 # ceiling when a module shrinks, and delete the entry once it fits the cap.
 OVERSIZED_MODULES: dict[str, int] = {
-    "harness/loader.py": 4100,
+    "harness/loader.py": 3400,
     "main.py": 2100,
     "agent/graph.py": 2100,
     "evals/runner.py": 1500,

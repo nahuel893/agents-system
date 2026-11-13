@@ -908,7 +908,7 @@ safer because there is structurally no room for an extra flag, not just a
 regex that is supposed to reject one.
 
 **Status.** ✅ done — `command_tools:` parsed and fully validated at load
-time in `harness/loader.py` (`CommandToolDeclaration`/`CommandToolParam`,
+time in `harness/definition/command_tools.py` (`CommandToolDeclaration`/`CommandToolParam`,
 `_parse_command_tools`): a placeholder must occupy a whole argv element,
 every placeholder has a matching declared param and every declared param is
 used, `argv[0]` is resolved to an absolute path once (bare names via

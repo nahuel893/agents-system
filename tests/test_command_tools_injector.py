@@ -20,7 +20,7 @@ from agents_system.permissions import Run, UnknownPermissionNameError, resolve, 
 
 
 #: These fixtures build `CommandToolDeclaration`/`ToolSpec` directly,
-#: bypassing `harness.loader._parse_command_tools` (which registers a
+#: bypassing `harness.definition.command_tools._parse_command_tools` (which registers a
 #: declared command tool's permission dynamically at manifest-parse time —
 #: see that function's docstring). Register the same two wire names here so
 #: this file is self-contained regardless of run order; `resource()` is not

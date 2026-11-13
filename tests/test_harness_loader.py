@@ -396,16 +396,16 @@ def test_platform_default_limits_public_alias() -> None:
 def test_default_platform_root_prefers_packaged_location(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import agents_system.harness.loader as loader_module
+    import agents_system.harness.definition.roots as roots_module
 
     packaged = tmp_path / "packaged" / "platform"
     packaged.mkdir(parents=True)
     checkout = tmp_path / "checkout" / "platform"  # deliberately absent
 
-    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
-    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+    monkeypatch.setattr(roots_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(roots_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
 
-    resolved = loader_module._default_platform_root()
+    resolved = roots_module._default_platform_root()
 
     assert resolved == packaged
 
@@ -413,16 +413,16 @@ def test_default_platform_root_prefers_packaged_location(
 def test_default_platform_root_falls_back_to_checkout_location(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import agents_system.harness.loader as loader_module
+    import agents_system.harness.definition.roots as roots_module
 
     packaged = tmp_path / "packaged" / "platform"  # deliberately absent
     checkout = tmp_path / "checkout" / "platform"
     checkout.mkdir(parents=True)
 
-    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
-    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+    monkeypatch.setattr(roots_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(roots_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
 
-    resolved = loader_module._default_platform_root()
+    resolved = roots_module._default_platform_root()
 
     assert resolved == checkout
 
@@ -437,19 +437,19 @@ def test_default_platform_root_both_missing_defers_instead_of_raising(
     directory the caller never reads. The "names both paths" guarantee moved
     to `_require_platform_root` and is asserted below.
     """
-    import agents_system.harness.loader as loader_module
+    import agents_system.harness.definition.roots as roots_module
     from agents_system.harness.loader import DefinitionError
 
     packaged = tmp_path / "packaged" / "platform"
     checkout = tmp_path / "checkout" / "platform"
 
-    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
-    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+    monkeypatch.setattr(roots_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(roots_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
 
-    assert loader_module._default_platform_root() == checkout
+    assert roots_module._default_platform_root() == checkout
 
     with pytest.raises(DefinitionError) as exc_info:
-        loader_module._require_platform_root(checkout)
+        roots_module._require_platform_root(checkout)
 
     message = str(exc_info.value)
     assert str(packaged) in message
@@ -466,16 +466,16 @@ def test_root_config_default_uses_packaged_then_checkout_resolution(
 ) -> None:
     """RootConfig() with no explicit platform_root must go through the same
     resolution — not a hardcoded single default."""
-    import agents_system.harness.loader as loader_module
+    import agents_system.harness.definition.roots as roots_module
 
     packaged = tmp_path / "packaged" / "platform"
     packaged.mkdir(parents=True)
     checkout = tmp_path / "checkout" / "platform"  # deliberately absent
 
-    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
-    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+    monkeypatch.setattr(roots_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(roots_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
 
-    roots = loader_module.RootConfig()
+    roots = roots_module.RootConfig()
 
     assert roots.platform_root == packaged
 
@@ -486,16 +486,16 @@ def test_root_config_deployments_root_default_untouched_by_resolution(
     """`deployments_root` keeps its dev-checkout default regardless of the
     platform_root packaged/checkout resolution — a consumer's deployments are
     never shipped inside the package."""
-    import agents_system.harness.loader as loader_module
+    import agents_system.harness.definition.roots as roots_module
 
     packaged = tmp_path / "packaged" / "platform"
     packaged.mkdir(parents=True)
 
-    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(roots_module, "_PACKAGED_PLATFORM_ROOT", packaged)
 
-    roots = loader_module.RootConfig()
+    roots = roots_module.RootConfig()
 
-    assert roots.deployments_root == loader_module._DEFAULT_DEPLOYMENTS_ROOT
+    assert roots.deployments_root == roots_module._DEFAULT_DEPLOYMENTS_ROOT
 
 
 # ---------------------------------------------------------------------------
@@ -513,13 +513,13 @@ def test_root_config_deployments_root_default_untouched_by_resolution(
 def test_require_deployments_root_raises_naming_the_path(
     tmp_path: pathlib.Path,
 ) -> None:
-    import agents_system.harness.loader as loader_module
+    import agents_system.harness.definition.roots as roots_module
     from agents_system.harness.loader import DefinitionError
 
     missing = tmp_path / "no-such-deployments"
 
     with pytest.raises(DefinitionError) as exc_info:
-        loader_module._require_deployments_root(missing)
+        roots_module._require_deployments_root(missing)
 
     assert str(missing) in str(exc_info.value)
 
@@ -527,12 +527,12 @@ def test_require_deployments_root_raises_naming_the_path(
 def test_require_deployments_root_returns_existing_directory(
     tmp_path: pathlib.Path,
 ) -> None:
-    import agents_system.harness.loader as loader_module
+    import agents_system.harness.definition.roots as roots_module
 
     existing = tmp_path / "deployments"
     existing.mkdir()
 
-    assert loader_module._require_deployments_root(existing) == existing
+    assert roots_module._require_deployments_root(existing) == existing
 
 
 def test_resolve_with_client_and_missing_deployments_root_raises(
@@ -685,12 +685,13 @@ def test_load_override_works_without_any_platform_directory(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agents_system.harness import loader as loader_module
+    from agents_system.harness.definition import roots as roots_module
 
     monkeypatch.setattr(
-        loader_module, "_PACKAGED_PLATFORM_ROOT", tmp_path / "no" / "packaged"
+        roots_module, "_PACKAGED_PLATFORM_ROOT", tmp_path / "no" / "packaged"
     )
     monkeypatch.setattr(
-        loader_module, "_CHECKOUT_PLATFORM_ROOT", tmp_path / "no" / "checkout"
+        roots_module, "_CHECKOUT_PLATFORM_ROOT", tmp_path / "no" / "checkout"
     )
     # The root must EXIST — an absent one is a misconfigured consumer and
     # now raises, because `load_override` returning None for it is exactly
@@ -698,7 +699,7 @@ def test_load_override_works_without_any_platform_directory(
     # the tool surface.
     (tmp_path / "deployments").mkdir()
     monkeypatch.setattr(
-        loader_module, "_DEFAULT_DEPLOYMENTS_ROOT", tmp_path / "deployments"
+        roots_module, "_DEFAULT_DEPLOYMENTS_ROOT", tmp_path / "deployments"
     )
 
     # Must not raise: this call never reads platform_root.
@@ -710,11 +711,12 @@ def test_missing_platform_root_still_fails_loudly_naming_both_paths(
 ) -> None:
     """Deferring the check must not weaken the error when it does matter."""
     from agents_system.harness import loader as loader_module
+    from agents_system.harness.definition import roots as roots_module
 
     packaged = tmp_path / "no" / "packaged"
     checkout = tmp_path / "no" / "checkout"
-    monkeypatch.setattr(loader_module, "_PACKAGED_PLATFORM_ROOT", packaged)
-    monkeypatch.setattr(loader_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
+    monkeypatch.setattr(roots_module, "_PACKAGED_PLATFORM_ROOT", packaged)
+    monkeypatch.setattr(roots_module, "_CHECKOUT_PLATFORM_ROOT", checkout)
 
     with pytest.raises(loader_module.DefinitionError) as excinfo:
         loader_module.load_generic("sales-agent")
