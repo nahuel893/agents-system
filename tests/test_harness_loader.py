@@ -785,3 +785,23 @@ def test_load_override_raises_when_the_deployments_root_is_absent(
         load_override("client-a", "sales-agent", roots=roots)
 
     assert "nope" in str(excinfo.value)
+
+
+def test_root_candidates_are_anchored_to_the_package() -> None:
+    """The two platform candidates are computed from where the package sits.
+
+    Pinned against the package directory, not this file tree, so the count of
+    hops in `roots.py` cannot drift when the module moves.
+    """
+    import agents_system
+    import agents_system.harness.definition.roots as roots_module
+
+    package_dir = pathlib.Path(agents_system.__file__).parent
+
+    assert package_dir / "platform" == roots_module._PACKAGED_PLATFORM_ROOT
+    assert package_dir.parent.parent == roots_module._REPO_ROOT
+    assert roots_module._REPO_ROOT / "platform" == roots_module._CHECKOUT_PLATFORM_ROOT
+    assert (
+        roots_module._REPO_ROOT / "deployments"
+        == roots_module._DEFAULT_DEPLOYMENTS_ROOT
+    )

@@ -88,7 +88,7 @@ class CommandToolDeclaration:
     """One declarative command tool from a manifest's `command_tools:` list
     (ADR-002 C.12).
 
-    Fully validated at LOAD time by `_parse_command_tools` below: `argv[0]`
+    Fully validated at LOAD time by `command_tools._parse_command_tools`: `argv[0]`
     is always an absolute path (resolved once at load, never re-looked-up on
     `$PATH` at call time) and every `{param}` placeholder in `argv` occupies
     a WHOLE element — never a fragment of one, which is exactly how option
