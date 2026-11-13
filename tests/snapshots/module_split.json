@@ -1,0 +1,1097 @@
+{
+  "app_state": {
+    "after_create_app": [
+      "adapter_channel",
+      "agents",
+      "budgets",
+      "channels",
+      "chat_model_override",
+      "checkpoint_threads",
+      "clients",
+      "conversation_recorder",
+      "execution_limits",
+      "grants",
+      "inbound_channels",
+      "outbox_retry",
+      "participant_directory",
+      "provider_probe",
+      "registry_factory",
+      "request_context_hook",
+      "roots",
+      "scope_provider_factory",
+      "subject_data_registry",
+      "subject_resolver",
+      "subject_threads",
+      "timeout_reply",
+      "tool_error_reply",
+      "usage_ledger"
+    ],
+    "inside_lifespan": [
+      "adapter_channel",
+      "adapter_model_ids",
+      "agents",
+      "audit_sink",
+      "budgets",
+      "channels",
+      "chat_model_override",
+      "checkpoint_threads",
+      "clients",
+      "conversation_recorder",
+      "engine",
+      "execution_limits",
+      "grants",
+      "inbound_channels",
+      "outbox_retry",
+      "participant_directory",
+      "provider_probe",
+      "registry_factory",
+      "request_context_hook",
+      "roots",
+      "runtimes",
+      "scope_provider_factory",
+      "subject_data_registry",
+      "subject_resolver",
+      "subject_threads",
+      "timeout_reply",
+      "tool_error_reply",
+      "turn_admission_limiter",
+      "usage_ledger",
+      "webhook_worker",
+      "whatsapp_client"
+    ]
+  },
+  "predefined_roles": {
+    "accountant-agent": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 3462,
+        "sha256": "ab92c8918371fc5aa9027c61dffc1ceebf666d014135ac89be33cc286d664cd0"
+      },
+      "escalation_rules": {
+        "chars": 1037,
+        "sha256": "35d36a28dab57679f38b1c745808333366fbed8bb6e03d1ea8cd1d52028774bd"
+      },
+      "execution_limits": null,
+      "importer_root": null,
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:reports",
+        "read:knowledge_base"
+      ],
+      "role_name": "accountant-agent",
+      "skills": [],
+      "skills_folder": null,
+      "system_prompt": {
+        "chars": 2435,
+        "sha256": "c8f91253bcb2344a96301890b44cd99e8c1d9961eaf69518cffd813efa23406f"
+      },
+      "tools": [
+        "escalation_notifier",
+        "run_report",
+        "knowledge_retrieval"
+      ],
+      "untrusted_input": false,
+      "version": "2.0"
+    },
+    "agent": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": false,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 1726,
+        "sha256": "40c3035e1514267804af787d19241d4b45591d42676aeece7e990e273d78cdd2"
+      },
+      "escalation_rules": {
+        "chars": 559,
+        "sha256": "23ddc9b476d626de687d907976173aa2e6cbdc32b9c2847b1d4d04ea68f27b9b"
+      },
+      "execution_limits": null,
+      "importer_root": null,
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation"
+      ],
+      "role_name": "agent",
+      "skills": [],
+      "skills_folder": null,
+      "system_prompt": {
+        "chars": 1105,
+        "sha256": "bf475e472c9733961b484686d54f1916fdd09346a719462a732f6ecd52c75760"
+      },
+      "tools": [
+        "escalation_notifier"
+      ],
+      "untrusted_input": false,
+      "version": "2.0"
+    },
+    "base": {
+      "refused": "Role 'base' is declared abstract and cannot be built directly. Extend it from a concrete role instead."
+    },
+    "data-agent": {
+      "audit_policy": {
+        "log_delegations": false,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "full",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 4284,
+        "sha256": "be3d8cb83afb37d8344e8dbeda9343a8bb5cedb87a7d7164a3ee93aee55ea827"
+      },
+      "escalation_rules": {
+        "chars": 1020,
+        "sha256": "ad6c57a5a3869c0d3b0351cf711f653a11f4f658cfe643c1cb642983779b64d1"
+      },
+      "execution_limits": null,
+      "importer_root": null,
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": false,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:catalog",
+        "read:client_registry",
+        "read:knowledge_base",
+        "read:reports"
+      ],
+      "role_name": "data-agent",
+      "skills": [],
+      "skills_folder": null,
+      "system_prompt": {
+        "chars": 3294,
+        "sha256": "3789d4900b3c9aae2bb4d3ae35e8e87a911d6f9ec9c6c9c6bef1e5cdb4baf1bb"
+      },
+      "tools": [
+        "escalation_notifier",
+        "catalog_search",
+        "client_lookup",
+        "knowledge_retrieval",
+        "run_report"
+      ],
+      "untrusted_input": false,
+      "version": "3.0"
+    },
+    "developer-agent": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 4859,
+        "sha256": "af2f9b407aa738f67d06a58ee64a793bda01c35ca0ebcf2fb9c0bf49660bb432"
+      },
+      "escalation_rules": {
+        "chars": 1104,
+        "sha256": "ef1cd086abfaf6e74831df0f732a2657a685f8b5e91ecb5cfa373db4813e5a5a"
+      },
+      "execution_limits": {
+        "max_tool_calls": 10,
+        "tool_call_timeout_s": 10,
+        "total_execution_timeout_s": 120
+      },
+      "importer_root": null,
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "exec:command",
+        "read:files",
+        "read:knowledge_base"
+      ],
+      "role_name": "developer-agent",
+      "skills": [],
+      "skills_folder": null,
+      "system_prompt": {
+        "chars": 3752,
+        "sha256": "c988267b85b73d76d1234cdcfb36eed027075af85e93364e9a5d375bdfd1a108"
+      },
+      "tools": [
+        "escalation_notifier",
+        "use_term",
+        "read_file",
+        "knowledge_retrieval"
+      ],
+      "untrusted_input": false,
+      "version": "2.0"
+    },
+    "operator-agent": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": false,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 2765,
+        "sha256": "06837c1a8fd805f5318ebacc2541dd802dc7c425074ea3b23b8ab8aa9b21d13d"
+      },
+      "escalation_rules": {
+        "chars": 771,
+        "sha256": "caebaa9abcaedf278e36024743abcd25f09156d55bcc989fa345dd6577effc25"
+      },
+      "execution_limits": {
+        "max_tool_calls": 10,
+        "tool_call_timeout_s": 10,
+        "total_execution_timeout_s": 30
+      },
+      "importer_root": null,
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "exec:command",
+        "read:files"
+      ],
+      "role_name": "operator-agent",
+      "skills": [],
+      "skills_folder": null,
+      "system_prompt": {
+        "chars": 1962,
+        "sha256": "35ed81fa9147e9c23a9b5a3fe93264ea3df966f872c719322f57a8300ddb2916"
+      },
+      "tools": [
+        "escalation_notifier",
+        "use_term",
+        "read_file"
+      ],
+      "untrusted_input": false,
+      "version": "2.0"
+    },
+    "orchestrator": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": true,
+        "max_depth": 2,
+        "permitted_child_roles": [
+          "sales-agent",
+          "data-agent",
+          "summary-agent"
+        ]
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 3165,
+        "sha256": "0fd4eed5eed7282cdc9bb0f68450fd4cc632d9cc403c282703d28ef2f2b234ef"
+      },
+      "escalation_rules": {
+        "chars": 1276,
+        "sha256": "b30cf91354c0d43aab29590f569a061b316f35f89d58bed2072fff0f0bb817b2"
+      },
+      "execution_limits": null,
+      "importer_root": null,
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": false,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:client_registry",
+        "write:session",
+        "spawn:sales-agent",
+        "spawn:data-agent",
+        "spawn:summary-agent"
+      ],
+      "role_name": "orchestrator",
+      "skills": [],
+      "skills_folder": null,
+      "system_prompt": {
+        "chars": 1980,
+        "sha256": "898daebff17d0ae21b83c2275fd4c914d25da0995fdb2ebcc1f3afb420bbc00d"
+      },
+      "tools": [
+        "escalation_notifier",
+        "client_lookup"
+      ],
+      "untrusted_input": false,
+      "version": "3.0"
+    },
+    "sales-agent": {
+      "audit_policy": {
+        "log_delegations": false,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": false,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 2953,
+        "sha256": "0d5f9ceff4dc873cf363259b0b27d412455b08fe14cf72194df3ca4f57152554"
+      },
+      "escalation_rules": {
+        "chars": 1225,
+        "sha256": "9b36e1387016803e03764db6ddf3750fd9ebc51cf45ed6d16939406c63ffb73a"
+      },
+      "execution_limits": null,
+      "importer_root": null,
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "deployment"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:catalog",
+        "read:client_registry",
+        "write:orders",
+        "write:order_items",
+        "read:price_lists",
+        "send:message"
+      ],
+      "role_name": "sales-agent",
+      "skills": [],
+      "skills_folder": null,
+      "system_prompt": {
+        "chars": 1800,
+        "sha256": "b4d878d63d56dc14e9bed826674342731428ca493b443cde423b30cc9c12354a"
+      },
+      "tools": [
+        "escalation_notifier",
+        "message_sender",
+        "catalog_search",
+        "order_writer",
+        "client_lookup"
+      ],
+      "untrusted_input": true,
+      "version": "3.0"
+    },
+    "summary-agent": {
+      "audit_policy": {
+        "log_delegations": false,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "full",
+      "command_tools": [],
+      "context": {
+        "org_context": false,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 2890,
+        "sha256": "6e2211f2a2dcd49e1eaa364763c2711b963363a0f1cd72a88a8a340d8cb5f4ad"
+      },
+      "escalation_rules": {
+        "chars": 921,
+        "sha256": "adf326073090bcbd375971e7aa424edc1ae3162a18bbc853f21ecd322c9b579a"
+      },
+      "execution_limits": null,
+      "importer_root": null,
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": false,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:conversation_logs",
+        "read:knowledge_base",
+        "write:summary_output"
+      ],
+      "role_name": "summary-agent",
+      "skills": [],
+      "skills_folder": null,
+      "system_prompt": {
+        "chars": 1982,
+        "sha256": "2ebfb9914f2c24608c6fb61f679e8cfa5222790dd5ec741253ade4101c9cb599"
+      },
+      "tools": [
+        "escalation_notifier",
+        "conversation_summarizer",
+        "knowledge_retrieval"
+      ],
+      "untrusted_input": false,
+      "version": "3.0"
+    },
+    "support-agent": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 3085,
+        "sha256": "a320343b7ad0dbee87926f54f8500b56e8994bef36160d2dac00951d620b73b9"
+      },
+      "escalation_rules": {
+        "chars": 917,
+        "sha256": "48b2de5c52fc086157c081d5a1239de675fff59c20e16576587aee70b60aef74"
+      },
+      "execution_limits": null,
+      "importer_root": null,
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:knowledge_base",
+        "read:conversation_logs",
+        "read:client_registry",
+        "send:message"
+      ],
+      "role_name": "support-agent",
+      "skills": [],
+      "skills_folder": null,
+      "system_prompt": {
+        "chars": 2169,
+        "sha256": "aebfb22b75eef148650a99ea91c38867a8542f5ed52953239750e3f30a43b731"
+      },
+      "tools": [
+        "escalation_notifier",
+        "knowledge_retrieval",
+        "conversation_summarizer",
+        "client_lookup",
+        "message_sender"
+      ],
+      "untrusted_input": true,
+      "version": "2.0"
+    }
+  },
+  "reference_agents": {
+    "accountant-agent": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 3462,
+        "sha256": "ab92c8918371fc5aa9027c61dffc1ceebf666d014135ac89be33cc286d664cd0"
+      },
+      "escalation_rules": {
+        "chars": 1037,
+        "sha256": "35d36a28dab57679f38b1c745808333366fbed8bb6e03d1ea8cd1d52028774bd"
+      },
+      "execution_limits": null,
+      "importer_root": "<repo>/examples/agents",
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:reports",
+        "read:knowledge_base"
+      ],
+      "role_name": "accountant-agent",
+      "skills": [],
+      "skills_folder": "<repo>/examples/agents/accountant-agent/skills",
+      "system_prompt": {
+        "chars": 2435,
+        "sha256": "c8f91253bcb2344a96301890b44cd99e8c1d9961eaf69518cffd813efa23406f"
+      },
+      "tools": [
+        "escalation_notifier",
+        "run_report",
+        "knowledge_retrieval"
+      ],
+      "untrusted_input": false,
+      "version": "2.0"
+    },
+    "data-agent": {
+      "audit_policy": {
+        "log_delegations": false,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 4283,
+        "sha256": "0c6562a0916b0aeeb387e02f9027b5d2b25ae6a82faf1ee1d4bbc8fc0ead25aa"
+      },
+      "escalation_rules": {
+        "chars": 1019,
+        "sha256": "87f3516aefc036666097c61cfdbace9d687b6fec2c4f962a79fc91f7c11d3dd9"
+      },
+      "execution_limits": null,
+      "importer_root": "<repo>/examples/agents",
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": false,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:catalog",
+        "read:client_registry",
+        "read:knowledge_base",
+        "read:reports"
+      ],
+      "role_name": "data-agent",
+      "skills": [],
+      "skills_folder": "<repo>/examples/agents/data-agent/skills",
+      "system_prompt": {
+        "chars": 3294,
+        "sha256": "3789d4900b3c9aae2bb4d3ae35e8e87a911d6f9ec9c6c9c6bef1e5cdb4baf1bb"
+      },
+      "tools": [
+        "escalation_notifier",
+        "catalog_search",
+        "client_lookup",
+        "knowledge_retrieval",
+        "run_report"
+      ],
+      "untrusted_input": false,
+      "version": "3.0"
+    },
+    "developer-agent": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 4859,
+        "sha256": "af2f9b407aa738f67d06a58ee64a793bda01c35ca0ebcf2fb9c0bf49660bb432"
+      },
+      "escalation_rules": {
+        "chars": 1104,
+        "sha256": "ef1cd086abfaf6e74831df0f732a2657a685f8b5e91ecb5cfa373db4813e5a5a"
+      },
+      "execution_limits": {
+        "max_tool_calls": 10,
+        "tool_call_timeout_s": 10,
+        "total_execution_timeout_s": 30
+      },
+      "importer_root": "<repo>/examples/agents",
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "exec:command",
+        "read:files",
+        "read:knowledge_base"
+      ],
+      "role_name": "developer-agent",
+      "skills": [],
+      "skills_folder": "<repo>/examples/agents/developer-agent/skills",
+      "system_prompt": {
+        "chars": 3752,
+        "sha256": "c988267b85b73d76d1234cdcfb36eed027075af85e93364e9a5d375bdfd1a108"
+      },
+      "tools": [
+        "escalation_notifier",
+        "use_term",
+        "read_file",
+        "knowledge_retrieval"
+      ],
+      "untrusted_input": false,
+      "version": "2.0"
+    },
+    "operator-agent": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": false,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 2765,
+        "sha256": "06837c1a8fd805f5318ebacc2541dd802dc7c425074ea3b23b8ab8aa9b21d13d"
+      },
+      "escalation_rules": {
+        "chars": 771,
+        "sha256": "caebaa9abcaedf278e36024743abcd25f09156d55bcc989fa345dd6577effc25"
+      },
+      "execution_limits": {
+        "max_tool_calls": 10,
+        "tool_call_timeout_s": 10,
+        "total_execution_timeout_s": 30
+      },
+      "importer_root": "<repo>/examples/agents",
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "exec:command",
+        "read:files"
+      ],
+      "role_name": "operator-agent",
+      "skills": [],
+      "skills_folder": "<repo>/examples/agents/operator-agent/skills",
+      "system_prompt": {
+        "chars": 1962,
+        "sha256": "35ed81fa9147e9c23a9b5a3fe93264ea3df966f872c719322f57a8300ddb2916"
+      },
+      "tools": [
+        "escalation_notifier",
+        "use_term",
+        "read_file"
+      ],
+      "untrusted_input": false,
+      "version": "2.0"
+    },
+    "orchestrator": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": true,
+        "max_depth": 2,
+        "permitted_child_roles": [
+          "sales-agent",
+          "data-agent",
+          "summary-agent"
+        ]
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 3157,
+        "sha256": "31dd356d5534c2381dc223c43214b03d53f83bdb78d34ecce7631e632eb879e2"
+      },
+      "escalation_rules": {
+        "chars": 1268,
+        "sha256": "a99f3ff11bf7a806639348332d6673696af764f150734082419843d4a150c46b"
+      },
+      "execution_limits": null,
+      "importer_root": "<repo>/examples/agents",
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": false,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:client_registry",
+        "write:session",
+        "spawn:sales-agent",
+        "spawn:data-agent",
+        "spawn:summary-agent"
+      ],
+      "role_name": "orchestrator",
+      "skills": [],
+      "skills_folder": "<repo>/examples/agents/orchestrator/skills",
+      "system_prompt": {
+        "chars": 1980,
+        "sha256": "898daebff17d0ae21b83c2275fd4c914d25da0995fdb2ebcc1f3afb420bbc00d"
+      },
+      "tools": [
+        "escalation_notifier",
+        "client_lookup"
+      ],
+      "untrusted_input": false,
+      "version": "3.0"
+    },
+    "sales-agent": {
+      "audit_policy": {
+        "log_delegations": false,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": false,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 3103,
+        "sha256": "b9fb59eb52f51f458f253626e52eb5af6c792c3664f9add3a3c5fee5aae7d38f"
+      },
+      "escalation_rules": {
+        "chars": 1409,
+        "sha256": "28e043413957bb517be85544f44fd2e727c9d72a4e644811d2be3d92df63ae38"
+      },
+      "execution_limits": null,
+      "importer_root": "<repo>/examples/agents",
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "deployment"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:catalog",
+        "read:client_registry",
+        "write:orders",
+        "write:order_items",
+        "read:price_lists",
+        "send:message"
+      ],
+      "role_name": "sales-agent",
+      "skills": [],
+      "skills_folder": "<repo>/examples/agents/sales-agent/skills",
+      "system_prompt": {
+        "chars": 1800,
+        "sha256": "b4d878d63d56dc14e9bed826674342731428ca493b443cde423b30cc9c12354a"
+      },
+      "tools": [
+        "escalation_notifier",
+        "message_sender",
+        "catalog_search",
+        "order_writer",
+        "client_lookup"
+      ],
+      "untrusted_input": true,
+      "version": "3.0"
+    },
+    "summary-agent": {
+      "audit_policy": {
+        "log_delegations": false,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": false,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 2889,
+        "sha256": "5e3b3e5b157da908da6e569daee75aa1f12fe251c3049d7b006709b47b59ba0d"
+      },
+      "escalation_rules": {
+        "chars": 920,
+        "sha256": "14e3b10f34e60c7f32c8c5fd93c24fb08d8382b744414f819f459dd1d63d4c09"
+      },
+      "execution_limits": null,
+      "importer_root": "<repo>/examples/agents",
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": false,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:conversation_logs",
+        "read:knowledge_base",
+        "write:summary_output"
+      ],
+      "role_name": "summary-agent",
+      "skills": [],
+      "skills_folder": "<repo>/examples/agents/summary-agent/skills",
+      "system_prompt": {
+        "chars": 1982,
+        "sha256": "2ebfb9914f2c24608c6fb61f679e8cfa5222790dd5ec741253ade4101c9cb599"
+      },
+      "tools": [
+        "escalation_notifier",
+        "conversation_summarizer",
+        "knowledge_retrieval"
+      ],
+      "untrusted_input": false,
+      "version": "3.0"
+    },
+    "support-agent": {
+      "audit_policy": {
+        "log_delegations": true,
+        "log_escalations": true,
+        "log_tool_calls": true,
+        "retention_days": null
+      },
+      "autonomy": "supervised",
+      "command_tools": [],
+      "context": {
+        "org_context": true,
+        "session": true,
+        "user_identity": true
+      },
+      "delegation_policy": {
+        "allowed": false,
+        "max_depth": 0,
+        "permitted_child_roles": []
+      },
+      "deployment": null,
+      "equipped_system_prompt": {
+        "chars": 3085,
+        "sha256": "a320343b7ad0dbee87926f54f8500b56e8994bef36160d2dac00951d620b73b9"
+      },
+      "escalation_rules": {
+        "chars": 917,
+        "sha256": "48b2de5c52fc086157c081d5a1239de675fff59c20e16576587aee70b60aef74"
+      },
+      "execution_limits": null,
+      "importer_root": "<repo>/examples/agents",
+      "inline_skills": {},
+      "memory_policy": {
+        "persist_conversation": true,
+        "read_scope": "session",
+        "write_scope": "session"
+      },
+      "model": null,
+      "permissions": [
+        "send:escalation",
+        "read:knowledge_base",
+        "read:conversation_logs",
+        "read:client_registry",
+        "send:message"
+      ],
+      "role_name": "support-agent",
+      "skills": [],
+      "skills_folder": "<repo>/examples/agents/support-agent/skills",
+      "system_prompt": {
+        "chars": 2169,
+        "sha256": "aebfb22b75eef148650a99ea91c38867a8542f5ed52953239750e3f30a43b731"
+      },
+      "tools": [
+        "escalation_notifier",
+        "knowledge_retrieval",
+        "conversation_summarizer",
+        "client_lookup",
+        "message_sender"
+      ],
+      "untrusted_input": true,
+      "version": "2.0"
+    }
+  }
+}
