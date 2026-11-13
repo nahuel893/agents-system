@@ -21,8 +21,8 @@ Delivery strategy: `stacked-to-main`, one PR per task. Test runner: `uv run pyte
 
 ## Tasks
 
-- [ ] T0.1 — S5, S6 — inline — structure guards (`tests/test_structure_guards.py`)
-- [ ] T0.2 — S7 — inline — characterization tests
+- [x] T0.1 — S5, S6 — inline — structure guards (`tests/test_structure_guards.py`) — 850e96f, plus the unreadable-target guard in the follow-up commit
+- [x] T0.2 — S7 — inline — characterization tests (`tests/test_module_split_characterization.py`, `tests/snapshots/module_split.json`) — 8e48928
 - [ ] T1.1 … T1.5 — S8 — planned in #334
 - [ ] T2.1 … T2.5 — S9 — planned in #335
 - [ ] T3.1 … T3.6 — S10 — planned in #336
@@ -34,3 +34,5 @@ Delivery strategy: `stacked-to-main`, one PR per task. Test runner: `uv run pyte
 - L3 (2026-11-12): an independent read measured the three modules and found that tests patch names by module path 207 times on `main`, 17 on `loader` and 15 on `graph`; a move with a plain re-export would leave those tests passing while testing nothing. Hence S3 and the patch-target guard in S6.
 - L4 (2026-11-12): layering contracts are written as plain AST tests instead of adding `import-linter`, to avoid a new dependency.
 - L5 (2026-11-12): open PRs that touch the three modules (#323, #317, and the local audio branch for #320) should merge before the phase that splits the module they touch, or they will conflict.
+- L6 (2026-11-12): T0.1 and T0.2 done. The patch-target guard reads 491 patch sites and finds no bad one today; 7 layering violations and 19 oversized modules are listed. The snapshot pins 10 predefined roles (the abstract `base` by its refusal), 8 reference agents, and `app.state` with 24 attributes after `create_app` and 31 inside the lifespan. Full offline suite on 850e96f plus the guards: 4015 passed, 17 xfailed.
+- L7 (2026-11-12): native review of 829a399..8e48928, reliability lens, owner consent granted: approved and acknowledged, six non-blocking findings. Taken in a follow-up commit: a guard for patch targets that cannot be read statically (4 listed, all in `tests/test_channel_port.py`) and a `TypeError` instead of `repr()` for an unknown type in the snapshot. Left as later work: exact size ceilings (the round ceilings leave room for the open PRs that touch these modules; tighten each one when its phase starts), environment isolation of the `app.state` test, pruning stale snapshot keys on regeneration, and star-import and `__getattr__` bindings in `binding_of`.

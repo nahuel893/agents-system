@@ -406,6 +406,83 @@ def test_no_new_patch_of_a_reexported_or_unbound_name() -> None:
     )
 
 
+# (test file, target expression) patches whose target is computed, so the guard
+# cannot tell which module they name.
+KNOWN_UNREADABLE_PATCH_TARGETS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("test_channel_port.py", "prefix + 'claim_available_outbox_work'"),
+        ("test_channel_port.py", "prefix + 'persist_outbound_intent'"),
+        ("test_channel_port.py", "prefix + 'complete_outbox_work'"),
+        ("test_channel_port.py", "prefix + 'record_outbox_failure'"),
+    }
+)
+
+
+def unreadable_patch_sites(test_source: str) -> list[tuple[int, str]]:
+    """Return (line, expression) for every patch whose target ``patch_sites`` cannot read.
+
+    That is a target that is not a string literal (``patch(prefix + "name")``,
+    ``monkeypatch.setattr(f"{mod}.name", v)``), one passed as ``target=``, and
+    ``patch.multiple``.
+    """
+    sites: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(test_source)):
+        if not isinstance(node, ast.Call):
+            continue
+        called = _called_name(node)
+        if called == "multiple":
+            sites.append((node.lineno, ast.unparse(node.func)))
+            continue
+        if called not in {"patch", "setattr", "delattr"}:
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "target":
+                sites.append((node.lineno, ast.unparse(keyword.value)))
+        if not node.args or _string(node.args[0]) is not None:
+            continue
+        # ``patch(x)`` and the two-argument ``setattr(x, value)`` take a dotted
+        # target; with more arguments the first one is the object itself.
+        dotted_form = called == "patch" or (
+            isinstance(node.func, ast.Attribute)
+            and len(node.args) == 2
+            and called == "setattr"
+        )
+        if dotted_form:
+            sites.append((node.lineno, ast.unparse(node.args[0])))
+    return sites
+
+
+def _unreadable_patch_targets(tests_root: Path) -> dict[tuple[str, str], list[int]]:
+    found: dict[tuple[str, str], list[int]] = {}
+    for path in sorted(tests_root.rglob("*.py")):
+        relative = path.relative_to(tests_root).as_posix()
+        for line, expression in unreadable_patch_sites(path.read_text()):
+            found.setdefault((relative, expression), []).append(line)
+    return found
+
+
+def test_no_new_patch_target_the_guard_cannot_read() -> None:
+    found = _unreadable_patch_targets(TESTS_ROOT)
+    new = {
+        key: lines
+        for key, lines in found.items()
+        if key not in KNOWN_UNREADABLE_PATCH_TARGETS
+    }
+    assert not new, (
+        "write the patch target as a string literal or pass the module object, "
+        f"so the patch-target guard can check it: {new}"
+    )
+
+
+def test_unreadable_patch_target_list_has_no_stale_entry() -> None:
+    stale = sorted(
+        KNOWN_UNREADABLE_PATCH_TARGETS - set(_unreadable_patch_targets(TESTS_ROOT))
+    )
+    assert not stale, (
+        f"these patches are readable now; remove them from the list: {stale}"
+    )
+
+
 def test_bad_patch_target_list_has_no_stale_entry() -> None:
     stale = sorted(
         KNOWN_BAD_PATCH_TARGETS - set(_bad_patch_targets(TESTS_ROOT, SRC_ROOT))
@@ -511,3 +588,30 @@ def test_layering_guard_flags_a_forbidden_import(tmp_path: Path) -> None:
         ("harness/registry.py", "connectors"),
         ("connectors/thing.py", "main"),
     }
+
+
+def test_unreadable_patch_sites_finds_every_form_the_guard_skips() -> None:
+    test_source = (
+        "from unittest.mock import patch\n"
+        "def test_it(monkeypatch, module, prefix):\n"
+        "    monkeypatch.setattr(prefix + 'work', lambda: 2)\n"
+        "    monkeypatch.setattr(f'{prefix}.work', lambda: 2)\n"
+        "    with patch(prefix):\n"
+        "        pass\n"
+        "    with patch(target='agents_system.main.work'):\n"
+        "        pass\n"
+        "    with patch.multiple('agents_system.main', work=1):\n"
+        "        pass\n"
+        "    monkeypatch.setattr(module, 'work', lambda: 2)\n"
+        "    monkeypatch.setattr('agents_system.main.work', lambda: 2)\n"
+        "    with patch.object(module, 'work'):\n"
+        "        pass\n"
+        "    setattr(module, 'work', 1)\n"
+    )
+    assert unreadable_patch_sites(test_source) == [
+        (3, "prefix + 'work'"),
+        (4, "f'{prefix}.work'"),
+        (5, "prefix"),
+        (7, "'agents_system.main.work'"),
+        (9, "patch.multiple"),
+    ]

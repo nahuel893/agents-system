@@ -71,7 +71,7 @@ def _plain(value: Any) -> Any:
         return _plain(value.value)
     if isinstance(value, str | int | float | bool) or value is None:
         return value
-    return repr(value)
+    raise TypeError(f"no stable form for {type(value).__name__}; teach _plain about it")
 
 
 def _compact(value: Any) -> Any:
