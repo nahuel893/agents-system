@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from agents_system.harness.definition.errors import DefinitionError
-from agents_system.harness.definition.frontmatter import _as_str_list
+from agents_system.harness.definition.frontmatter import as_str_list
 
 
 def _union_preserving_order(parent: list[str], child: list[str]) -> list[str]:
@@ -54,10 +54,10 @@ _INHERIT_DIRECTIVE_KEYS = frozenset({"inherit", "add", "remove"})
 _DIRECTIVE_KEYS = _INHERIT_DIRECTIVE_KEYS | {"override"}
 
 
-def _check_list_directive(value: Any, *, who: str, field: str) -> None:
+def check_list_directive(value: Any, *, who: str, field: str) -> None:
     """Raise unless ``value`` is a shape `_resolve_list_directive` honours
     (issue #106): absent, ``"inherit"``, a list (a bare string is a one-item
-    list, as ``_as_str_list`` reads it), ``{inherit: true, add: [...],
+    list, as ``as_str_list`` reads it), ``{inherit: true, add: [...],
     remove: [...]}`` or ``{override: [...]}``.
 
     Any other mapping -- ``{remove: [...]}`` without ``inherit: true``, a
@@ -97,14 +97,14 @@ def _resolve_list_directive(
     - ``{inherit: true, remove: [...]}`` → parent minus removals
     - ``{override: <value>}``            → replace entirely
     - plain list                         → use override list as-is
-    - any other string                   → a one-item list, as ``_as_str_list``
+    - any other string                   → a one-item list, as ``as_str_list``
     - None / absent                      → return parent list
 
     Anything else raises ``DefinitionError`` naming ``who`` and ``field``
-    (``_check_list_directive``, issue #106). It used to resolve to the
+    (``check_list_directive``, issue #106). It used to resolve to the
     parent's full set.
     """
-    _check_list_directive(override_value, who=who, field=field)
+    check_list_directive(override_value, who=who, field=field)
 
     if override_value is None or override_value == "inherit":
         return list(parent_list)
@@ -116,12 +116,12 @@ def _resolve_list_directive(
         return list(override_value)
 
     if "override" in override_value:
-        return _as_str_list(override_value["override"])
+        return as_str_list(override_value["override"])
 
     # {inherit: true, add: [...], remove: [...]}
     result = list(parent_list)
-    additions = _as_str_list(override_value.get("add"))
-    removals = set(_as_str_list(override_value.get("remove")))
+    additions = as_str_list(override_value.get("add"))
+    removals = set(as_str_list(override_value.get("remove")))
     # add deduped
     seen = set(result)
     for item in additions:
@@ -158,7 +158,7 @@ def _check_escalation_descriptions(rules: Mapping[str, Any], *, who: str) -> Non
         )
 
 
-def _check_mapping_directive(value: Any, *, who: str, field: str) -> None:
+def check_mapping_directive(value: Any, *, who: str, field: str) -> None:
     """Raise unless ``value`` is a shape `_resolve_mapping_directive`
     honours (issue #106): absent, ``"inherit"``, a plain mapping, or
     ``{inherit: true, ...}``. On ``escalation_rules`` the directive may also
@@ -215,9 +215,9 @@ def _resolve_mapping_directive(
     leaves a policy field out loads it as ``{}``, and replacing the role's
     mapping with it silently dropped every escalation condition and audit
     setting the role had. An unrecognised shape raises
-    (``_check_mapping_directive``).
+    (``check_mapping_directive``).
     """
-    _check_mapping_directive(override_value, who=who, field=field)
+    check_mapping_directive(override_value, who=who, field=field)
 
     if not isinstance(override_value, Mapping) or not override_value:
         # Absent, "inherit", or an empty mapping: nothing to change.
@@ -233,10 +233,10 @@ def _resolve_mapping_directive(
         if k in ("inherit",):
             continue
         if k in ("add", "remove"):
-            # Only on escalation_rules (`_check_mapping_directive`): they
+            # Only on escalation_rules (`check_mapping_directive`): they
             # edit its `conditions` list.
             result["conditions"] = _resolve_list_directive(
-                _as_str_list(result.get("conditions")),
+                as_str_list(result.get("conditions")),
                 {"inherit": True, k: v},
                 who=who,
                 field=f"{field}.{k}",

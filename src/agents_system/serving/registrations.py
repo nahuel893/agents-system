@@ -11,7 +11,7 @@ from collections.abc import (
 from typing import Any
 
 from agents_system.agent.spec import Agent
-from agents_system.harness.definition.locate import _SAFE_SEGMENT
+from agents_system.harness.definition.locate import SAFE_SEGMENT
 from agents_system.harness.loader import DefinitionError, RoleLocator
 from agents_system.harness.registry import ToolRegistry
 from agents_system.services.retry_policy import OutboxRetryPolicy
@@ -45,7 +45,7 @@ def _validate_runtime_id(runtime_id: str) -> str:
     A runtime id is deployer-chosen (design.md D5) and becomes part of
     URLs (``/v1/models``), structured logs and metrics labels once
     registered -- the same class of user-supplied, filesystem-adjacent
-    segment ``locate._SAFE_SEGMENT`` already validates elsewhere in this
+    segment ``locate.SAFE_SEGMENT`` already validates elsewhere in this
     codebase (a role type, a client/deployment name), reused here for the
     same reason: consistency, and because an id built from it must be safe
     to embed in a URL path segment and a log line with no further escaping.
@@ -63,10 +63,10 @@ def _validate_runtime_id(runtime_id: str) -> str:
             f"Invalid runtime id {_bounded_repr(runtime_id)}. A runtime id "
             f"is at most {_MAX_RUNTIME_ID_LENGTH} characters."
         )
-    if not _SAFE_SEGMENT.fullmatch(runtime_id):
+    if not SAFE_SEGMENT.fullmatch(runtime_id):
         raise DefinitionError(
             f"Invalid runtime id {runtime_id!r}. Must match "
-            f"{_SAFE_SEGMENT.pattern} -- letters, digits, underscore and "
+            f"{SAFE_SEGMENT.pattern} -- letters, digits, underscore and "
             "hyphen only, non-empty, not starting with '-' or '_'."
         )
     return runtime_id
@@ -74,7 +74,7 @@ def _validate_runtime_id(runtime_id: str) -> str:
 
 def _validate_client(runtime_id: str, client: object) -> str:
     """Reject a ``clients`` value that is not a client name: a ``str``
-    matching ``locate._SAFE_SEGMENT``, the rule the loader applies when it
+    matching ``locate.SAFE_SEGMENT``, the rule the loader applies when it
     joins that name onto ``deployments_root``.
 
     A ``None`` (``os.environ.get(...)`` for an unset variable) would
@@ -87,10 +87,10 @@ def _validate_client(runtime_id: str, client: object) -> str:
             f"clients[{runtime_id!r}] must be a deployment client name (str), "
             f"got {type(client).__name__}. Refusing to boot."
         )
-    if not _SAFE_SEGMENT.fullmatch(client):
+    if not SAFE_SEGMENT.fullmatch(client):
         raise DefinitionError(
             f"clients[{runtime_id!r}] is not a valid deployment client name. "
-            f"It must match {_SAFE_SEGMENT.pattern} -- letters, digits, "
+            f"It must match {SAFE_SEGMENT.pattern} -- letters, digits, "
             "underscore and hyphen only, non-empty, not starting with '-' or "
             "'_'. Refusing to boot."
         )
@@ -104,7 +104,7 @@ def _parse_agent_registration(value: str) -> tuple[str, str | None]:
     ``main.py``'s own env-boot convention, not a public string format: a
     library caller registers ``Agent``/``str`` objects through
     ``create_app(agents=...)`` instead. Strict -- at most one ``@``, and
-    both the role and the client must match ``locate._SAFE_SEGMENT`` AND be
+    both the role and the client must match ``locate.SAFE_SEGMENT`` AND be
     at most ``_MAX_RUNTIME_ID_LENGTH`` characters (issue #128 item 6: a
     segment made only of legal characters but far longer than any real role
     or client name previously passed straight through here, to overflow
@@ -126,13 +126,13 @@ def _parse_agent_registration(value: str) -> tuple[str, str | None]:
     )
     if (
         role_or_client_too_long
-        or not _SAFE_SEGMENT.fullmatch(role)
-        or (separator and not _SAFE_SEGMENT.fullmatch(client))
+        or not SAFE_SEGMENT.fullmatch(role)
+        or (separator and not SAFE_SEGMENT.fullmatch(client))
     ):
         raise DefinitionError(
             f"Invalid agent registration {_bounded_repr(value)}. Expected "
             '"{role}" or "{role}@{client}", where the role and the client '
-            f"each match {_SAFE_SEGMENT.pattern}, are each at most "
+            f"each match {SAFE_SEGMENT.pattern}, are each at most "
             f"{_MAX_RUNTIME_ID_LENGTH} characters, and '@' appears at most "
             "once."
         )
@@ -263,11 +263,11 @@ def _folder_registration(value: str, agents_root: str) -> Agent:
             "a folder registration needs AGENTS_ROOT set to an absolute "
             "directory path; it is unset or relative."
         )
-    if len(name) > _MAX_RUNTIME_ID_LENGTH or not _SAFE_SEGMENT.fullmatch(name):
+    if len(name) > _MAX_RUNTIME_ID_LENGTH or not SAFE_SEGMENT.fullmatch(name):
         raise DefinitionError(
             f"Invalid folder registration {_bounded_repr(value)}. Expected "
             f'"{_FOLDER_PREFIX}<name>", one folder name directly under '
-            f"AGENTS_ROOT matching {_SAFE_SEGMENT.pattern} (no path "
+            f"AGENTS_ROOT matching {SAFE_SEGMENT.pattern} (no path "
             "separators, no '..', at most "
             f"{_MAX_RUNTIME_ID_LENGTH} characters)."
         )

@@ -712,7 +712,7 @@ def test_compose_prompt_escalation_block_precedes_base_contract_no_skills() -> N
 
 
 def test_compose_prompt_escalation_block_precedes_base_contract_with_skills() -> None:
-    """Skills insert content too (`_strip_base_contract` / re-append path) --
+    """Skills insert content too (`strip_base_contract` / re-append path) --
     the escalation block must still land before the contract, not after."""
     from agents_system.harness.factory import LoadedSkill, _compose_prompt
 
@@ -816,7 +816,7 @@ def test_compose_prompt_treats_a_bare_string_conditions_as_one_condition() -> No
     shape -- YAML lets a role.md author write `conditions: single_condition`
     instead of a one-item list. A naive `for c in escalation_rules["conditions"]`
     iterates a *string* character-by-character instead of treating it as one
-    condition. `frontmatter._as_str_list` already exists for exactly this
+    condition. `frontmatter.as_str_list` already exists for exactly this
     coercion (used for this same `conditions` field by
     `_resolve_list_directive`), so `_render_escalation_block` must use the
     same convention rather than reinvent it.

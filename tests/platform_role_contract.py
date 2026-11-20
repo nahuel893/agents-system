@@ -594,9 +594,9 @@ def check_escalation_conditions_have_descriptions(definition: Any) -> None:
     tolerated fallback (bare name, no failure), see
     `harness/factory.py::_render_escalation_block`'s own docstring.
     """
-    from agents_system.harness.definition.frontmatter import _as_str_list
+    from agents_system.harness.definition.frontmatter import as_str_list
 
-    conditions = _as_str_list(definition.escalation_rules.get("conditions"))
+    conditions = as_str_list(definition.escalation_rules.get("conditions"))
     descriptions = definition.escalation_rules.get("descriptions") or {}
     missing = [
         condition

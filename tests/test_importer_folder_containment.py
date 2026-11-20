@@ -27,8 +27,8 @@ from agents_system.agent.spec import _AGENT_OVERRIDABLE_FIELDS, Agent
 from agents_system.harness.definition.files import _FOLDER_OVERRIDE_FIELDS
 from agents_system.harness.definition.fsread import (
     _DIR_FD_READS,
-    _read_within_root,
-    _resolve_within_root,
+    read_within_root,
+    resolve_within_root,
 )
 from agents_system.harness.factory import FactoryError, _load_skills
 from agents_system.harness.loader import (
@@ -317,39 +317,39 @@ def test_folder_swapped_for_a_symlink_after_the_check_is_refused(
 ) -> None:
     """The path passed the containment check, then the folder was replaced by
     a symlink to outside it. A path-based read would follow it."""
-    checked = _resolve_within_root(root, root / "vip-support", "manifest.md")
+    checked = resolve_within_root(root, root / "vip-support", "manifest.md")
     assert checked is not None
     (root / "vip-support").rename(root / "moved")
     os.symlink(outside, root / "vip-support")
     assert "stolen" in checked.read_text(encoding="utf-8")  # what a path read gets
 
     with pytest.raises(OSError):
-        _read_within_root(root, checked)
+        read_within_root(root, checked)
 
 
 @_needs_dir_fd
 def test_file_swapped_for_a_symlink_after_the_check_is_refused(
     root: pathlib.Path, outside: pathlib.Path
 ) -> None:
-    checked = _resolve_within_root(root, root / "vip-support", "manifest.md")
+    checked = resolve_within_root(root, root / "vip-support", "manifest.md")
     assert checked is not None
     checked.unlink()
     os.symlink(outside / "manifest.md", checked)
 
     with pytest.raises(OSError):
-        _read_within_root(root, checked)
+        read_within_root(root, checked)
 
 
 @_needs_dir_fd
 def test_a_fifo_is_refused_without_blocking(root: pathlib.Path) -> None:
     """A named pipe opened for reading would block the load forever."""
-    checked = _resolve_within_root(root, root / "vip-support", "manifest.md")
+    checked = resolve_within_root(root, root / "vip-support", "manifest.md")
     assert checked is not None
     checked.unlink()
     os.mkfifo(checked)
 
     with pytest.raises(OSError):
-        _read_within_root(root, checked)
+        read_within_root(root, checked)
 
 
 _LEAK_ROUNDS = 20
@@ -370,7 +370,7 @@ def test_a_directory_is_refused_without_leaking_a_descriptor(
     """PR #97 review: the handle opened for a directory was given to `open()`,
     which refuses a directory and does not close a descriptor it was handed.
     Each load of a hostile folder leaked one."""
-    checked = _resolve_within_root(root, root / "vip-support", "role.md")
+    checked = resolve_within_root(root, root / "vip-support", "role.md")
     assert checked is not None
     checked.unlink()
     checked.mkdir()
@@ -378,7 +378,7 @@ def test_a_directory_is_refused_without_leaking_a_descriptor(
 
     for _ in range(_LEAK_ROUNDS):
         with pytest.raises(OSError):
-            _read_within_root(root, checked)
+            read_within_root(root, checked)
 
     assert _open_fd_count() == before
 
@@ -424,17 +424,17 @@ def test_skill_that_is_a_directory_fails_without_leaking(
 
 
 def test_read_within_root_reads_a_contained_file(root: pathlib.Path) -> None:
-    checked = _resolve_within_root(root, root / "vip-support", "role.md")
+    checked = resolve_within_root(root, root / "vip-support", "role.md")
     assert checked is not None
 
-    assert "vip-support prose" in _read_within_root(root, checked)
+    assert "vip-support prose" in read_within_root(root, checked)
 
 
 def test_read_within_root_refuses_a_path_outside_the_root(
     root: pathlib.Path, outside: pathlib.Path
 ) -> None:
     with pytest.raises(OSError):
-        _read_within_root(root, outside / "role.md")
+        read_within_root(root, outside / "role.md")
 
 
 # ---------------------------------------------------------------------------

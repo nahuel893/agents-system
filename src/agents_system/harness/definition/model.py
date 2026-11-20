@@ -52,7 +52,7 @@ class AgentDefinition:
     inline_skills: Mapping[str, str] = dataclasses.field(default_factory=dict)
     #: Issue #75. The `FolderLocator.root` that `skills_folder` belongs to:
     #: a skill file must resolve inside both, and `_load_skills` reads it
-    #: walking from this root (`_read_within_root`). `None` exactly when
+    #: walking from this root (`read_within_root`). `None` exactly when
     #: `skills_folder` is.
     importer_root: pathlib.Path | None = None
     #: D-037 (issue #13, ADR-004). `None` means this runtime uses the

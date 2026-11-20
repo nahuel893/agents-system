@@ -19,9 +19,9 @@ from agents_system.harness.definition.directives import (
     _resolve_permissions,
 )
 from agents_system.harness.definition.frontmatter import (
-    _as_str_list,
     _read_md,
     _split_frontmatter,
+    as_str_list,
 )
 from agents_system.harness.loader import DefinitionError, RawDefinition, merge, resolve
 
@@ -90,22 +90,22 @@ def test_split_frontmatter_valid() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _as_str_list
+# as_str_list
 # ---------------------------------------------------------------------------
 def test_as_str_list_none() -> None:
-    assert _as_str_list(None) == []
+    assert as_str_list(None) == []
 
 
 def test_as_str_list_str_wraps() -> None:
-    assert _as_str_list("solo") == ["solo"]
+    assert as_str_list("solo") == ["solo"]
 
 
 def test_as_str_list_list_coerces_elements() -> None:
-    assert _as_str_list(["a", 1]) == ["a", "1"]
+    assert as_str_list(["a", 1]) == ["a", "1"]
 
 
 def test_as_str_list_scalar_fallback() -> None:
-    assert _as_str_list(42) == ["42"]
+    assert as_str_list(42) == ["42"]
 
 
 # ---------------------------------------------------------------------------

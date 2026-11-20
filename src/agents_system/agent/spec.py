@@ -27,15 +27,15 @@ from types import MappingProxyType
 from typing import Any, NoReturn, Self
 
 from agents_system.harness.definition.directives import (
-    _check_list_directive,
-    _check_mapping_directive,
+    check_list_directive,
+    check_mapping_directive,
 )
 from agents_system.harness.definition.files import (
-    _parse_untrusted_input,
-    _validate_inline_skills,
+    parse_untrusted_input,
+    validate_inline_skills,
 )
-from agents_system.harness.definition.frontmatter import _as_str_list
-from agents_system.harness.definition.policy import _POLICY_FIELDS
+from agents_system.harness.definition.frontmatter import as_str_list
+from agents_system.harness.definition.policy import POLICY_FIELDS
 from agents_system.harness.loader import (
     DefinitionError,
     FolderLocator,
@@ -150,12 +150,12 @@ _MAPPING_PARAMS = frozenset(
     }
 )
 #: The mappings that take `{inherit: true, ...}` directives.
-_DIRECTIVE_MAPPING_PARAMS = frozenset(_POLICY_FIELDS)
+_DIRECTIVE_MAPPING_PARAMS = frozenset(POLICY_FIELDS)
 
 
 def _str_list(who: str, name: str, value: Any) -> tuple[str, ...]:
     """A list parameter, read as the loader reads the YAML field
-    (``_as_str_list``): ``None`` is empty, and a bare string is a one-item
+    (``as_str_list``): ``None`` is empty, and a bare string is a one-item
     list -- it used to be split into its characters. Anything but a string or
     a list/tuple of strings raises, rather than being stringified into a
     name nothing matches."""
@@ -169,7 +169,7 @@ def _str_list(who: str, name: str, value: Any) -> tuple[str, ...]:
             f"({type(value).__name__}), which is not a list of strings. A "
             f"single string counts as a one-item list, as in YAML."
         )
-    return tuple(_as_str_list(value))
+    return tuple(as_str_list(value))
 
 
 def _permissions(who: str, value: Any) -> Any:
@@ -179,9 +179,9 @@ def _permissions(who: str, value: Any) -> Any:
     it used to be iterated, which turned its keys into the permissions
     ``'inherit'`` and ``'remove'`` and ignored the removal. A mapping the
     loader does not recognise is rejected here, by the loader's own check
-    (``_check_list_directive``), so the two cannot drift."""
+    (``check_list_directive``), so the two cannot drift."""
     if isinstance(value, Mapping):
-        _check_list_directive(dict(value), who=who, field="permissions")
+        check_list_directive(dict(value), who=who, field="permissions")
         return {
             key: item
             if key == "inherit"
@@ -207,7 +207,7 @@ def _mapping(who: str, name: str, value: Any) -> Mapping[str, Any]:
         # The loader's own check (issue #106): `{"add": [...]}` without
         # `"inherit": True`, or `"inherit": "yes"`, used to be stored as
         # literal policy keys or replace the parent's whole mapping.
-        _check_mapping_directive(dict(value), who=who, field=name)
+        check_mapping_directive(dict(value), who=who, field=name)
     if name == "skill_contents" and not all(
         isinstance(key, str) and isinstance(text, str) for key, text in value.items()
     ):
@@ -226,7 +226,7 @@ def _checked(who: str, params: Mapping[str, Any]) -> dict[str, Any]:
     One function for both forms, so ``Agent(...)`` and
     ``Agent.from_folder(path, **overrides)`` enforce the same rules.
     ``untrusted_input`` goes through the loader's own
-    ``_parse_untrusted_input``: only a real bool is accepted (``'false'``
+    ``parse_untrusted_input``: only a real bool is accepted (``'false'``
     and ``'no'`` used to resolve to True), and a key present with ``None``
     is ambiguous with not passing it, exactly like ``untrusted_input: null``
     in ``policy.md``.
@@ -239,7 +239,7 @@ def _checked(who: str, params: Mapping[str, Any]) -> dict[str, Any]:
             checked[name] = _mapping(who, name, value)
         elif name == "permissions":
             checked[name] = _permissions(who, value)
-    _parse_untrusted_input(params, source=who)
+    parse_untrusted_input(params, source=who)
     return checked
 
 
@@ -328,7 +328,7 @@ class Agent:
             del own["untrusted_input"]
         for name, value in _checked(who, own).items():
             object.__setattr__(self, name, value)
-        _validate_inline_skills(self.name, self.skills, self.skill_contents)
+        validate_inline_skills(self.name, self.skills, self.skill_contents)
 
         if self._folder is not None:
             unknown = set(self._folder_overrides) - _AGENT_OVERRIDABLE_FIELDS
@@ -342,7 +342,7 @@ class Agent:
                 # the folder's own `skills` decide, and the loader runs the
                 # same check once it has read them
                 # (`_apply_agent_folder_overrides`).
-                _validate_inline_skills(
+                validate_inline_skills(
                     self.name, overrides["skills"], overrides["skill_contents"]
                 )
             object.__setattr__(self, "_folder_overrides", overrides)

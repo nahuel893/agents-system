@@ -145,8 +145,8 @@ def test_parse_does_not_echo_an_oversized_value() -> None:
 
 # ---------------------------------------------------------------------------
 # issue #128 item 6 -- a role/client segment with no `@`, and made only of
-# `_SAFE_SEGMENT`-legal characters, previously passed straight through with
-# no length bound at all: `_SAFE_SEGMENT` checks the character class, never
+# `SAFE_SEGMENT`-legal characters, previously passed straight through with
+# no length bound at all: `SAFE_SEGMENT` checks the character class, never
 # the length. That oversized, but otherwise "valid", segment then reaches a
 # real filesystem join (`locate._role_folder`/`_deployment_folder`) and can
 # overflow into a raw `OSError` (`ENAMETOOLONG`) instead of the bounded

@@ -18,7 +18,7 @@ from agents_system.harness.definition.model_config import _resolve_model_declara
 from agents_system.harness.definition.policy import (
     _DEPLOYMENT_RULE,
     _PLATFORM_DEFAULT_LIMITS,
-    _POLICY_FIELDS,
+    POLICY_FIELDS,
 )
 from agents_system.harness.definition.prompt import _PROMPT_SEPARATOR
 from agents_system.harness.definition.safeguards import (
@@ -145,7 +145,7 @@ def _merge_validated(
         field: _resolve_mapping_directive(
             getattr(generic, field), getattr(override, field), who=who, field=field
         )
-        for field in _POLICY_FIELDS
+        for field in POLICY_FIELDS
     }
     # The role's descriptions carry over a plain mapping too (review of
     # #112): a deployment may describe only the conditions it adds

@@ -7,7 +7,7 @@ from typing import Any
 
 from agents_system.harness.definition.directives import _descriptions_of
 from agents_system.harness.definition.errors import DefinitionError
-from agents_system.harness.definition.frontmatter import _as_str_list
+from agents_system.harness.definition.frontmatter import as_str_list
 from agents_system.harness.definition.policy import _IMPORTER_RULE
 
 
@@ -50,7 +50,7 @@ def _validate_audit_redaction(
             f"Invariant violation — audit_policy: {who} sets redact_keys={keys!r}, "
             f"which is not a list of strings.  {rule}"
         )
-    dropped = set(_as_str_list(ceiling.get("redact_keys"))) - set(keys)
+    dropped = set(as_str_list(ceiling.get("redact_keys"))) - set(keys)
     if dropped:
         raise DefinitionError(
             f"Invariant violation — audit_policy: {who} resolves to "
@@ -84,10 +84,10 @@ def _validate_escalation_kept(
     plain ``escalation_rules`` mapping replaces the role's and whose
     ``remove:`` directive subtracts from it.
     """
-    kept = {_condition_name(c) for c in _as_str_list(resolved.get("conditions"))}
+    kept = {_condition_name(c) for c in as_str_list(resolved.get("conditions"))}
     dropped = [
         condition
-        for condition in _as_str_list(ceiling.get("conditions"))
+        for condition in as_str_list(ceiling.get("conditions"))
         if _condition_name(condition) not in kept
     ]
     if dropped:
@@ -127,7 +127,7 @@ def _validate_escalation_wording(
     A predefined child role is not held to this: the same author writes
     both files (``_fold_parent_into_child``).
     """
-    inherited = {_condition_name(c) for c in _as_str_list(parent.get("conditions"))}
+    inherited = {_condition_name(c) for c in as_str_list(parent.get("conditions"))}
     # Issue #146 review: the same silent key-collision `_render_escalation_
     # block` (issue #137) fixed for its own `descriptions` dict-building
     # applies here too. A plain dict comprehension over the PARENT's

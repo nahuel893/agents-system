@@ -261,7 +261,7 @@ def test_an_unrecognised_list_directive_raises(directive: Any) -> None:
 
 
 def test_a_bare_string_is_a_one_item_list() -> None:
-    """As `_as_str_list` reads `tools:` and `Agent(permissions="x")` reads
+    """As `as_str_list` reads `tools:` and `Agent(permissions="x")` reads
     it. It used to resolve to the parent's full set."""
     assert _resolve_list_directive(["a", "b"], "read:x") == ["read:x"]
 

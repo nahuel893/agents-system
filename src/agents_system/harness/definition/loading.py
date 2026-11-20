@@ -13,14 +13,14 @@ from agents_system.harness.definition.errors import DefinitionError
 from agents_system.harness.definition.files import (
     _declared_memory_policy,
     _load_role_files,
-    _parse_untrusted_input,
+    parse_untrusted_input,
 )
 from agents_system.harness.definition.fold import (
     _apply_importer_ceiling,
     _fold_parent_into_child,
     _resolve_chain_root,
 )
-from agents_system.harness.definition.frontmatter import _as_str_list, _read_md
+from agents_system.harness.definition.frontmatter import _read_md, as_str_list
 from agents_system.harness.definition.locate import (
     _DEPRECATED_PREDEFINED_ROLES,
     _deployment_folder,
@@ -39,7 +39,7 @@ from agents_system.harness.definition.policy import (
     _PLATFORM_DEFAULT_LIMITS,
 )
 from agents_system.harness.definition.prompt import _split_design_notes
-from agents_system.harness.definition.roots import RootConfig, _require_deployments_root
+from agents_system.harness.definition.roots import RootConfig, require_deployments_root
 
 logger = structlog.get_logger()
 
@@ -242,7 +242,7 @@ def load_override(
         roots = RootConfig()
 
     folder = _deployment_folder(
-        _require_deployments_root(roots.deployments_root), client, role_type
+        require_deployments_root(roots.deployments_root), client, role_type
     )
 
     if not folder.exists():
@@ -300,8 +300,8 @@ def load_override(
         version=version,
         deployment=deployment,
         system_prompt=role_body,
-        tools=_as_str_list(manifest_fm.get("tools")),
-        skills=_as_str_list(manifest_fm.get("skills")),
+        tools=as_str_list(manifest_fm.get("tools")),
+        skills=as_str_list(manifest_fm.get("skills")),
         context=dict(manifest_fm.get("context") or {}),
         permissions=manifest_fm.get("permissions", []),
         # "" means NOT DECLARED here too -- see `_load_role_files`. A
@@ -322,11 +322,11 @@ def load_override(
         model=policy_fm.get("model"),
         # ADR-002 C.11. `None` means the override says nothing and inherits
         # the resolved role's value — see `_validate_untrusted_input_monotonic`.
-        # `_parse_untrusted_input` type-checks whatever was actually written.
-        untrusted_input=_parse_untrusted_input(policy_fm, source=shown / "policy.md"),
+        # `parse_untrusted_input` type-checks whatever was actually written.
+        untrusted_input=parse_untrusted_input(policy_fm, source=shown / "policy.md"),
         # ADR-002 C.12. NAMES only, same shape as `tools` above — a
         # deployment never originates a full declaration (`command_tool_
         # declarations` stays empty), it only narrows the role's set by
         # name. `_validate_command_tools` enforces the subset below.
-        command_tools=_as_str_list(manifest_fm.get("command_tools")),
+        command_tools=as_str_list(manifest_fm.get("command_tools")),
     )

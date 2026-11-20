@@ -119,7 +119,7 @@ de `skills/` en `docs/platform/role.md` se corrigen para reflejar esto
 `create_app` incorpora `agents: Mapping[str, Agent | str] | None`,
 `grants: Mapping[str, Sequence[str]] | None` y
 `clients: Mapping[str, str] | None`. Todo id es opaco — como máximo 64
-caracteres válidos según `_SAFE_SEGMENT`, nunca se parsea — y todo id que
+caracteres válidos según `SAFE_SEGMENT`, nunca se parsea — y todo id que
 nombren `WHATSAPP_RUNTIME_ID` o `ADAPTER_RUNTIMES` debe estar registrado, o
 el arranque falla nombrándolo. `clients` se rechaza contra un id cuyo valor
 es un `Agent`: los overrides de despliegue siguen siendo exclusivos de roles
@@ -134,7 +134,7 @@ reaparezca.
 ### D6 — Validación del runtime id, y dónde vive el código nuevo
 
 `_validate_runtime_id` (`main.py`) reutiliza la clase de caracteres de
-`locate._SAFE_SEGMENT` para todo id, venga de `agents`, `grants`, `clients`
+`locate.SAFE_SEGMENT` para todo id, venga de `agents`, `grants`, `clients`
 o `agent_registrations`. `Agent` vive en `src/agents_system/agent/spec.py`,
 junto a `agent/graph.py` — no en un archivo `agent.py` hermano, que no
 puede coexistir con el paquete `agent/` ya existente.

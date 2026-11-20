@@ -168,7 +168,7 @@ def test_frozen_shapes_still_resolve_to_the_loaders_plain_shapes(
 ) -> None:
     """The loader parses YAML lists/dicts; a tuple where it expects a list
     would be silently dropped (e.g. a permissions override) or mangled
-    (`_as_str_list` of a tuple). `_to_locator()` thaws before handing over."""
+    (`as_str_list` of a tuple). `_to_locator()` thaws before handing over."""
     from agents_system.agent.spec import Agent
 
     inline = resolve(

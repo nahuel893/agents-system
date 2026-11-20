@@ -288,7 +288,7 @@ def _parse_command_tools(
 
     Only a platform ROLE's own `manifest.md` calls this — a deployment
     override's `command_tools:` is a bare list of NAMES (parsed with
-    `_as_str_list`, like `tools:`), never full entries; see `merge()`.
+    `as_str_list`, like `tools:`), never full entries; see `merge()`.
     """
     raw_list = manifest_fm.get("command_tools")
     if raw_list is None:
