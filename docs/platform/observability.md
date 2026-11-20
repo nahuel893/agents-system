@@ -28,7 +28,7 @@ curl -H "Authorization: Bearer $METRICS_API_KEY" http://localhost:8000/metrics
 
 **Protection model** follows `integration/openai_adapter.py`'s
 `ADAPTER_API_KEY`/`ALLOW_INSECURE` fail-closed spirit exactly
-(`main.py::verify_metrics_access`, `Settings.validate_security_fail_closed`):
+(`serving/auth.py::verify_metrics_access`, `Settings.validate_security_fail_closed`):
 
 - `metrics_enabled=False` (default): the route exists in the app, but the
   dependency raises 404 before doing anything else — the same posture as
@@ -375,7 +375,7 @@ once at import time. A test builds its own throw-away set —
 other (registering the same metric name twice on one registry raises
 `ValueError`) or mutate process-wide state another test could observe. Pass
 a fresh set into `AgentRuntime(..., metrics=my_metrics)` — or, for the
-provider counters, into `main._build_chat_model(..., metrics=my_metrics)`
+provider counters, into `serving.models._build_chat_model(..., metrics=my_metrics)`
 (issue #145) — to assert on exactly the values one test's turns produced.
 
 ## Out of scope for this slice
@@ -406,7 +406,7 @@ provider counters, into `main._build_chat_model(..., metrics=my_metrics)`
   (metrics section), `tests/test_config.py` (fail-closed validator)
 - Provider throttling/retries (issue #145):
   `src/agents_system/observability/provider_http.py` (`MetricsHTTPTransport`,
-  `classify_provider_status`), wired in `main._build_chat_model`'s
+  `classify_provider_status`), wired in `serving.models._build_chat_model`'s
   `openai_compatible` branch; `tests/test_provider_http_metrics.py`,
   `tests/test_main.py` (the `#145` section), `tests/test_config.py`
   (`openai_compatible_request_timeout_s`)

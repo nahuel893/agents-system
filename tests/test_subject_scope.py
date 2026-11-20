@@ -194,7 +194,7 @@ def test_runtime_with_a_scope_provider_needs_an_explicit_runtime_id() -> None:
 
 
 async def test_boot_helper_verifies_the_provider_only_when_a_feature_is_on() -> None:
-    from agents_system.main import _start_scope_provider
+    from agents_system.serving.stores import _start_scope_provider
 
     engine = object()
     # No per-user feature configured: nothing is built, nothing is checked.

@@ -159,7 +159,7 @@ la aplicación en ejecución: `EVAL_PROVIDER` (`Settings.eval_provider`, sin
 valor por defecto), leído por `agents_system.evals.provider.build_eval_model()`.
 Elegir otro modelo para una corrida de eval puntual nunca debe cambiar lo que
 la app misma sirve, así que ambos nunca comparten un campo. Acepta los mismos
-valores que despacha `main._build_chat_model`: `ollama`, `groq`, `anthropic`,
+valores que despacha `serving.models._build_chat_model`: `ollama`, `groq`, `anthropic`,
 `openai_compatible`.
 
 A propósito no hay valor por defecto. Antes era un modelo local de Ollama, así

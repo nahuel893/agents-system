@@ -36,7 +36,7 @@ MAX_MODULE_LINES = 500
 # Modules already over the cap, each with the ceiling it may not pass. Lower a
 # ceiling when a module shrinks, and delete the entry once it fits the cap.
 OVERSIZED_MODULES: dict[str, int] = {
-    "main.py": 2100,
+    "main.py": 1200,
     "agent/runtime.py": 1050,
     "evals/runner.py": 1500,
     "evals/live_harness.py": 1200,
@@ -121,7 +121,7 @@ class Contract:
         return self.importers is None or unit in self.importers
 
 
-_SERVING = frozenset({"main", "server", "integration", "channels"})
+_SERVING = frozenset({"main", "server", "serving", "integration", "channels"})
 
 CONTRACTS: tuple[Contract, ...] = (
     Contract(

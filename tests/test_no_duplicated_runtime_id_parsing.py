@@ -10,7 +10,7 @@ module under `src/agents_system/` and fails on any code that splits,
 partitions, builds or tests a string around a `"__"` separator, or names the
 `"_generic"` sentinel.
 
-`AGENT_REGISTRATIONS` values are parsed by `main._parse_agent_registration`
+`AGENT_REGISTRATIONS` values are parsed by `serving.registrations._parse_agent_registration`
 on `"@"`, never `"__"`, and never out of a runtime id.
 
 The same gate covers prose: no module, and neither twin of the doc that
@@ -174,7 +174,7 @@ def test_the_scan_flags_a_renamed_successor(source: str) -> None:
 # ---------------------------------------------------------------------------
 # issue #128 item 7 -- the broadened generic-constant check must not flag a
 # docstring, a real dunder name, or the one allow-listed migration-hint
-# string (`_SCHEME`, used verbatim in `main.py`'s unregistered-channel error
+# string (`_SCHEME`, used verbatim in `serving/boot.py`'s unregistered-channel error
 # to tell an operator what the OLD scheme looked like).
 # ---------------------------------------------------------------------------
 
@@ -243,7 +243,7 @@ _RUNTIME_ID_DOCS = (
 # Each tells a reader what replaced it; none describes it as current behavior.
 _ALLOWED_SCHEME_MENTIONS = {
     # The unregistered-channel error's static migration hint.
-    "main.py": 1,
+    "serving/boot.py": 1,
     # The AGENT_REGISTRATIONS comment, naming the encoding it replaces.
     "config.py": 1,
 }

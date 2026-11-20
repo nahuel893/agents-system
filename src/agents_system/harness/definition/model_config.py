@@ -8,7 +8,7 @@ from typing import Any
 
 from agents_system.harness.definition.errors import DefinitionError
 
-#: D-037 (issue #13, ADR-004) -- the provider values `main._build_chat_model`
+#: D-037 (issue #13, ADR-004) -- the provider values `serving.models._build_chat_model`
 #: dispatches on. Kept identical to `Settings.adapter_provider`'s `Literal`
 #: (config.py); the loader cannot import `main`/`config` here without risking
 #: a cycle (`main` imports this module), so
@@ -22,7 +22,7 @@ _SUPPORTED_MODEL_PROVIDERS = frozenset(
 
 #: The closed key set a `model:` declaration may use. Closed deliberately:
 #: `provider`/`model` select WHICH already-configured provider/model to use,
-#: never a credential -- `main._build_chat_model` reads every real secret
+#: never a credential -- `serving.models._build_chat_model` reads every real secret
 #: exclusively from `Settings`/the process environment. A key outside this
 #: set (an attempted `api_key`, `token`, `secret`, ...) is rejected by
 #: `_validate_model_config`, so a versioned manifest structurally cannot

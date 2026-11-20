@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from agents_system.config import Settings
-from agents_system.main import _bind_user_fact_store
 from agents_system.scope import InMemoryScopeProvider
 from agents_system.server import default_registry_factory
+from agents_system.serving.stores import _bind_user_fact_store
 from agents_system.subject_data import SubjectDataRegistry
 from agents_system.user_memory import (
     InMemoryUserFactStore,

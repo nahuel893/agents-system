@@ -2,7 +2,7 @@
 
 Same isolation strategy as tests/test_openai_adapter.py: TestClient is built
 WITHOUT the context-manager form so the real lifespan never runs, and
-agents_system.main.get_settings is patched so the route's Depends(get_settings)
+agents_system.serving.auth.get_settings is patched so the route's Depends(get_settings)
 sees a controlled fake Settings -- the real Settings' own fail-closed
 validator (metrics_enabled + empty metrics_api_key) is covered separately in
 tests/test_config.py.
@@ -37,12 +37,12 @@ def _make_client(
     app.state.engine = MagicMock()
     app.state.audit_sink = MagicMock(dropped_count=audit_dropped_count)
 
-    import agents_system.main as main_mod
+    import agents_system.serving.auth as auth_mod
 
     fake_settings = MagicMock()
     fake_settings.metrics_enabled = metrics_enabled
     fake_settings.metrics_api_key = metrics_api_key
-    monkeypatch.setattr(main_mod, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(auth_mod, "get_settings", lambda: fake_settings)
 
     return TestClient(app)
 

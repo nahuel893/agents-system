@@ -20,7 +20,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from agents_system.config import Settings, get_settings
 from agents_system.harness.loader import DefinitionError
-from agents_system.main import _settings_agents, create_app, lifespan
+from agents_system.main import create_app, lifespan
+from agents_system.serving.registrations import _settings_agents
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 EXAMPLES = REPO / "examples" / "agents"

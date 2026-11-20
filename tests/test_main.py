@@ -39,19 +39,18 @@ from agents_system.agent.reasoning import ReasoningSanitizedChatOpenAI
 from agents_system.channels.port import Channel
 from agents_system.config import Settings, get_settings
 from agents_system.harness.loader import DefinitionError, RootConfig
-from agents_system.main import (
-    ProviderHealthProbe,
-    _build_chat_model,
-    _build_registrations,
-    _folder_registration,
-    _provider_probe_target,
-    _validate_channels,
-    lifespan,
-)
+from agents_system.main import ProviderHealthProbe, lifespan
 from agents_system.observability.metrics import DEFAULT_METRICS, build_metrics
 from agents_system.observability.provider_http import MetricsHTTPTransport
 from agents_system.permissions import UntrustedInputGrantError
 from agents_system.services.scope_postgres import PostgresScopeProvider
+from agents_system.serving.channels import _validate_channels
+from agents_system.serving.health import _provider_probe_target
+from agents_system.serving.models import _build_chat_model
+from agents_system.serving.registrations import (
+    _build_registrations,
+    _folder_registration,
+)
 
 #: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
 #: is deprecated. They move to `agent` or the reference agents in
@@ -100,7 +99,7 @@ def _default_deploy_grants(registrations: dict[str, str]) -> dict[str, tuple[str
     consulted regardless.
     """
     from agents_system.harness.loader import resolve as _resolve
-    from agents_system.main import _parse_agent_registration
+    from agents_system.serving.registrations import _parse_agent_registration
 
     grants: dict[str, tuple[str, ...]] = {}
     for runtime_id, value in registrations.items():
@@ -431,7 +430,7 @@ async def test_lifespan_skips_checkpointer_when_disabled() -> None:
 
 
 def test_the_checkpointer_is_postgres_on_the_app_database() -> None:
-    from agents_system.main import _build_checkpointer_cm
+    from agents_system.serving.stores import _build_checkpointer_cm
 
     settings = _make_settings(checkpointer_pool_size=3, checkpointer_timeout_s=2.5)
     with patch(
@@ -446,7 +445,7 @@ def test_retention_never_reaches_the_checkpointer_itself() -> None:
     """Durability and retention are separate: the saver is built the same
     way whatever the retention, so changing the backend cannot silently
     change how long conversations are kept."""
-    from agents_system.main import _build_checkpointer_cm
+    from agents_system.serving.stores import _build_checkpointer_cm
 
     calls = []
     for retention in (3_600, 2_592_000, None):
@@ -927,7 +926,8 @@ def test_build_chat_model_dispatches_by_provider(
     monkeypatch.setenv("GROQ_API_KEY", "test")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model(provider)
 
@@ -958,7 +958,8 @@ def _anthropic_model_id(
 ) -> str:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model("anthropic", model_override=model_override)
     return str(model.model)
@@ -997,7 +998,8 @@ def test_build_chat_model_anthropic_empty_model_names_the_variable(
 
 def test_build_chat_model_wires_openai_compatible_from_settings() -> None:
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model("openai_compatible")
 
@@ -1023,7 +1025,7 @@ def test_build_chat_model_requires_base_url_and_model(
     """
     settings = _openai_compatible_settings(**{missing_field: ""})
     with (
-        patch("agents_system.main.get_settings", return_value=settings),
+        patch("agents_system.serving.models.get_settings", return_value=settings),
         pytest.raises(ValueError, match=expected_env_var) as excinfo,
     ):
         _build_chat_model("openai_compatible")
@@ -1043,7 +1045,7 @@ def test_build_chat_model_accepts_empty_api_key_for_keyless_hosts() -> None:
     fake_logger = MagicMock()
     with (
         patch(
-            "agents_system.main.get_settings",
+            "agents_system.serving.models.get_settings",
             return_value=_openai_compatible_settings(openai_compatible_api_key=""),
         ),
         patch("agents_system.main.structlog.get_logger", return_value=fake_logger),
@@ -1062,7 +1064,8 @@ def test_openai_compatible_model_still_supports_bind_tools() -> None:
     stop applying the moment the agent equips a tool.
     """
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model("openai_compatible")
 
@@ -1094,7 +1097,7 @@ def test_openai_compatible_model_gets_a_bounded_request_timeout() -> None:
     Settings, not the SDK default and not `None`.
     """
     settings = _openai_compatible_settings(openai_compatible_request_timeout_s=12.5)
-    with patch("agents_system.main.get_settings", return_value=settings):
+    with patch("agents_system.serving.models.get_settings", return_value=settings):
         model = _build_chat_model("openai_compatible")
 
     timeout = model.request_timeout
@@ -1109,7 +1112,8 @@ def test_openai_compatible_model_wires_the_metrics_http_transport() -> None:
     the "openai_compatible" provider label and the process-wide default
     metrics, so a real 429/retry shows up on `/metrics` (issue #145)."""
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model("openai_compatible")
 
@@ -1127,7 +1131,8 @@ def test_openai_compatible_model_accepts_an_injected_metrics_set() -> None:
     registry = CollectorRegistry()
     my_metrics = build_metrics(registry)
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model("openai_compatible", metrics=my_metrics)
 
@@ -1142,7 +1147,8 @@ async def test_openai_compatible_model_records_a_429_on_the_injected_metrics() -
     registry = CollectorRegistry()
     my_metrics = build_metrics(registry)
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model("openai_compatible", metrics=my_metrics)
 
@@ -1171,7 +1177,7 @@ def test_build_chat_model_ollama_uses_configured_model_and_base_url() -> None:
     settings = _make_settings(
         ollama_model="qwen3:8b", ollama_base_url="http://localhost:11500"
     )
-    with patch("agents_system.main.get_settings", return_value=settings):
+    with patch("agents_system.serving.models.get_settings", return_value=settings):
         model = _build_chat_model("ollama")
 
     assert model.model == "qwen3:8b"
@@ -1183,7 +1189,9 @@ def test_build_chat_model_ollama_defaults_leave_base_url_unset() -> None:
     treats an empty string base_url differently from "not configured"
     (it would try to hit http://, not fall back to its own default host).
     """
-    with patch("agents_system.main.get_settings", return_value=_make_settings()):
+    with patch(
+        "agents_system.serving.models.get_settings", return_value=_make_settings()
+    ):
         model = _build_chat_model("ollama")
 
     assert model.model == "qwen2.5:3b"
@@ -1212,7 +1220,8 @@ def test_build_chat_model_override_replaces_default_model_id(
     monkeypatch.setenv("GROQ_API_KEY", "test")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model(provider, model_override="overridden-model-id")
 
@@ -1263,7 +1272,9 @@ def test_build_chat_model_temperature_and_max_tokens_override_groq() -> None:
 def test_build_chat_model_max_tokens_maps_to_num_predict_for_ollama() -> None:
     """ChatOllama has no `max_tokens` field -- it is `num_predict` (verified
     against the installed langchain-ollama's own model fields)."""
-    with patch("agents_system.main.get_settings", return_value=_make_settings()):
+    with patch(
+        "agents_system.serving.models.get_settings", return_value=_make_settings()
+    ):
         model = _build_chat_model("ollama", temperature=0.3, max_tokens=64)
 
     assert model.temperature == 0.3
@@ -1272,7 +1283,8 @@ def test_build_chat_model_max_tokens_maps_to_num_predict_for_ollama() -> None:
 
 def test_build_chat_model_openai_compatible_temperature_override() -> None:
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model("openai_compatible", temperature=0.6, max_tokens=512)
 
@@ -1284,7 +1296,8 @@ def test_build_chat_model_no_override_keeps_previous_defaults() -> None:
     """Zero behavior change for a call site that names no override -- byte-
     identical to the pre-D-037 defaults."""
     with patch(
-        "agents_system.main.get_settings", return_value=_openai_compatible_settings()
+        "agents_system.serving.models.get_settings",
+        return_value=_openai_compatible_settings(),
     ):
         model = _build_chat_model("openai_compatible")
 
@@ -1526,7 +1539,12 @@ async def test_lifespan_uses_full_lease_duration_when_it_exceeds_one_day() -> No
 
     with (
         patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.serving.models.get_settings", return_value=test_settings),
         patch("agents_system.main.DEFAULT_LEASE_DURATION", timedelta(days=1)),
+        patch(
+            "agents_system.serving.channels.DEFAULT_LEASE_DURATION", timedelta(days=1)
+        ),
+        patch("agents_system.serving.boot.DEFAULT_LEASE_DURATION", timedelta(days=1)),
         _stack(patches),
     ):
         app = create_test_app()
@@ -1988,6 +2006,7 @@ async def test_whatsapp_runtime_is_built_even_with_no_adapter_runtimes() -> None
 
     with (
         patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.serving.models.get_settings", return_value=test_settings),
         patch("agents_system.main.get_engine", return_value=_awaitable_engine()),
         patch("agents_system.audit.sink.AuditSink") as sink_cls,
         patch("agents_system.main.close_redis_pool", new=AsyncMock()),
@@ -2071,6 +2090,7 @@ async def test_lifespan_passes_explicit_roots_to_build_runtime_too() -> None:
 
     with (
         patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.serving.models.get_settings", return_value=test_settings),
         patch("agents_system.main.get_engine", return_value=_awaitable_engine()),
         patch("agents_system.audit.sink.AuditSink") as sink_cls,
         patch("agents_system.main.close_redis_pool", new=AsyncMock()),
@@ -2134,6 +2154,7 @@ async def test_client_runtime_without_explicit_roots_raises_definition_error() -
 
     with (
         patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.serving.models.get_settings", return_value=test_settings),
         patch("agents_system.main.get_engine", return_value=_awaitable_engine()),
         patch("agents_system.audit.sink.AuditSink") as sink_cls,
         patch("agents_system.main.close_redis_pool", new=AsyncMock()),
@@ -2181,6 +2202,7 @@ async def test_client_whatsapp_runtime_without_explicit_roots_raises_definition_
 
     with (
         patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.serving.models.get_settings", return_value=test_settings),
         patch("agents_system.main.get_engine", return_value=_awaitable_engine()),
         patch("agents_system.audit.sink.AuditSink") as sink_cls,
         patch("agents_system.main.close_redis_pool", new=AsyncMock()),
@@ -2285,6 +2307,7 @@ async def test_create_app_refuses_to_boot_when_whatsapp_role_is_not_untrusted_in
 
     with (
         patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.serving.models.get_settings", return_value=test_settings),
         patch("agents_system.main.get_engine", return_value=mock_engine),
         patch("agents_system.main.close_redis_pool", new=AsyncMock()),
         patch(

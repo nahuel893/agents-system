@@ -74,7 +74,7 @@ PROVIDER_REQUEST_STATUSES = (
 )
 
 #: issue #145 -- the bounded, code-defined chat model providers
-#: `main._build_chat_model` dispatches on. Mirrors `Settings.adapter_provider`
+#: `serving.models._build_chat_model` dispatches on. Mirrors `Settings.adapter_provider`
 #: or `Settings.eval_provider`'s own `Literal` -- never a caller-supplied
 #: string reaching a label.
 PROVIDER_NAMES = ("groq", "anthropic", "openai_compatible", "ollama")

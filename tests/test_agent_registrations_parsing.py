@@ -3,7 +3,7 @@
 The Settings-driven boot path no longer reads a role and a deployment out of
 a `{deployment}__{role}` runtime id. The operator names each runtime id in
 `AGENT_REGISTRATIONS` and maps it to `"{role}"` or `"{role}@{client}"`;
-`main._parse_agent_registration` reads that one value shape, strictly.
+`serving.registrations._parse_agent_registration` reads that one value shape, strictly.
 
 What the lifespan builds from these entries is covered by `tests/test_main.py`
 (the "env_registration" tests).
@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from agents_system.config import Settings
 from agents_system.harness.loader import DefinitionError
-from agents_system.main import _parse_agent_registration
+from agents_system.serving.registrations import _parse_agent_registration
 
 # ---------------------------------------------------------------------------
 # Settings.agent_registrations
@@ -155,7 +155,7 @@ def test_parse_does_not_echo_an_oversized_value() -> None:
 
 
 def test_parse_rejects_an_oversized_role_segment_with_legal_characters() -> None:
-    from agents_system.main import _MAX_RUNTIME_ID_LENGTH
+    from agents_system.serving.registrations import _MAX_RUNTIME_ID_LENGTH
 
     oversized_role = "a" * (_MAX_RUNTIME_ID_LENGTH + 1)
 
@@ -168,7 +168,7 @@ def test_parse_rejects_an_oversized_role_segment_with_legal_characters() -> None
 
 
 def test_parse_rejects_an_oversized_client_segment_with_legal_characters() -> None:
-    from agents_system.main import _MAX_RUNTIME_ID_LENGTH
+    from agents_system.serving.registrations import _MAX_RUNTIME_ID_LENGTH
 
     oversized_client = "c" * (_MAX_RUNTIME_ID_LENGTH + 1)
 
@@ -181,7 +181,7 @@ def test_parse_rejects_an_oversized_client_segment_with_legal_characters() -> No
 
 
 def test_parse_accepts_a_role_segment_at_exactly_the_max_length() -> None:
-    from agents_system.main import _MAX_RUNTIME_ID_LENGTH
+    from agents_system.serving.registrations import _MAX_RUNTIME_ID_LENGTH
 
     role = "a" * _MAX_RUNTIME_ID_LENGTH
 

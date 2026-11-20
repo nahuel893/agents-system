@@ -334,7 +334,7 @@ class Settings(ProviderSettings):
     # predefined role it serves, as "{role}" or "{role}@{client}" (client =
     # the deployments/<client>/<role>/ override). The id is opaque; the value
     # has exactly one optional "@" and is parsed strictly by
-    # main._parse_agent_registration -- a malformed entry fails boot.
+    # serving.registrations._parse_agent_registration -- a malformed entry fails boot.
     # Replaces the "{deployment}__{role}" encoding ADAPTER_RUNTIMES and
     # WHATSAPP_RUNTIME_ID used to carry. Ignored when create_app gets
     # `agents=`. e.g.
@@ -422,7 +422,7 @@ class Settings(ProviderSettings):
     # E.18). Deliberately a SEPARATE field from `adapter_provider` above --
     # a manual eval run choosing a different model must never change what
     # the running application serves. Accepts the same values
-    # `main._build_chat_model` dispatches on; `openai_compatible` then reads
+    # `serving.models._build_chat_model` dispatches on; `openai_compatible` then reads
     # the same `openai_compatible_*` settings as every other role (e.g.
     # OpenRouter -- see docs/platform/live-eval.md). Env var: EVAL_PROVIDER.
     #

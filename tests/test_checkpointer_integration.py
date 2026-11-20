@@ -432,7 +432,7 @@ async def test_the_lifespan_purger_enforces_retention_on_the_real_saver(
     import asyncio
 
     from agents_system.config import Settings
-    from agents_system.main import _build_checkpoint_purger
+    from agents_system.serving.stores import _build_checkpoint_purger
 
     idle = "+5491100024008"
     await _turns(migrated, idle, ["old"])

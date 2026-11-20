@@ -31,7 +31,7 @@ curl -H "Authorization: Bearer $METRICS_API_KEY" http://localhost:8000/metrics
 
 **Modelo de protección**: sigue exactamente el espíritu fail-closed de
 `ADAPTER_API_KEY`/`ALLOW_INSECURE` de `integration/openai_adapter.py`
-(`main.py::verify_metrics_access`, `Settings.validate_security_fail_closed`):
+(`serving/auth.py::verify_metrics_access`, `Settings.validate_security_fail_closed`):
 
 - `metrics_enabled=False` (default): la ruta existe en la app, pero la
   dependencia lanza 404 antes de hacer cualquier otra cosa -- la misma
@@ -409,7 +409,7 @@ para que los tests nunca choquen entre sí (registrar el mismo nombre de
 métrica dos veces en un registro lanza `ValueError`) ni muten estado de
 todo el proceso que otro test pudiera observar. Pasá un conjunto propio a
 `AgentRuntime(..., metrics=mis_metrics)` -- o, para los contadores del
-proveedor, a `main._build_chat_model(..., metrics=mis_metricas)` (issue
+proveedor, a `serving.models._build_chat_model(..., metrics=mis_metricas)` (issue
 #145) -- para verificar exactamente los valores que produjeron los turnos de
 un test.
 
@@ -444,7 +444,7 @@ un test.
 - Throttling/reintentos del proveedor (issue #145):
   `src/agents_system/observability/provider_http.py`
   (`MetricsHTTPTransport`, `classify_provider_status`), conectado en la
-  rama `openai_compatible` de `main._build_chat_model`;
+  rama `openai_compatible` de `serving.models._build_chat_model`;
   `tests/test_provider_http_metrics.py`, `tests/test_main.py` (sección
   `#145`), `tests/test_config.py` (`openai_compatible_request_timeout_s`)
 - La causa raíz real del #145 (un esquema demo faltante, no el proveedor):

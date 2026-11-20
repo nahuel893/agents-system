@@ -4,7 +4,7 @@ The eval's own provider choice is deliberately independent of
 `Settings.adapter_provider`: flipping which model a manual eval run uses
 must never change what the running application actually serves.
 `Settings.eval_provider` (env var `EVAL_PROVIDER`, no default) is a
-separate switch, accepting the exact same values `main._build_chat_model`
+separate switch, accepting the exact same values `serving.models._build_chat_model`
 dispatches on -- `"ollama"`, `"groq"`, `"anthropic"`, `"openai_compatible"`.
 The `openai_compatible` branch reads the SAME `OPENAI_COMPATIBLE_BASE_URL` /
 `OPENAI_COMPATIBLE_MODEL` / `OPENAI_COMPATIBLE_API_KEY` settings every other
@@ -22,7 +22,7 @@ from langchain_core.language_models import BaseChatModel
 
 from agents_system.agent.graph import model_display_name
 from agents_system.config import get_settings
-from agents_system.main import _build_chat_model
+from agents_system.serving.models import _build_chat_model
 
 #: Re-exported for backward compatibility -- `model_display_name` moved to
 #: `agent/graph.py` (issue #78 review finding 4) so `AgentRuntime` itself can
@@ -50,7 +50,7 @@ def build_eval_model(
     """Build the chat model a live-eval run should use, from
     `Settings.eval_provider`, plus the display name to report results under.
 
-    Reuses `main._build_chat_model` -- the exact provider dispatch every
+    Reuses `serving.models._build_chat_model` -- the exact provider dispatch every
     real role is built with -- so an eval run exercises a genuinely
     supported provider, never a bespoke construction path of its own.
 

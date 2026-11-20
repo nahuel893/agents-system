@@ -20,7 +20,8 @@ from agents_system.agent.spec import Agent
 from agents_system.config import Settings, get_settings
 from agents_system.harness.loader import DefinitionError
 from agents_system.harness.registry import ToolRegistry
-from agents_system.main import _validate_runtime_id, create_app, lifespan
+from agents_system.main import create_app, lifespan
+from agents_system.serving.registrations import _validate_runtime_id
 
 
 @pytest.fixture(autouse=True)
@@ -159,7 +160,7 @@ async def test_lifespan_rejects_a_grants_value_that_is_not_a_list(
 
 
 def test_boot_plan_rejects_a_grants_key_that_agents_does_not_register() -> None:
-    from agents_system.main import _boot_plan
+    from agents_system.serving.boot import _boot_plan
 
     app = create_app(
         registry_factory=lambda *a, **k: ToolRegistry(),
@@ -177,7 +178,7 @@ def test_boot_plan_rejects_a_grants_key_that_agents_does_not_register() -> None:
 
 
 def test_boot_plan_accepts_a_grants_key_that_matches_a_registration() -> None:
-    from agents_system.main import _boot_plan
+    from agents_system.serving.boot import _boot_plan
 
     app = create_app(
         registry_factory=lambda *a, **k: ToolRegistry(),
@@ -200,7 +201,7 @@ def test_boot_plan_accepts_a_grants_key_that_matches_a_registration() -> None:
 
 
 def test_boot_plan_rejects_grants_without_agents() -> None:
-    from agents_system.main import _boot_plan
+    from agents_system.serving.boot import _boot_plan
 
     app = create_app(
         registry_factory=lambda *a, **k: ToolRegistry(),
@@ -224,7 +225,7 @@ def test_boot_plan_rejects_grants_without_agents() -> None:
 
 
 def test_boot_plan_unknown_clients_key_error_does_not_echo_an_unbounded_id() -> None:
-    from agents_system.main import _boot_plan
+    from agents_system.serving.boot import _boot_plan
 
     oversized = "x" * 10_000
     app = create_app(
@@ -245,7 +246,7 @@ def test_boot_plan_unknown_clients_key_error_does_not_echo_an_unbounded_id() -> 
 def test_boot_plan_unregistered_grants_key_error_does_not_echo_an_unbounded_id() -> (
     None
 ):
-    from agents_system.main import _boot_plan
+    from agents_system.serving.boot import _boot_plan
 
     oversized = "y" * 10_000
     app = create_app(
@@ -266,7 +267,7 @@ def test_boot_plan_unregistered_grants_key_error_does_not_echo_an_unbounded_id()
 def test_boot_plan_unmatched_whatsapp_runtime_id_error_does_not_echo_an_unbounded_id() -> (
     None
 ):
-    from agents_system.main import _boot_plan
+    from agents_system.serving.boot import _boot_plan
 
     oversized = "z" * 10_000
     app = create_app(
