@@ -1856,6 +1856,7 @@ async def test_the_lifespan_calls_the_caller_supplied_registry_factory() -> None
 
     with (
         patch("agents_system.main.get_settings", return_value=test_settings),
+        patch("agents_system.serving.models.get_settings", return_value=test_settings),
         patch("agents_system.main.get_engine", return_value=MagicMock()),
         patch("agents_system.audit.sink.AuditSink") as sink_cls,
         patch("agents_system.main.close_redis_pool", new=AsyncMock()),
