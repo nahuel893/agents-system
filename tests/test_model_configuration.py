@@ -25,13 +25,11 @@ import pathlib
 import pytest
 
 from agents_system.agent.spec import Agent
-from agents_system.harness.loader import (
+from agents_system.harness.definition.model_config import (
     _SUPPORTED_MODEL_PROVIDERS,
-    DefinitionError,
-    RootConfig,
     _validate_model_config,
-    resolve,
 )
+from agents_system.harness.loader import DefinitionError, RootConfig, resolve
 
 #: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
 #: is deprecated. They move to `agent` or the reference agents in

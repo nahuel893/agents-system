@@ -33,6 +33,7 @@ from typing import Any
 
 import pytest
 
+from agents_system.harness.definition.loading import _MAX_ROLE_CHAIN_DEPTH
 from agents_system.harness.loader import DefinitionError, RootConfig, resolve
 
 #: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
@@ -136,9 +137,8 @@ def test_a_chain_deeper_than_the_cap_raises_a_depth_error(
     this deep should never exist on disk. It also lets the cycle test above
     rely on the two error messages being distinguishable.
     """
-    from agents_system.harness import loader
 
-    depth = loader._MAX_ROLE_CHAIN_DEPTH + 2
+    depth = _MAX_ROLE_CHAIN_DEPTH + 2
     roles_dir = tmp_path / "roles"
     for i in range(depth):
         folder = roles_dir / f"deep-{i}"

@@ -134,7 +134,7 @@ reaparezca.
 ### D6 — Validación del runtime id, y dónde vive el código nuevo
 
 `_validate_runtime_id` (`main.py`) reutiliza la clase de caracteres de
-`loader._SAFE_SEGMENT` para todo id, venga de `agents`, `grants`, `clients`
+`locate._SAFE_SEGMENT` para todo id, venga de `agents`, `grants`, `clients`
 o `agent_registrations`. `Agent` vive en `src/agents_system/agent/spec.py`,
 junto a `agent/graph.py` — no en un archivo `agent.py` hermano, que no
 puede coexistir con el paquete `agent/` ya existente.

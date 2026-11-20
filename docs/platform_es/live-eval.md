@@ -438,7 +438,7 @@ corrida, no lo que se afirma después:
   techo que rige en producción.** Todo otro límite de `execution_limits` en
   este código (un override de deployment, un importer agent) se hace
   cumplir con el invariante "Deployments may only restrict, not elevate" de
-  `harness.loader._validate_execution_limits` — un hijo puede ajustar un
+  `harness.definition.validators._validate_execution_limits` — un hijo puede ajustar un
   límite, nunca aflojarlo. `execution_limits_override` está deliberadamente
   exento: `runner._build_equipped` lo combina directo sobre los
   `execution_limits` del rol resuelto sin ningún chequeo equivalente, así
@@ -1589,7 +1589,7 @@ con la API pública `Agent` (`Agent.from_folder`), nunca un rol predefinido de
 la plataforma:
 
 - **Definir.** Extiende el `sales-agent` de referencia (aditivo para
-  capacidad, `harness/loader.py::_fold_parent_into_child`). Su manifest
+  capacidad, `harness/definition/fold.py::_fold_parent_into_child`). Su manifest
   nombra el hermano `extends: ../sales-agent` que tendría un proyecto con una
   copia de `examples/agents/sales-agent`; esta carpeta de fixture no lo
   tiene, así que la prueba pasa el padre como

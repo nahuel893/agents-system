@@ -373,10 +373,8 @@ def test_no_role_outside_the_operator_branch_can_reach_the_host() -> None:
     """
     from platform_role_contract import discover_concrete_platform_roles
 
-    from agents_system.harness.loader import (
-        RootConfig,
-        _load_role_files,
-    )
+    from agents_system.harness.definition.files import _load_role_files
+    from agents_system.harness.loader import RootConfig
 
     host_permissions = {"exec:command", "read:files"}
     host_tools = {"use_term", "read_file"}

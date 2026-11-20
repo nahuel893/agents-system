@@ -32,15 +32,17 @@ from typing import Any
 
 import pytest
 
+from agents_system.harness.definition.directives import (
+    _resolve_list_directive,
+    _resolve_mapping_directive,
+)
+from agents_system.harness.definition.validators import _validate_execution_limits
 from agents_system.harness.loader import (
     DefinitionError,
     FolderLocator,
     InlineLocator,
     RawDefinition,
     RootConfig,
-    _resolve_list_directive,
-    _resolve_mapping_directive,
-    _validate_execution_limits,
     resolve,
 )
 
@@ -575,7 +577,7 @@ def test_every_predefined_role_keeps_its_parents_conditions() -> None:
     used to leave out conditions `agent` adds."""
     from platform_role_contract import discover_concrete_platform_roles, role_chain
 
-    from agents_system.harness.loader import _resolve_role_chain
+    from agents_system.harness.definition.loading import _resolve_role_chain
 
     for role in discover_concrete_platform_roles():
         chain = role_chain(role)

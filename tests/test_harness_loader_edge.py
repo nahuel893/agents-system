@@ -13,18 +13,17 @@ from typing import Any
 
 import pytest
 
-from agents_system.harness.loader import (
-    DefinitionError,
-    RawDefinition,
-    _as_str_list,
-    _read_md,
+from agents_system.harness.definition.directives import (
     _resolve_list_directive,
     _resolve_mapping_directive,
     _resolve_permissions,
-    _split_frontmatter,
-    merge,
-    resolve,
 )
+from agents_system.harness.definition.frontmatter import (
+    _as_str_list,
+    _read_md,
+    _split_frontmatter,
+)
+from agents_system.harness.loader import DefinitionError, RawDefinition, merge, resolve
 
 #: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
 #: is deprecated. They move to `agent` or the reference agents in
@@ -207,7 +206,9 @@ def test_mapping_inherit_overlay_merges_descriptions_instead_of_replacing() -> N
 # _parse_escalation_descriptions (issue #88)
 # ---------------------------------------------------------------------------
 def test_parse_escalation_descriptions_single_line_bullet() -> None:
-    from agents_system.harness.loader import _parse_escalation_descriptions
+    from agents_system.harness.definition.frontmatter import (
+        _parse_escalation_descriptions,
+    )
 
     body = "- `data_source_unreachable` — the source is unreachable.\n"
 
@@ -225,7 +226,9 @@ def test_parse_escalation_descriptions_joins_wrapped_continuation_lines() -> Non
         "  retry attempt.\n"
     )
 
-    from agents_system.harness.loader import _parse_escalation_descriptions
+    from agents_system.harness.definition.frontmatter import (
+        _parse_escalation_descriptions,
+    )
 
     out = _parse_escalation_descriptions(
         body, known_conditions=["data_source_unreachable"]
@@ -241,7 +244,9 @@ def test_parse_escalation_descriptions_joins_wrapped_continuation_lines() -> Non
 def test_parse_escalation_descriptions_ignores_unknown_backtick_names() -> None:
     """A `- `name` — text` bullet describing an unrelated field must never
     be mistaken for an escalation description."""
-    from agents_system.harness.loader import _parse_escalation_descriptions
+    from agents_system.harness.definition.frontmatter import (
+        _parse_escalation_descriptions,
+    )
 
     body = "- `read_scope` — where memory reads come from.\n- `known_condition` — the real one.\n"
 
@@ -251,7 +256,9 @@ def test_parse_escalation_descriptions_ignores_unknown_backtick_names() -> None:
 
 
 def test_parse_escalation_descriptions_blank_line_ends_continuation() -> None:
-    from agents_system.harness.loader import _parse_escalation_descriptions
+    from agents_system.harness.definition.frontmatter import (
+        _parse_escalation_descriptions,
+    )
 
     body = "- `a` — first line\n  still first.\n\nUnrelated prose paragraph.\n"
 
@@ -261,7 +268,9 @@ def test_parse_escalation_descriptions_blank_line_ends_continuation() -> None:
 
 
 def test_parse_escalation_descriptions_empty_known_conditions_returns_empty() -> None:
-    from agents_system.harness.loader import _parse_escalation_descriptions
+    from agents_system.harness.definition.frontmatter import (
+        _parse_escalation_descriptions,
+    )
 
     out = _parse_escalation_descriptions("- `a` — text.\n", known_conditions=[])
 
@@ -275,7 +284,9 @@ def test_parse_escalation_descriptions_ignores_bullets_inside_fenced_code_block(
     documentation example for a future maintainer) must never be mistaken
     for a real description — only the real bullet outside the fence counts
     (#88 follow-up)."""
-    from agents_system.harness.loader import _parse_escalation_descriptions
+    from agents_system.harness.definition.frontmatter import (
+        _parse_escalation_descriptions,
+    )
 
     body = (
         "- `real_condition` — the real, intended description.\n"
@@ -294,7 +305,9 @@ def test_parse_escalation_descriptions_ignores_bullets_inside_fenced_code_block(
 
 def test_parse_escalation_descriptions_ignores_fence_with_language_tag() -> None:
     """A fence opened with a language tag (e.g. ```yaml) is still a fence."""
-    from agents_system.harness.loader import _parse_escalation_descriptions
+    from agents_system.harness.definition.frontmatter import (
+        _parse_escalation_descriptions,
+    )
 
     body = (
         "- `real_condition` — the real description.\n"
@@ -315,7 +328,9 @@ def test_parse_escalation_descriptions_raises_on_unterminated_fence() -> None:
     bullet that follows the unclosed fence -- the exact 'bare condition name
     only' failure mode issue #88 was opened to eliminate, with no error,
     warning, or log to say why."""
-    from agents_system.harness.loader import _parse_escalation_descriptions
+    from agents_system.harness.definition.frontmatter import (
+        _parse_escalation_descriptions,
+    )
 
     body = (
         "- `condition_a` — first description.\n"
@@ -337,7 +352,9 @@ def test_parse_escalation_descriptions_raises_on_duplicate_bullet_for_same_condi
     """Two real (non-fenced) bullets for the same condition name in one
     file's prose is an authoring mistake, not a silent "last one wins" —
     it must fail loud (#88 follow-up)."""
-    from agents_system.harness.loader import _parse_escalation_descriptions
+    from agents_system.harness.definition.frontmatter import (
+        _parse_escalation_descriptions,
+    )
 
     body = (
         "- `dup_condition` — first description.\n"
@@ -353,7 +370,7 @@ def test_parse_escalation_descriptions_raises_on_duplicate_bullet_for_same_condi
 # _fold_parent_into_child — descriptions accumulate across `extends:` (#88)
 # ---------------------------------------------------------------------------
 def test_fold_parent_into_child_merges_descriptions_deeply() -> None:
-    from agents_system.harness.loader import _fold_parent_into_child
+    from agents_system.harness.definition.fold import _fold_parent_into_child
 
     parent = _raw(
         escalation_rules={
@@ -379,7 +396,7 @@ def test_fold_parent_into_child_merges_descriptions_deeply() -> None:
 
 
 def test_fold_parent_into_child_child_description_wins_on_name_collision() -> None:
-    from agents_system.harness.loader import _fold_parent_into_child
+    from agents_system.harness.definition.fold import _fold_parent_into_child
 
     parent = _raw(escalation_rules={"descriptions": {"x": "parent's wording"}})
     child = _raw(escalation_rules={"descriptions": {"x": "child's sharper wording"}})
@@ -406,7 +423,7 @@ def test_validate_escalation_wording_raises_on_parent_description_key_collision(
     shape of collision issue #137 already closed for
     ``_render_escalation_block``'s own dict-building. This must raise
     instead of silently picking one."""
-    from agents_system.harness.loader import _validate_escalation_wording
+    from agents_system.harness.definition.safeguards import _validate_escalation_wording
 
     parent = {
         "conditions": ["low stock"],
@@ -498,7 +515,7 @@ def test_merge_exec_limits_new_key_allowed() -> None:
     than the role, so naming one stricter limit raised the ceiling on all
     the others.
     """
-    from agents_system.harness.loader import _PLATFORM_DEFAULT_LIMITS
+    from agents_system.harness.definition.policy import _PLATFORM_DEFAULT_LIMITS
 
     out = merge(
         _raw(execution_limits=None),  # baseline = platform defaults

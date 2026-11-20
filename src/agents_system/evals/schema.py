@@ -235,7 +235,7 @@ class Scenario:
     #: happening to be small enough for a real model to exceed it.
     #:
     #: PR #102 review fix -- deliberately EXEMPT from
-    #: `harness.loader._validate_execution_limits`'s "Deployments may only
+    #: `harness.definition.validators._validate_execution_limits`'s "Deployments may only
     #: restrict, not elevate" ceiling check, unlike every other
     #: `execution_limits` boundary in this codebase (a real deployment
     #: override, an importer agent): `runner._build_equipped` merges this

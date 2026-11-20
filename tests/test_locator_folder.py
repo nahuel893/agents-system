@@ -13,6 +13,7 @@ import pathlib
 
 import pytest
 
+from agents_system.harness.definition.files import _load_role_files
 from agents_system.harness.loader import (
     AgentDefinition,
     DefinitionError,
@@ -20,7 +21,6 @@ from agents_system.harness.loader import (
     RawDefinition,
     RoleLocator,
     RootConfig,
-    _load_role_files,
     resolve,
 )
 

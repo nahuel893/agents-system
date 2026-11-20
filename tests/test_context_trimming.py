@@ -275,11 +275,8 @@ def test_effective_limits_carry_the_context_budget() -> None:
 
 
 def test_a_definition_cannot_raise_the_budget_above_the_platform_default() -> None:
-    from agents_system.harness.loader import (
-        PLATFORM_DEFAULT_LIMITS,
-        DefinitionError,
-        _validate_execution_limits,
-    )
+    from agents_system.harness.definition.validators import _validate_execution_limits
+    from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS, DefinitionError
 
     _validate_execution_limits({}, {"max_context_tokens": 8_000})
     with pytest.raises(DefinitionError, match="max_context_tokens"):

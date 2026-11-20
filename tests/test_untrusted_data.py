@@ -296,7 +296,7 @@ async def test_a_block_cannot_widen_policy() -> None:
 
 
 def test_the_base_contract_names_the_blocks() -> None:
-    from agents_system.harness.loader import _BASE_PROMPT_CONTRACT
+    from agents_system.harness.definition.prompt import _BASE_PROMPT_CONTRACT
 
     assert "untrusted-data block" in _BASE_PROMPT_CONTRACT
 

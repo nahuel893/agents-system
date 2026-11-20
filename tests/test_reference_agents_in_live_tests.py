@@ -18,7 +18,7 @@ import tomllib
 import pytest
 
 from agents_system.evals.schema import load_scenarios
-from agents_system.harness import loader
+from agents_system.harness.definition import locate
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _TESTS = _REPO_ROOT / "tests"
@@ -52,7 +52,7 @@ def test_the_deprecation_filter_matches_the_message_the_loader_emits() -> None:
     message = entry.removeprefix("error:").removesuffix(_DEPRECATION_FILTER_SUFFIX)
 
     with pytest.warns(DeprecationWarning) as caught:
-        loader._warn_deprecated_role("sales-agent")
+        locate._warn_deprecated_role("sales-agent")
 
     assert re.match(message, str(caught[0].message))
     assert not re.match(message, "pkg.thing is deprecated")

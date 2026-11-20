@@ -713,7 +713,7 @@ def test_execution_limits_override_docstring_discloses_it_bypasses_the_ceiling_i
     """PR #102 review fix (#76) -- `execution_limits_override` merges
     straight into a scenario's resolved `execution_limits`
     (`runner._build_equipped`) with no equivalent to
-    `harness.loader._validate_execution_limits`'s "Deployments may only
+    `harness.definition.validators._validate_execution_limits`'s "Deployments may only
     restrict, not elevate" ceiling check, unlike every other
     `execution_limits` boundary in the codebase (a real deployment override,
     an importer agent). That gap is intentional here: a guardrail scenario

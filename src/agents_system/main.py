@@ -62,8 +62,8 @@ from agents_system.execution_limits import (
     parse_timeout_replies,
     parse_tool_error_replies,
 )
+from agents_system.harness.definition.locate import _SAFE_SEGMENT
 from agents_system.harness.loader import (
-    _SAFE_SEGMENT,
     DefinitionError,
     RoleLocator,
     RootConfig,
@@ -1129,7 +1129,7 @@ def _validate_runtime_id(runtime_id: str) -> str:
     A runtime id is deployer-chosen (design.md D5) and becomes part of
     URLs (``/v1/models``), structured logs and metrics labels once
     registered -- the same class of user-supplied, filesystem-adjacent
-    segment ``loader._SAFE_SEGMENT`` already validates elsewhere in this
+    segment ``locate._SAFE_SEGMENT`` already validates elsewhere in this
     codebase (a role type, a client/deployment name), reused here for the
     same reason: consistency, and because an id built from it must be safe
     to embed in a URL path segment and a log line with no further escaping.
@@ -1158,7 +1158,7 @@ def _validate_runtime_id(runtime_id: str) -> str:
 
 def _validate_client(runtime_id: str, client: object) -> str:
     """Reject a ``clients`` value that is not a client name: a ``str``
-    matching ``loader._SAFE_SEGMENT``, the rule the loader applies when it
+    matching ``locate._SAFE_SEGMENT``, the rule the loader applies when it
     joins that name onto ``deployments_root``.
 
     A ``None`` (``os.environ.get(...)`` for an unset variable) would
@@ -1188,12 +1188,12 @@ def _parse_agent_registration(value: str) -> tuple[str, str | None]:
     ``main.py``'s own env-boot convention, not a public string format: a
     library caller registers ``Agent``/``str`` objects through
     ``create_app(agents=...)`` instead. Strict -- at most one ``@``, and
-    both the role and the client must match ``loader._SAFE_SEGMENT`` AND be
+    both the role and the client must match ``locate._SAFE_SEGMENT`` AND be
     at most ``_MAX_RUNTIME_ID_LENGTH`` characters (issue #128 item 6: a
     segment made only of legal characters but far longer than any real role
     or client name previously passed straight through here, to overflow
     into a raw ``OSError`` -- ``ENAMETOOLONG`` -- once it reached a real
-    filesystem join in ``loader._role_folder``/``_deployment_folder``,
+    filesystem join in ``locate._role_folder``/``_deployment_folder``,
     instead of this function's own bounded ``DefinitionError``); anything
     else fails boot naming the value, cut to ``_MAX_RUNTIME_ID_LENGTH``
     characters. Nothing else in the value has a meaning: ``__`` in

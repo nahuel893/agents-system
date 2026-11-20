@@ -408,7 +408,7 @@ not what is asserted afterward:
   **This is an eval-only escape hatch, not the production ceiling
   guarantee.** Every other `execution_limits` boundary in this codebase
   (a deployment override, an importer agent) is enforced by
-  `harness.loader._validate_execution_limits`'s "Deployments may only
+  `harness.definition.validators._validate_execution_limits`'s "Deployments may only
   restrict, not elevate" invariant — a child may tighten a limit, never
   loosen it. `execution_limits_override` is deliberately exempt:
   `runner._build_equipped` merges it straight over the resolved role's
@@ -1492,7 +1492,7 @@ the public `Agent` API (`Agent.from_folder`), never a predefined platform
 role:
 
 - **Define.** It extends the reference `sales-agent` (additive for
-  capability, `harness/loader.py::_fold_parent_into_child`). Its manifest
+  capability, `harness/definition/fold.py::_fold_parent_into_child`). Its manifest
   names the sibling `extends: ../sales-agent` that a project with a copy of
   `examples/agents/sales-agent` would have; this fixture folder has none, so
   the test supplies the parent as

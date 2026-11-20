@@ -13,14 +13,17 @@ from typing import Any
 
 import pytest
 
+from agents_system.harness.definition.files import _load_role_files
+from agents_system.harness.definition.loading import (
+    _MAX_ROLE_CHAIN_DEPTH,
+    _resolve_role_chain,
+)
 from agents_system.harness.loader import (
     AgentDefinition,
     DefinitionError,
     InlineLocator,
     RawDefinition,
     RootConfig,
-    _load_role_files,
-    _resolve_role_chain,
     resolve,
 )
 
@@ -167,9 +170,8 @@ def test_locator_based_chain_still_hits_the_depth_ceiling(
 ) -> None:
     """`_MAX_ROLE_CHAIN_DEPTH` (8) still fires identically for a chain that
     starts from a non-`str` locator."""
-    from agents_system.harness import loader
 
-    depth = loader._MAX_ROLE_CHAIN_DEPTH + 2
+    depth = _MAX_ROLE_CHAIN_DEPTH + 2
     roles_dir = tmp_path / "roles"
     for i in range(depth):
         parent = f"deep-{i + 1}" if i < depth - 1 else None
