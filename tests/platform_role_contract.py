@@ -477,7 +477,8 @@ def role_chain(role: str) -> tuple[str, ...]:
     loader's own fold) does, so a role's ancestry here can never drift from
     what actually gets resolved -- never a hardcoded map.
     """
-    from agents_system.harness.loader import RootConfig, _load_role_files
+    from agents_system.harness.definition.files import _load_role_files
+    from agents_system.harness.loader import RootConfig
 
     roots = RootConfig()
     chain: list[str] = []

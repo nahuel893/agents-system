@@ -6,9 +6,7 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
-from agents_system.harness.definition.errors import (
-    DefinitionError,
-)
+from agents_system.harness.definition.errors import DefinitionError
 
 #: D-037 (issue #13, ADR-004) -- the provider values `main._build_chat_model`
 #: dispatches on. Kept identical to `Settings.adapter_provider`'s `Literal`

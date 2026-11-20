@@ -370,7 +370,7 @@ def test_parse_escalation_descriptions_raises_on_duplicate_bullet_for_same_condi
 # _fold_parent_into_child — descriptions accumulate across `extends:` (#88)
 # ---------------------------------------------------------------------------
 def test_fold_parent_into_child_merges_descriptions_deeply() -> None:
-    from agents_system.harness.loader import _fold_parent_into_child
+    from agents_system.harness.definition.fold import _fold_parent_into_child
 
     parent = _raw(
         escalation_rules={
@@ -396,7 +396,7 @@ def test_fold_parent_into_child_merges_descriptions_deeply() -> None:
 
 
 def test_fold_parent_into_child_child_description_wins_on_name_collision() -> None:
-    from agents_system.harness.loader import _fold_parent_into_child
+    from agents_system.harness.definition.fold import _fold_parent_into_child
 
     parent = _raw(escalation_rules={"descriptions": {"x": "parent's wording"}})
     child = _raw(escalation_rules={"descriptions": {"x": "child's sharper wording"}})

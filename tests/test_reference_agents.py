@@ -27,7 +27,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from agents_system.agent.graph import AgentRuntime
 from agents_system.agent.spec import Agent
-from agents_system.harness import loader
+from agents_system.harness.definition import loading
 from agents_system.harness.factory import build_runtime
 from agents_system.harness.loader import (
     AgentDefinition,
@@ -130,13 +130,13 @@ def test_reference_agent_resolves_through_the_importer_ceiling(
     """Every hop that the folder authors is held to its parent's ceiling by
     the same `_apply_importer_ceiling` an adopter's folder goes through."""
     checked: list[tuple[str | None, str]] = []
-    real = loader._apply_importer_ceiling
+    real = loading._apply_importer_ceiling
 
     def spy(parent: Any, child: Any, **kwargs: Any) -> Any:
         checked.append((None if parent is None else parent.role_name, child.role_name))
         return real(parent, child, **kwargs)
 
-    monkeypatch.setattr(loader, "_apply_importer_ceiling", spy)
+    monkeypatch.setattr(loading, "_apply_importer_ceiling", spy)
 
     definition = resolve(_folder_agent(name))
 

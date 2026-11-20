@@ -30,6 +30,10 @@ from agents_system.harness.definition.directives import (
     _check_list_directive,
     _check_mapping_directive,
 )
+from agents_system.harness.definition.files import (
+    _parse_untrusted_input,
+    _validate_inline_skills,
+)
 from agents_system.harness.definition.frontmatter import _as_str_list
 from agents_system.harness.definition.policy import _POLICY_FIELDS
 from agents_system.harness.loader import (
@@ -38,8 +42,6 @@ from agents_system.harness.loader import (
     InlineLocator,
     RawDefinition,
     RoleLocator,
-    _parse_untrusted_input,
-    _validate_inline_skills,
 )
 
 

@@ -41,4 +41,4 @@ the deprecated predefined role.
 `run:check_stock` is additive on top of every permission `sales-agent`
 already inherits -- its own six, plus `send:escalation` from the base
 `agent` role (role-to-role folds are additive for capability,
-`harness/loader.py::_fold_parent_into_child`) -- never replacing them.
+`harness/definition/fold.py::_fold_parent_into_child`) -- never replacing them.

@@ -1589,7 +1589,7 @@ con la API pública `Agent` (`Agent.from_folder`), nunca un rol predefinido de
 la plataforma:
 
 - **Definir.** Extiende el `sales-agent` de referencia (aditivo para
-  capacidad, `harness/loader.py::_fold_parent_into_child`). Su manifest
+  capacidad, `harness/definition/fold.py::_fold_parent_into_child`). Su manifest
   nombra el hermano `extends: ../sales-agent` que tendría un proyecto con una
   copia de `examples/agents/sales-agent`; esta carpeta de fixture no lo
   tiene, así que la prueba pasa el padre como

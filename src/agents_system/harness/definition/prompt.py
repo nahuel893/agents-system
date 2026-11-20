@@ -5,9 +5,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from agents_system.harness.definition.errors import (
-    DefinitionError,
-)
+from agents_system.harness.definition.errors import DefinitionError
 
 #: Prompt bodies are joined root-first with the same separator the factory
 #: uses for skills, so a child's prompt refines its parent's rather than

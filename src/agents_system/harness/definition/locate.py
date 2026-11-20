@@ -14,9 +14,7 @@ from agents_system.harness.definition.errors import (
     DefinitionError,
     PredefinedRoleDeprecationWarning,
 )
-from agents_system.harness.definition.frontmatter import (
-    _split_frontmatter,
-)
+from agents_system.harness.definition.frontmatter import _split_frontmatter
 from agents_system.harness.definition.fsread import (
     _is_absolute_value,
     _read_within_root,
@@ -27,10 +25,7 @@ from agents_system.harness.definition.model import (
     InlineLocator,
     RoleLocator,
 )
-from agents_system.harness.definition.roots import (
-    RootConfig,
-    _require_platform_root,
-)
+from agents_system.harness.definition.roots import RootConfig, _require_platform_root
 
 logger = structlog.get_logger()
 

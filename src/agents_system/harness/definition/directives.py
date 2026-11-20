@@ -5,12 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from agents_system.harness.definition.errors import (
-    DefinitionError,
-)
-from agents_system.harness.definition.frontmatter import (
-    _as_str_list,
-)
+from agents_system.harness.definition.errors import DefinitionError
+from agents_system.harness.definition.frontmatter import _as_str_list
 
 
 def _union_preserving_order(parent: list[str], child: list[str]) -> list[str]:

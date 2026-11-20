@@ -6,12 +6,8 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
-from agents_system.harness.definition.errors import (
-    DefinitionError,
-)
-from agents_system.harness.definition.model import (
-    RawDefinition,
-)
+from agents_system.harness.definition.errors import DefinitionError
+from agents_system.harness.definition.model import RawDefinition
 from agents_system.harness.definition.policy import (
     _AUTONOMY_RANK,
     _DEPLOYMENT_RULE,

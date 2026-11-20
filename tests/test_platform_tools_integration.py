@@ -444,10 +444,8 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
     """
     from platform_role_contract import discover_platform_roles, is_abstract
 
-    from agents_system.harness.loader import (
-        RootConfig,
-        _load_role_files,
-    )
+    from agents_system.harness.definition.files import _load_role_files
+    from agents_system.harness.loader import RootConfig
 
     roots = RootConfig()
     parents: set[str] = set()
@@ -460,7 +458,7 @@ def test_every_abstract_role_has_a_concrete_descendant() -> None:
     # satisfied by another abstract role, which would leave a whole abstract
     # subtree that still cannot be built and still grants nothing — the exact
     # dead-file case this exists to catch, one level down.
-    from agents_system.harness.loader import _load_role_files
+    from agents_system.harness.definition.files import _load_role_files
 
     def reaches_a_concrete_descendant(ancestor: str) -> bool:
         for role in discover_platform_roles():

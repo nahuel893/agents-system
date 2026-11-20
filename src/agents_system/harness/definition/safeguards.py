@@ -5,18 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from agents_system.harness.definition.directives import (
-    _descriptions_of,
-)
-from agents_system.harness.definition.errors import (
-    DefinitionError,
-)
-from agents_system.harness.definition.frontmatter import (
-    _as_str_list,
-)
-from agents_system.harness.definition.policy import (
-    _IMPORTER_RULE,
-)
+from agents_system.harness.definition.directives import _descriptions_of
+from agents_system.harness.definition.errors import DefinitionError
+from agents_system.harness.definition.frontmatter import _as_str_list
+from agents_system.harness.definition.policy import _IMPORTER_RULE
 
 
 def _validate_audit_redaction(

@@ -929,7 +929,7 @@ def test_compose_prompt_collapses_embedded_newlines_in_description() -> None:
     extra, unindented lines that were indistinguishable from additional real
     bullets or a forged `## escalation rules` heading. Every description
     must render on exactly one line regardless of source, the same way a
-    parsed policy.md continuation always has (`loader._parse_escalation_
+    parsed policy.md continuation always has (`frontmatter._parse_escalation_
     descriptions` joins wrapped lines with single spaces)."""
     from agents_system.harness.factory import _compose_prompt
 

@@ -1492,7 +1492,7 @@ the public `Agent` API (`Agent.from_folder`), never a predefined platform
 role:
 
 - **Define.** It extends the reference `sales-agent` (additive for
-  capability, `harness/loader.py::_fold_parent_into_child`). Its manifest
+  capability, `harness/definition/fold.py::_fold_parent_into_child`). Its manifest
   names the sibling `extends: ../sales-agent` that a project with a copy of
   `examples/agents/sales-agent` would have; this fixture folder has none, so
   the test supplies the parent as

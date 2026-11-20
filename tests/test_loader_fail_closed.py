@@ -577,7 +577,7 @@ def test_every_predefined_role_keeps_its_parents_conditions() -> None:
     used to leave out conditions `agent` adds."""
     from platform_role_contract import discover_concrete_platform_roles, role_chain
 
-    from agents_system.harness.loader import _resolve_role_chain
+    from agents_system.harness.definition.loading import _resolve_role_chain
 
     for role in discover_concrete_platform_roles():
         chain = role_chain(role)

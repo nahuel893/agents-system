@@ -13,6 +13,8 @@ import pathlib
 
 import pytest
 
+from agents_system.harness.definition.files import _load_role_files
+from agents_system.harness.definition.loading import _resolve_role_chain
 from agents_system.harness.definition.locate import (
     _extends_target,
     _platform_role_name_or_none,
@@ -24,8 +26,6 @@ from agents_system.harness.loader import (
     InlineLocator,
     RawDefinition,
     RootConfig,
-    _load_role_files,
-    _resolve_role_chain,
     resolve,
 )
 

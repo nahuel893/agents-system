@@ -9,9 +9,7 @@ from typing import Any
 
 import yaml
 
-from agents_system.harness.definition.errors import (
-    DefinitionError,
-)
+from agents_system.harness.definition.errors import DefinitionError
 
 # ---------------------------------------------------------------------------
 # Internal helpers

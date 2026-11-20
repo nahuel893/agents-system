@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from agents_system.agent.spec import _AGENT_OVERRIDABLE_FIELDS, Agent
+from agents_system.harness.definition.files import _FOLDER_OVERRIDE_FIELDS
 from agents_system.harness.definition.fsread import (
     _DIR_FD_READS,
     _read_within_root,
@@ -31,7 +32,6 @@ from agents_system.harness.definition.fsread import (
 )
 from agents_system.harness.factory import FactoryError, _load_skills
 from agents_system.harness.loader import (
-    _FOLDER_OVERRIDE_FIELDS,
     AgentDefinition,
     CommandToolDeclaration,
     CommandToolParam,
