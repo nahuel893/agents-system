@@ -46,7 +46,7 @@ PLATFORM_DEFAULT_LIMITS: dict[str, int] = _PLATFORM_DEFAULT_LIMITS
 
 
 #: The policy mappings that take ``{inherit: true, ...}`` directives.
-_POLICY_FIELDS = (
+POLICY_FIELDS = (
     "escalation_rules",
     "delegation_policy",
     "memory_policy",

@@ -7,20 +7,20 @@ from collections.abc import Mapping
 from typing import Any
 
 from agents_system.harness.definition.directives import (
-    _check_mapping_directive,
     _resolve_list_directive,
     _resolve_mapping_directive,
     _union_preserving_order,
+    check_mapping_directive,
 )
 from agents_system.harness.definition.errors import DefinitionError
-from agents_system.harness.definition.frontmatter import _as_str_list
+from agents_system.harness.definition.frontmatter import as_str_list
 from agents_system.harness.definition.model import RawDefinition
 from agents_system.harness.definition.policy import (
     _DEFAULT_AUTONOMY,
     _FOLD_RULE,
     _IMPORTER_RULE,
     _PLATFORM_DEFAULT_LIMITS,
-    _POLICY_FIELDS,
+    POLICY_FIELDS,
 )
 from agents_system.harness.definition.prompt import _PROMPT_SEPARATOR
 from agents_system.harness.definition.safeguards import (
@@ -105,7 +105,7 @@ def _fold_parent_into_child(
     )
     child_perms = child.permissions
     if isinstance(child_perms, str) and child_perms != "inherit":
-        # A bare string is a one-item list, as `_as_str_list` reads `tools:`.
+        # A bare string is a one-item list, as `as_str_list` reads `tools:`.
         # It used to resolve to the parent's set, dropping the grant.
         child_perms = [child_perms]
     if isinstance(child_perms, list | tuple):
@@ -208,7 +208,7 @@ def _fold_parent_into_child(
         condition, and every descendant inherits it without repeating it.
         """
         child_value = getattr(child, field)
-        _check_mapping_directive(child_value, who=who, field=field)
+        check_mapping_directive(child_value, who=who, field=field)
         if isinstance(child_value, Mapping):
             child_value = {**child_value, "inherit": True}
         return _resolve_mapping_directive(
@@ -301,7 +301,7 @@ def _resolve_chain_root(root: RawDefinition) -> RawDefinition:
         field: _resolve_mapping_directive(
             {}, getattr(root, field), who=who, field=field
         )
-        for field in _POLICY_FIELDS
+        for field in POLICY_FIELDS
     }
     changes["permissions"] = _resolve_list_directive(
         [], root.permissions, who=who, field="permissions"
@@ -411,8 +411,8 @@ def _apply_importer_ceiling(
         # An undeclared `conditions` already keeps the parent's in the fold.
         return child
     conditions = _union_preserving_order(
-        _as_str_list(parent.escalation_rules.get("conditions")),
-        _as_str_list(rules["conditions"]),
+        as_str_list(parent.escalation_rules.get("conditions")),
+        as_str_list(rules["conditions"]),
     )
     return dataclasses.replace(
         child, escalation_rules={**rules, "conditions": conditions}

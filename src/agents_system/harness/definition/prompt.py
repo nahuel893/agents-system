@@ -106,7 +106,7 @@ def _split_design_notes(body: str, *, source: pathlib.Path) -> str:
 #: exactly once by ``resolve()`` itself rather than declared in any
 #: role.md, so no role in the chain and no deployment override can omit or
 #: contradict them.
-_BASE_PROMPT_CONTRACT = (
+BASE_PROMPT_CONTRACT = (
     "## base contract\n"
     "\n"
     "1. Never fabricate data. If a tool refuses or fails, say so plainly.\n"
@@ -129,11 +129,11 @@ def _append_base_contract(prompt: str) -> str:
     stripped or contradicted by any role.md or deployment override, neither
     of which ever sees this constant at all.
     """
-    parts = [part for part in (prompt, _BASE_PROMPT_CONTRACT) if part.strip()]
+    parts = [part for part in (prompt, BASE_PROMPT_CONTRACT) if part.strip()]
     return _PROMPT_SEPARATOR.join(parts)
 
 
-def _strip_base_contract(prompt: str) -> str:
+def strip_base_contract(prompt: str) -> str:
     """Remove a trailing ADR-002 B.9 base contract block from *prompt*.
 
     Exact inverse of ``_append_base_contract``, for its only two possible
@@ -146,10 +146,10 @@ def _strip_base_contract(prompt: str) -> str:
     longer the final block once skills follow it. The factory strips it back
     off here, inserts skill content, and re-appends it once, genuinely last.
     """
-    suffix = _PROMPT_SEPARATOR + _BASE_PROMPT_CONTRACT
+    suffix = _PROMPT_SEPARATOR + BASE_PROMPT_CONTRACT
     if prompt.endswith(suffix):
         return prompt[: -len(suffix)]
-    if prompt == _BASE_PROMPT_CONTRACT:
+    if prompt == BASE_PROMPT_CONTRACT:
         # The role/deployment chain had no prose of its own —
         # `_append_base_contract` returned the contract alone, no separator.
         return ""

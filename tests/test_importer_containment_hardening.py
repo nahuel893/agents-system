@@ -13,11 +13,11 @@ GREEN once the corresponding fix lands.
   permission (a chmod-000 folder above the target, not the target itself —
   `os.stat()` only needs search permission on a path's ANCESTORS, never on
   the entry itself).
-- `_read_within_root` had no size cap, opened directory handles with
+- `read_within_root` had no size cap, opened directory handles with
   `O_RDONLY` (needing LIST permission, not just search/execute), accepted an
   unresolved path with a lexical `.`/`..` component, and let a raw
   `UnicodeDecodeError` escape for non-UTF-8 content.
-- The existing TOCTOU/FIFO tests call `_read_within_root` directly; nothing
+- The existing TOCTOU/FIFO tests call `read_within_root` directly; nothing
   proved the real callers (`_read_contained_md` via `resolve()`, `_read_skill`
   via `_load_skills`) actually route through it.
 """
@@ -35,7 +35,7 @@ from agents_system.harness.definition import locate as locate_module
 from agents_system.harness.definition.fsread import (
     _DIR_FD_READS,
     _MAX_DEFINITION_FILE_BYTES,
-    _read_within_root,
+    read_within_root,
 )
 from agents_system.harness.factory import FactoryError, _load_skills
 from agents_system.harness.loader import (
@@ -176,7 +176,7 @@ def test_extends_target_ancestor_without_search_permission_is_a_definition_error
 
 
 # ---------------------------------------------------------------------------
-# `_read_within_root` has no size cap
+# `read_within_root` has no size cap
 # ---------------------------------------------------------------------------
 
 
@@ -237,7 +237,7 @@ def test_read_within_root_bounds_the_actual_read_after_fstat_toctou(
     monkeypatch.setattr(fsread_module.os, "fstat", fstat_that_grows_the_file_mid_check)
 
     with pytest.raises(OSError, match="too large"):
-        _read_within_root(root, role_md)
+        read_within_root(root, role_md)
 
 
 def test_read_within_root_bounds_the_actual_read_after_stat_toctou_fallback(
@@ -272,7 +272,7 @@ def test_read_within_root_bounds_the_actual_read_after_stat_toctou_fallback(
     monkeypatch.setattr(pathlib.Path, "stat", stat_that_grows_the_file_mid_check)
 
     with pytest.raises(OSError, match="too large"):
-        _read_within_root(root, role_md)
+        read_within_root(root, role_md)
 
 
 # ---------------------------------------------------------------------------
@@ -299,14 +299,14 @@ def test_search_only_folder_permission_still_loads(tmp_path: pathlib.Path) -> No
 
 
 # ---------------------------------------------------------------------------
-# `_read_within_root`'s own containment guard is lexical, not resolved
+# `read_within_root`'s own containment guard is lexical, not resolved
 # ---------------------------------------------------------------------------
 
 
 def test_read_within_root_rejects_a_lexical_dotdot_component(
     tmp_path: pathlib.Path,
 ) -> None:
-    """`_read_within_root` is documented as safe only because every caller
+    """`read_within_root` is documented as safe only because every caller
     pre-resolves the path first: its own `is_relative_to` check is lexical
     and does not resolve `..`, so an UNRESOLVED path with a `..` component
     can walk out of `root` at read time even though the check appears to
@@ -320,7 +320,7 @@ def test_read_within_root_rejects_a_lexical_dotdot_component(
     sneaky = root / "vip-support" / ".." / ".." / "outside" / "role.md"
 
     with pytest.raises(OSError):
-        _read_within_root(root, sneaky)
+        read_within_root(root, sneaky)
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +354,7 @@ def test_non_utf8_skill_file_is_reported_as_not_found(tmp_path: pathlib.Path) ->
 
 
 # ---------------------------------------------------------------------------
-# The real callers actually route through `_read_within_root`
+# The real callers actually route through `read_within_root`
 # ---------------------------------------------------------------------------
 
 
@@ -362,19 +362,19 @@ def test_resolve_routes_role_files_through_read_within_root(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Nothing previously asserted that `resolve()` reads role/manifest/policy
-    files THROUGH `_read_within_root` rather than a plain path read — a
+    files THROUGH `read_within_root` rather than a plain path read — a
     regression reverting `_read_contained_md` to `path.read_text()` would
     pass the whole suite unnoticed (issue #127)."""
     root = tmp_path / "agents"
     folder = _agent(root, "vip-support")
-    original = locate_module._read_within_root
+    original = locate_module.read_within_root
     seen: list[pathlib.Path] = []
 
     def spy(root_arg: pathlib.Path, path_arg: pathlib.Path) -> str:
         seen.append(path_arg)
         return original(root_arg, path_arg)
 
-    monkeypatch.setattr(locate_module, "_read_within_root", spy)
+    monkeypatch.setattr(locate_module, "read_within_root", spy)
 
     resolve(FolderLocator(path=folder, root=root), roots=_roots(tmp_path))
 
@@ -391,14 +391,14 @@ def test_load_skills_routes_through_read_within_root(
     roots = _roots(tmp_path)
     definition = resolve(FolderLocator(path=folder, root=root), roots=roots)
 
-    original = factory_module._read_within_root
+    original = factory_module.read_within_root
     seen: list[pathlib.Path] = []
 
     def spy(root_arg: pathlib.Path, path_arg: pathlib.Path) -> str:
         seen.append(path_arg)
         return original(root_arg, path_arg)
 
-    monkeypatch.setattr(factory_module, "_read_within_root", spy)
+    monkeypatch.setattr(factory_module, "read_within_root", spy)
 
     _load_skills(definition, None, roots)
 

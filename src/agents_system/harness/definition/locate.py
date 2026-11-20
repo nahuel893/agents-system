@@ -17,8 +17,8 @@ from agents_system.harness.definition.errors import (
 from agents_system.harness.definition.frontmatter import _split_frontmatter
 from agents_system.harness.definition.fsread import (
     _is_absolute_value,
-    _read_within_root,
-    _resolve_within_root,
+    read_within_root,
+    resolve_within_root,
 )
 from agents_system.harness.definition.model import (
     FolderLocator,
@@ -81,7 +81,7 @@ def _warn_deprecated_role(role_type: str) -> None:
 # A role or client name is a single directory name, nothing else. Anything
 # with a separator, a dot segment, or a leading dash is rejected before it can
 # reach the filesystem.
-_SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 def _validate_segment(value: str, *, kind: str) -> str:
@@ -97,9 +97,9 @@ def _validate_segment(value: str, *, kind: str) -> str:
     Validate here rather than in the callers so every path-building site is
     covered by construction.
     """
-    if not _SAFE_SEGMENT.fullmatch(value):
+    if not SAFE_SEGMENT.fullmatch(value):
         raise DefinitionError(
-            f"Invalid {kind} {value!r}. Must match {_SAFE_SEGMENT.pattern} — "
+            f"Invalid {kind} {value!r}. Must match {SAFE_SEGMENT.pattern} — "
             "a single directory name, with no path separators or dot segments."
         )
     return value
@@ -134,10 +134,10 @@ def _platform_role_name_or_none(value: str) -> str | None:
     shipped manifest writes — a bare segment or ``platform/roles/<segment>``
     — else ``None``. Anything else is never a platform-role reference."""
     name = value.removeprefix(_PLATFORM_ROLE_PREFIX)
-    return name if _SAFE_SEGMENT.fullmatch(name) else None
+    return name if SAFE_SEGMENT.fullmatch(name) else None
 
 
-def _shown_path(root: pathlib.Path, path: pathlib.Path) -> str:
+def shown_path(root: pathlib.Path, path: pathlib.Path) -> str:
     """``path`` relative to ``root``, for an error message (issue #75).
 
     Loader errors can reach whoever supplied the agent folder, so they name
@@ -157,7 +157,7 @@ def _shown_path(root: pathlib.Path, path: pathlib.Path) -> str:
 def _describe_locator(locator: RoleLocator) -> str:
     """Name the agent declaring an ``extends:`` value, for error messages."""
     if isinstance(locator, FolderLocator):
-        return f"agent folder '{_shown_path(locator.root, locator.path)}'"
+        return f"agent folder '{shown_path(locator.root, locator.path)}'"
     if isinstance(locator, InlineLocator):
         return f"inline agent '{locator.raw.role_name}'"
     return f"role '{locator}'"
@@ -170,7 +170,7 @@ def _contained_folder(locator: FolderLocator) -> pathlib.Path:
     an ``extends:`` target already passed ``_extends_target``; a
     ``FolderLocator`` built by hand is held to the same rule."""
     label = _describe_locator(locator)
-    folder = _resolve_within_root(locator.root, locator.path, ".")
+    folder = resolve_within_root(locator.root, locator.path, ".")
     if folder is None:
         raise DefinitionError(
             f"Invariant violation — containment: {label} is not inside its "
@@ -202,11 +202,11 @@ def _read_contained_md(
 ) -> tuple[dict[str, Any], str]:
     """``_read_md`` for an importer folder: ``folder/filename`` must resolve
     inside ``locator.root`` (symlinks followed first, as for ``extends:``),
-    and is then read through ``_read_within_root``. Issue #75: ``role.md``,
+    and is then read through ``read_within_root``. Issue #75: ``role.md``,
     ``manifest.md`` and ``policy.md`` used to be read wherever a symlink
     pointed."""
     label = _describe_locator(locator)
-    target = _resolve_within_root(locator.root, folder, filename)
+    target = resolve_within_root(locator.root, folder, filename)
     if target is None:
         raise DefinitionError(
             f"Invariant violation — containment: {label} has a {filename} that "
@@ -215,7 +215,7 @@ def _read_contained_md(
             "that root."
         )
     try:
-        text = _read_within_root(locator.root, target)
+        text = read_within_root(locator.root, target)
     except FileNotFoundError:
         raise DefinitionError(
             f"Required definition file not found: {(shown / filename).as_posix()}"
@@ -306,7 +306,7 @@ def _extends_target(
             f"'extends: {value}', a folder path, but it was not loaded from a "
             "folder, so it has no importer root to resolve the path in"
         )
-    resolved = _resolve_within_root(current.root, current.path, value)
+    resolved = resolve_within_root(current.root, current.path, value)
     if resolved is None:
         raise fail(
             f"'extends: {value}', which escapes the importer root: after "
@@ -382,7 +382,7 @@ def _locator_label(locator: RoleLocator) -> str:
     named relative to its importer root, not by host path, and an inline
     definition by its role name."""
     if isinstance(locator, FolderLocator):
-        return f"folder:{_shown_path(locator.root, locator.path)}"
+        return f"folder:{shown_path(locator.root, locator.path)}"
     if isinstance(locator, InlineLocator):
         return f"inline:{locator.raw.role_name}"
     return f"platform:{locator}"

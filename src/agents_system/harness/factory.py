@@ -23,7 +23,7 @@ in the manifest, followed by the resolved ``escalation_rules`` rendered as a
 short block (issue #36 — see ``_render_escalation_block``). Skill files own
 their own headings; the factory does not rewrite them (same principle as the
 skill-resolver: pass content, preserve author intent). The ADR-002 B.9 base
-contract (``_BASE_PROMPT_CONTRACT``) is always the LAST block, regardless of
+contract (``BASE_PROMPT_CONTRACT``) is always the LAST block, regardless of
 skills or escalation content — see ``_compose_prompt``.
 
 Skill content resolves through a 4-source precedence (design.md D4, PR3):
@@ -47,17 +47,17 @@ import structlog
 
 from agents_system.execution_limits import validate_execution_limits
 from agents_system.harness.defaults import builtin_default_tools, is_builtin_default
-from agents_system.harness.definition.frontmatter import _as_str_list
+from agents_system.harness.definition.frontmatter import as_str_list
 from agents_system.harness.definition.fsread import (
-    _read_within_root,
-    _resolve_within_root,
+    read_within_root,
+    resolve_within_root,
 )
-from agents_system.harness.definition.locate import _shown_path
+from agents_system.harness.definition.locate import shown_path
 from agents_system.harness.definition.prompt import (
-    _BASE_PROMPT_CONTRACT,
-    _strip_base_contract,
+    BASE_PROMPT_CONTRACT,
+    strip_base_contract,
 )
-from agents_system.harness.definition.roots import _require_deployments_root
+from agents_system.harness.definition.roots import require_deployments_root
 from agents_system.harness.injector import (
     _emit,
     resolve_command_tool_surface,
@@ -170,15 +170,15 @@ def _read_skill(root: pathlib.Path, skills_dir: pathlib.Path, name: str) -> str 
     ``skills/`` inside its importer root, and a deployment's
     ``{client}/{role}/skills/`` inside the deployments root. The path must
     resolve, after ``..`` and symlinks, inside ``root``
-    (``harness.definition.fsread._resolve_within_root``) and inside ``skills_dir``
+    (``harness.definition.fsread.resolve_within_root``) and inside ``skills_dir``
     itself, and is read walking from ``root`` without following symlinks
-    (``_read_within_root``). A ``skills`` directory that is itself a symlink
+    (``read_within_root``). A ``skills`` directory that is itself a symlink
     out of the root, a skill name with ``..`` in it, and a role name that
     walks out of the deployments root are all refused. Never raises for an
     escape: it is reported as "not found here", like a missing file.
 
     Issue #127 review follow-up: this collapses every failure — an escape,
-    a permission error, an oversized file (``_read_within_root``'s own
+    a permission error, an oversized file (``read_within_root``'s own
     cap), and non-UTF-8 content — into the same "not found" outcome rather
     than a `FactoryError` naming the specific reason. That is a deliberate
     extension of the choice already documented above (issue #75), not an
@@ -188,13 +188,13 @@ def _read_skill(root: pathlib.Path, skills_dir: pathlib.Path, name: str) -> str 
     checked, which is what an author needs to fix a genuinely missing
     skill.
     """
-    path = _resolve_within_root(root, skills_dir, f"{name}.md")
+    path = resolve_within_root(root, skills_dir, f"{name}.md")
     if path is None:
         return None
     try:
         if not path.is_relative_to(skills_dir.resolve()):
             return None
-        return _read_within_root(root, path).strip()
+        return read_within_root(root, path).strip()
     except (OSError, RuntimeError):
         return None
 
@@ -232,7 +232,7 @@ def _load_skills(
     deployments_root: pathlib.Path | None = None
     deployment_skills_dir: pathlib.Path | None = None
     if client is not None:
-        deployments_root = _require_deployments_root(roots.deployments_root)
+        deployments_root = require_deployments_root(roots.deployments_root)
         deployment_skills_dir = (
             deployments_root / client / definition.role_name / "skills"
         )
@@ -265,10 +265,10 @@ def _load_skills(
             # Named relative to their roots, never by host path (issue #75).
             checked = [
                 "its inline content",
-                f"its own folder ({_shown_path(folder_root, folder_path)})"
+                f"its own folder ({shown_path(folder_root, folder_path)})"
                 if folder_root is not None and folder_path is not None
                 else "its own folder (none — not an importer-folder agent)",
-                f"its deployment ({_shown_path(deployments_root, deployment_path)})"
+                f"its deployment ({shown_path(deployments_root, deployment_path)})"
                 if deployments_root is not None and deployment_path is not None
                 else "its deployment (none — no client deployment was given)",
             ]
@@ -352,7 +352,7 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     Unknown/empty input renders nothing: a role that declares no escalation
     policy gets no block, so this is a strict addition for roles that do.
 
-    ``conditions`` is coerced through ``frontmatter._as_str_list`` — the same
+    ``conditions`` is coerced through ``frontmatter.as_str_list`` — the same
     coercion ``directives._resolve_mapping_directive`` already applies to this
     exact field for the ``add``/``remove`` deployment directives — rather
     than iterated directly. YAML permits a bare scalar
@@ -377,7 +377,7 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
         condition
         for condition in (
             _normalize_condition_name(c)
-            for c in _as_str_list(escalation_rules.get("conditions"))
+            for c in as_str_list(escalation_rules.get("conditions"))
         )
         if condition
     ]
@@ -483,7 +483,7 @@ def _compose_prompt(
     insert, ``definition.system_prompt`` is already correct as-is (the
     contract is already its final block) and is returned unchanged. Whenever
     either exists, the contract is stripped back off
-    (``prompt._strip_base_contract``, the exact inverse of
+    (``prompt.strip_base_contract``, the exact inverse of
     ``prompt._append_base_contract``), skill content and then the escalation
     block (issue #36) are inserted in that order, and the contract is
     appended once more — so it still appears exactly once overall, now
@@ -494,12 +494,12 @@ def _compose_prompt(
     if not skills and not escalation_block:
         return definition.system_prompt.strip()
 
-    role_prompt = _strip_base_contract(definition.system_prompt).strip()
+    role_prompt = strip_base_contract(definition.system_prompt).strip()
     parts = [role_prompt]
     parts.extend(skill.content for skill in skills)
     if escalation_block:
         parts.append(escalation_block)
-    parts.append(_BASE_PROMPT_CONTRACT.strip())
+    parts.append(BASE_PROMPT_CONTRACT.strip())
     return _SKILL_SEPARATOR.join(p for p in parts if p)
 
 

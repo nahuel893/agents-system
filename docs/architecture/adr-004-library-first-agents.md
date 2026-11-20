@@ -106,7 +106,7 @@ corrected to state this (#91).
 `create_app` gains `agents: Mapping[str, Agent | str] | None`,
 `grants: Mapping[str, Sequence[str]] | None` and
 `clients: Mapping[str, str] | None`. Every id is opaque — at most 64
-`_SAFE_SEGMENT` characters, never parsed — and every id `WHATSAPP_RUNTIME_ID`
+`SAFE_SEGMENT` characters, never parsed — and every id `WHATSAPP_RUNTIME_ID`
 or `ADAPTER_RUNTIMES` names must be registered, or boot fails naming it.
 `clients` is rejected against an `Agent`-valued id: deployment overrides
 stay predefined-role-only. When `agents` is omitted, `lifespan()` falls back
@@ -119,7 +119,7 @@ no third copy of that parsing reappears.
 
 ### D6 — Runtime id validation, and where the new code lives
 
-`_validate_runtime_id` (`main.py`) reuses `locate._SAFE_SEGMENT`'s character
+`_validate_runtime_id` (`main.py`) reuses `locate.SAFE_SEGMENT`'s character
 class for every id, whichever of `agents`/`grants`/`clients`/
 `agent_registrations` it came from. `Agent` lives at
 `src/agents_system/agent/spec.py`, alongside `agent/graph.py` — not a

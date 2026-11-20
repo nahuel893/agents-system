@@ -57,7 +57,7 @@ def _read_md(
     return _split_frontmatter(path.read_text(encoding="utf-8"))
 
 
-def _as_str_list(value: Any) -> list[str]:
+def as_str_list(value: Any) -> list[str]:
     """Coerce a YAML value to a list of strings: a scalar is a one-item list.
 
     Also used for `Agent(...)`'s list parameters (`agent/spec.py`), which is

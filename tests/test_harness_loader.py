@@ -519,7 +519,7 @@ def test_require_deployments_root_raises_naming_the_path(
     missing = tmp_path / "no-such-deployments"
 
     with pytest.raises(DefinitionError) as exc_info:
-        roots_module._require_deployments_root(missing)
+        roots_module.require_deployments_root(missing)
 
     assert str(missing) in str(exc_info.value)
 
@@ -532,7 +532,7 @@ def test_require_deployments_root_returns_existing_directory(
     existing = tmp_path / "deployments"
     existing.mkdir()
 
-    assert roots_module._require_deployments_root(existing) == existing
+    assert roots_module.require_deployments_root(existing) == existing
 
 
 def test_resolve_with_client_and_missing_deployments_root_raises(
@@ -639,7 +639,7 @@ def test_load_override_refuses_traversing_client_and_role(
     """Both segments are caller-supplied; both must be validated.
 
     The root must EXIST and the message must be asserted, or this stops
-    testing traversal. Moving `_require_deployments_root` into
+    testing traversal. Moving `require_deployments_root` into
     `load_override` made it the FIRST argument evaluated, so with an absent
     root it raised before `_validate_segment` ever saw `../escape` — and a
     bare `pytest.raises(DefinitionError)` cannot tell the two apart. The test

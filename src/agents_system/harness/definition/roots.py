@@ -62,7 +62,7 @@ def _require_platform_root(root: pathlib.Path) -> pathlib.Path:
     )
 
 
-def _require_deployments_root(root: pathlib.Path) -> pathlib.Path:
+def require_deployments_root(root: pathlib.Path) -> pathlib.Path:
     """Fail loudly, naming what was searched, before resolving a client override.
 
     Mirrors ``_require_platform_root``. Without this, a missing

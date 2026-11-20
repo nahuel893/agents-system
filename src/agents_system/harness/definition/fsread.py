@@ -16,7 +16,7 @@ def _is_absolute_value(value: str) -> bool:
     return bool(pathlib.PureWindowsPath(value).anchor)
 
 
-def _resolve_within_root(
+def resolve_within_root(
     root: pathlib.Path, base: pathlib.Path, relative: str
 ) -> pathlib.Path | None:
     """Resolve ``relative`` against ``base`` (the declaring agent's folder)
@@ -42,7 +42,7 @@ def _resolve_within_root(
     return resolved
 
 
-#: Issue #75 — whether ``_read_within_root`` can walk directory handles
+#: Issue #75 — whether ``read_within_root`` can walk directory handles
 #: (``openat`` with ``O_NOFOLLOW``). True on Linux and macOS. Elsewhere
 #: (Windows) a read falls back to the path, after the same resolve-then-check
 #: containment, with the check-to-read window documented in
@@ -91,7 +91,7 @@ def _read_bounded(read: Callable[[int], bytes], *, label: str) -> bytes:
     plus one chunk in memory.
 
     This is the cap's actual enforcement. The ``stat()``/``fstat()`` size
-    check kept in both ``_read_within_root`` branches ahead of this call is
+    check kept in both ``read_within_root`` branches ahead of this call is
     only a fast-path rejection for a file already oversized at that instant
     -- a point-in-time check that a file growing between the check and the
     read would otherwise slip past, since a plain ``read()``/``read_text()``
@@ -112,12 +112,12 @@ def _read_bounded(read: Callable[[int], bytes], *, label: str) -> bytes:
     return b"".join(chunks)
 
 
-def _read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
+def read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
     """Read ``path``, a real path strictly inside ``root`` (what
-    ``_resolve_within_root`` returns), without following any symlink on the
+    ``resolve_within_root`` returns), without following any symlink on the
     way (issue #75, TOCTOU).
 
-    ``_resolve_within_root`` checks a path at one moment and the read comes
+    ``resolve_within_root`` checks a path at one moment and the read comes
     later: a folder swapped for a symlink in between would be followed by a
     plain ``path.read_text()``. This opens ``root`` instead and walks
     ``path``'s components one directory handle at a time, each opened with
@@ -139,7 +139,7 @@ def _read_within_root(root: pathlib.Path, path: pathlib.Path) -> str:
     see the threat model in ``docs/platform/role.md``.
     """
     # Issue #127 — defense in depth. Every current caller pre-resolves the
-    # path with `_resolve_within_root` first, whose `.resolve()` already
+    # path with `resolve_within_root` first, whose `.resolve()` already
     # collapses `.`/`..`, so this never fires today. It exists for whatever
     # calls this function next without going through that helper: the
     # `is_relative_to` check below is lexical (string comparison, not

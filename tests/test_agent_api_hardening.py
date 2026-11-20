@@ -120,7 +120,7 @@ def test_from_folder_untrusted_input_override_is_checked_at_construction(
 
 @pytest.mark.parametrize("field", ["tools", "permissions", "skills"])
 def test_a_bare_string_is_one_item_not_its_characters(field: str) -> None:
-    """A YAML scalar means a one-item list (`_as_str_list`). The Python
+    """A YAML scalar means a one-item list (`as_str_list`). The Python
     parameter used to be split into single characters instead."""
     from agents_system.agent.spec import Agent
 

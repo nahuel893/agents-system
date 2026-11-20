@@ -14,9 +14,9 @@ from agents_system.harness.definition.directives import (
 )
 from agents_system.harness.definition.errors import DefinitionError
 from agents_system.harness.definition.frontmatter import (
-    _as_str_list,
     _parse_escalation_descriptions,
     _read_md,
+    as_str_list,
 )
 from agents_system.harness.definition.locate import (
     _contained_folder,
@@ -24,7 +24,7 @@ from agents_system.harness.definition.locate import (
     _extends_target,
     _read_contained_md,
     _role_folder,
-    _shown_path,
+    shown_path,
 )
 from agents_system.harness.definition.model import (
     FolderLocator,
@@ -32,12 +32,12 @@ from agents_system.harness.definition.model import (
     RawDefinition,
     RoleLocator,
 )
-from agents_system.harness.definition.policy import _POLICY_FIELDS
+from agents_system.harness.definition.policy import POLICY_FIELDS
 from agents_system.harness.definition.prompt import _split_design_notes
 from agents_system.harness.definition.roots import RootConfig, _require_platform_root
 
 
-def _parse_untrusted_input(
+def parse_untrusted_input(
     policy_fm: Mapping[str, Any], *, source: pathlib.Path | str
 ) -> bool | None:
     """Read `untrusted_input` from parsed policy.md frontmatter (ADR-002 C.11).
@@ -75,7 +75,7 @@ def _parse_untrusted_input(
     return value
 
 
-def _validate_inline_skills(
+def validate_inline_skills(
     agent: str, skills: Iterable[str], inline_skills: Mapping[str, Any]
 ) -> None:
     """Every ``skill_contents`` key must also be listed in ``skills``.
@@ -173,14 +173,14 @@ def _apply_agent_folder_overrides(
             f"{unknown}, which Agent.from_folder cannot override. Allowed: "
             f"{sorted(_FOLDER_OVERRIDE_FIELDS)}."
         )
-    _parse_untrusted_input(overrides, source=who)
+    parse_untrusted_input(overrides, source=who)
     changes: dict[str, Any] = {}
     for key, value in overrides.items():
         target = _FOLDER_OVERRIDE_FIELDS[key]
         if target is not None:
             changes[target] = dict(value) if target == "inline_skills" else value
     if "inline_skills" in changes:
-        _validate_inline_skills(
+        validate_inline_skills(
             changes.get("role_name", definition.role_name),
             changes.get("skills", definition.skills),
             changes["inline_skills"],
@@ -223,7 +223,7 @@ def _load_role_files(
     if isinstance(locator, FolderLocator):
         folder = _contained_folder(locator)
         role_type = folder.name
-        shown = pathlib.Path(_shown_path(locator.root, folder))
+        shown = pathlib.Path(shown_path(locator.root, folder))
         importer = locator
 
         def read(filename: str) -> tuple[dict[str, Any], str]:
@@ -284,7 +284,7 @@ def _load_role_files(
     _check_escalation_descriptions(escalation_rules, who=str(shown / "policy.md"))
     parsed_descriptions = _parse_escalation_descriptions(
         policy_body,
-        known_conditions=_as_str_list(escalation_rules.get("conditions")),
+        known_conditions=as_str_list(escalation_rules.get("conditions")),
         source=shown / "policy.md",
     )
     if parsed_descriptions or "descriptions" in escalation_rules:
@@ -301,8 +301,8 @@ def _load_role_files(
         version=version,
         deployment=None,
         system_prompt=role_body,
-        tools=_as_str_list(manifest_fm.get("tools")),
-        skills=_as_str_list(manifest_fm.get("skills")),
+        tools=as_str_list(manifest_fm.get("tools")),
+        skills=as_str_list(manifest_fm.get("skills")),
         context=dict(manifest_fm.get("context") or {}),
         permissions=manifest_fm.get("permissions", []),
         # "" means NOT DECLARED, resolved by the fold below or defaulted at
@@ -325,9 +325,9 @@ def _load_role_files(
         # `autonomy` above: a child role inherits the parent's value, so
         # defaulting here would erase the difference between "declared
         # false" and "said nothing", which is exactly the distinction the
-        # monotonicity invariant needs. `_parse_untrusted_input` type-checks
+        # monotonicity invariant needs. `parse_untrusted_input` type-checks
         # whatever was actually written on disk.
-        untrusted_input=_parse_untrusted_input(policy_fm, source=shown / "policy.md"),
+        untrusted_input=parse_untrusted_input(policy_fm, source=shown / "policy.md"),
         # ADR-002 C.12. Dict preserves manifest declaration order.
         command_tools=list(command_tool_declarations),
         command_tool_declarations=command_tool_declarations,
@@ -361,7 +361,7 @@ def _plain_policies(definition: RawDefinition) -> RawDefinition:
     """
     changes: dict[str, Any] = {
         field: dict(value)
-        for field in (*_POLICY_FIELDS, "execution_limits", "model")
+        for field in (*POLICY_FIELDS, "execution_limits", "model")
         if isinstance(value := getattr(definition, field), Mapping)
         and not isinstance(value, dict)
     }
