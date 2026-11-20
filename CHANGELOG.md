@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.8.0](https://github.com/nahuel893/agents-system/compare/v0.7.2...v0.8.0) (2026-11-20)
+
+
+### Features
+
+* **adapter:** add a per-request context hook to the OpenAI-compatible adapter ([#321](https://github.com/nahuel893/agents-system/issues/321)) ([d3f6d2e](https://github.com/nahuel893/agents-system/commit/d3f6d2e1d45c5873d94fa1ae843b426dac05dc17))
+
+
+### Bug Fixes
+
+* **deps:** upgrade fsspec and virtualenv past their advisories ([#305](https://github.com/nahuel893/agents-system/issues/305)) ([#306](https://github.com/nahuel893/agents-system/issues/306)) ([40eb734](https://github.com/nahuel893/agents-system/commit/40eb7347b315cf607da1e1c8ce018a0b071e657f))
+* **deps:** upgrade six transitive packages past their advisories ([#328](https://github.com/nahuel893/agents-system/issues/328)) ([#329](https://github.com/nahuel893/agents-system/issues/329)) ([de21b9c](https://github.com/nahuel893/agents-system/commit/de21b9c480a84cea6573d2b1b507b074d083b1a5))
+
+
+### Documentation
+
+* **architecture:** add the architecture review and the module split plan ([#337](https://github.com/nahuel893/agents-system/issues/337)) ([#339](https://github.com/nahuel893/agents-system/issues/339)) ([fc5c7cc](https://github.com/nahuel893/agents-system/commit/fc5c7cce55b2f8e6d7e2dc1ff1686bf59381968b))
+* **architecture:** record the progress of the module split in the plan ([#337](https://github.com/nahuel893/agents-system/issues/337)) ([#345](https://github.com/nahuel893/agents-system/issues/345)) ([de15f47](https://github.com/nahuel893/agents-system/commit/de15f4770a0dce3be2504f44e7e4bba1e38ef22b))
+* **quickstart:** ship the Quickstart as examples/quickstart.py ([#315](https://github.com/nahuel893/agents-system/issues/315)) ([#316](https://github.com/nahuel893/agents-system/issues/316)) ([98aa9e8](https://github.com/nahuel893/agents-system/commit/98aa9e8cf2372fc2e7f192b61925f5556d403b19))
+
+
+### Code Refactoring
+
+* **graph:** split agent/graph.py into modules ([#335](https://github.com/nahuel893/agents-system/issues/335)) ([#342](https://github.com/nahuel893/agents-system/issues/342)) ([79470c5](https://github.com/nahuel893/agents-system/commit/79470c55d549977fd319f04a916e51b60ae5e272))
+* **loader:** give the names other packages import a public name ([#334](https://github.com/nahuel893/agents-system/issues/334)) ([#344](https://github.com/nahuel893/agents-system/issues/344)) ([5825b89](https://github.com/nahuel893/agents-system/commit/5825b89378f4218327acc1e3760f8c6f3da936d0))
+* **loader:** move the definition leaves into harness/definition ([#334](https://github.com/nahuel893/agents-system/issues/334)) ([#340](https://github.com/nahuel893/agents-system/issues/340)) ([a4541ba](https://github.com/nahuel893/agents-system/commit/a4541bafe18b8ff89c7e750e5ede9275dae20adb))
+* **loader:** move the rest of the loader into harness/definition ([#334](https://github.com/nahuel893/agents-system/issues/334)) ([#341](https://github.com/nahuel893/agents-system/issues/341)) ([898ab6f](https://github.com/nahuel893/agents-system/commit/898ab6f7227178ca59e07b806b7a8d0e634d0c4d))
+* **server:** move the helpers out of main.py into the serving package ([#336](https://github.com/nahuel893/agents-system/issues/336)) ([#343](https://github.com/nahuel893/agents-system/issues/343)) ([5c872fb](https://github.com/nahuel893/agents-system/commit/5c872fb215d96711826ffcd31c57b4887644ee30))
+
 ## [0.7.2](https://github.com/nahuel893/agents-system/compare/v0.7.1...v0.7.2) (2026-10-13)
 
 
