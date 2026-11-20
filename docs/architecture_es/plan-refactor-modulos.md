@@ -25,9 +25,31 @@ Plan para resolver el problema P1 de [la revisión de arquitectura](revision-arq
 | Fase | Qué | PRs | Estado |
 |---|---|---|---|
 | 0 (`#333`) | Red de seguridad | 1 | Lista, integrada en `main` con el PR #338 |
-| 1 (`#334`) | `loader.py` → `harness/definition/` | 5 | Pendiente |
-| 2 (`#335`) | `graph.py` → módulos de `agent/` | 5 | Pendiente |
-| 3 (`#336`) | `main.py` → paquete `server/` | 6 | Pendiente |
+| 1 (`#334`) | `loader.py` → `harness/definition/` | 5 | Movimientos integrados (#340, #341, #344). Falta el arreglo 1.4 |
+| 2 (`#335`) | `graph.py` → módulos de `agent/` | 5 | Movimientos integrados (#342). Faltan los arreglos 2.4 y 2.5 |
+| 3 (`#336`) | `main.py` → paquete `serving/` | 6 | Movimientos de funciones auxiliares integrados (#343). Faltan los arreglos 3.1 y 3.2, y la división de `lifespan` y `create_app` |
+
+### Avance al 2026-11-20
+
+| Módulo | Antes | Ahora |
+|---|---|---|
+| `harness/loader.py` | 4.031 líneas | 282 |
+| `agent/graph.py` | 2.047 | 51 |
+| `main.py` | 2.079 | 1.156 |
+
+Lo que cambió respecto del plan original:
+
+- **Orden de la fase 1.** El bloque de comandos no podía salir primero: usa el modelo de datos. Salieron antes `errors.py`, `roots.py` y `model.py`. El paquete quedó en 17 módulos, ninguno sobre 500 líneas, y `resolve` se queda en `loader.py`, porque los tests lo parchean en esa ruta.
+- **Nombre del paquete de la fase 3.** Es `serving/` y no `server/`: `agents_system/server.py` ya existe y es una ruta de import pública.
+- **Lo que un movimiento no puede dividir.** `AgentRuntime` es una clase de unas 820 líneas; `lifespan` y `create_app` son dos funciones que suman unas 980. Quedan enteras en `agent/runtime.py` (techo 1.050) y `main.py` (techo 1.200) hasta los arreglos de cada fase.
+- **Arreglo 1.5, parcial.** Trece nombres que otros paquetes importan ya son públicos. Quedan dos, `_effective_limits` y `_build_chat_model`: cada uno choca con un nombre que ya existe y necesita un nombre nuevo.
+- **Una guarda que no alcanza.** La guarda de destino de parches no detecta este caso: un test parchea un nombre en el módulo viejo, el módulo viejo todavía lo usa, pero la función que el test quería interceptar se mudó y lee el nombre en otro módulo. Una lectura independiente encontró un test así; se corrigió en #343.
+
+Pendiente, todo cambios de diseño o de comportamiento:
+
+- **1.4** Constructor único de `AgentDefinition`. Espera la decisión sobre `merge()`.
+- **2.4 y 2.5** `RuntimeOptions` y el `TurnContext` explícito. Toca concurrencia y el chequeo de permisos.
+- **3.1 y 3.2** `AppServices` e inyección de settings, engine y modelo de chat; después, dividir `lifespan` y `create_app`.
 
 ## Fase 0 — Red de seguridad
 
