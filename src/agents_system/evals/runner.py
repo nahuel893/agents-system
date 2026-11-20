@@ -54,7 +54,7 @@ from agents_system.scope import InMemoryScopeProvider
 from agents_system.subject import TurnActor, TurnSubject
 from agents_system.user_memory import UserFacts, UserMemoryLimits, backend_for
 
-#: The exact prefix `agent/graph.py::_execute_tools` writes into a
+#: The exact prefix `agent/nodes/tools.py::_execute_tools` writes into a
 #: `ToolMessage.content` when the Layer-2 interceptor raises `PolicyViolation`
 #: (reasons: not_in_surface / revalidation_required / permission_revoked).
 #: A timeout also sets `status="error"` but with different content, so
@@ -550,7 +550,7 @@ def _blocked_tool_names(messages: Sequence[AnyMessage]) -> frozenset[str]:
     return frozenset(blocked)
 
 
-#: #76 -- the fixed AIMessage content `agent/graph.py::_limit_reached`
+#: #76 -- the fixed AIMessage content `agent/nodes/tools.py::_limit_reached`
 #: appends when a turn exhausts its `max_tool_calls` budget. Harness-authored
 #: text, not the model's own -- matching it is the same class of check
 #: `_BLOCKED_PREFIX` above already is, never a comparison against
@@ -1263,7 +1263,7 @@ async def run_scenario(
             # #76 -- merge this scenario's execution_limits_override (if any)
             # over whatever the resolved role's own manifest declares. Never
             # touches Layer-1/Layer-2 permission handling above -- only the
-            # execution_limits Mapping `agent.graph._effective_limits` later
+            # execution_limits Mapping `agent.limits._effective_limits` later
             # merges over the platform defaults.
             if scenario.execution_limits_override:
                 merged_limits = {

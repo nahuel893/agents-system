@@ -374,7 +374,7 @@ new_conversation_before: [1]          # opcional — índices de turno (desde 0)
   liga la denegación `"Tool call blocked: ..."` del interceptor al
   tool_call_id al que ocurrió, el mismo join que ya usa `_succeeded_tool_names`.
 - **`limit_reached`** coincide con el mensaje terminal fijo propio de
-  `agent/graph.py::_limit_reached` ("I could not complete this within the
+  `agent/nodes/tools.py::_limit_reached` ("I could not complete this within the
   allowed number of steps...") — texto escrito por el harness, no por el
   modelo, así que esto no es más una aserción de igualdad de texto sobre la
   salida del modelo que lo que ya es `permission_denied` al matchear

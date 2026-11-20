@@ -123,7 +123,7 @@ def _limit_defaults(deployment_limits: Mapping[str, Any]) -> Mapping[str, Any]:
     A deployment value above the platform default replaces it, so the agent
     may declare anything up to it. One below leaves the platform default as
     the load-time ceiling: the runtime applies the deployment's value
-    (``graph._effective_limits``), so a declaration above it is capped, not
+    (``limits._effective_limits``), so a declaration above it is capped, not
     refused.
     """
     if not deployment_limits:

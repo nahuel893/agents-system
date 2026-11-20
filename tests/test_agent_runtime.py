@@ -1533,7 +1533,8 @@ async def test_limit_reached_message_not_counted_in_usage() -> None:
 def test_compute_turn_cost_returns_none_for_implausibly_large_token_counts() -> None:
     """A huge attacker/compromised-backend-supplied input_tokens value must
     not raise OverflowError out of _compute_turn_cost."""
-    from agents_system.agent.graph import TurnUsage, _compute_turn_cost
+    from agents_system.agent.graph import TurnUsage
+    from agents_system.agent.usage import _compute_turn_cost
     from agents_system.config import ModelPrice
 
     malicious_usage = TurnUsage(
@@ -1556,7 +1557,8 @@ def test_compute_turn_cost_returns_none_for_implausibly_large_token_counts() -> 
 def test_compute_turn_cost_returns_none_for_negative_token_counts() -> None:
     """A negative token count is equally untrustworthy -- it must never be
     fed into the cost formula either."""
-    from agents_system.agent.graph import TurnUsage, _compute_turn_cost
+    from agents_system.agent.graph import TurnUsage
+    from agents_system.agent.usage import _compute_turn_cost
     from agents_system.config import ModelPrice
 
     usage = TurnUsage(model_calls=1, input_tokens=-5, output_tokens=10, total_tokens=5)
@@ -1572,7 +1574,7 @@ def test_aggregate_turn_usage_treats_negative_per_call_tokens_as_unknown() -> No
     ONE call must null the whole turn's totals right where the entries are
     summed, not only downstream in `_compute_turn_cost` -- the honesty rule
     applies at the per-call boundary, the same as at the aggregate."""
-    from agents_system.agent.graph import _aggregate_turn_usage
+    from agents_system.agent.usage import _aggregate_turn_usage
 
     entries = [
         {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
@@ -1592,7 +1594,7 @@ def test_aggregate_turn_usage_treats_implausible_per_call_tokens_as_unknown() ->
     rejected BEFORE summing, so a second call's compensating negative value
     cannot net out to a small, plausible-looking (but wrong) aggregate that
     slips past `_compute_turn_cost`'s own bound check."""
-    from agents_system.agent.graph import (
+    from agents_system.agent.usage import (
         _MAX_PLAUSIBLE_TURN_TOKENS,
         _aggregate_turn_usage,
     )
@@ -1623,7 +1625,7 @@ def test_aggregate_turn_usage_treats_implausible_per_call_tokens_as_unknown() ->
 def test_aggregate_turn_usage_still_sums_ordinary_plausible_calls() -> None:
     """Sanity check: the new per-entry bound does not disturb an ordinary
     multi-call turn's real sum."""
-    from agents_system.agent.graph import _aggregate_turn_usage
+    from agents_system.agent.usage import _aggregate_turn_usage
 
     entries = [
         {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
@@ -1641,7 +1643,8 @@ def test_aggregate_turn_usage_still_sums_ordinary_plausible_calls() -> None:
 def test_compute_turn_cost_still_prices_ordinary_plausible_usage() -> None:
     """Sanity check: the new bounds check does not disturb an ordinary
     turn's cost computation."""
-    from agents_system.agent.graph import TurnUsage, _compute_turn_cost
+    from agents_system.agent.graph import TurnUsage
+    from agents_system.agent.usage import _compute_turn_cost
     from agents_system.config import ModelPrice
 
     usage = TurnUsage(

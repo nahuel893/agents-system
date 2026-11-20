@@ -258,7 +258,7 @@ def test_the_platform_default_budget_is_derived_from_the_assumed_window() -> Non
 
 
 def test_effective_limits_carry_the_context_budget() -> None:
-    from agents_system.agent.graph import _effective_limits
+    from agents_system.agent.limits import _effective_limits
     from agents_system.harness.loader import PLATFORM_DEFAULT_LIMITS
 
     assert (
@@ -601,7 +601,7 @@ def _big_single_message_state(chars: int = 40_000) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_an_over_budget_request_with_nothing_to_drop_is_logged() -> None:
-    from agents_system.agent.graph import _call_model
+    from agents_system.agent.nodes.model import _call_model
 
     model = _model()
     with structlog.testing.capture_logs() as logs:
@@ -624,7 +624,7 @@ async def test_an_over_budget_request_with_nothing_to_drop_is_audited_and_counte
 ) -> None:
     from prometheus_client import CollectorRegistry
 
-    from agents_system.agent.graph import _call_model
+    from agents_system.agent.nodes.model import _call_model
     from agents_system.observability.metrics import build_metrics
 
     metrics = build_metrics(CollectorRegistry())
@@ -652,7 +652,7 @@ async def test_an_over_budget_request_with_nothing_to_drop_is_audited_and_counte
 
 @pytest.mark.asyncio
 async def test_a_fixed_parts_only_request_above_the_budget_is_reported() -> None:
-    from agents_system.agent.graph import _call_model
+    from agents_system.agent.nodes.model import _call_model
 
     with structlog.testing.capture_logs() as logs:
         await _call_model(
@@ -666,7 +666,7 @@ async def test_a_fixed_parts_only_request_above_the_budget_is_reported() -> None
 
 @pytest.mark.asyncio
 async def test_an_oversized_tool_result_reaches_the_model_with_its_call() -> None:
-    from agents_system.agent.graph import _call_model
+    from agents_system.agent.nodes.model import _call_model
 
     model = _model()
     user = HumanMessage(content="Please calculate")

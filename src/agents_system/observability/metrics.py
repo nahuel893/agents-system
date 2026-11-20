@@ -80,7 +80,7 @@ PROVIDER_REQUEST_STATUSES = (
 PROVIDER_NAMES = ("groq", "anthropic", "openai_compatible", "ollama")
 
 #: issue #24 -- the two points where a conversation thread touches its
-#: checkpointer (`agent/graph.py::_Thread`): reading its history before the
+#: checkpointer (`agent/thread.py::_Thread`): reading its history before the
 #: turn, saving the turn after it. NEVER the thread id itself, which is a
 #: customer's phone number.
 CHECKPOINTER_OPERATIONS = ("read", "write")

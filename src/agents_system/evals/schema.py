@@ -49,7 +49,7 @@ DEFAULT_HAPPY_PATH_THRESHOLD = 0.8
 #: 100%-guardrail bar, with no error. See `_check_guardrail_filename_pairing`.
 _GUARDRAIL_FILENAME_MARKERS = ("_boundary", "_escalation", "_no_fabrication")
 
-#: #76 -- the subset of `agent.graph._ENFORCED_LIMIT_KEYS` a scenario may
+#: #76 -- the subset of `agent.limits._ENFORCED_LIMIT_KEYS` a scenario may
 #: override via `Scenario.execution_limits_override`. Kept as this module's
 #: own tuple (schema.py has no dependency on agent.graph) so a YAML typo is
 #: rejected at LOAD time, before `run_scenario` ever tries to apply it.
@@ -88,7 +88,7 @@ class ScenarioAssertions:
     tool_blocked: tuple[str, ...] = ()
     #: #76 -- ``None`` asserts nothing. ``True`` requires the turn's
     #: `max_tool_calls` budget was exhausted (the harness's own fixed
-    #: `agent.graph._limit_reached` terminal message -- harness-authored
+    #: `agent.nodes.tools._limit_reached` terminal message -- harness-authored
     #: text, not the model's, so matching it is not a text-equality
     #: assertion on model output). ``False`` requires it was never reached.
     limit_reached: bool | None = None

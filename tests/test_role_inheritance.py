@@ -695,7 +695,7 @@ def test_a_deployment_limit_that_is_null_or_not_a_number_is_checked(
     tmp_path: pathlib.Path, value: str
 ) -> None:
     """A deployment's `max_tool_calls: null` runs as the platform default
-    (`graph._effective_limits`), so under a role that set 5 it RAISES the
+    (`limits._effective_limits`), so under a role that set 5 it RAISES the
     limit to 20 -- it used to crash the comparison with a TypeError instead.
     `.nan` compared false against every ceiling and was accepted; a string
     crashed with TypeError. All three are a `DefinitionError` now."""

@@ -39,7 +39,7 @@ from test_main import (
 )
 
 import agents_system
-from agents_system.agent.graph import _effective_limits
+from agents_system.agent.limits import _effective_limits
 from agents_system.execution_limits import (
     DEFAULT_TIMEOUT_REPLY,
     LEASE_MARGIN_S,
@@ -467,7 +467,7 @@ async def test_boot_hands_each_runtime_its_limits_and_reply() -> None:
         _stack(patches),
         patch("agents_system.harness.loader.resolve", return_value=definition) as res,
         patch("agents_system.harness.factory.build_runtime") as build,
-        patch("agents_system.agent.graph.AgentRuntime") as runtime_cls,
+        patch("agents_system.agent.runtime.AgentRuntime") as runtime_cls,
     ):
         async with lifespan(app):
             pass
