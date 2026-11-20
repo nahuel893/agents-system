@@ -241,7 +241,7 @@ def _validate_execution_limits(
         if baseline_value is None:
             # Genuinely unknown to both — a new limit nobody has a ceiling for.
             continue
-        # The same null reading on the override side: `graph._effective_limits`
+        # The same null reading on the override side: `limits._effective_limits`
         # runs a null value as the platform default, so that is what gets
         # checked. Otherwise a null would lift a parent's tighter limit back
         # up to the default while comparing as "no value".

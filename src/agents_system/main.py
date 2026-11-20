@@ -454,7 +454,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
 
         if plan.registrations:
-            from agents_system.agent.graph import AgentRuntime, _effective_limits
+            from agents_system.agent.limits import _effective_limits
+            from agents_system.agent.runtime import AgentRuntime
             from agents_system.harness.factory import build_runtime
             from agents_system.harness.loader import resolve
             from agents_system.services.embeddings import (
@@ -1485,7 +1486,7 @@ def _check_channel_runtime(
     (``WHATSAPP_RUNTIME_ID``) exactly as before #22, and to every registered
     channel's runtime.
     """
-    from agents_system.agent.graph import _effective_limits
+    from agents_system.agent.limits import _effective_limits
 
     label = (
         "WhatsApp" if channel_name == WHATSAPP_CHANNEL else f"Channel {channel_name!r}"
@@ -1528,7 +1529,7 @@ def _warn_if_turn_budget_below_request_timeout(
     the check reads the provider the runtime will actually use: its own
     ``model:`` selection when it has one, else ``ADAPTER_PROVIDER``.
     """
-    from agents_system.agent.graph import _effective_limits
+    from agents_system.agent.limits import _effective_limits
 
     selection = getattr(definition, "model", None)
     provider = (

@@ -25,7 +25,8 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
-import agents_system.agent.graph as graph_module
+import agents_system.agent.limits as limits_module
+import agents_system.agent.runtime as runtime_module
 from agents_system.audit import recorder as audit_recorder
 from agents_system.audit.redactor import Redactor
 from agents_system.connectors.operator import SandboxPolicy, TerminalPolicy
@@ -190,7 +191,7 @@ async def _run(
 
 
 def _disable_limits(monkeypatch: pytest.MonkeyPatch) -> None:
-    original = graph_module._effective_limits
+    original = limits_module._effective_limits
 
     def _unbounded(limits: Any, deployment_limits: Any = None) -> dict[str, Any]:
         merged = original(limits, deployment_limits)
@@ -201,7 +202,10 @@ def _disable_limits(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         return merged
 
-    monkeypatch.setattr(graph_module, "_effective_limits", _unbounded)
+    # `_effective_limits` is read as a module global by AgentRuntime (runtime)
+    # and imported at call time by the boot checks in main (limits).
+    monkeypatch.setattr(runtime_module, "_effective_limits", _unbounded)
+    monkeypatch.setattr(limits_module, "_effective_limits", _unbounded)
 
 
 # ---------------------------------------------------------------------------

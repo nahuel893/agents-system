@@ -9,7 +9,7 @@ customer said, so it should be built on evidence that trimming loses
 something that matters.
 
 The function is pure. It works on the model-input projection built in
-`agent.graph._call_model` and never touches the persisted history.
+`agent.nodes.model._call_model` and never touches the persisted history.
 
 Rules, in priority order:
 

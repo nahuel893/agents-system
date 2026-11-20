@@ -351,7 +351,7 @@ new_conversation_before: [1]          # optional — 0-based turn indexes that s
   `runner._blocked_tool_names` ties the interceptor's `"Tool call blocked:
   ..."` denial to the tool_call_id it happened to, the same join
   `_succeeded_tool_names` already uses.
-- **`limit_reached`** matches `agent/graph.py::_limit_reached`'s own fixed
+- **`limit_reached`** matches `agent/nodes/tools.py::_limit_reached`'s own fixed
   terminal message ("I could not complete this within the allowed number of
   steps...") — harness-authored text, not the model's, so this is not a
   text-equality assertion on model output any more than `permission_denied`

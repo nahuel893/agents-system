@@ -32,7 +32,7 @@ from contextlib import asynccontextmanager
 # Matches ADR-001's Stage A launch target ("10 concurrent conversations: a
 # single process") -- D-033 explicitly calls the bound "needed at 10, not
 # just at 100". A turn holds AT MOST ONE database connection at a time --
-# never one per tool call, since agent/graph.py::_execute_tools runs its
+# never one per tool call, since agent/nodes/tools.py::_execute_tools runs its
 # tool_calls sequentially over one shared AsyncSession per round, not one
 # session per call -- so 10 concurrent turns implies at most 10 held
 # connections from this path at once. The operational engine's default

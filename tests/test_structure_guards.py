@@ -37,7 +37,7 @@ MAX_MODULE_LINES = 500
 # ceiling when a module shrinks, and delete the entry once it fits the cap.
 OVERSIZED_MODULES: dict[str, int] = {
     "main.py": 2100,
-    "agent/graph.py": 2100,
+    "agent/runtime.py": 1050,
     "evals/runner.py": 1500,
     "evals/live_harness.py": 1200,
     "connectors/operator.py": 1100,

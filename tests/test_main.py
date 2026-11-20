@@ -221,7 +221,7 @@ async def test_lifespan_uses_explicit_deploy_grants() -> None:
         patch(
             "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ) as mock_build_runtime,
-        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.agent.runtime.AgentRuntime", return_value=MagicMock()),
     ):
         app = create_test_app()
 
@@ -370,7 +370,7 @@ async def test_lifespan_injects_checkpointer_into_runtimes() -> None:
         patch(
             "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ),
-        patch("agents_system.agent.graph.AgentRuntime") as mock_agent_runtime,
+        patch("agents_system.agent.runtime.AgentRuntime") as mock_agent_runtime,
     ):
         app = create_test_app()
 
@@ -413,7 +413,7 @@ async def test_lifespan_skips_checkpointer_when_disabled() -> None:
         patch(
             "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ),
-        patch("agents_system.agent.graph.AgentRuntime") as mock_agent_runtime,
+        patch("agents_system.agent.runtime.AgentRuntime") as mock_agent_runtime,
     ):
         app = create_test_app()
 
@@ -486,7 +486,7 @@ async def _boot_with_postgres_checkpointer(settings: Settings, fake_saver: Any) 
         ),
         patch("agents_system.harness.loader.resolve", return_value=fake_definition),
         patch("agents_system.harness.factory.build_runtime", return_value=MagicMock()),
-        patch("agents_system.agent.graph.AgentRuntime"),
+        patch("agents_system.agent.runtime.AgentRuntime"),
         patch("agents_system.services.checkpointer.CheckpointPurger", purger),
     ):
         app = create_test_app()
@@ -592,7 +592,7 @@ async def _boot_and_capture_logs(
         ),
         patch("agents_system.harness.loader.resolve", return_value=fake_definition),
         patch("agents_system.harness.factory.build_runtime", return_value=MagicMock()),
-        patch("agents_system.agent.graph.AgentRuntime"),
+        patch("agents_system.agent.runtime.AgentRuntime"),
         patch("agents_system.main.SubjectDataPurger", new=purger or MagicMock()),
     ):
         app = create_test_app()
@@ -818,7 +818,7 @@ async def test_lifespan_builds_dedicated_model_for_agent_with_own_declaration() 
         patch(
             "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ),
-        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.agent.runtime.AgentRuntime", return_value=MagicMock()),
     ):
         app = create_test_app()
 
@@ -871,7 +871,7 @@ async def test_lifespan_resource_teardown_survives_engine_dispose_failure() -> N
         patch(
             "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ),
-        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.agent.runtime.AgentRuntime", return_value=MagicMock()),
         patch(
             "agents_system.integration.whatsapp_client.WhatsAppClient.aclose",
             new=mock_aclose,
@@ -1329,7 +1329,7 @@ def _runtime_lease_invariant_patches(
             patch(
                 "agents_system.harness.factory.build_runtime", return_value=MagicMock()
             ),
-            patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+            patch("agents_system.agent.runtime.AgentRuntime", return_value=MagicMock()),
             patch(
                 "agents_system.services.webhook_worker.DeferredWebhookWorker",
                 return_value=mock_worker,
@@ -1598,7 +1598,7 @@ def _bi_lifespan_patches(settings: Settings, bi_engine: Any) -> tuple[Any, ...]:
         ),
         patch("agents_system.harness.loader.resolve", return_value=fake_definition),
         patch("agents_system.harness.factory.build_runtime", return_value=MagicMock()),
-        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.agent.runtime.AgentRuntime", return_value=MagicMock()),
     )
 
 
@@ -2336,7 +2336,7 @@ async def test_create_app_boots_when_whatsapp_role_is_untrusted_input_true() -> 
         patch(
             "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ),
-        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.agent.runtime.AgentRuntime", return_value=MagicMock()),
     ):
         app = create_test_app()
 
@@ -2370,7 +2370,7 @@ async def test_boot_check_does_not_apply_to_adapter_only_runtimes() -> None:
         patch(
             "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ),
-        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.agent.runtime.AgentRuntime", return_value=MagicMock()),
     ):
         app = create_test_app()
 
@@ -2437,7 +2437,7 @@ async def test_lifespan_starts_and_stops_the_webhook_worker_around_dependencies(
         patch(
             "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ),
-        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.agent.runtime.AgentRuntime", return_value=MagicMock()),
         patch(
             "agents_system.integration.whatsapp_client.WhatsAppClient.aclose",
             new=aclose,
@@ -2650,7 +2650,7 @@ async def test_lifespan_boots_normally_with_credentials_and_valid_runtime_id() -
         patch(
             "agents_system.harness.factory.build_runtime", return_value=fake_equipped
         ),
-        patch("agents_system.agent.graph.AgentRuntime", return_value=MagicMock()),
+        patch("agents_system.agent.runtime.AgentRuntime", return_value=MagicMock()),
     ):
         app = create_test_app()
 
@@ -2731,7 +2731,7 @@ def _registration_patches(settings: Settings) -> tuple[Any, ...]:
         ),
         # The stub keeps what it was given: runtimes[id]["runtime"] is the
         # EquippedRuntime build_runtime returned for that id.
-        patch("agents_system.agent.graph.AgentRuntime", side_effect=lambda **kw: kw),
+        patch("agents_system.agent.runtime.AgentRuntime", side_effect=lambda **kw: kw),
     )
 
 

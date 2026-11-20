@@ -198,11 +198,15 @@ async def test_user_over_the_daily_cap_is_refused_before_any_model_call() -> Non
 @pytest.mark.asyncio
 async def test_a_refused_turn_is_audited_without_the_address(monkeypatch: Any) -> None:
     seen: list[dict[str, Any]] = []
-    from agents_system.agent import graph
+    from agents_system.agent import runtime as runtime_module
+    from agents_system.agent.nodes import model as model_node
 
-    monkeypatch.setattr(
-        graph, "_emit", lambda name, **kw: seen.append({"name": name, **kw})
-    )
+    def _record(name: str, **kw: Any) -> None:
+        seen.append({"name": name, **kw})
+
+    # `_emit` is read as a module global by AgentRuntime and by the model node.
+    monkeypatch.setattr(runtime_module, "_emit", _record)
+    monkeypatch.setattr(model_node, "_emit", _record)
     caps = BudgetCaps(daily_tokens=1)
     runtime, _, _ = _runtime(
         [AIMessage(content="a", usage_metadata=_usage(10))] * 2, caps=caps

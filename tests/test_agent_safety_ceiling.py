@@ -240,7 +240,7 @@ def test_agent_cannot_raise_a_limit_its_parent_agent_tightened() -> None:
 
 
 def test_a_null_limit_on_the_child_means_the_platform_default_and_is_checked() -> None:
-    """`graph._effective_limits` reads a null value as "use the platform
+    """`limits._effective_limits` reads a null value as "use the platform
     default", so a child writing `max_tool_calls: None` under a parent that
     set 5 would run with 20. Rejected like any other raise."""
     from agents_system.agent.spec import Agent
