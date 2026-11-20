@@ -11,6 +11,7 @@ core and never warn, and neither do the reference agents themselves.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import warnings
 from typing import Any
@@ -88,6 +89,17 @@ def test_the_warning_points_at_the_callers_line_not_the_loader() -> None:
     [warning] = _recorded(lambda: resolve("sales-agent"))
 
     assert pathlib.Path(warning.filename) == pathlib.Path(__file__)
+
+
+def test_the_skipped_prefix_is_the_package_directory() -> None:
+    """The warning skips every frame inside the package. The prefix is counted
+    up from the module's own file, so a move could shift it unnoticed."""
+    import agents_system
+
+    package_dir = pathlib.Path(agents_system.__file__).parent
+
+    assert pathlib.Path(locate._PACKAGE_DIR) == package_dir
+    assert locate._PACKAGE_DIR.endswith(os.sep)
 
 
 def test_a_role_that_extends_another_concrete_role_warns_once() -> None:

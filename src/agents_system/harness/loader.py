@@ -59,8 +59,6 @@ import dataclasses
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-import structlog
-
 from agents_system.execution_limits import validate_execution_limits
 from agents_system.harness.definition.command_tools import _revalidate_command_tools
 from agents_system.harness.definition.errors import (
@@ -112,8 +110,6 @@ __all__ = [
     "merge",
     "resolve",
 ]
-
-logger = structlog.get_logger()
 
 
 # ---------------------------------------------------------------------------
