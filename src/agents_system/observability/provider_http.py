@@ -68,7 +68,7 @@ class MetricsHTTPTransport(httpx.AsyncBaseTransport):
     network at all; production wraps the real
     `httpx.AsyncHTTPTransport()` default. *provider* is one of
     `observability.metrics.PROVIDER_NAMES` -- a bounded, code-chosen value
-    from `main._build_chat_model`'s own dispatch, never anything
+    from `serving.models._build_chat_model`'s own dispatch, never anything
     caller-supplied at request time.
     """
 

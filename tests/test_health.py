@@ -167,7 +167,7 @@ async def test_provider_probe_single_flights_cold_and_expired_cache_bursts():
 
 async def test_provider_probe_applies_a_total_timeout(monkeypatch):
     """A hanging request callable returns an unreachable result within the budget."""
-    monkeypatch.setattr("agents_system.main._PROVIDER_PROBE_TIMEOUT_S", 0.01)
+    monkeypatch.setattr("agents_system.serving.health._PROVIDER_PROBE_TIMEOUT_S", 0.01)
 
     async def hanging_request(target: str) -> None:
         assert target == "http://fake"
@@ -537,7 +537,7 @@ async def test_outbox_backlog_probe_times_out_instead_of_hanging(app):
     that would otherwise hang far longer than that."""
     import time
 
-    from agents_system.main import _outbox_backlog
+    from agents_system.serving.health import _outbox_backlog
 
     class _HangingSession:
         async def __aenter__(self):
@@ -554,11 +554,11 @@ async def test_outbox_backlog_probe_times_out_instead_of_hanging(app):
 
     with (
         patch(
-            "agents_system.main.get_session_factory",
+            "agents_system.serving.health.get_session_factory",
             return_value=lambda: _HangingSession(),
         ),
         patch(
-            "agents_system.main.count_outbox_backlog",
+            "agents_system.serving.health.count_outbox_backlog",
             new=hanging_count_outbox_backlog,
         ),
     ):

@@ -117,7 +117,7 @@ _MODEL_BLOCK = "model:\n  provider: anthropic\n  model: claude-3-5-haiku-latest\
 
 # ---------------------------------------------------------------------------
 # 1. No declaration anywhere -- behavior is unchanged (the global default
-#    settings-driven provider applies, per main._build_chat_model).
+#    settings-driven provider applies, per serving.models._build_chat_model).
 # ---------------------------------------------------------------------------
 
 

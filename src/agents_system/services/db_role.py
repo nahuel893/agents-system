@@ -1,6 +1,6 @@
 """Shared read-only-role verification.
 
-Extracted from ``main._bi_role_is_read_only`` so more than one entrypoint can
+Extracted from ``serving.stores._bi_role_is_read_only`` so more than one entrypoint can
 ask the same question of a database role without duplicating the reasoning:
 ``main.py``'s lifespan asks it about ``BI_DATABASE_URL`` before binding
 ``run_report``, and ``demo.py``'s entrypoint asks it about

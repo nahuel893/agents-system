@@ -56,7 +56,7 @@ class AgentDefinition:
     #: `skills_folder` is.
     importer_root: pathlib.Path | None = None
     #: D-037 (issue #13, ADR-004). `None` means this runtime uses the
-    #: global `ADAPTER_PROVIDER`-driven default (`main._build_chat_model`,
+    #: global `ADAPTER_PROVIDER`-driven default (`serving.models._build_chat_model`,
     #: unchanged) -- the overwhelming majority of resolved definitions.
     #: Otherwise a fully validated `{"provider": ..., "model": ...,
     #: "temperature"?: ..., "max_tokens"?: ...}` mapping (never a

@@ -1,27 +1,24 @@
 # pyright: reportMissingImports=false, reportCallIssue=false
-"""FastAPI application factory."""
+"""FastAPI application factory.
+
+Where the code lives: ``lifespan`` and ``create_app`` stay here; the helpers
+they call live in ``agents_system.serving``, one module per concern
+(``stores``, ``auth``, ``models``, ``health``, ``registrations``,
+``channels`` and ``boot``). The public names keep this import path.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-import os
-import pathlib
-import re
-import secrets
-import time
 import uuid
 from collections.abc import (
     AsyncIterator,
-    Awaitable,
     Callable,
-    Iterable,
     Mapping,
     Sequence,
 )
 from contextlib import AsyncExitStack, asynccontextmanager
-from functools import partial
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 import structlog
@@ -29,11 +26,43 @@ from langchain_core.language_models import BaseChatModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from agents_system.extras import MissingExtraError, raise_missing_extra
+from agents_system.serving.auth import (
+    verify_metrics_access,
+)
+from agents_system.serving.boot import (
+    _boot_plan,
+    _warn_if_turn_budget_below_request_timeout,
+)
+from agents_system.serving.channels import (
+    _check_channel_runtime,
+    _fixed_resolver,
+    _registered_channels,
+    _validate_channels,
+)
+from agents_system.serving.health import (
+    ProviderHealthProbe,
+    _outbox_backlog,
+)
+from agents_system.serving.models import (
+    _build_chat_model,
+)
+from agents_system.serving.registrations import (
+    _refuse_builtin_default_tools,
+)
+from agents_system.serving.stores import (
+    _bi_role_is_read_only,
+    _bind_proactive_store,
+    _bind_schedule_store,
+    _bind_user_fact_store,
+    _build_checkpoint_purger,
+    _build_checkpointer_cm,
+    _build_usage_ledger,
+    _start_scope_provider,
+)
 
 try:
-    from fastapi import Depends, FastAPI, HTTPException, Request
+    from fastapi import Depends, FastAPI, Request
     from fastapi.responses import JSONResponse, Response
-    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker
 except ImportError as exc:
@@ -44,7 +73,6 @@ from agents_system.agent import models as _models
 from agents_system.agent.spec import Agent
 from agents_system.channels.port import (
     Channel,
-    ChannelAdapter,
     ChannelResolver,
     InboundChannels,
 )
@@ -57,18 +85,12 @@ from agents_system.config import Settings, get_settings
 from agents_system.execution_limits import (
     check_effective_limits,
     check_margin_covers_checkpointer,
-    check_turn_fits_lease,
-    parse_execution_limits,
-    parse_timeout_replies,
-    parse_tool_error_replies,
 )
-from agents_system.harness.definition.locate import _SAFE_SEGMENT
 from agents_system.harness.loader import (
     DefinitionError,
-    RoleLocator,
     RootConfig,
 )
-from agents_system.harness.registry import RegistryFactory, ToolRegistry
+from agents_system.harness.registry import RegistryFactory
 from agents_system.integration import openai_router, webhook_router
 from agents_system.integration.operator_api import SubjectThreads
 from agents_system.integration.operator_api import router as operator_router
@@ -82,10 +104,8 @@ from agents_system.observability import RequestIdMiddleware, setup_logging
 from agents_system.observability.metrics import (
     DEFAULT_METRICS,
     DEFAULT_REGISTRY,
-    Metrics,
 )
-from agents_system.schedules import InMemoryScheduleStore
-from agents_system.scope import InMemoryScopeProvider, ScopeProvider
+from agents_system.scope import ScopeProvider
 from agents_system.services.checkpointer import CheckpointThreads
 from agents_system.subject_data import (
     DEFAULT_REGISTRY as DEFAULT_SUBJECT_DATA,
@@ -93,16 +113,12 @@ from agents_system.subject_data import (
 from agents_system.subject_data import (
     SubjectDataPurger,
     SubjectDataRegistry,
-    SubjectDataStore,
 )
 from agents_system.usage import (
     BudgetCaps,
-    InMemoryUsageLedger,
-    UsageLedger,
     parse_budgets,
 )
 from agents_system.user_memory import (
-    InMemoryUserFactStore,
     limits_from_settings,
 )
 
@@ -110,11 +126,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agents_system.services.admission import TurnAdmissionLimiter
-from agents_system.services.db_role import role_is_read_only
 from agents_system.services.outbox import (
     DEFAULT_LEASE_DURATION,
-    OutboxBacklogCounts,
-    count_outbox_backlog,
 )
 from agents_system.services.participants import (
     ChannelParticipantDirectory,
@@ -123,216 +136,14 @@ from agents_system.services.participants import (
     SubjectResolver,
 )
 from agents_system.services.redis import close_redis_pool, get_redis_client
-from agents_system.services.retry_policy import OutboxRetryPolicy, build_retry_policies
+from agents_system.services.retry_policy import OutboxRetryPolicy
 
-
-def _build_checkpointer_cm(settings: Settings) -> Any:
-    """Build the checkpointer's async context manager (design AD-1, issue #24).
-
-    LangGraph's ``AsyncPostgresSaver`` on its own psycopg pool, in the app's
-    PostgreSQL database -- the store that already holds the durable webhook
-    inbox and outbox -- so a restart or a container recreation keeps every
-    conversation. Entering it opens the pool and checks the checkpoint schema
-    (created by ``alembic upgrade head``, revision 007); it is held open for
-    the app's lifetime through the lifespan's ``AsyncExitStack``.
-
-    Only durability is configured here. How long an idle conversation is kept
-    is ``checkpointer_retention_s``, enforced by the purger the lifespan
-    starts next to it (``_build_checkpoint_purger``), never by the saver.
-    """
-    from agents_system.services.checkpointer import open_postgres_checkpointer
-
-    return open_postgres_checkpointer(
-        settings.database_url,
-        pool_size=settings.checkpointer_pool_size,
-        timeout_s=settings.checkpointer_timeout_s,
-    )
-
-
-def _build_checkpoint_purger(checkpointer: Any, settings: Settings) -> Any:
-    """The periodic job enforcing ``checkpointer_retention_s`` (issue #24).
-
-    Deletes every conversation idle for longer than the retention and prunes
-    each thread's superseded checkpoints, on ``checkpointer_purge_interval_s``.
-    The purge is SQL on the saver's own tables, so it exists only for the
-    Postgres saver; any other checkpointer (a test double) gets none.
-    """
-    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-    from agents_system.services import checkpointer as checkpointer_service
-
-    if not isinstance(checkpointer, AsyncPostgresSaver):
-        return None
-    return checkpointer_service.CheckpointPurger(
-        partial(checkpointer_service.purge_checkpoints, checkpointer.conn),
-        retention_s=settings.checkpointer_retention_s,
-        interval_s=settings.checkpointer_purge_interval_s,
-    )
-
-
-async def _bi_role_is_read_only(engine: Any) -> bool | None:
-    """Ask the database whether the BI role really is read-only.
-
-    Thin BI-scoped wrapper over the shared
-    :func:`agents_system.services.db_role.role_is_read_only` (the full
-    True/False/None reasoning lives there — see its docstring). Kept as its
-    own function, rather than calling the shared one directly at the
-    lifespan call site below, so `bi.read_only_check_failed` stays this
-    deployment's own log event name and so any future BI-specific behaviour
-    has a place to live without touching the shared helper.
-    """
-    return await role_is_read_only(engine, log_event="bi.read_only_check_failed")
-
-
-#: #78 Phase 0 Slice 2 -- same HTTPBearer mechanism as
-#: integration/openai_adapter.py's `_http_bearer` (a distinct instance: the
-#: two endpoints are protected by two independent keys/settings fields).
-_metrics_http_bearer = HTTPBearer(auto_error=False)
-
-
-async def verify_metrics_access(
-    credentials: Annotated[
-        HTTPAuthorizationCredentials | None, Depends(_metrics_http_bearer)
-    ] = None,
-) -> None:
-    """FastAPI dependency gating `GET /metrics` (#78 Phase 0 Slice 2).
-
-    Follows `integration/openai_adapter.py`'s `verify_bearer` fail-closed
-    spirit, with one extra step in front of it (ADR-005 section 6 / issue
-    #78's scope note: "unauthenticated exposure only under an explicit
-    setting"):
-
-    - `metrics_enabled` is `False` (the default): 404 -- the endpoint does
-      not exist. Absent, not merely unauthenticated, so probing for it
-      reveals nothing about whether metrics are configured at all.
-    - `metrics_enabled` is `True` + `metrics_api_key` set: Bearer auth
-      enforced (constant-time compare), identical shape to `verify_bearer`.
-    - `metrics_enabled` is `True` + `metrics_api_key` empty: open. Refused
-      at boot by `Settings.validate_security_fail_closed` unless
-      `allow_insecure=True` was also set explicitly (dev-only escape hatch,
-      same as the adapter's own open mode).
-    """
-    settings = get_settings()
-    if not settings.metrics_enabled:
-        raise HTTPException(status_code=404)
-
-    expected_key = settings.metrics_api_key
-    if not expected_key:
-        # Open mode — Settings itself already refused to boot this way
-        # without allow_insecure=True.
-        return
-
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(
-            status_code=401,
-            detail="Missing or malformed Authorization header (expected Bearer token).",
-        )
-
-    if not secrets.compare_digest(credentials.credentials, expected_key):
-        raise HTTPException(status_code=401, detail="Invalid bearer token.")
-
-
-def _build_usage_ledger(
-    scope_provider: ScopeProvider | None,
-    registry: SubjectDataRegistry,
-    budgets: Mapping[str, BudgetCaps],
-) -> UsageLedger | None:
-    """The per-user usage ledger over the scope provider (ADR-011 part 5, #252).
-
-    With a scope provider every runtime records its subjects' turns; with
-    budgets and no provider there is nowhere to count, so the boot fails
-    rather than run uncapped. The ledger is registered as a subject data
-    store so the operator export and delete reach it.
-    """
-    if scope_provider is None:
-        if budgets:
-            raise ValueError(
-                "USER_BUDGETS / create_app(budgets=...) need a usage ledger: "
-                "pass create_app(scope_provider_factory=...)"
-            )
-        return None
-    ledger: UsageLedger
-    if isinstance(scope_provider, InMemoryScopeProvider):
-        ledger = InMemoryUsageLedger(scope_provider)
-    else:
-        from agents_system.services.usage_postgres import PostgresUsageLedger
-
-        # One ledger per app, never the import-time placeholder: the runtime
-        # and the operator registry must hold the very same object.
-        ledger = PostgresUsageLedger(scope_provider)  # type: ignore[arg-type]
-    registry.bind(ledger)
-    return ledger
-
-
-def _bind_user_fact_store(
-    scope_provider: ScopeProvider | None, registry: SubjectDataRegistry
-) -> None:
-    """Register the per-user facts store so export and delete reach it (#250)."""
-    if scope_provider is None:
-        return
-    store: SubjectDataStore
-    if isinstance(scope_provider, InMemoryScopeProvider):
-        store = InMemoryUserFactStore(scope_provider)
-    else:
-        from agents_system.services.user_facts_postgres import PostgresUserFactStore
-
-        store = PostgresUserFactStore(scope_provider)  # type: ignore[arg-type]
-    registry.bind(store)
-
-
-def _bind_schedule_store(
-    scope_provider: ScopeProvider | None, registry: SubjectDataRegistry
-) -> None:
-    """Register the schedules store so export and delete reach it (#175)."""
-    if scope_provider is None:
-        return
-    store: SubjectDataStore
-    if isinstance(scope_provider, InMemoryScopeProvider):
-        store = InMemoryScheduleStore(scope_provider)
-    else:
-        from agents_system.services.schedules_postgres import PostgresScheduleStore
-
-        store = PostgresScheduleStore(scope_provider)  # type: ignore[arg-type]
-    registry.bind(store)
-
-
-async def _start_scope_provider(
-    factory: Callable[[AsyncEngine], ScopeProvider] | None, engine: AsyncEngine
-) -> ScopeProvider | None:
-    """Build the per-user scope provider and refuse an unfenced database role.
-
-    ADR-011 part 3: only when a per-user feature is configured (``factory`` is
-    given), so deployments without one keep booting on any role. A provider
-    with a ``verify()`` (Postgres: superuser / BYPASSRLS refusal) is checked
-    before any runtime is built.
-    """
-    if factory is None:
-        return None
-    provider = factory(engine)
-    verify = getattr(provider, "verify", None)
-    if verify is not None:
-        await verify()
-    return provider
-
-
-def _bind_proactive_store(registry: SubjectDataRegistry, provider: Any) -> None:
-    """Serve proactive messages through the operator export, delete and purge.
-
-    The queue table holds message bodies per subject, so the app's registry
-    must carry the store bound to the app's database, not only whichever
-    module happened to be imported. A no-op without the ``postgres`` extra or
-    a Postgres scope provider (nothing could have been queued).
-    """
-    try:
-        from agents_system.services.proactive_postgres import PROACTIVE_STORE
-        from agents_system.services.scope_postgres import PostgresScopeProvider
-    except ImportError:
-        return
-    if not isinstance(provider, PostgresScopeProvider):
-        return
-    if PROACTIVE_STORE.name not in registry.stores:
-        registry.register(PROACTIVE_STORE)
-    PROACTIVE_STORE.bind(provider)
+__all__ = [
+    "ProviderHealthProbe",
+    "create_app",
+    "lifespan",
+    "verify_metrics_access",
+]
 
 
 @asynccontextmanager
@@ -952,30 +763,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
 
 
-def _build_chat_model(
-    provider: str,
-    *,
-    model_override: str | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-    metrics: Metrics | None = None,
-) -> Any:
-    """The served app's chat model for ``provider``.
-
-    The implementation is `agent.models.build_chat_model`, shared with the
-    library path (issue #186); this wrapper only points it at the server
-    ``Settings`` (`get_settings`), which the served app has already validated.
-    Kept under this name because the lifespan, the live evals and the test
-    suite all reach the served builder through it.
-    """
-    return _models.build_chat_model(
-        provider,
-        model_override=model_override,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        metrics=metrics,
-        settings_source=get_settings,
-    )
+"""A runtime id lands in URLs, every log line of its turns and /metrics
+labels, so it is short by contract, not only safe by character class."""
 
 
 def _resolve_model_for_definition(
@@ -994,718 +783,6 @@ def _resolve_model_for_definition(
     """
     return _models.resolve_model_for_definition(
         definition, default_model, build=_build_chat_model
-    )
-
-
-_PROVIDER_PROBE_TIMEOUT_S = 1.0
-_PROVIDER_PROBE_CACHE_TTL_S = 5.0
-
-
-def _provider_probe_target(settings: Settings) -> str:
-    """Return the credential-free base URL used for a provider liveness probe.
-
-    A HEAD against the provider base URL cannot generate tokens. Any HTTP
-    response, including an authentication or route error, proves the provider
-    is reachable; transport and timeout failures do not. The configured
-    OpenAI-compatible and Ollama base URLs are used verbatim (minus a trailing
-    slash), while hosted providers have fixed public API origins.
-    """
-    if settings.adapter_provider == "ollama":
-        return (settings.ollama_base_url or "http://localhost:11434").rstrip("/")
-    if settings.adapter_provider == "openai_compatible":
-        return settings.openai_compatible_base_url.rstrip("/")
-    if settings.adapter_provider == "groq":
-        return "https://api.groq.com"
-    return "https://api.anthropic.com"
-
-
-class ProviderHealthProbe:
-    """Bounded, cached reachability probe that never sends provider credentials."""
-
-    def __init__(
-        self,
-        *,
-        request: Callable[[str], Awaitable[None]] | None = None,
-        monotonic: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._request = request or self._head
-        self._monotonic = monotonic
-        self._cached: dict[str, tuple[float, bool]] = {}
-        self._lock = asyncio.Lock()
-
-    async def _head(self, target: str) -> None:
-        async with httpx.AsyncClient(
-            timeout=_PROVIDER_PROBE_TIMEOUT_S,
-            follow_redirects=False,
-        ) as client:
-            await client.head(target)
-
-    async def probe(self, settings: Settings) -> bool:
-        """Return reachability, using a short per-provider-target cache."""
-        target = _provider_probe_target(settings)
-        cache_key = f"{settings.adapter_provider}:{target}"
-        now = self._monotonic()
-        cached = self._cached.get(cache_key)
-        if cached is not None and now - cached[0] < _PROVIDER_PROBE_CACHE_TTL_S:
-            return cached[1]
-
-        async with self._lock:
-            now = self._monotonic()
-            cached = self._cached.get(cache_key)
-            if cached is not None and now - cached[0] < _PROVIDER_PROBE_CACHE_TTL_S:
-                return cached[1]
-
-            try:
-                async with asyncio.timeout(_PROVIDER_PROBE_TIMEOUT_S):
-                    await self._request(target)
-            except Exception:
-                # Do not log the exception: provider error strings can include a
-                # credential-bearing URL or response details.
-                structlog.get_logger().warning(
-                    "health.provider_unreachable", provider=settings.adapter_provider
-                )
-                reachable = False
-            else:
-                reachable = True
-            self._cached[cache_key] = (now, reachable)
-            return reachable
-
-
-async def _outbox_backlog(engine: Any) -> OutboxBacklogCounts | None:
-    """Best-effort outbox backlog counts for GET /health (#141).
-
-    ``None`` on any failure -- opening a session or querying can fail for
-    the same reasons the postgres probe can (already reported separately as
-    ``postgres_status``), and that must not crash the health check itself.
-    ``None`` is deliberately not coerced to ``0``: an unreachable/unknown
-    backlog is a different fact than a confirmed-empty one, and collapsing
-    them would let a DB outage report a falsely healthy backlog.
-
-    Bounded to the same 3s budget as the postgres/redis probes above (#141
-    review follow-up, BLOCKER) -- ``outbox_work`` is queried through the
-    same engine those probes use, and without a timeout here a locked or
-    slow table would hang this whole endpoint (and any liveness probe
-    reading it) even while postgres/redis themselves answer fine. A timeout
-    is just another failure from this function's point of view: it is
-    caught below and reported as ``None``, the same as any other error.
-    """
-    try:
-        async with asyncio.timeout(3.0):
-            session_factory = get_session_factory(engine)
-            async with session_factory() as session:
-                return await count_outbox_backlog(session)
-    except Exception:
-        structlog.get_logger().warning("health.outbox_backlog_error")
-        return None
-
-
-_MAX_RUNTIME_ID_LENGTH = 64
-"""A runtime id lands in URLs, every log line of its turns and /metrics
-labels, so it is short by contract, not only safe by character class."""
-
-
-def _bounded_repr(value: str) -> str:
-    """``repr(value)``, truncated to ``_MAX_RUNTIME_ID_LENGTH`` characters of
-    *value* itself, plus a trailing character count, when longer.
-
-    issue #128 item 2 -- every boot error that echoes a caller-supplied,
-    not-yet-validated id back (an unregistered ``clients``/``grants`` key, an
-    unmatched ``WHATSAPP_RUNTIME_ID``/``ADAPTER_RUNTIMES`` id) must go
-    through this, never a bare ``!r}``: those ids reach the error message
-    specifically BECAUSE they failed validation, so nothing has bounded
-    their length yet either. Reused by ``_validate_runtime_id`` and
-    ``_parse_agent_registration``, which used to each inline the same
-    truncate-then-repr logic.
-    """
-    if len(value) <= _MAX_RUNTIME_ID_LENGTH:
-        return repr(value)
-    return f"{value[:_MAX_RUNTIME_ID_LENGTH]!r}... ({len(value)} characters)"
-
-
-def _validate_runtime_id(runtime_id: str) -> str:
-    """Reject a runtime id that is empty, longer than
-    ``_MAX_RUNTIME_ID_LENGTH``, or contains anything other than letters,
-    digits, underscore or hyphen (design.md D6).
-
-    A runtime id is deployer-chosen (design.md D5) and becomes part of
-    URLs (``/v1/models``), structured logs and metrics labels once
-    registered -- the same class of user-supplied, filesystem-adjacent
-    segment ``locate._SAFE_SEGMENT`` already validates elsewhere in this
-    codebase (a role type, a client/deployment name), reused here for the
-    same reason: consistency, and because an id built from it must be safe
-    to embed in a URL path segment and a log line with no further escaping.
-    Malformed ids fail here, at registration time, rather than surfacing as
-    a confusing lookup miss at first request.
-    """
-    if not isinstance(runtime_id, str):
-        raise DefinitionError(
-            f"Invalid runtime id of type {type(runtime_id).__name__}: a "
-            "runtime id must be a str."
-        )
-    if len(runtime_id) > _MAX_RUNTIME_ID_LENGTH:
-        # Never echo the whole value: the length is the problem.
-        raise DefinitionError(
-            f"Invalid runtime id {_bounded_repr(runtime_id)}. A runtime id "
-            f"is at most {_MAX_RUNTIME_ID_LENGTH} characters."
-        )
-    if not _SAFE_SEGMENT.fullmatch(runtime_id):
-        raise DefinitionError(
-            f"Invalid runtime id {runtime_id!r}. Must match "
-            f"{_SAFE_SEGMENT.pattern} -- letters, digits, underscore and "
-            "hyphen only, non-empty, not starting with '-' or '_'."
-        )
-    return runtime_id
-
-
-def _validate_client(runtime_id: str, client: object) -> str:
-    """Reject a ``clients`` value that is not a client name: a ``str``
-    matching ``locate._SAFE_SEGMENT``, the rule the loader applies when it
-    joins that name onto ``deployments_root``.
-
-    A ``None`` (``os.environ.get(...)`` for an unset variable) would
-    otherwise pass as "no client" and serve the role WITHOUT its
-    subtractive override, silently. The error names the id, never the
-    value.
-    """
-    if not isinstance(client, str):
-        raise DefinitionError(
-            f"clients[{runtime_id!r}] must be a deployment client name (str), "
-            f"got {type(client).__name__}. Refusing to boot."
-        )
-    if not _SAFE_SEGMENT.fullmatch(client):
-        raise DefinitionError(
-            f"clients[{runtime_id!r}] is not a valid deployment client name. "
-            f"It must match {_SAFE_SEGMENT.pattern} -- letters, digits, "
-            "underscore and hyphen only, non-empty, not starting with '-' or "
-            "'_'. Refusing to boot."
-        )
-    return client
-
-
-def _parse_agent_registration(value: str) -> tuple[str, str | None]:
-    """Read one ``AGENT_REGISTRATIONS`` value: ``"{role}"`` or
-    ``"{role}@{client}"`` -> ``(role, client or None)`` (design.md D5/D6).
-
-    ``main.py``'s own env-boot convention, not a public string format: a
-    library caller registers ``Agent``/``str`` objects through
-    ``create_app(agents=...)`` instead. Strict -- at most one ``@``, and
-    both the role and the client must match ``locate._SAFE_SEGMENT`` AND be
-    at most ``_MAX_RUNTIME_ID_LENGTH`` characters (issue #128 item 6: a
-    segment made only of legal characters but far longer than any real role
-    or client name previously passed straight through here, to overflow
-    into a raw ``OSError`` -- ``ENAMETOOLONG`` -- once it reached a real
-    filesystem join in ``locate._role_folder``/``_deployment_folder``,
-    instead of this function's own bounded ``DefinitionError``); anything
-    else fails boot naming the value, cut to ``_MAX_RUNTIME_ID_LENGTH``
-    characters. Nothing else in the value has a meaning: ``__`` in
-    particular is part of the role name, never a separator.
-    """
-    if not isinstance(value, str):
-        raise DefinitionError(
-            f"Invalid agent registration of type {type(value).__name__}: "
-            'expected "{role}" or "{role}@{client}".'
-        )
-    role, separator, client = value.partition("@")
-    role_or_client_too_long = len(role) > _MAX_RUNTIME_ID_LENGTH or (
-        separator and len(client) > _MAX_RUNTIME_ID_LENGTH
-    )
-    if (
-        role_or_client_too_long
-        or not _SAFE_SEGMENT.fullmatch(role)
-        or (separator and not _SAFE_SEGMENT.fullmatch(client))
-    ):
-        raise DefinitionError(
-            f"Invalid agent registration {_bounded_repr(value)}. Expected "
-            '"{role}" or "{role}@{client}", where the role and the client '
-            f"each match {_SAFE_SEGMENT.pattern}, are each at most "
-            f"{_MAX_RUNTIME_ID_LENGTH} characters, and '@' appears at most "
-            "once."
-        )
-    return role, (client if separator else None)
-
-
-@dataclasses.dataclass(frozen=True)
-class _Registration:
-    """One runtime the lifespan builds (design.md D5): what to resolve, and
-    the deployment client (if any) to resolve it for."""
-
-    locator: RoleLocator
-    client: str | None
-    subject: str
-    """``role 'sales-agent'`` or ``agent 'triage-bot'`` -- names it in boot errors."""
-
-
-@dataclasses.dataclass(frozen=True)
-class _BootPlan:
-    """Every runtime to build, keyed by runtime id, and where its grants come from."""
-
-    registrations: dict[str, _Registration]
-    grants: Mapping[str, Any]
-    grant_source: str
-    """``create_app(grants=...)``, or ``DEPLOY_GRANTS`` when it got none."""
-    execution_limits: dict[str, dict[str, int | float]]
-    """#278 -- each runtime's deployment-set limits, checked against the lease."""
-    timeout_replies: dict[str, str]
-    """#278 -- each runtime's timeout reply; absent means the default text."""
-    tool_error_replies: dict[str, str]
-    """#289 -- each runtime's reply when tool errors reach the cap; absent
-    means the default text."""
-    retry_policies: dict[str, OutboxRetryPolicy]
-    """#290 -- each runtime's outbox retry policy; absent means the defaults."""
-
-
-def _refuse_builtin_default_tools(registry: ToolRegistry) -> None:
-    """Issue #168 -- never serve a built-in default tool.
-
-    ``build_runtime`` fills a missing ``escalation_notifier`` for in-process
-    use with a default that reaches no human. The lifespan builds with
-    ``builtin_defaults=False``; this closes the other way in, the caller's
-    registry holding the default because it was registered by hand. A
-    customer asking for a person must never be answered by it while the
-    operator believes escalation is wired.
-    """
-    from agents_system.harness.defaults import is_builtin_default
-
-    served_defaults = sorted(
-        name for name in registry.names() if is_builtin_default(registry.get(name))
-    )
-    if served_defaults:
-        raise DefinitionError(
-            f"The tool registry holds the built-in default for "
-            f"{', '.join(served_defaults)}, which reaches no human. It is for "
-            "in-process use only: register a ToolSpec that delivers to a real "
-            "channel. Refusing to boot."
-        )
-
-
-def _build_registrations(
-    agents: Mapping[str, Agent | str],
-    clients: Mapping[str, str] | None,
-) -> dict[str, _Registration]:
-    """``create_app(agents=...)``, or ``AGENT_REGISTRATIONS`` read into the
-    same shape: each id is opaque and validated, never parsed. A ``str`` is
-    a predefined-role name; an ``Agent`` is its own locator."""
-    clients = clients or {}
-    # A client names a subtractive deployment override: one keyed by a
-    # typo'd id would silently serve that agent WITHOUT its narrowing.
-    # issue #128 item 2 -- `key` is exactly what failed the membership check
-    # below, so it is not yet a validated runtime id and may be unbounded.
-    unknown = [_bounded_repr(key) for key in clients if key not in agents]
-    if unknown:
-        raise DefinitionError(
-            f"clients names runtime id(s) {', '.join(unknown)} that agents "
-            "does not register. Refusing to boot."
-        )
-    registrations: dict[str, _Registration] = {}
-    for runtime_id, agent in agents.items():
-        _validate_runtime_id(runtime_id)
-        if isinstance(agent, Agent):
-            if runtime_id in clients:
-                # design.md D5 / Q5: deployment overrides stay
-                # predefined-role-only. Fail loud, not a silent no-op.
-                raise DefinitionError(
-                    f"clients[{runtime_id!r}] is set, but agents[{runtime_id!r}] "
-                    f"is an Agent ({agent.name!r}). A client deployment "
-                    "override applies only to a predefined role registered "
-                    "by name (a str). Refusing to boot."
-                )
-            registrations[runtime_id] = _Registration(
-                agent._to_locator(), None, f"agent {agent.name!r}"
-            )
-        elif isinstance(agent, str):
-            client = (
-                _validate_client(runtime_id, clients[runtime_id])
-                if runtime_id in clients
-                else None
-            )
-            registrations[runtime_id] = _Registration(agent, client, f"role {agent!r}")
-        else:
-            raise DefinitionError(
-                f"agents[{runtime_id!r}] must be an Agent or a predefined role "
-                f"name (str), got {type(agent).__name__}."
-            )
-    return registrations
-
-
-#: ``AGENT_REGISTRATIONS`` value prefix naming an agent folder under
-#: ``AGENTS_ROOT`` instead of a predefined role (ADR-010, #226).
-_FOLDER_PREFIX = "folder:"
-
-
-def _folder_registration(value: str, agents_root: str) -> Agent:
-    """Read a ``"folder:<name>"`` registration into an ``Agent``.
-
-    The root is the operator's (``AGENTS_ROOT``); the value is not trusted.
-    It must be one folder name directly under the root -- an absolute path,
-    a ``..`` segment or any separator fails the name rule -- and the folder,
-    once symlinks are followed, must still lie strictly inside the root.
-    An unset or relative root fails closed. The loader then holds every file
-    the folder supplies (and a sibling ``extends:``) to the same root.
-    """
-    name = value[len(_FOLDER_PREFIX) :]
-    if not agents_root or not os.path.isabs(agents_root):
-        raise DefinitionError(
-            "a folder registration needs AGENTS_ROOT set to an absolute "
-            "directory path; it is unset or relative."
-        )
-    if len(name) > _MAX_RUNTIME_ID_LENGTH or not _SAFE_SEGMENT.fullmatch(name):
-        raise DefinitionError(
-            f"Invalid folder registration {_bounded_repr(value)}. Expected "
-            f'"{_FOLDER_PREFIX}<name>", one folder name directly under '
-            f"AGENTS_ROOT matching {_SAFE_SEGMENT.pattern} (no path "
-            "separators, no '..', at most "
-            f"{_MAX_RUNTIME_ID_LENGTH} characters)."
-        )
-    try:
-        real_root = pathlib.Path(agents_root).resolve(strict=True)
-        folder = (real_root / name).resolve(strict=True)
-    except (OSError, RuntimeError):
-        raise DefinitionError(
-            f"folder {name!r} is not a directory under AGENTS_ROOT."
-        ) from None
-    if folder == real_root or not folder.is_relative_to(real_root):
-        raise DefinitionError(
-            f"folder {name!r} resolves outside AGENTS_ROOT (a symlink leads out of it)."
-        )
-    if not folder.is_dir():
-        raise DefinitionError(f"folder {name!r} is not a directory under AGENTS_ROOT.")
-    return Agent.from_folder(real_root / name)
-
-
-def _settings_agents(
-    agent_registrations: Mapping[str, str],
-    agents_root: str = "",
-) -> tuple[dict[str, Agent | str], dict[str, str]]:
-    """The Settings-driven fallback, used when ``create_app`` got no
-    ``agents``: ``AGENT_REGISTRATIONS`` read into the ``agents``/``clients``
-    shape ``create_app`` takes, so both paths build through one loop
-    (design.md D5). A malformed id or value fails boot, naming it."""
-    agents: dict[str, Agent | str] = {}
-    clients: dict[str, str] = {}
-    for runtime_id, value in agent_registrations.items():
-        try:
-            _validate_runtime_id(runtime_id)
-        except DefinitionError as exc:
-            raise DefinitionError(
-                f"AGENT_REGISTRATIONS: {exc} Refusing to boot."
-            ) from exc
-        if isinstance(value, str) and value.startswith(_FOLDER_PREFIX):
-            try:
-                agents[runtime_id] = _folder_registration(value, agents_root)
-            except DefinitionError as exc:
-                raise DefinitionError(
-                    f"AGENT_REGISTRATIONS[{runtime_id!r}]: {exc} Refusing to boot."
-                ) from exc
-            continue
-        try:
-            role, client = _parse_agent_registration(value)
-        except DefinitionError as exc:
-            raise DefinitionError(
-                f"AGENT_REGISTRATIONS[{runtime_id!r}]: {exc} Refusing to boot."
-            ) from exc
-        agents[runtime_id] = role
-        if client is not None:
-            clients[runtime_id] = client
-    return agents, clients
-
-
-#: A registered channel's name (#22): the ``/webhook/{name}`` path segment
-#: and the value stored in ``webhook_inbox.channel``, so deliberately
-#: narrower than a runtime id -- lowercase, URL- and log-safe, short.
-_CHANNEL_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
-
-
-def _validate_channels(channels: Mapping[str, Channel] | None) -> dict[str, Channel]:
-    """``create_app(channels=...)``, validated when the app is created.
-
-    The generic route serves these as soon as the app exists (no lifespan
-    needed), so a bad name must fail here rather than at boot.
-    ``whatsapp`` is the built-in channel and cannot be re-registered.
-    """
-    validated: dict[str, Channel] = {}
-    for name, channel in (channels or {}).items():
-        if not isinstance(name, str) or not _CHANNEL_NAME.fullmatch(name):
-            raise DefinitionError(
-                f"channels key {_bounded_repr(str(name))} is not a valid channel "
-                "name: 1-32 characters of lowercase letters, digits, '_' or "
-                "'-', starting with a letter."
-            )
-        if name == WHATSAPP_CHANNEL:
-            raise DefinitionError(
-                f"channels[{name!r}] is reserved for the built-in WhatsApp "
-                "channel (configured through WHATSAPP_* / META_WEBHOOK_SECRET)."
-            )
-        if not isinstance(channel, Channel):
-            raise DefinitionError(
-                f"channels[{name!r}] must be a Channel(adapter=..., "
-                f"runtime_id=...), got {type(channel).__name__}."
-            )
-        if not isinstance(channel.adapter, ChannelAdapter):
-            raise DefinitionError(
-                f"channels[{name!r}].adapter does not implement ChannelAdapter "
-                "(verify_inbound, read_inbound, extract_turn, send_text)."
-            )
-        if not isinstance(channel.runtime_id, str) or not channel.runtime_id:
-            raise DefinitionError(
-                f"channels[{name!r}].runtime_id must name a registered runtime "
-                "id (a non-empty str)."
-            )
-        validated[name] = channel
-    return validated
-
-
-def _fixed_resolver(channel: Channel) -> ChannelResolver:
-    """A registered channel's adapter, whatever the request's Settings."""
-
-    def resolve(_settings: Settings) -> ChannelAdapter:
-        return channel.adapter
-
-    return resolve
-
-
-def _registered_channels(app: FastAPI) -> Mapping[str, Channel]:
-    """The channels ``create_app(channels=...)`` registered (#22)."""
-    channels: Mapping[str, Channel] | None = getattr(app.state, "channels", None)
-    return channels if channels is not None else {}
-
-
-def _check_channel_runtime(
-    channel_name: str,
-    runtime_id: str,
-    subject: str,
-    definition: Any,
-    deployment_limits: Mapping[str, Any] | None = None,
-) -> None:
-    """The boot-time checks every channel-bound runtime gets.
-
-    ADR-002 C.13: a webhook channel delivers untrusted external input, so the
-    runtime answering it must resolve ``untrusted_input=True``. And its turn
-    must finish, with ``LEASE_MARGIN_S`` (60 seconds) of non-turn headroom,
-    before the deferred worker's outbox lease expires, counting the
-    deployment's limits (#278). Applied to the built-in WhatsApp channel
-    (``WHATSAPP_RUNTIME_ID``) exactly as before #22, and to every registered
-    channel's runtime.
-    """
-    from agents_system.agent.limits import _effective_limits
-
-    label = (
-        "WhatsApp" if channel_name == WHATSAPP_CHANNEL else f"Channel {channel_name!r}"
-    )
-    if not definition.untrusted_input:
-        raise DefinitionError(
-            f"Channel {channel_name!r} is bound to {subject} "
-            f"(runtime {runtime_id!r}), which resolves "
-            f"untrusted_input=False. {label} delivers "
-            "untrusted external input, so it must "
-            "declare untrusted_input: true (ADR-002 C.11/C.13) "
-            "to be bound to it. Refusing to boot."
-        )
-
-    effective_limits = _effective_limits(definition.execution_limits, deployment_limits)
-    check_turn_fits_lease(
-        effective_limits["total_execution_timeout_s"],
-        who=f"{label} runtime {runtime_id!r}",
-        lease_s=DEFAULT_LEASE_DURATION.total_seconds(),
-    )
-
-
-def _warn_if_turn_budget_below_request_timeout(
-    runtime_id: str,
-    definition: Any,
-    settings: Settings,
-    deployment_limits: Mapping[str, Any] | None = None,
-) -> None:
-    """Warn at boot when a runtime's turn budget cannot hold one provider call.
-
-    ``total_execution_timeout_s`` bounds the whole turn and
-    ``OPENAI_COMPATIBLE_REQUEST_TIMEOUT_S`` bounds one provider HTTP call, so
-    a budget below the request timeout lets a single slow response consume
-    the entire turn (issue #172). A turn that uses a tool makes at least two
-    such calls, so the useful floor is higher still; this only flags the
-    case that is broken outright and stays a warning, never a boot failure:
-    a deliberately tight budget is the operator's call to make.
-
-    Only the ``openai_compatible`` provider is bounded by that setting, so
-    the check reads the provider the runtime will actually use: its own
-    ``model:`` selection when it has one, else ``ADAPTER_PROVIDER``.
-    """
-    from agents_system.agent.limits import _effective_limits
-
-    selection = getattr(definition, "model", None)
-    provider = (
-        selection.get("provider")
-        if isinstance(selection, Mapping) and selection
-        else settings.adapter_provider
-    )
-    if provider != "openai_compatible":
-        return
-    total_timeout_s = _effective_limits(
-        getattr(definition, "execution_limits", None), deployment_limits
-    )["total_execution_timeout_s"]
-    request_timeout_s = settings.openai_compatible_request_timeout_s
-    if total_timeout_s < request_timeout_s:
-        structlog.get_logger().warning(
-            "runtime.turn_budget_below_request_timeout",
-            runtime_id=runtime_id,
-            total_execution_timeout_s=total_timeout_s,
-            openai_compatible_request_timeout_s=request_timeout_s,
-        )
-
-
-def _boot_plan(app: FastAPI, settings: Settings) -> _BootPlan:
-    """Which runtimes to build, validated before the lifespan creates any
-    resource, so a bad registration fails boot before anything is served."""
-    agents: Mapping[str, Agent | str] | None = getattr(app.state, "agents", None)
-    grants: Mapping[str, Any] | None = getattr(app.state, "grants", None)
-    clients: Mapping[str, str] | None = getattr(app.state, "clients", None)
-
-    for runtime_id, granted in (grants or {}).items():
-        # A str (or bytes) satisfies Sequence[str] but would be granted one
-        # character at a time; a non-iterable cannot be a grant at all.
-        if isinstance(granted, str | bytes) or not isinstance(granted, Iterable):
-            raise DefinitionError(
-                f"grants[{runtime_id!r}] must be a list of permission wire "
-                f"names, got {type(granted).__name__}. A bare string is not "
-                "a grant list. Refusing to boot."
-            )
-
-    if agents is None:
-        if clients is not None:
-            raise DefinitionError(
-                "create_app got clients but no agents: clients names the "
-                "deployment client of a registered predefined role, so it "
-                "needs agents to register one. Refusing to boot."
-            )
-        # issue #128 item 5 -- create_app's own docstring says grants is
-        # "keyed by the same ids as agents", exactly like clients above; a
-        # grants= with no agents= to key it against was silently accepted
-        # instead of refused the same way.
-        if grants is not None:
-            raise DefinitionError(
-                "create_app got grants but no agents: grants is keyed by "
-                "the same runtime ids as agents, so it needs agents to "
-                "register one. Refusing to boot."
-            )
-        agents, clients = _settings_agents(
-            settings.agent_registrations, settings.agents_root
-        )
-        source = "AGENT_REGISTRATIONS"
-        # Static, never derived from the id: nothing parses it.
-        hint = (
-            " A runtime id is no longer read as '{deployment}__{role}': map "
-            'it in AGENT_REGISTRATIONS to "{role}" or "{role}@{client}".'
-        )
-    else:
-        source = "create_app(agents=...)"
-        hint = ""
-    registrations = _build_registrations(agents, clients)
-
-    # issue #128 item 4 -- create_app(grants=...) keys were never
-    # cross-checked against what agents actually registers, unlike clients
-    # just above: an id create_app(grants=...) names that agents does not
-    # register was silently ignored instead of failing boot. Scoped to the
-    # caller-supplied grants= only -- never settings.deploy_grants below,
-    # which the per-runtime "has no grant entry" check in the lifespan loop
-    # already covers, for a distinct, separately-tested scenario (e.g. a
-    # DEPLOY_GRANTS entry still keyed by the old, removed scheme -- see
-    # test_registration_fails_boot_without_a_grant_for_the_id).
-    if grants is not None:
-        unknown_grants = [
-            _bounded_repr(key) for key in grants if key not in registrations
-        ]
-        if unknown_grants:
-            raise DefinitionError(
-                f"grants names runtime id(s) {', '.join(unknown_grants)} "
-                f"that {source} does not register. Refusing to boot."
-            )
-
-    # A channel id is looked up in the registration as an opaque key, never
-    # parsed. One that matches nothing fails boot: an unmatched
-    # WHATSAPP_RUNTIME_ID would accept messages no runtime answers, and an
-    # unmatched ADAPTER_RUNTIMES id would leave /v1/models listing less than
-    # the operator named.
-    whatsapp_ids = (
-        [settings.whatsapp_runtime_id] if settings.whatsapp_runtime_id else []
-    )
-    # #22 -- a registered channel's runtime id is checked the same way.
-    channel_ids = [
-        (f"channels[{name!r}].runtime_id", [channel.runtime_id])
-        for name, channel in _registered_channels(app).items()
-    ]
-    for channel, ids in (
-        ("WHATSAPP_RUNTIME_ID", whatsapp_ids),
-        ("ADAPTER_RUNTIMES", settings.adapter_runtimes),
-        *channel_ids,
-    ):
-        # issue #128 item 2 -- an id that fails this membership check is, by
-        # definition, not yet a validated runtime id and may be unbounded.
-        unmatched = [
-            _bounded_repr(runtime_id)
-            for runtime_id in ids
-            if runtime_id not in registrations
-        ]
-        if unmatched:
-            raise DefinitionError(
-                f"{channel} names runtime id(s) {', '.join(unmatched)} that "
-                f"{source} does not register (registered: "
-                f"{sorted(registrations)}).{hint} Refusing to boot."
-            )
-
-    # #278 -- set by the deployment only, checked here so a turn that cannot
-    # fit the outbox lease, or a limit for a runtime this boot does not
-    # build, fails before any resource exists.
-    raw_limits = getattr(app.state, "execution_limits", None)
-    raw_replies = getattr(app.state, "timeout_reply", None)
-    execution_limits = parse_execution_limits(
-        raw_limits if raw_limits is not None else settings.execution_limits,
-        lease_s=DEFAULT_LEASE_DURATION.total_seconds(),
-    )
-    timeout_replies = parse_timeout_replies(
-        raw_replies if raw_replies is not None else settings.turn_timeout_reply
-    )
-    raw_error_replies = getattr(app.state, "tool_error_reply", None)
-    tool_error_replies = parse_tool_error_replies(
-        raw_error_replies
-        if raw_error_replies is not None
-        else settings.tool_error_reply
-    )
-    for source, configured in (
-        ("execution limits (EXECUTION_LIMITS)", execution_limits),
-        ("timeout replies (TURN_TIMEOUT_REPLY)", timeout_replies),
-        ("tool error replies (TOOL_ERROR_REPLY)", tool_error_replies),
-    ):
-        unknown = sorted(set(configured) - set(registrations))
-        if unknown:
-            raise ValueError(
-                f"{source} name runtime id(s) this boot does not build: "
-                f"{', '.join(unknown)}. Refusing to boot."
-            )
-
-    raw_retry = getattr(app.state, "outbox_retry", None)
-    retry_policies = build_retry_policies(
-        policies=raw_retry,
-        max_attempts=settings.outbox_max_attempts,
-        fallback_replies=settings.outbox_fallback_reply,
-    )
-    unknown_retry = sorted(set(retry_policies) - set(registrations))
-    if unknown_retry:
-        raise ValueError(
-            "outbox retry policies (create_app(outbox_retry=...), "
-            "OUTBOX_MAX_ATTEMPTS, OUTBOX_FALLBACK_REPLY) name runtime id(s) "
-            f"this boot does not build: {', '.join(unknown_retry)}. "
-            "Refusing to boot."
-        )
-
-    return _BootPlan(
-        registrations=registrations,
-        grants=grants if grants is not None else settings.deploy_grants,
-        grant_source="create_app(grants=...)"
-        if grants is not None
-        else "DEPLOY_GRANTS",
-        execution_limits=execution_limits,
-        timeout_replies=timeout_replies,
-        tool_error_replies=tool_error_replies,
-        retry_policies=retry_policies,
     )
 
 

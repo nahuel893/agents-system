@@ -557,7 +557,7 @@ def test_create_app_rejects_an_adapter_that_does_not_implement_the_port() -> Non
 
 
 def test_boot_fails_when_a_channel_names_an_unregistered_runtime() -> None:
-    from agents_system.main import _boot_plan
+    from agents_system.serving.boot import _boot_plan
 
     app = create_test_app(
         agents={"support": "sales-agent"},

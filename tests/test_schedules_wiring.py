@@ -8,7 +8,6 @@ import pytest
 
 from agents_system.config import Settings
 from agents_system.harness.registry import Tier
-from agents_system.main import _bind_schedule_store
 from agents_system.permissions import resolve
 from agents_system.schedules import (
     InMemoryScheduleStore,
@@ -17,6 +16,7 @@ from agents_system.schedules import (
 )
 from agents_system.scope import InMemoryScopeProvider
 from agents_system.server import default_registry_factory
+from agents_system.serving.stores import _bind_schedule_store
 from agents_system.subject_data import SubjectDataRegistry
 
 

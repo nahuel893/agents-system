@@ -379,7 +379,7 @@ def test_user_budgets_setting_parses_like_deploy_grants(
 
 
 def test_budgets_without_a_scope_provider_fail_the_boot() -> None:
-    from agents_system.main import _build_usage_ledger
+    from agents_system.serving.stores import _build_usage_ledger
     from agents_system.subject_data import SubjectDataRegistry
 
     with pytest.raises(ValueError, match="scope_provider_factory"):
@@ -388,7 +388,7 @@ def test_budgets_without_a_scope_provider_fail_the_boot() -> None:
 
 
 def test_the_ledger_is_registered_as_a_subject_data_store() -> None:
-    from agents_system.main import _build_usage_ledger
+    from agents_system.serving.stores import _build_usage_ledger
     from agents_system.subject_data import SubjectDataRegistry
 
     registry = SubjectDataRegistry()
@@ -554,7 +554,7 @@ async def test_the_tool_format_fallback_rechecks_the_cap() -> None:
 
 
 def test_a_second_app_does_not_reuse_the_first_apps_ledger_or_registry() -> None:
-    from agents_system.main import _build_usage_ledger
+    from agents_system.serving.stores import _build_usage_ledger
     from agents_system.subject_data import DEFAULT_REGISTRY
 
     pytest.importorskip("sqlalchemy")
@@ -568,7 +568,7 @@ def test_a_second_app_does_not_reuse_the_first_apps_ledger_or_registry() -> None
 
 
 def test_a_conflicting_usage_registration_is_rejected() -> None:
-    from agents_system.main import _build_usage_ledger
+    from agents_system.serving.stores import _build_usage_ledger
     from agents_system.subject_data import SubjectDataRegistry
 
     class Custom:
@@ -582,7 +582,7 @@ def test_a_conflicting_usage_registration_is_rejected() -> None:
 
 
 def test_binding_a_ledger_leaves_the_registry_it_was_copied_from_alone() -> None:
-    from agents_system.main import _build_usage_ledger
+    from agents_system.serving.stores import _build_usage_ledger
     from agents_system.subject_data import DEFAULT_REGISTRY
 
     pytest.importorskip("sqlalchemy")
@@ -597,7 +597,7 @@ def test_binding_a_ledger_leaves_the_registry_it_was_copied_from_alone() -> None
 def test_a_postgres_provider_gets_its_own_ledger_registered_in_the_app_registry() -> (
     None
 ):
-    from agents_system.main import _build_usage_ledger
+    from agents_system.serving.stores import _build_usage_ledger
     from agents_system.subject_data import DEFAULT_REGISTRY
 
     pytest.importorskip("sqlalchemy")

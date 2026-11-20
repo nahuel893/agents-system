@@ -33,13 +33,14 @@ def _settings(**overrides: Any) -> Settings:
 
 def _patched_settings(settings: Settings) -> tuple[Any, Any]:
     """`build_eval_model` reads `get_settings()` itself, and internally
-    calls `main._build_chat_model`, which reads its OWN `get_settings()`
-    reference -- a separate name bound at import time in `agents_system.main`.
+    calls `serving.models._build_chat_model`, which reads its OWN `get_settings()`
+    reference -- a separate name bound at import time in
+    `agents_system.serving.models`.
     Both must be patched to the same settings object for a test to control
     the whole call."""
     return (
         patch("agents_system.evals.provider.get_settings", return_value=settings),
-        patch("agents_system.main.get_settings", return_value=settings),
+        patch("agents_system.serving.models.get_settings", return_value=settings),
     )
 
 
@@ -67,7 +68,7 @@ def test_build_eval_model_fails_fast_when_the_provider_is_unset(
     with (
         provider_patch,
         main_patch,
-        patch("agents_system.main._build_chat_model") as build_chat_model,
+        patch("agents_system.evals.provider._build_chat_model") as build_chat_model,
         pytest.raises(EvalProviderNotConfiguredError) as excinfo,
     ):
         build_eval_model()

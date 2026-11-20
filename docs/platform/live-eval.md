@@ -148,7 +148,7 @@ The eval's own provider is a separate switch from the running application's
 read by `agents_system.evals.provider.build_eval_model()`. Choosing a
 different model for a one-off eval run must never change what the app itself
 serves, so the two never share a field. It accepts the same values
-`main._build_chat_model` dispatches on: `ollama`, `groq`, `anthropic`,
+`serving.models._build_chat_model` dispatches on: `ollama`, `groq`, `anthropic`,
 `openai_compatible`.
 
 There is deliberately no default. It used to be a local Ollama model, so a run

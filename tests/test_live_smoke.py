@@ -169,11 +169,11 @@ async def test_smoke_turn_through_a_folder_registered_reference_agent(
     ``AGENT_REGISTRATIONS='{"id": "folder:sales-agent"}'`` registers it, serves
     a live turn through the served app and its tool audit.
 
-    The agent is resolved by ``main._settings_agents`` -- the function the env
+    The agent is resolved by ``serving.registrations._settings_agents`` -- the function the env
     boot path calls, with the same containment -- then handed to the harness
     as an ``Agent`` because the harness registers through ``create_app(agents=)``.
     """
-    from agents_system.main import _settings_agents
+    from agents_system.serving.registrations import _settings_agents
 
     root = tmp_path / "agents"
     root.mkdir()
