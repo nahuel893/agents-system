@@ -14,13 +14,11 @@ from typing import Any
 
 import pytest
 
-from agents_system.harness.loader import (
-    CommandToolParam,
-    DefinitionError,
-    Tier,
+from agents_system.harness.definition.command_tools import (
     _parse_command_tools,
     _validate_argv_template,
 )
+from agents_system.harness.loader import CommandToolParam, DefinitionError, Tier
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent
 _FIXTURE_BASE = _REPO_ROOT / "tests" / "fixtures" / "agents" / "command_tools"
@@ -130,7 +128,8 @@ def test_argv0_relative_which_result_is_rejected(
     relative `which()` result must fail loudly instead of being stored and
     silently needing `$PATH`/cwd context again at call time."""
     monkeypatch.setattr(
-        "agents_system.harness.loader.shutil.which", lambda raw: "relative/bin/tool"
+        "agents_system.harness.definition.command_tools.shutil.which",
+        lambda raw: "relative/bin/tool",
     )
 
     with pytest.raises(DefinitionError, match="relative"):

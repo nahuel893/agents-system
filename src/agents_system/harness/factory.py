@@ -47,6 +47,7 @@ import structlog
 
 from agents_system.execution_limits import validate_execution_limits
 from agents_system.harness.defaults import builtin_default_tools, is_builtin_default
+from agents_system.harness.definition.roots import _require_deployments_root
 from agents_system.harness.injector import (
     _emit,
     resolve_command_tool_surface,
@@ -59,7 +60,6 @@ from agents_system.harness.loader import (
     RootConfig,
     _as_str_list,
     _read_within_root,
-    _require_deployments_root,
     _resolve_within_root,
     _shown_path,
     _strip_base_contract,
