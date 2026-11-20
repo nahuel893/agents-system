@@ -87,7 +87,7 @@ def test_the_shipped_spellings_session_and_deployment_are_accepted() -> None:
 def test_every_shipped_policy_file_parses() -> None:
     import pathlib
 
-    from agents_system.harness.loader import _read_md
+    from agents_system.harness.definition.frontmatter import _read_md
 
     root = pathlib.Path(__file__).parent.parent
     files = [

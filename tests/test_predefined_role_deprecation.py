@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agents_system.agent.spec import Agent
-from agents_system.harness import loader
+from agents_system.harness.definition import locate
 from agents_system.harness.loader import (
     DefinitionError,
     PredefinedRoleDeprecationWarning,
@@ -124,7 +124,7 @@ def test_the_warning_is_also_logged_for_a_served_app(
     """Python's default filters hide a `DeprecationWarning` raised under a
     server, so the loader logs it too."""
     logger = MagicMock()
-    monkeypatch.setattr(loader, "logger", logger)
+    monkeypatch.setattr(locate, "logger", logger)
 
     _recorded(lambda: resolve("summary-agent"))
 

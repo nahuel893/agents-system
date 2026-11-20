@@ -27,12 +27,8 @@ from typing import Any
 
 import pytest
 
-from agents_system.harness.loader import (
-    DefinitionError,
-    RootConfig,
-    _validate_execution_limits,
-    resolve,
-)
+from agents_system.harness.definition.validators import _validate_execution_limits
+from agents_system.harness.loader import DefinitionError, RootConfig, resolve
 
 #: ADR-010 (#222): these tests resolve concrete predefined roles by name, which
 #: is deprecated. They move to `agent` or the reference agents in

@@ -438,7 +438,7 @@ corrida, no lo que se afirma después:
   techo que rige en producción.** Todo otro límite de `execution_limits` en
   este código (un override de deployment, un importer agent) se hace
   cumplir con el invariante "Deployments may only restrict, not elevate" de
-  `harness.loader._validate_execution_limits` — un hijo puede ajustar un
+  `harness.definition.validators._validate_execution_limits` — un hijo puede ajustar un
   límite, nunca aflojarlo. `execution_limits_override` está deliberadamente
   exento: `runner._build_equipped` lo combina directo sobre los
   `execution_limits` del rol resuelto sin ningún chequeo equivalente, así

@@ -89,7 +89,7 @@ def build_chat_model(
     each provider's own hardcoded default model id). Credentials are
     UNCHANGED by this parameter set -- still read exclusively from
     settings/the process environment, never from an override, which is
-    exactly why `harness.loader._validate_model_config` never allows a
+    exactly why `harness.definition.model_config._validate_model_config` never allows a
     credential-shaped key into one.
 
     issue #145 -- ``metrics`` is an OPTIONAL override of the ``Metrics`` set
@@ -261,7 +261,7 @@ def declared_model(definition: Any) -> Mapping[str, Any] | None:
     ``definition.model`` is ``None`` for the overwhelming majority of resolved
     definitions -- no role/deployment/`Agent` in the chain declared one. When
     it IS a mapping it was already validated by
-    `harness.loader._validate_model_config` at resolution time; this function
+    `harness.definition.model_config._validate_model_config` at resolution time; this function
     does not re-validate.
 
     ``isinstance(selection, Mapping)`` (not a truthiness check) deliberately

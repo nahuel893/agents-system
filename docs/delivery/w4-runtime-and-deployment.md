@@ -153,7 +153,7 @@ runtime whose resolved definition declares one (`_resolve_model_for_
 definition`), still during boot, never lazily at first request; a runtime
 with no declaration keeps the single, global `ADAPTER_PROVIDER`-driven
 default exactly as before, so every existing deployment is unaffected. The
-closed key set (`harness.loader._validate_model_config`) structurally
+closed key set (`harness.definition.model_config._validate_model_config`) structurally
 excludes any credential-shaped key — every real secret still comes only from
 `Settings`/the process environment, never from a versioned manifest.
 `MODEL_PRICES` (#78) needed no change: it is already keyed by the actual

@@ -148,7 +148,7 @@ def test_parse_does_not_echo_an_oversized_value() -> None:
 # `_SAFE_SEGMENT`-legal characters, previously passed straight through with
 # no length bound at all: `_SAFE_SEGMENT` checks the character class, never
 # the length. That oversized, but otherwise "valid", segment then reaches a
-# real filesystem join (`loader._role_folder`/`_deployment_folder`) and can
+# real filesystem join (`locate._role_folder`/`_deployment_folder`) and can
 # overflow into a raw `OSError` (`ENAMETOOLONG`) instead of the bounded
 # `DefinitionError` every other malformed value gets here.
 # ---------------------------------------------------------------------------

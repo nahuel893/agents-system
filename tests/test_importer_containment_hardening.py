@@ -30,15 +30,18 @@ import pathlib
 import pytest
 
 from agents_system.harness import factory as factory_module
-from agents_system.harness import loader as loader_module
-from agents_system.harness.factory import FactoryError, _load_skills
-from agents_system.harness.loader import (
+from agents_system.harness.definition import fsread as fsread_module
+from agents_system.harness.definition import locate as locate_module
+from agents_system.harness.definition.fsread import (
     _DIR_FD_READS,
     _MAX_DEFINITION_FILE_BYTES,
+    _read_within_root,
+)
+from agents_system.harness.factory import FactoryError, _load_skills
+from agents_system.harness.loader import (
     DefinitionError,
     FolderLocator,
     RootConfig,
-    _read_within_root,
     resolve,
 )
 
@@ -231,7 +234,7 @@ def test_read_within_root_bounds_the_actual_read_after_fstat_toctou(
             )
         return result
 
-    monkeypatch.setattr(loader_module.os, "fstat", fstat_that_grows_the_file_mid_check)
+    monkeypatch.setattr(fsread_module.os, "fstat", fstat_that_grows_the_file_mid_check)
 
     with pytest.raises(OSError, match="too large"):
         _read_within_root(root, role_md)
@@ -249,7 +252,7 @@ def test_read_within_root_bounds_the_actual_read_after_stat_toctou_fallback(
     role_md = folder / "role.md"
     role_md.write_text("small-and-under-cap\n", encoding="utf-8")
 
-    monkeypatch.setattr(loader_module, "_DIR_FD_READS", False)
+    monkeypatch.setattr(fsread_module, "_DIR_FD_READS", False)
 
     original_stat = pathlib.Path.stat
     grown = False
@@ -364,14 +367,14 @@ def test_resolve_routes_role_files_through_read_within_root(
     pass the whole suite unnoticed (issue #127)."""
     root = tmp_path / "agents"
     folder = _agent(root, "vip-support")
-    original = loader_module._read_within_root
+    original = locate_module._read_within_root
     seen: list[pathlib.Path] = []
 
     def spy(root_arg: pathlib.Path, path_arg: pathlib.Path) -> str:
         seen.append(path_arg)
         return original(root_arg, path_arg)
 
-    monkeypatch.setattr(loader_module, "_read_within_root", spy)
+    monkeypatch.setattr(locate_module, "_read_within_root", spy)
 
     resolve(FolderLocator(path=folder, root=root), roots=_roots(tmp_path))
 

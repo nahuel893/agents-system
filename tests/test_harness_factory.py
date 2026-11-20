@@ -654,7 +654,8 @@ def _fx_definition(escalation_rules: dict[str, Any]) -> Any:
     """A minimal `AgentDefinition` with a realistic, contract-appended
     `system_prompt`, so `_compose_prompt`'s strip/reappend logic exercises
     the exact same base-contract text `resolve()` would produce."""
-    from agents_system.harness.loader import AgentDefinition, _append_base_contract
+    from agents_system.harness.definition.prompt import _append_base_contract
+    from agents_system.harness.loader import AgentDefinition
 
     return AgentDefinition(
         role_name="fx-role",
@@ -815,7 +816,7 @@ def test_compose_prompt_treats_a_bare_string_conditions_as_one_condition() -> No
     shape -- YAML lets a role.md author write `conditions: single_condition`
     instead of a one-item list. A naive `for c in escalation_rules["conditions"]`
     iterates a *string* character-by-character instead of treating it as one
-    condition. `loader._as_str_list` already exists for exactly this
+    condition. `frontmatter._as_str_list` already exists for exactly this
     coercion (used for this same `conditions` field by
     `_resolve_list_directive`), so `_render_escalation_block` must use the
     same convention rather than reinvent it.
@@ -1038,7 +1039,7 @@ def test_compose_prompt_rejects_description_keys_colliding_after_normalization()
     needing whitespace collapsing still finds its condition -- but two
     DISTINCT raw keys that collapse to the SAME normalized string used to be
     silently resolved by whichever the dict comprehension iterated last, with
-    no error. `loader._parse_escalation_descriptions`'s sibling duplicate-
+    no error. `frontmatter._parse_escalation_descriptions`'s sibling duplicate-
     bullet check (same PR #99 commit) already fails loud for this exact shape
     of mistake; this must too, naming both colliding raw keys."""
     from agents_system.harness.factory import FactoryError, _compose_prompt

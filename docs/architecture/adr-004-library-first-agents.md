@@ -119,7 +119,7 @@ no third copy of that parsing reappears.
 
 ### D6 — Runtime id validation, and where the new code lives
 
-`_validate_runtime_id` (`main.py`) reuses `loader._SAFE_SEGMENT`'s character
+`_validate_runtime_id` (`main.py`) reuses `locate._SAFE_SEGMENT`'s character
 class for every id, whichever of `agents`/`grants`/`clients`/
 `agent_registrations` it came from. `Agent` lives at
 `src/agents_system/agent/spec.py`, alongside `agent/graph.py` — not a

@@ -362,7 +362,7 @@ def test_accountant_agent_role_prose_ties_report_catalog_gap_to_escalation() -> 
     from the shared `agent` parent's unrelated prose) so the assertion is
     about accountant-agent's own prose, not an inherited false positive.
     """
-    from agents_system.harness.loader import _read_md
+    from agents_system.harness.definition.frontmatter import _read_md
 
     _, body = _read_md(_REAL_PLATFORM_ROOT / "roles" / "accountant-agent" / "role.md")
 

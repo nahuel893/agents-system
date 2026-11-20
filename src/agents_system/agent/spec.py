@@ -26,16 +26,18 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 from typing import Any, NoReturn, Self
 
+from agents_system.harness.definition.directives import (
+    _check_list_directive,
+    _check_mapping_directive,
+)
+from agents_system.harness.definition.frontmatter import _as_str_list
+from agents_system.harness.definition.policy import _POLICY_FIELDS
 from agents_system.harness.loader import (
-    _POLICY_FIELDS,
     DefinitionError,
     FolderLocator,
     InlineLocator,
     RawDefinition,
     RoleLocator,
-    _as_str_list,
-    _check_list_directive,
-    _check_mapping_directive,
     _parse_untrusted_input,
     _validate_inline_skills,
 )
@@ -286,7 +288,7 @@ class Agent:
     #: "temperature"?: ..., "max_tokens"?: ...}`, checked the same way (and
     #: at the same stage) as `execution_limits` above -- `_checked` does NOT
     #: touch it either, since it is not a capability/safety ceiling field;
-    #: `harness.loader._validate_model_config` validates it once resolved.
+    #: `harness.definition.model_config._validate_model_config` validates it once resolved.
     #: `None` (the default) means this agent uses its parent's `model:`, or
     #: -- at the chain root -- the global `ADAPTER_PROVIDER`-driven default.
     model: Mapping[str, Any] | str | None = None

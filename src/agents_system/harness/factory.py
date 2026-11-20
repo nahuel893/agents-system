@@ -47,6 +47,16 @@ import structlog
 
 from agents_system.execution_limits import validate_execution_limits
 from agents_system.harness.defaults import builtin_default_tools, is_builtin_default
+from agents_system.harness.definition.frontmatter import _as_str_list
+from agents_system.harness.definition.fsread import (
+    _read_within_root,
+    _resolve_within_root,
+)
+from agents_system.harness.definition.locate import _shown_path
+from agents_system.harness.definition.prompt import (
+    _BASE_PROMPT_CONTRACT,
+    _strip_base_contract,
+)
 from agents_system.harness.definition.roots import _require_deployments_root
 from agents_system.harness.injector import (
     _emit,
@@ -54,15 +64,9 @@ from agents_system.harness.injector import (
     resolve_tool_surface,
 )
 from agents_system.harness.loader import (
-    _BASE_PROMPT_CONTRACT,
     AgentDefinition,
     RoleLocator,
     RootConfig,
-    _as_str_list,
-    _read_within_root,
-    _resolve_within_root,
-    _shown_path,
-    _strip_base_contract,
     resolve,
 )
 from agents_system.harness.registry import Tier, ToolRegistry, ToolSpec
@@ -166,7 +170,7 @@ def _read_skill(root: pathlib.Path, skills_dir: pathlib.Path, name: str) -> str 
     ``skills/`` inside its importer root, and a deployment's
     ``{client}/{role}/skills/`` inside the deployments root. The path must
     resolve, after ``..`` and symlinks, inside ``root``
-    (``harness.loader._resolve_within_root``) and inside ``skills_dir``
+    (``harness.definition.fsread._resolve_within_root``) and inside ``skills_dir``
     itself, and is read walking from ``root`` without following symlinks
     (``_read_within_root``). A ``skills`` directory that is itself a symlink
     out of the root, a skill name with ``..`` in it, and a role name that
@@ -348,14 +352,14 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     Unknown/empty input renders nothing: a role that declares no escalation
     policy gets no block, so this is a strict addition for roles that do.
 
-    ``conditions`` is coerced through ``loader._as_str_list`` — the same
-    coercion ``loader._resolve_mapping_directive`` already applies to this
+    ``conditions`` is coerced through ``frontmatter._as_str_list`` — the same
+    coercion ``directives._resolve_mapping_directive`` already applies to this
     exact field for the ``add``/``remove`` deployment directives — rather
     than iterated directly. YAML permits a bare scalar
     (``conditions: single_condition``) as well as a list; iterating a bare
     *string* directly yields one bullet per CHARACTER, not one condition.
 
-    Issue #88: ``descriptions`` (``loader._parse_escalation_descriptions``'s
+    Issue #88: ``descriptions`` (``frontmatter._parse_escalation_descriptions``'s
     output, ``{condition_name: prose}``) renders each condition as
     ``- name — description`` instead of the bare name alone. #82 showed the
     bare name was not enough for a model to reliably act on: it understood
@@ -398,7 +402,7 @@ def _render_escalation_block(escalation_rules: Mapping[str, Any]) -> str:
     # stray extra space in one of two otherwise-identical declarations)
     # silently resolve to whichever the comprehension iterated last, with no
     # error -- unlike the sibling duplicate-bullet check
-    # `loader._parse_escalation_descriptions` already raises for the same
+    # `frontmatter._parse_escalation_descriptions` already raises for the same
     # shape of authoring mistake. Building the mapping key by key, tracking
     # each normalized key's first raw key, lets the collision be detected and
     # both raw keys named, mirroring that "fail loud, don't silently drop"
@@ -479,8 +483,8 @@ def _compose_prompt(
     insert, ``definition.system_prompt`` is already correct as-is (the
     contract is already its final block) and is returned unchanged. Whenever
     either exists, the contract is stripped back off
-    (``loader._strip_base_contract``, the exact inverse of
-    ``loader._append_base_contract``), skill content and then the escalation
+    (``prompt._strip_base_contract``, the exact inverse of
+    ``prompt._append_base_contract``), skill content and then the escalation
     block (issue #36) are inserted in that order, and the contract is
     appended once more — so it still appears exactly once overall, now
     genuinely last.

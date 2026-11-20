@@ -115,7 +115,7 @@ def discover_platform_roles() -> tuple[str, ...]:
 
 def is_abstract(role: str) -> bool:
     """Whether ``role``'s manifest declares ``abstract: true``."""
-    from agents_system.harness.loader import _read_md
+    from agents_system.harness.definition.frontmatter import _read_md
 
     manifest_fm, _ = _read_md(platform_roles_dir() / role / "manifest.md")
     return bool(manifest_fm.get("abstract", False))
@@ -593,7 +593,7 @@ def check_escalation_conditions_have_descriptions(definition: Any) -> None:
     tolerated fallback (bare name, no failure), see
     `harness/factory.py::_render_escalation_block`'s own docstring.
     """
-    from agents_system.harness.loader import _as_str_list
+    from agents_system.harness.definition.frontmatter import _as_str_list
 
     conditions = _as_str_list(definition.escalation_rules.get("conditions"))
     descriptions = definition.escalation_rules.get("descriptions") or {}

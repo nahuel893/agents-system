@@ -408,7 +408,7 @@ not what is asserted afterward:
   **This is an eval-only escape hatch, not the production ceiling
   guarantee.** Every other `execution_limits` boundary in this codebase
   (a deployment override, an importer agent) is enforced by
-  `harness.loader._validate_execution_limits`'s "Deployments may only
+  `harness.definition.validators._validate_execution_limits`'s "Deployments may only
   restrict, not elevate" invariant — a child may tighten a limit, never
   loosen it. `execution_limits_override` is deliberately exempt:
   `runner._build_equipped` merges it straight over the resolved role's

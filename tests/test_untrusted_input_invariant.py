@@ -311,7 +311,8 @@ def test_chain_three_levels_deep_rejects_a_false_two_levels_down(
 # issue's scope.
 # ---------------------------------------------------------------------------
 def test_every_concrete_platform_role_explicitly_declares_untrusted_input() -> None:
-    from agents_system.harness.loader import _extends_target, _read_md
+    from agents_system.harness.definition.frontmatter import _read_md
+    from agents_system.harness.definition.locate import _extends_target
 
     roots = RootConfig()
     for role in discover_concrete_platform_roles():
