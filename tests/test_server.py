@@ -271,3 +271,26 @@ def test_server_module_exports_app(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert hasattr(server, "app")
     assert isinstance(server.app, FastAPI)
+
+
+def test_readme_uvicorn_targets_resolve_to_an_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every ``module:attribute`` the README hands to uvicorn is a real app (#347)."""
+    import importlib
+    import re
+    from pathlib import Path
+
+    monkeypatch.setenv("ALLOW_INSECURE", "true")
+    monkeypatch.delenv("AGENT_REGISTRATIONS", raising=False)
+    monkeypatch.delenv("REGISTRY_FACTORY", raising=False)
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    targets = set(re.findall(r"uvicorn\s+(agents_system[\w.]*):(\w+)", readme))
+    assert targets, "the README no longer shows how to start the server"
+    for module_name, attribute in sorted(targets):
+        app = getattr(importlib.import_module(module_name), attribute, None)
+        assert isinstance(app, FastAPI), (
+            f"README starts the server with {module_name}:{attribute}, "
+            "which is not a FastAPI app"
+        )
