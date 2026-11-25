@@ -46,6 +46,7 @@ from agents_system.evals.live_harness import (
     boot_live_harness,
     metric_value,
 )
+from agents_system.evals.load_checks import model_reach_failure
 from agents_system.evals.provider import build_eval_model
 from agents_system.services.outbox import MAX_OUTBOX_ATTEMPTS
 
@@ -593,7 +594,9 @@ async def test_small_real_model_load_run_reports_tokens_cost_and_latency() -> No
     assertions are the same system-level guarantees the deterministic layer
     above already proves without a real provider's variance: nothing that
     completes is ever lost or recorded twice, and at least one conversation
-    completes at all (the harness itself works).
+    completes at all (the harness itself works), and that the run reached
+    the model at all: a provider that rejects every call is a broken run,
+    not a slow one (#348).
     """
     model, model_name = build_eval_model()
     concurrency = 20
@@ -675,15 +678,27 @@ async def test_small_real_model_load_run_reports_tokens_cost_and_latency() -> No
         cost_usd = metric_value(
             metrics_text, "agent_cost_usd_total", runtime_id=harness.runtime_id
         )
+        error_turns = metric_value(
+            metrics_text,
+            "agent_turns_total",
+            runtime_id=harness.runtime_id,
+            outcome="error",
+        )
 
         print(
             f"real-model load[{concurrency}] model={model_name} "
             f"limiter_ceiling={limiter.max_concurrent_turns}: "
             f"completed={len(latencies)}/{concurrency} "
-            f"({completion_rate:.0%}) still_pending_at_{_REAL_MODEL_PER_CONVERSATION_TIMEOUT_S:.0f}s={pending} "
+            f"({completion_rate:.0%}) error_turns={error_turns} still_pending_at_{_REAL_MODEL_PER_CONVERSATION_TIMEOUT_S:.0f}s={pending} "
             f"p50={_percentile(latencies, 50):.2f}s "
             f"p95={_percentile(latencies, 95):.2f}s "
             f"max={max(latencies):.2f}s "
             f"input_tokens={input_tokens} output_tokens={output_tokens} "
             f"cost_usd={cost_usd}"
         )
+        # #348: a rejected turn still sends its fallback reply, so `completed`
+        # alone passes when the provider refused every call.
+        failure = model_reach_failure(
+            metrics_text, runtime_id=harness.runtime_id, conversations=concurrency
+        )
+        assert failure is None, failure
