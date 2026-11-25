@@ -765,7 +765,7 @@ runs pass through; for a none row it is "—".
 | Guardrail assertions | direct | `test_live_eval_capabilities`, `test_live_eval_guardrails` |
 | Offline mechanism suite | n/a-live | — |
 | Composition scenarios on reference agents | direct | `test_live_eval_composition` |
-| Load scenarios | direct | `test_live_load_phase3` (reported, not gated) |
+| Load scenarios | direct | `test_live_load_phase3` (reported, not gated; fails when no turn reached the model) |
 | Result files | direct | `test_live_eval_capabilities`, `test_live_eval_sql_query`, `test_live_eval_folder_target`, `test_live_eval_guardrails` |
 
 ### Installation and packaging

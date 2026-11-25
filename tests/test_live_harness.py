@@ -24,6 +24,7 @@ from agents_system.evals.live_harness import (
     metric_value,
     outbox_rows_statement,
 )
+from agents_system.evals.load_checks import model_reach_failure
 from agents_system.integration.meta_signature import sign_payload, verify_signature
 
 # ---------------------------------------------------------------------------
@@ -1215,3 +1216,76 @@ def test_outbox_rows_statement_orders_by_enqueued_at_then_id() -> None:
     order_by_index = compiled.index("ORDER BY")
     order_clause = compiled[order_by_index:]
     assert order_clause.index("ENQUEUED_AT") < order_clause.index("OUTBOX_WORK.ID")
+
+
+# ---------------------------------------------------------------------------
+# model_reach_failure (#348)
+# ---------------------------------------------------------------------------
+
+#: What `/metrics` holds after a load run whose provider rejected every call:
+#: no token sample at all, and every turn counted as an error.
+_REJECTED_PROVIDER_METRICS = """\
+# TYPE agent_turns_total counter
+agent_turns_total{runtime_id="live-harness",outcome="error"} 20.0
+"""
+
+_REACHED_MODEL_METRICS = """\
+# TYPE agent_turns_total counter
+agent_turns_total{runtime_id="live-harness",outcome="ok"} 18.0
+agent_turns_total{runtime_id="live-harness",outcome="error"} 2.0
+# TYPE agent_tokens_total counter
+agent_tokens_total{runtime_id="live-harness",direction="input"} 5400.0
+agent_tokens_total{runtime_id="live-harness",direction="output"} 610.0
+"""
+
+_NO_USAGE_REPORTED_METRICS = """\
+# TYPE agent_turns_total counter
+agent_turns_total{runtime_id="live-harness",outcome="ok"} 20.0
+"""
+
+
+def test_model_reach_failure_names_a_run_the_provider_rejected() -> None:
+    failure = model_reach_failure(
+        _REJECTED_PROVIDER_METRICS, runtime_id="live-harness", conversations=20
+    )
+    assert failure is not None
+    assert "none of 20 conversations reached the model" in failure
+    assert "error_turns=20.0" in failure
+
+
+def test_model_reach_failure_treats_zero_tokens_as_not_reached() -> None:
+    metrics = _REJECTED_PROVIDER_METRICS + (
+        "# TYPE agent_tokens_total counter\n"
+        'agent_tokens_total{runtime_id="live-harness",direction="input"} 0.0\n'
+    )
+    assert (
+        model_reach_failure(metrics, runtime_id="live-harness", conversations=20)
+        is not None
+    )
+
+
+def test_model_reach_failure_passes_a_partially_failing_run() -> None:
+    assert (
+        model_reach_failure(
+            _REACHED_MODEL_METRICS, runtime_id="live-harness", conversations=20
+        )
+        is None
+    )
+
+
+def test_model_reach_failure_passes_a_provider_that_reports_no_usage() -> None:
+    assert (
+        model_reach_failure(
+            _NO_USAGE_REPORTED_METRICS, runtime_id="live-harness", conversations=20
+        )
+        is None
+    )
+
+
+def test_model_reach_failure_ignores_another_runtime() -> None:
+    assert (
+        model_reach_failure(
+            _REACHED_MODEL_METRICS, runtime_id="other-runtime", conversations=20
+        )
+        is not None
+    )
