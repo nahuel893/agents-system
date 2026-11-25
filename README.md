@@ -279,10 +279,10 @@ uv run pytest
 
 ```bash
 # Development
-uv run uvicorn agents_system.main:app --reload --port 8000
+uv run uvicorn agents_system.server:app --reload --port 8000
 
 # Production
-uv run uvicorn agents_system.main:app --host 0.0.0.0 --port 8000 --workers 4
+uv run uvicorn agents_system.server:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 The platform exposes an **OpenAI-compatible adapter** at `/v1/*` — any OpenAI SDK client can point to it and get agent responses. This lets you use the platform as a drop-in replacement for OpenAI with your own roles and tools.
