@@ -812,7 +812,7 @@ que pasan las corridas en vivo; en una fila sin cobertura es "—".
 | Aserciones de guardrails | directa | `test_live_eval_capabilities`, `test_live_eval_guardrails` |
 | Suite de mecanismos offline | no aplica en vivo | — |
 | Escenarios de composición sobre agentes de referencia | directa | `test_live_eval_composition` |
-| Escenarios de carga | directa | `test_live_load_phase3` (se reporta, sin umbral) |
+| Escenarios de carga | directa | `test_live_load_phase3` (se reporta, sin umbral; falla si ningún turno llegó al modelo) |
 | Archivos de resultados | directa | `test_live_eval_capabilities`, `test_live_eval_sql_query`, `test_live_eval_folder_target`, `test_live_eval_guardrails` |
 
 ### Instalación y empaquetado
